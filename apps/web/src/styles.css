@@ -72,7 +72,25 @@ main { display: grid; gap: 24px; padding-top: 24px; }
 .empty_state p { max-width: 220px; font-size: 12px; line-height: 1.7; }
 .player_panel { min-width: 0; }
 .video_frame { padding: 22px; background: #05070a; }
-.video_frame video { display: block; width: 100%; max-height: 62vh; aspect-ratio: 16 / 9; background: #000; }
+.video_frame [data-media-player] {
+  display: block;
+  width: 100%;
+  max-width: none;
+}
+.video_frame [data-media-provider] {
+  width: 100%;
+  height: 100%;
+}
+.video_frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  aspect-ratio: auto;
+  background: #000;
+  object-fit: contain;
+}
 .media_details { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; padding: 26px; border-top: 1px solid var(--line); }
 .media_details h3 { margin: 0 0 10px; font-size: 20px; }
 .media_details p { display: -webkit-box; max-width: 700px; margin: 0; overflow: hidden; color: var(--muted); font-size: 13px; line-height: 1.7; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
