@@ -15,6 +15,7 @@ from openvideo.settings import Settings
 from openvideo.tools.bilibili import BilibiliSource
 from openvideo.tools.downloader import DownloadFailure, download_bilibili_video
 from openvideo.tools.media import probe_media
+from openvideo.tools.thumbnails import generate_thumbnail_sprite
 
 
 class DownloadManager:
@@ -127,6 +128,21 @@ class DownloadManager:
                     else None
                 )
                 asset.remote_thumbnail_url = metadata.thumbnail_url
+                storyboard = await asyncio.to_thread(
+                    generate_thumbnail_sprite,
+                    downloaded.playback_file,
+                    self.library.asset_directory(asset.asset_id),
+                    asset.duration_seconds,
+                    self.settings.ffmpeg_path,
+                    self.settings.ffmpeg_bin_dir,
+                )
+                if storyboard:
+                    asset.thumbnail_sprite_path = storyboard.sprite_path
+                    asset.thumbnail_tile_width = storyboard.tile_width
+                    asset.thumbnail_tile_height = storyboard.tile_height
+                    asset.thumbnail_interval_seconds = storyboard.interval_seconds
+                    asset.thumbnail_columns = storyboard.columns
+                    asset.thumbnail_total_tiles = storyboard.total_tiles
                 asset.status = MediaAssetStatus.READY
                 asset.error_message = None
                 self.library.save(asset)

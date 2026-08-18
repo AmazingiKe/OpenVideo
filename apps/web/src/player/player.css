@@ -2,6 +2,10 @@
   --plyr-color-main: #9cf2bd;
   --plyr-menu-background: #0f141d;
   --plyr-menu-color: #edf0f5;
+  --plyr-thumbnail-min-width: 320px;
+  --plyr-thumbnail-max-width: 320px;
+  --plyr-thumbnail-min-height: 180px;
+  --plyr-thumbnail-max-height: 180px;
   width: 100%;
   aspect-ratio: 16 / 9;
   background: #000;

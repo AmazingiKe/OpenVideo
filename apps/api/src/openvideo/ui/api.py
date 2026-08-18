@@ -157,6 +157,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="视频封面不存在")
         return FileResponse(thumbnail_file)
 
+    @app.get("/api/media/assets/{asset_id}/thumbnail-sprite")
+    def thumbnail_sprite(asset_id: str) -> FileResponse:
+        asset = _ready_asset(library, asset_id)
+        sprite_file = library.resolve_asset_file(asset, asset.thumbnail_sprite_path)
+        if not sprite_file:
+            raise HTTPException(status_code=404, detail="预览图拼板不存在")
+        return FileResponse(sprite_file, media_type="image/jpeg")
+
     return app
 
 

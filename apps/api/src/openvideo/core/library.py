@@ -5,11 +5,14 @@ from pathlib import Path
 from threading import RLock
 
 from openvideo.core.models import MediaAsset, MediaAssetResponse, MediaAssetStatus
+from openvideo.core.models import ThumbnailStoryboardResponse, ThumbnailStoryboardTile
+from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 METADATA_FILE_NAME = "metadata.json"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
+SPRITE_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail-sprite"
 
 
 class MediaLibrary:
@@ -89,6 +92,7 @@ class MediaLibrary:
     def response_for(self, asset: MediaAsset) -> MediaAssetResponse:
         playback_file = self.resolve_asset_file(asset, asset.playback_path)
         thumbnail_file = self.resolve_asset_file(asset, asset.thumbnail_path)
+        storyboard = self._storyboard_for(asset)
         return MediaAssetResponse(
             asset_id=asset.asset_id,
             source_url=asset.source_url,
@@ -114,8 +118,43 @@ class MediaLibrary:
                 if thumbnail_file
                 else None
             ),
+            thumbnail_storyboard=storyboard,
             created_at=asset.created_at,
             updated_at=asset.updated_at,
+        )
+
+    def _storyboard_for(self, asset: MediaAsset) -> ThumbnailStoryboardResponse | None:
+        sprite_file = self.resolve_asset_file(asset, asset.thumbnail_sprite_path)
+        if not sprite_file:
+            return None
+        if any(
+            value is None
+            for value in (
+                asset.thumbnail_tile_width,
+                asset.thumbnail_tile_height,
+                asset.thumbnail_interval_seconds,
+                asset.thumbnail_columns,
+                asset.thumbnail_total_tiles,
+            )
+        ):
+            return None
+        storyboard = ThumbnailStoryboard(
+            sprite_path=asset.thumbnail_sprite_path,
+            tile_width=asset.thumbnail_tile_width,
+            tile_height=asset.thumbnail_tile_height,
+            interval_seconds=asset.thumbnail_interval_seconds,
+            columns=asset.thumbnail_columns,
+            total_tiles=asset.thumbnail_total_tiles,
+        )
+        tiles = [
+            ThumbnailStoryboardTile(start_time=tile.start_time, x=tile.x, y=tile.y)
+            for tile in build_thumbnail_tiles(storyboard)
+        ]
+        return ThumbnailStoryboardResponse(
+            url=SPRITE_ROUTE_TEMPLATE.format(asset_id=asset.asset_id),
+            tile_width=storyboard.tile_width,
+            tile_height=storyboard.tile_height,
+            tiles=tiles,
         )
 
     def _write_asset(self, asset: MediaAsset) -> None:

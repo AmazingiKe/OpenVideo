@@ -16,14 +16,22 @@ type TimelineMarker = {
   label: string;
 };
 
+type Storyboard = {
+  url: string;
+  tile_width: number;
+  tile_height: number;
+  tiles: { start_time: number; x: number; y: number }[];
+};
+
 type PlayerProps = {
   src: string;
   markers?: TimelineMarker[];
+  thumbnails?: Storyboard | null;
   on_time_change?: (seconds: number) => void;
 };
 
 export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
-  { src, markers = [], on_time_change },
+  { src, markers = [], thumbnails = null, on_time_change },
   ref,
 ) {
   const player_ref = useRef<PlayerRef>(null);
@@ -39,6 +47,19 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     label: marker.label,
   }));
 
+  const plyr_thumbnails = thumbnails
+    ? {
+        url: new URL(thumbnails.url, window.location.origin).href,
+        tileWidth: thumbnails.tile_width,
+        tileHeight: thumbnails.tile_height,
+        tiles: thumbnails.tiles.map((tile) => ({
+          startTime: tile.start_time,
+          x: tile.x,
+          y: tile.y,
+        })),
+      }
+    : null;
+
   return (
     <MediaPlayer
       className="openvideo_player"
@@ -49,6 +70,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       <PlyrLayout
         icons={plyrLayoutIcons}
         markers={plyr_markers}
+        thumbnails={plyr_thumbnails}
         clickToPlay
       />
       <PlayerStateBridge

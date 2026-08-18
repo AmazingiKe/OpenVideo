@@ -207,6 +207,7 @@ export function App() {
                     ref={player_ref}
                     src={media_url(selected_asset.playback_url)}
                     markers={markers}
+                    thumbnails={player_storyboard(selected_asset)}
                     on_time_change={set_current_time}
                   />
                 </div>
@@ -313,6 +314,17 @@ function DownloadProgress({ job }: { job: DownloadJob }) {
 
 function format_resolution(asset: MediaAsset): string {
   return asset.width && asset.height ? `${asset.width} × ${asset.height}` : "未知";
+}
+
+function player_storyboard(asset: MediaAsset) {
+  const storyboard = asset.thumbnail_storyboard;
+  if (!storyboard) return null;
+  return {
+    url: media_url(storyboard.url),
+    tile_width: storyboard.tile_width,
+    tile_height: storyboard.tile_height,
+    tiles: storyboard.tiles,
+  };
 }
 
 function format_codecs(asset: MediaAsset): string {

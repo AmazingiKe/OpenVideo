@@ -28,6 +28,13 @@ export type DownloadJob = {
   updated_at: string;
 };
 
+export type ThumbnailStoryboard = {
+  url: string;
+  tile_width: number;
+  tile_height: number;
+  tiles: { start_time: number; x: number; y: number }[];
+};
+
 export type MediaAsset = {
   asset_id: string;
   source_url: string;
@@ -45,6 +52,7 @@ export type MediaAsset = {
   error_message: string | null;
   playback_url: string | null;
   thumbnail_url: string | null;
+  thumbnail_storyboard: ThumbnailStoryboard | null;
   created_at: string;
   updated_at: string;
 };

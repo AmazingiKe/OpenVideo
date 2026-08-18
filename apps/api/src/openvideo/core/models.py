@@ -40,10 +40,29 @@ class MediaAsset(BaseModel):
     playback_path: str | None = None
     thumbnail_path: str | None = None
     remote_thumbnail_url: HttpUrl | None = None
+    thumbnail_sprite_path: str | None = None
+    thumbnail_tile_width: int | None = None
+    thumbnail_tile_height: int | None = None
+    thumbnail_interval_seconds: float | None = None
+    thumbnail_columns: int | None = None
+    thumbnail_total_tiles: int | None = None
     status: MediaAssetStatus = MediaAssetStatus.PENDING
     error_message: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ThumbnailStoryboardTile(BaseModel):
+    start_time: float
+    x: int
+    y: int
+
+
+class ThumbnailStoryboardResponse(BaseModel):
+    url: str
+    tile_width: int
+    tile_height: int
+    tiles: list[ThumbnailStoryboardTile]
 
 
 class MediaAssetResponse(BaseModel):
@@ -63,6 +82,7 @@ class MediaAssetResponse(BaseModel):
     error_message: str | None
     playback_url: str | None
     thumbnail_url: str | None
+    thumbnail_storyboard: ThumbnailStoryboardResponse | None = None
     created_at: datetime
     updated_at: datetime
 
