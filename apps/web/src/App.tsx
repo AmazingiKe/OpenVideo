@@ -24,7 +24,7 @@ export function App() {
   const selected_asset =
     assets.find((asset) => asset.asset_id === selected_asset_id) ?? null;
 
-  const { markers, add_marker, remove_marker } = use_asset_markers(
+  const { markers, add_marker, add_tag, remove_tag, remove_marker } = use_asset_markers(
     selected_asset?.asset_id ?? "",
   );
 
@@ -227,23 +227,60 @@ export function App() {
                   ) : (
                     <div className="marker_chips">
                       {markers.map((marker) => (
-                        <span key={marker.id} className="marker_chip">
-                          <button
-                            type="button"
-                            onClick={() => seek_to(marker.time_seconds)}
-                            title="跳转到该时间点"
-                          >
-                            {marker.label}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => remove_marker(marker.id)}
-                            title="删除标记"
-                            aria-label={`删除 ${marker.label} 标记`}
-                          >
-                            ✕
-                          </button>
-                        </span>
+                        <div key={marker.id} className="marker_chip">
+                          <div className="marker_chip_header">
+                            <button
+                              className="marker_time_button"
+                              type="button"
+                              onClick={() => seek_to(marker.time_seconds)}
+                              title="跳转到该时间点"
+                            >
+                              {marker.label}
+                            </button>
+                            <button
+                              className="marker_remove_button"
+                              type="button"
+                              onClick={() => remove_marker(marker.id)}
+                              title="删除标记"
+                              aria-label={`删除 ${marker.label} 标记`}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <div className="marker_tags">
+                            {marker.tags.map((tag) => (
+                              <span key={tag} className="marker_tag">
+                                {tag}
+                                <button
+                                  type="button"
+                                  onClick={() => remove_tag(marker.id, tag)}
+                                  aria-label={`删除标签 ${tag}`}
+                                  title="删除标签"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                            <form
+                              className="marker_tag_form"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                const form = event.currentTarget;
+                                const tag_input = new FormData(form).get("tag");
+                                if (typeof tag_input === "string") add_tag(marker.id, tag_input);
+                                form.reset();
+                              }}
+                            >
+                              <input
+                                name="tag"
+                                type="text"
+                                placeholder="添加 Tag"
+                                aria-label={`${marker.label} 的 Tag`}
+                                maxLength={40}
+                              />
+                            </form>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   )}

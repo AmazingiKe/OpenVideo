@@ -23,6 +23,19 @@ describe("use_asset_markers", () => {
     expect(reloaded.result.current.markers).toHaveLength(2);
   });
 
+  it("adds and removes tags from a marker", () => {
+    const { result } = renderHook(() => use_asset_markers(ASSET_ID));
+    act(() => result.current.add_marker(12));
+    const marker_id = result.current.markers[0].id;
+
+    act(() => result.current.add_tag(marker_id, "重点画面"));
+    act(() => result.current.add_tag(marker_id, "重点画面"));
+    expect(result.current.markers[0].tags).toEqual(["重点画面"]);
+
+    act(() => result.current.remove_tag(marker_id, "重点画面"));
+    expect(result.current.markers[0].tags).toEqual([]);
+  });
+
   it("ignores markers within one second and removes by id", () => {
     const { result } = renderHook(() => use_asset_markers(ASSET_ID));
     act(() => result.current.add_marker(100));

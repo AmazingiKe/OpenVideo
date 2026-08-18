@@ -44,10 +44,11 @@
 }
 
 .marker_chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 6px 5px 10px;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 6px 5px 8px;
   border: 1px solid #4a4a30;
   color: #ffd479;
   background: #1d1a10;
@@ -55,10 +56,17 @@
   font-size: 11px;
 }
 
-.marker_chip button {
+.marker_chip_header,
+.marker_tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.marker_time_button,
+.marker_remove_button,
+.marker_tag button {
   display: grid;
-  width: 18px;
-  height: 18px;
   place-items: center;
   padding: 0;
   border: none;
@@ -68,8 +76,62 @@
   cursor: pointer;
 }
 
-.marker_chip button:hover {
+.marker_time_button,
+.marker_remove_button {
+  width: 18px;
+  height: 18px;
+}
+
+.marker_time_button {
+  width: auto;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: transparent;
+  font-family: inherit;
+}
+
+.marker_time_button:hover,
+.marker_remove_button:hover,
+.marker_tag button:hover {
   background: rgba(255, 212, 121, 0.25);
+}
+
+.marker_tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 3px 2px 6px;
+  border-radius: 3px;
+  color: #c8f7d6;
+  background: #173426;
+}
+
+.marker_tag button {
+  width: 14px;
+  height: 14px;
+  color: #c8f7d6;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.marker_tag_form input {
+  width: 76px;
+  padding: 3px 6px;
+  border: 1px dashed #526a5a;
+  border-radius: 3px;
+  outline: none;
+  color: #edf0f5;
+  background: #101a13;
+  font: inherit;
+}
+
+.marker_tag_form input:focus {
+  border-color: var(--accent);
+}
+
+.marker_tag_form input::placeholder {
+  color: #78857d;
 }
 
 .marker_empty_hint {

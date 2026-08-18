@@ -8,6 +8,7 @@ export type PlayerMarker = {
   id: string;
   time_seconds: number;
   label: string;
+  tags: string[];
 };
 
 const STORAGE_PREFIX = "openvideo.player.markers";
@@ -29,8 +30,39 @@ export function use_asset_markers(asset_id: string) {
         if (too_close) return current;
         const next = [
           ...current,
-          { id: uuid7(), time_seconds: rounded, label: format_time(rounded) },
+          { id: uuid7(), time_seconds: rounded, label: format_time(rounded), tags: [] },
         ].sort((left, right) => left.time_seconds - right.time_seconds);
+        save_markers(asset_id, next);
+        return next;
+      });
+    },
+    [asset_id],
+  );
+
+  const add_tag = useCallback(
+    (marker_id: string, tag: string) => {
+      const normalized_tag = tag.trim();
+      if (!normalized_tag) return;
+      set_markers((current) => {
+        const next = current.map((marker) => {
+          if (marker.id !== marker_id || marker.tags.includes(normalized_tag)) return marker;
+          return { ...marker, tags: [...marker.tags, normalized_tag] };
+        });
+        save_markers(asset_id, next);
+        return next;
+      });
+    },
+    [asset_id],
+  );
+
+  const remove_tag = useCallback(
+    (marker_id: string, tag: string) => {
+      set_markers((current) => {
+        const next = current.map((marker) => (
+          marker.id === marker_id
+            ? { ...marker, tags: marker.tags.filter((current_tag) => current_tag !== tag) }
+            : marker
+        ));
         save_markers(asset_id, next);
         return next;
       });
@@ -49,7 +81,7 @@ export function use_asset_markers(asset_id: string) {
     [asset_id],
   );
 
-  return { markers, add_marker, remove_marker };
+  return { markers, add_marker, add_tag, remove_tag, remove_marker };
 }
 
 function load_markers(asset_id: string): PlayerMarker[] {
@@ -60,6 +92,7 @@ function load_markers(asset_id: string): PlayerMarker[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter(is_valid_marker)
+      .map((marker) => ({ ...marker, tags: Array.isArray(marker.tags) ? marker.tags : [] }))
       .sort((left, right) => left.time_seconds - right.time_seconds);
   } catch {
     return [];
@@ -85,6 +118,9 @@ function is_valid_marker(value: unknown): value is PlayerMarker {
     typeof candidate.id === "string" &&
     typeof candidate.time_seconds === "number" &&
     Number.isFinite(candidate.time_seconds) &&
-    candidate.time_seconds >= 0
+    candidate.time_seconds >= 0 &&
+    (candidate.tags === undefined || (
+      Array.isArray(candidate.tags) && candidate.tags.every((tag) => typeof tag === "string")
+    ))
   );
 }
