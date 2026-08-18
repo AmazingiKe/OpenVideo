@@ -1,0 +1,27 @@
+# Web
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.ruff_cache/
+
+# Runtime data
+library/
+
+# 本地媒体工具二进制
+tools/ffmpeg/
+tools/*.zip
+
+# Environment and editors
+.env
+.env.local
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

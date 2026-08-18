@@ -1,0 +1,74 @@
+.openvideo_player {
+  --plyr-color-main: #9cf2bd;
+  --plyr-menu-background: #0f141d;
+  --plyr-menu-color: #edf0f5;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.player_toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  background: #0a0f16;
+}
+
+.add_marker_button {
+  padding: 8px 13px;
+  border: 1px solid #315d42;
+  color: var(--accent);
+  background: #11251a;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.add_marker_button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.marker_chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.marker_chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid #4a4a30;
+  color: #ffd479;
+  background: #1d1a10;
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+}
+
+.marker_chip button {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: #ffd479;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.marker_chip button:hover {
+  background: rgba(255, 212, 121, 0.25);
+}
+
+.marker_empty_hint {
+  color: var(--muted);
+  font-size: 12px;
+}
