@@ -63,7 +63,7 @@ pnpm install
 安装 API 依赖：
 
 ```powershell
-Set-Location apps/api
+Set-Location apps/backend
 uv sync
 ```
 
@@ -72,7 +72,7 @@ uv sync
 先启动 API：
 
 ```powershell
-Set-Location apps/api
+Set-Location apps/backend
 uv run uvicorn openvideo.ui.api:app --host 127.0.0.1 --port 8000 --reload
 ```
 
@@ -102,7 +102,7 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 | `OPENVIDEO_CORS_ORIGINS` | 本地 Vite 两个来源 | 允许访问 API 的 Web 来源，逗号分隔 |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 
-若从 `apps/api` 启动且未配置媒体库路径，默认运行数据会在 `apps/api/library`。希望统一保存在仓库根目录时，可在启动前设置：
+若从 `apps/backend` 启动且未配置媒体库路径，默认运行数据会在 `apps/backend/library`。希望统一保存在仓库根目录时，可在启动前设置：
 
 ```powershell
 $env:OPENVIDEO_LIBRARY_PATH = (Resolve-Path ../..).Path + "\library"
@@ -113,7 +113,7 @@ $env:OPENVIDEO_LIBRARY_PATH = (Resolve-Path ../..).Path + "\library"
 后端：
 
 ```powershell
-Set-Location apps/api
+Set-Location apps/backend
 uv run pytest
 ```
 
