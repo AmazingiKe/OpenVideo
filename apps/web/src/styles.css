@@ -43,10 +43,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 
 /* ---------- 顶部状态栏 ---------- */
 .status_bar {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
   align-items: center;
-  gap: 24px;
   height: var(--status_height);
   flex: none;
   padding: 0 14px;
@@ -70,58 +68,6 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   font-weight: 500;
 }
 .brand_name { color: #ffffff; font-weight: 700; font-size: 13px; letter-spacing: .02em; }
-
-.status_cluster { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.status_job {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 340px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #d9e4e7;
-  font-size: 12px;
-}
-.status_spinner {
-  flex: none;
-  width: 12px; height: 12px;
-  border: 2px solid #2a4a57;
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-.status_spinner.static { animation: none; border-color: var(--accent); background: var(--accent); }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.status_asset {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 320px;
-  overflow: hidden;
-  font-size: 12px;
-  color: var(--muted);
-}
-.status_asset_dot { width: 7px; height: 7px; border-radius: 50%; flex: none; border: 1px solid #4a6b78; }
-.status_asset_dot.ready { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 8px #7eadbf44; }
-.status_asset_name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d9e4e7; }
-.status_asset_meta { flex: none; font-family: "DM Mono", monospace; font-size: 11px; color: var(--accent); }
-.status_asset_empty { font-style: italic; opacity: .7; }
-
-.dependency_badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.dependency_badge.ready { color: var(--accent); border-color: #1e4a57; background: var(--accent_dark); }
-.dependency_badge.degraded { color: #f0b49c; border-color: #5e4a36; background: #2b2117; }
 
 /* ---------- 主体：左工具栏 + 内容区 ---------- */
 .app_body {
@@ -344,7 +290,6 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 700px) {
-  .status_asset { display: none; }
   .app_body { grid-template-columns: 1fr; }
   .toolbar { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); padding: 6px 8px; }
   .toolbar_spacer { display: none; }

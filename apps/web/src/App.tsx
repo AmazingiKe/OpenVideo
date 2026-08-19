@@ -129,11 +129,7 @@ export function App() {
 
   return (
     <div className="app_shell">
-      <StatusBar
-        health={health}
-        active_job={active_job}
-        selected_asset={selected_asset}
-      />
+      <StatusBar />
 
       <div className="app_body">
         <Toolbar active_tool={active_tool} on_tool={pick_tool} />
@@ -181,43 +177,12 @@ export function App() {
   );
 }
 
-function StatusBar({
-  health,
-  active_job,
-  selected_asset,
-}: {
-  health: HealthResponse | null;
-  active_job: DownloadJob | null;
-  selected_asset: MediaAsset | null;
-}) {
+function StatusBar() {
   return (
     <header className="status_bar">
       <div className="brand">
         <span className="brand_mark">OV</span>
         <span className="brand_name">OpenVideo</span>
-      </div>
-
-      <div className="status_cluster">
-        <DependencyBadge health={health} />
-
-        {active_job && active_job.stage !== "complete" && active_job.stage !== "failed" ? (
-          <span className="status_job" title={active_job.message}>
-            <span className="status_spinner" aria-hidden="true" />
-            {active_job.message}
-          </span>
-        ) : null}
-      </div>
-
-      <div className="status_asset">
-        {selected_asset ? (
-          <>
-            <span className="status_asset_dot ready" aria-hidden="true" />
-            <span className="status_asset_name">{selected_asset.title}</span>
-            <span className="status_asset_meta">{format_duration(selected_asset.duration_seconds)}</span>
-          </>
-        ) : (
-          <span className="status_asset_empty">未选择视频</span>
-        )}
       </div>
     </header>
   );
@@ -520,23 +485,6 @@ function PlayerPanel({
         </div>
       )}
     </section>
-  );
-}
-
-function DependencyBadge({ health }: { health: HealthResponse | null }) {
-  if (!health) return <span className="dependency_badge checking">检查环境</span>;
-  const missing = Object.entries(health.dependencies)
-    .filter(([, available]) => !available)
-    .map(([name]) => name.replace("_", "-"));
-  return missing.length === 0 ? (
-    <span className="dependency_badge ready">
-      <span className="status_spinner static" aria-hidden="true" />
-      环境就绪
-    </span>
-  ) : (
-    <span className="dependency_badge degraded" title={`缺少：${missing.join("、")}`}>
-      缺少 {missing.join(" / ")}
-    </span>
   );
 }
 
