@@ -73,7 +73,7 @@ uv sync
 
 ```powershell
 Set-Location apps/backend
-uv run uvicorn openvideo.ui.api:app --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn openvideo.ui.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 再从仓库根目录启动 Web：
@@ -90,6 +90,16 @@ http://127.0.0.1:5173
 
 Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 
+### 局域网访问
+
+API 与 Vite 均监听 `0.0.0.0`，同一局域网内的设备可直接通过服务器 IP 访问：
+
+```text
+http://<服务器IP>:5173
+```
+
+API 地址为 `http://<服务器IP>:8000`。若需收紧跨域来源，可通过 `OPENVIDEO_CORS_ORIGINS` 指定允许的 Web 来源（逗号分隔）。
+
 ## 配置
 
 可参考 `.env.example`：
@@ -99,7 +109,7 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 | `OPENVIDEO_LIBRARY_PATH` | 当前进程目录下的 `library` | 媒体库存放位置 |
 | `OPENVIDEO_FFMPEG_PATH` | 从 `PATH` 查找 | ffmpeg 完整路径 |
 | `OPENVIDEO_FFPROBE_PATH` | 从 `PATH` 查找 | ffprobe 完整路径 |
-| `OPENVIDEO_CORS_ORIGINS` | 本地 Vite 两个来源 | 允许访问 API 的 Web 来源，逗号分隔 |
+| `OPENVIDEO_CORS_ORIGINS` | `*`（放行所有来源） | 允许访问 API 的 Web 来源，逗号分隔；局域网访问可保持默认 |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 
 若从 `apps/backend` 启动且未配置媒体库路径，默认运行数据会在 `apps/backend/library`。希望统一保存在仓库根目录时，可在启动前设置：

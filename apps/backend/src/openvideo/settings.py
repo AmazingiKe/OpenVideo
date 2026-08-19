@@ -4,10 +4,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
-DEFAULT_CORS_ORIGINS = (
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-)
+# API 无鉴权且面向局域网开放，默认放行所有来源；可用 OPENVIDEO_CORS_ORIGINS 收紧。
+DEFAULT_CORS_ORIGINS = ("*",)
 
 
 class Settings(BaseModel):
