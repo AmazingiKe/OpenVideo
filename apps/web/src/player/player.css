@@ -1,7 +1,7 @@
 .openvideo_player {
-  --plyr-color-main: #9cf2bd;
-  --plyr-menu-background: #0f141d;
-  --plyr-menu-color: #edf0f5;
+  --plyr-color-main: #7EADBF;
+  --plyr-menu-background: #0b141a;
+  --plyr-menu-color: #e6eef0;
   --plyr-thumbnail-min-width: 320px;
   --plyr-thumbnail-max-width: 320px;
   --plyr-thumbnail-min-height: 180px;
@@ -45,14 +45,15 @@
   gap: 10px;
   padding: 14px 18px;
   border-top: 1px solid var(--line);
-  background: #0a0f16;
+  background: #0a141b;
 }
 
 .add_marker_button {
   padding: 8px 13px;
-  border: 1px solid #315d42;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
   color: var(--accent);
-  background: #11251a;
+  background: transparent;
   font-size: 12px;
   white-space: nowrap;
 }
@@ -74,9 +75,10 @@
   gap: 8px;
   min-height: 32px;
   padding: 5px 6px 5px 8px;
-  border: 1px solid #4a4a30;
-  color: #ffd479;
-  background: #1d1a10;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--accent);
+  background: #0a141b;
   font-family: "DM Mono", monospace;
   font-size: 11px;
 }
@@ -96,8 +98,8 @@
   padding: 0;
   border: none;
   border-radius: 50%;
-  color: #ffd479;
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent);
+  background: rgba(126, 173, 191, 0.1);
   cursor: pointer;
 }
 
@@ -120,7 +122,7 @@
 .marker_remove_button:hover,
 .marker_tag button:hover,
 .marker_tag_form button:hover {
-  background: rgba(255, 212, 121, 0.25);
+  background: rgba(126, 173, 191, 0.25);
 }
 
 .marker_time_button:focus-visible,
@@ -137,15 +139,15 @@
   align-items: center;
   gap: 4px;
   padding: 2px 3px 2px 6px;
-  border-radius: 3px;
-  color: #c8f7d6;
-  background: #173426;
+  border-radius: 6px;
+  color: #cfe0e5;
+  background: #12242a;
 }
 
 .marker_tag button {
   width: 14px;
   height: 14px;
-  color: #c8f7d6;
+  color: var(--accent);
   font-size: 12px;
   line-height: 1;
 }
@@ -159,11 +161,11 @@
 .marker_tag_form input {
   width: 108px;
   padding: 3px 6px;
-  border: 1px dashed #526a5a;
-  border-radius: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
   outline: none;
-  color: #edf0f5;
-  background: #101a13;
+  color: #e6eef0;
+  background: #0a141b;
   font: inherit;
 }
 
@@ -172,16 +174,16 @@
 }
 
 .marker_tag_form input::placeholder {
-  color: #78857d;
+  color: #5b7780;
 }
 
 .marker_tag_form button {
   min-height: 26px;
   padding: 3px 7px;
-  border: 1px solid #526a5a;
-  border-radius: 3px;
-  color: #c8f7d6;
-  background: #173426;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--accent);
+  background: transparent;
   font: inherit;
 }
 
