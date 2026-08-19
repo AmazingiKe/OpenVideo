@@ -9,7 +9,16 @@ import type { DownloadJob, HealthResponse, MediaAsset } from "./types";
 
 const terminal_stages = new Set(["complete", "failed"]);
 
+type ToolKey = "download" | "library" | "player";
+
+const tools: { key: ToolKey; label: string; icon: string }[] = [
+  { key: "download", label: "下载", icon: "⤓" },
+  { key: "library", label: "媒体库", icon: "▤" },
+  { key: "player", label: "播放器", icon: "▶" },
+];
+
 export function App() {
+  const [active_tool, set_active_tool] = useState<ToolKey>("download");
   const [source_url, set_source_url] = useState("");
   const [health, set_health] = useState<HealthResponse | null>(null);
   const [assets, set_assets] = useState<MediaAsset[]>([]);
@@ -94,6 +103,15 @@ export function App() {
     }
   }
 
+  async function pick_tool(tool: ToolKey) {
+    set_active_tool(tool);
+    if (tool === "player" && selected_asset_id === null) {
+      // 自动回填一个可用视频，避免空播放器
+      const fallback = assets.find((asset) => asset.status === "ready");
+      if (fallback) set_selected_asset_id(fallback.asset_id);
+    }
+  }
+
   function seek_to(seconds: number) {
     player_ref.current?.seek_to(seconds);
   }
@@ -111,240 +129,410 @@ export function App() {
 
   return (
     <div className="app_shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">OPENVIDEO · PROTOTYPE</p>
-          <h1>获取视频，建立可回溯的时间轴。</h1>
-          <p className="hero_copy">
-            当前雏形支持 Bilibili 公开视频下载与本地播放。下一步将在同一播放器上加入 MediaSegment、字幕和画面分析。
-          </p>
-        </div>
-        <DependencyBadge health={health} />
-      </header>
+      <StatusBar
+        health={health}
+        active_job={active_job}
+        selected_asset={selected_asset}
+      />
 
-      <main>
-        <section className="download_panel" aria-labelledby="download_title">
-          <div className="section_heading">
-            <div>
-              <span className="step_number">01</span>
-              <h2 id="download_title">获取 Bilibili 视频</h2>
-            </div>
-            <span className="section_note">公开单视频 · HTTPS</span>
-          </div>
-          <form className="download_form" onSubmit={submit_download}>
-            <label htmlFor="source_url">视频地址</label>
-            <div className="input_row">
-              <input
-                id="source_url"
-                name="source_url"
-                type="url"
-                value={source_url}
-                onChange={(event) => set_source_url(event.target.value)}
-                placeholder="https://www.bilibili.com/video/BV..."
-                disabled={is_submitting}
-                autoComplete="off"
-              />
-              <button type="submit" disabled={is_submitting || health === null || !dependencies_ready}>
-                {is_submitting ? "处理中…" : "开始下载"}
-              </button>
-            </div>
-          </form>
+      <div className="app_body">
+        <Toolbar active_tool={active_tool} on_tool={pick_tool} />
 
-          {active_job ? <DownloadProgress job={active_job} /> : null}
-          {page_error ? (
-            <div className="error_message" role="alert">
-              {page_error}
-            </div>
+        <main className="content_pane" aria-label="主工作区">
+          {active_tool === "download" ? (
+            <DownloadPanel
+              source_url={source_url}
+              set_source_url={set_source_url}
+              is_submitting={is_submitting}
+              dependencies_ready={dependencies_ready}
+              health={health}
+              active_job={active_job}
+              page_error={page_error}
+              on_submit={submit_download}
+            />
           ) : null}
-        </section>
 
-        <section className="workspace" aria-label="媒体工作区">
-          <aside className="asset_library">
-            <div className="section_heading compact">
-              <div>
-                <span className="step_number">02</span>
-                <h2>媒体库</h2>
-              </div>
-              <span className="asset_count">{assets.length}</span>
-            </div>
-            {assets.length === 0 ? (
-              <div className="empty_state">
-                <span>暂无视频</span>
-                <p>下载完成后，视频会保存在本地媒体库中。</p>
-              </div>
-            ) : (
-              <ul className="asset_list">
-                {assets.map((asset) => (
-                  <li key={asset.asset_id}>
-                    <button
-                      className={asset.asset_id === selected_asset_id ? "asset_item selected" : "asset_item"}
-                      onClick={() => {
-                        set_current_time(0);
-                        set_selected_asset_id(asset.asset_id);
-                      }}
-                      aria-pressed={asset.asset_id === selected_asset_id}
-                    >
-                      <span className="asset_thumbnail">
-                        {asset.thumbnail_url ? (
-                          <img src={media_url(asset.thumbnail_url)} alt="" />
-                        ) : (
-                          <span>{asset.status === "ready" ? "▶" : "…"}</span>
-                        )}
-                      </span>
-                      <span className="asset_text">
-                        <strong>{asset.title}</strong>
-                        <small>
-                          {asset.author_name ?? "未知作者"} · {format_duration(asset.duration_seconds)}
-                        </small>
-                      </span>
-                      <span className={`status_dot ${asset.status}`} title={asset.status} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </aside>
+          {active_tool === "library" ? (
+            <LibraryPanel
+              assets={assets}
+              selected_asset_id={selected_asset_id}
+              on_select={(id) => set_selected_asset_id(id)}
+            />
+          ) : null}
 
-          <section className="player_panel" aria-labelledby="player_title">
-            <div className="section_heading compact">
-              <div>
-                <span className="step_number">03</span>
-                <h2 id="player_title">播放器</h2>
-              </div>
-              {selected_asset?.source_video_id ? (
-                <span className="section_note">{selected_asset.source_video_id}</span>
-              ) : null}
-            </div>
-            {selected_asset?.playback_url ? (
-              <>
-                <div className="video_frame">
-                  <Player
-                    key={selected_asset.asset_id}
-                    ref={player_ref}
-                    src={media_url(selected_asset.playback_url)}
-                    markers={markers}
-                    thumbnails={player_storyboard(selected_asset)}
-                    on_time_change={set_current_time}
-                  />
-                </div>
-                <div className="player_toolbar">
-                  <button
-                    className="add_marker_button"
-                    type="button"
-                    disabled={current_time <= 0}
-                    onClick={add_marker_at_current_time}
-                  >
-                    添加标记 @ {format_time(current_time)}
-                  </button>
-                  {storage_error ? (
-                    <span className="marker_storage_error" role="status">
-                      无法保存到浏览器，当前修改仅在本次页面中有效。
-                    </span>
-                  ) : null}
-                  {markers.length === 0 ? (
-                    <span className="marker_empty_hint">
-                      在播放中点击按钮添加时间点标记，点击标记可跳转到对应位置。
-                    </span>
-                  ) : (
-                    <div className="marker_chips">
-                      {markers.map((marker) => (
-                        <div key={marker.id} className="marker_chip">
-                          <div className="marker_chip_header">
-                            <button
-                              className="marker_time_button"
-                              type="button"
-                              onClick={() => seek_to(marker.time_seconds)}
-                              title="跳转到该时间点"
-                            >
-                              {marker.label}
-                            </button>
-                            <button
-                              className="marker_remove_button"
-                              type="button"
-                              onClick={() => remove_marker(marker.id)}
-                              title="删除标记"
-                              aria-label={`删除 ${marker.label} 标记`}
-                            >
-                              ✕
-                            </button>
-                          </div>
-                          <div className="marker_tags">
-                            {marker.tags.map((tag) => (
-                              <span key={tag} className="marker_tag">
-                                {tag}
-                                <button
-                                  type="button"
-                                  onClick={() => remove_tag(marker.id, tag)}
-                                  aria-label={`删除标签 ${tag}`}
-                                  title="删除标签"
-                                >
-                                  ×
-                                </button>
-                              </span>
-                            ))}
-                            <form
-                              className="marker_tag_form"
-                              onSubmit={(event) => {
-                                event.preventDefault();
-                                const form = event.currentTarget;
-                                const tag_input = new FormData(form).get("tag");
-                                if (typeof tag_input === "string") add_tag(marker.id, tag_input);
-                                form.reset();
-                              }}
-                            >
-                              <input
-                                name="tag"
-                                type="text"
-                                placeholder="添加标签"
-                                aria-label={`${marker.label} 的标签`}
-                                maxLength={40}
-                              />
-                              <button type="submit" aria-label={`为 ${marker.label} 添加标签`}>
-                                添加
-                              </button>
-                            </form>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="media_details">
-                  <div>
-                    <h3>{selected_asset.title}</h3>
-                    <p>{selected_asset.description || "该视频暂无简介。"}</p>
-                  </div>
-                  <dl>
-                    <div><dt>时长</dt><dd>{format_duration(selected_asset.duration_seconds)}</dd></div>
-                    <div><dt>分辨率</dt><dd>{format_resolution(selected_asset)}</dd></div>
-                    <div><dt>编码</dt><dd>{format_codecs(selected_asset)}</dd></div>
-                  </dl>
-                  <button className="seek_demo" type="button" onClick={() => seek_to(0)}>
-                    回到 00:00
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="player_empty">
-                <span className="player_mark">OV</span>
-                <h3>选择一个已完成的视频</h3>
-                <p>这里将成为视频、时间轴片段与分析文档之间的连接点。</p>
-              </div>
-            )}
-          </section>
-        </section>
-      </main>
+          {active_tool === "player" ? (
+            <PlayerPanel
+              selected_asset={selected_asset}
+              markers={markers}
+              storage_error={storage_error}
+              current_time={current_time}
+              player_ref={player_ref}
+              on_time_change={set_current_time}
+              on_add_marker={add_marker_at_current_time}
+              on_remove_marker={remove_marker}
+              on_add_tag={add_tag}
+              on_remove_tag={remove_tag}
+              on_seek={seek_to}
+            />
+          ) : null}
+        </main>
+      </div>
     </div>
   );
 }
 
+function StatusBar({
+  health,
+  active_job,
+  selected_asset,
+}: {
+  health: HealthResponse | null;
+  active_job: DownloadJob | null;
+  selected_asset: MediaAsset | null;
+}) {
+  return (
+    <header className="status_bar">
+      <div className="brand">
+        <span className="brand_mark">OV</span>
+        <span className="brand_name">OpenVideo</span>
+      </div>
+
+      <div className="status_cluster">
+        <DependencyBadge health={health} />
+
+        {active_job && active_job.stage !== "complete" && active_job.stage !== "failed" ? (
+          <span className="status_job" title={active_job.message}>
+            <span className="status_spinner" aria-hidden="true" />
+            {active_job.message}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="status_asset">
+        {selected_asset ? (
+          <>
+            <span className="status_asset_dot ready" aria-hidden="true" />
+            <span className="status_asset_name">{selected_asset.title}</span>
+            <span className="status_asset_meta">{format_duration(selected_asset.duration_seconds)}</span>
+          </>
+        ) : (
+          <span className="status_asset_empty">未选择视频</span>
+        )}
+      </div>
+    </header>
+  );
+}
+
+function Toolbar({
+  active_tool,
+  on_tool,
+}: {
+  active_tool: ToolKey;
+  on_tool: (tool: ToolKey) => void;
+}) {
+  return (
+    <nav className="toolbar" aria-label="工具">
+      {tools.map((tool) => {
+        const active = tool.key === active_tool;
+        return (
+          <button
+            key={tool.key}
+            className={active ? "tool_button active" : "tool_button"}
+            onClick={() => on_tool(tool.key)}
+            aria-pressed={active}
+            aria-label={tool.label}
+            title={tool.label}
+          >
+            <span className="tool_icon">{tool.icon}</span>
+            <span className="tool_label">{tool.label}</span>
+          </button>
+        );
+      })}
+
+      <div className="toolbar_spacer" />
+
+      <button className="tool_button" type="button" aria-label="设置" title="设置（即将推出）">
+        <span className="tool_icon">⚙</span>
+        <span className="tool_label">设置</span>
+      </button>
+    </nav>
+  );
+}
+
+function DownloadPanel({
+  source_url,
+  set_source_url,
+  is_submitting,
+  dependencies_ready,
+  health,
+  active_job,
+  page_error,
+  on_submit,
+}: {
+  source_url: string;
+  set_source_url: (value: string) => void;
+  is_submitting: boolean;
+  dependencies_ready: boolean;
+  health: HealthResponse | null;
+  active_job: DownloadJob | null;
+  page_error: string | null;
+  on_submit: (event: FormEvent) => void;
+}) {
+  return (
+    <section className="panel" aria-labelledby="download_title">
+      <div className="panel_heading">
+        <h2 id="download_title">获取 Bilibili 视频</h2>
+        <span className="panel_note">公开单视频 · HTTPS</span>
+      </div>
+
+      <form className="download_form" onSubmit={on_submit}>
+        <label htmlFor="source_url">视频地址</label>
+        <div className="input_row">
+          <input
+            id="source_url"
+            name="source_url"
+            type="url"
+            value={source_url}
+            onChange={(event) => set_source_url(event.target.value)}
+            placeholder="https://www.bilibili.com/video/BV..."
+            disabled={is_submitting}
+            autoComplete="off"
+          />
+          <button type="submit" disabled={is_submitting || health === null || !dependencies_ready}>
+            {is_submitting ? "处理中…" : "开始下载"}
+          </button>
+        </div>
+      </form>
+
+      {active_job ? <DownloadProgress job={active_job} /> : null}
+      {page_error ? (
+        <div className="error_message" role="alert">
+          {page_error}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function LibraryPanel({
+  assets,
+  selected_asset_id,
+  on_select,
+}: {
+  assets: MediaAsset[];
+  selected_asset_id: string | null;
+  on_select: (id: string) => void;
+}) {
+  return (
+    <section className="panel" aria-label="媒体库">
+      <div className="panel_heading">
+        <h2>媒体库</h2>
+        <span className="panel_note">{assets.length} 个视频</span>
+      </div>
+
+      {assets.length === 0 ? (
+        <div className="empty_state">
+          <span>暂无视频</span>
+          <p>下载完成后，视频会保存在本地媒体库中。</p>
+        </div>
+      ) : (
+        <ul className="asset_list">
+          {assets.map((asset) => (
+            <li key={asset.asset_id}>
+              <button
+                className={asset.asset_id === selected_asset_id ? "asset_item selected" : "asset_item"}
+                onClick={() => on_select(asset.asset_id)}
+                aria-pressed={asset.asset_id === selected_asset_id}
+              >
+                <span className="asset_thumbnail">
+                  {asset.thumbnail_url ? (
+                    <img src={media_url(asset.thumbnail_url)} alt="" />
+                  ) : (
+                    <span>{asset.status === "ready" ? "▶" : "…"}</span>
+                  )}
+                </span>
+                <span className="asset_text">
+                  <strong>{asset.title}</strong>
+                  <small>
+                    {asset.author_name ?? "未知作者"} · {format_duration(asset.duration_seconds)}
+                  </small>
+                </span>
+                <span className={`status_dot ${asset.status}`} title={asset.status} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function PlayerPanel({
+  selected_asset,
+  markers,
+  storage_error,
+  current_time,
+  player_ref,
+  on_time_change,
+  on_add_marker,
+  on_remove_marker,
+  on_add_tag,
+  on_remove_tag,
+  on_seek,
+}: {
+  selected_asset: MediaAsset | null;
+  markers: { id: string; time_seconds: number; label: string; tags: string[] }[];
+  storage_error: boolean;
+  current_time: number;
+  player_ref: React.RefObject<PlayerHandle | null>;
+  on_time_change: (seconds: number) => void;
+  on_add_marker: () => void;
+  on_remove_marker: (id: string) => void;
+  on_add_tag: (marker_id: string, tag: string) => void;
+  on_remove_tag: (marker_id: string, tag: string) => void;
+  on_seek: (seconds: number) => void;
+}) {
+  return (
+    <section className="panel player_panel" aria-labelledby="player_title">
+      <div className="panel_heading">
+        <h2 id="player_title">播放器</h2>
+        {selected_asset?.source_video_id ? (
+          <span className="panel_note">{selected_asset.source_video_id}</span>
+        ) : null}
+      </div>
+
+      {selected_asset?.playback_url ? (
+        <>
+          <div className="video_frame">
+            <Player
+              key={selected_asset.asset_id}
+              ref={player_ref}
+              src={media_url(selected_asset.playback_url)}
+              markers={markers}
+              thumbnails={player_storyboard(selected_asset)}
+              on_time_change={on_time_change}
+            />
+          </div>
+
+          <div className="player_toolbar">
+            <button
+              className="add_marker_button"
+              type="button"
+              disabled={current_time <= 0}
+              onClick={on_add_marker}
+            >
+              添加标记 @ {format_time(current_time)}
+            </button>
+            {storage_error ? (
+              <span className="marker_storage_error" role="status">
+                无法保存到浏览器，当前修改仅在本次页面中有效。
+              </span>
+            ) : null}
+            {markers.length === 0 ? (
+              <span className="marker_empty_hint">
+                在播放中点击按钮添加时间点标记，点击标记可跳转到对应位置。
+              </span>
+            ) : (
+              <div className="marker_chips">
+                {markers.map((marker) => (
+                  <div key={marker.id} className="marker_chip">
+                    <div className="marker_chip_header">
+                      <button
+                        className="marker_time_button"
+                        type="button"
+                        onClick={() => on_seek(marker.time_seconds)}
+                        title="跳转到该时间点"
+                      >
+                        {marker.label}
+                      </button>
+                      <button
+                        className="marker_remove_button"
+                        type="button"
+                        onClick={() => on_remove_marker(marker.id)}
+                        title="删除标记"
+                        aria-label={`删除 ${marker.label} 标记`}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="marker_tags">
+                      {marker.tags.map((tag) => (
+                        <span key={tag} className="marker_tag">
+                          {tag}
+                          <button
+                            type="button"
+                            onClick={() => on_remove_tag(marker.id, tag)}
+                            aria-label={`删除标签 ${tag}`}
+                            title="删除标签"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <form
+                        className="marker_tag_form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const form = event.currentTarget;
+                          const tag_input = new FormData(form).get("tag");
+                          if (typeof tag_input === "string") on_add_tag(marker.id, tag_input);
+                          form.reset();
+                        }}
+                      >
+                        <input
+                          name="tag"
+                          type="text"
+                          placeholder="添加标签"
+                          aria-label={`${marker.label} 的标签`}
+                          maxLength={40}
+                        />
+                        <button type="submit" aria-label={`为 ${marker.label} 添加标签`}>
+                          添加
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="media_details">
+            <div>
+              <h3>{selected_asset.title}</h3>
+              <p>{selected_asset.description || "该视频暂无简介。"}</p>
+            </div>
+            <dl>
+              <div><dt>时长</dt><dd>{format_duration(selected_asset.duration_seconds)}</dd></div>
+              <div><dt>分辨率</dt><dd>{format_resolution(selected_asset)}</dd></div>
+              <div><dt>编码</dt><dd>{format_codecs(selected_asset)}</dd></div>
+            </dl>
+            <button className="seek_demo" type="button" onClick={() => on_seek(0)}>
+              回到 00:00
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="player_empty">
+          <span className="player_mark">OV</span>
+          <h3>选择一个已完成的视频</h3>
+          <p>这里将成为视频、时间轴片段与分析文档之间的连接点。</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DependencyBadge({ health }: { health: HealthResponse | null }) {
-  if (!health) return <span className="dependency_badge checking">正在检查环境</span>;
+  if (!health) return <span className="dependency_badge checking">检查环境</span>;
   const missing = Object.entries(health.dependencies)
     .filter(([, available]) => !available)
     .map(([name]) => name.replace("_", "-"));
   return missing.length === 0 ? (
-    <span className="dependency_badge ready">环境已就绪</span>
+    <span className="dependency_badge ready">
+      <span className="status_spinner static" aria-hidden="true" />
+      环境就绪
+    </span>
   ) : (
     <span className="dependency_badge degraded" title={`缺少：${missing.join("、")}`}>
       缺少 {missing.join(" / ")}
