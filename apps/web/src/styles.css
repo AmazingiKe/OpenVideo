@@ -63,10 +63,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   border-radius: 6px;
   color: #ffffff;
   background: var(--primary);
-  font-family: "DM Mono", monospace;
-  font-size: 10px;
-  font-weight: 500;
 }
+.brand_mark svg { width: 15px; height: 15px; }
 .brand_name { color: #ffffff; font-weight: 700; font-size: 13px; letter-spacing: .02em; }
 
 /* ---------- 主体：左工具栏 + 内容区 ---------- */

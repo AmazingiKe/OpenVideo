@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { Clapperboard } from "lucide-react";
 
 import { ApiError, create_download, get_health, list_assets, media_url } from "./api";
 import { format_duration, format_time } from "./format";
@@ -181,7 +182,9 @@ function StatusBar() {
   return (
     <header className="status_bar">
       <div className="brand">
-        <span className="brand_mark">OV</span>
+        <span className="brand_mark">
+          <Clapperboard aria-hidden="true" />
+        </span>
         <span className="brand_name">OpenVideo</span>
       </div>
     </header>
