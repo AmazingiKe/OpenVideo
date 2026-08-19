@@ -317,6 +317,23 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .seek_demo { grid-column: 1 / -1; justify-self: start; padding: 9px 13px; border: 1px solid var(--line); border-radius: 8px; color: var(--accent); background: transparent; font-size: 12px; transition: background-color .15s ease; }
 .seek_demo:hover { background: var(--accent_dark); }
 
+.analysis_section { padding: 22px; border-top: 1px solid var(--line); }
+.analysis_heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.analysis_heading h3 { margin: 0; font-size: 16px; color: #e6eef0; }
+.analysis_heading button { padding: 8px 14px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); background: transparent; font-weight: 600; font-size: 12px; transition: background-color .15s ease; }
+.analysis_heading button:hover:not(:disabled) { background: var(--accent_dark); }
+.analysis_heading button:disabled { opacity: .5; cursor: default; }
+.analysis_progress { margin-bottom: 12px; color: var(--accent); font-size: 12px; }
+.analysis_empty { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.segment_list { display: grid; margin: 0; padding: 0; gap: 12px; list-style: none; }
+.segment_item { display: grid; grid-template-columns: 120px 1fr; gap: 14px; width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #0a141b; text-align: left; transition: border-color .15s ease; }
+.segment_item:hover { border-color: var(--accent); }
+.segment_frame { width: 120px; height: 68px; object-fit: cover; border-radius: 8px; background: #000; }
+.segment_body { display: grid; gap: 6px; min-width: 0; }
+.segment_body strong { color: var(--accent); font-family: "DM Mono", monospace; font-size: 12px; }
+.segment_body p { margin: 0; color: #e6eef0; font-size: 13px; line-height: 1.6; }
+.segment_body small { display: -webkit-box; margin: 0; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+
 .player_empty { display: grid; place-items: center; align-content: center; min-height: 420px; padding: 40px; color: var(--muted); text-align: center; }
 .player_mark { display: grid; width: 78px; height: 78px; margin-bottom: 24px; place-items: center; border: 1px solid #295E73; border-radius: 50%; color: var(--accent); font-family: "DM Mono", monospace; }
 .player_empty h3 { margin: 0 0 10px; color: #e6eef0; }

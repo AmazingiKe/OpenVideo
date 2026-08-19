@@ -51,6 +51,9 @@ export type AnalysisStage =
   | "pending"
   | "extracting_audio"
   | "transcribing"
+  | "selecting_moments"
+  | "extracting_frames"
+  | "describing_visuals"
   | "complete"
   | "failed";
 
@@ -76,6 +79,18 @@ export type Transcript = {
   language: string | null;
   segments: TranscriptSegment[];
   created_at: string;
+};
+
+export type MediaSegment = {
+  segment_id: string;
+  asset_id: string;
+  start_seconds: number;
+  end_seconds: number;
+  transcript_text: string | null;
+  speaker_name: string | null;
+  key_frame_paths: string[];
+  visual_description: string | null;
+  ocr_text: string | null;
 };
 
 export type ThumbnailStoryboard = {

@@ -1,12 +1,13 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Clapperboard } from "lucide-react";
 
-import { ApiError, create_download, get_health, list_assets, media_url, probe_source } from "./shared/api";
+import { ApiError, analyze_asset, create_download, get_health, get_segments, list_assets, media_url, probe_source } from "./shared/api";
 import { format_duration, format_time } from "./shared/format";
 import { Player, PlayerHandle } from "./features/player/Player";
 import { use_asset_markers } from "./features/player/use_asset_markers";
+import { poll_analysis } from "./shared/poll_analysis";
 import { poll_download } from "./shared/poll_download";
-import type { DownloadJob, HealthResponse, MediaAsset, ProbeResponse } from "./shared/types";
+import type { AnalysisJob, DownloadJob, HealthResponse, MediaAsset, MediaSegment, ProbeResponse } from "./shared/types";
 
 const terminal_stages = new Set(["complete", "failed"]);
 
@@ -30,8 +31,12 @@ export function App() {
   const [is_submitting, set_is_submitting] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [current_time, set_current_time] = useState(0);
+  const [segments, set_segments] = useState<MediaSegment[]>([]);
+  const [analysis_job, set_analysis_job] = useState<AnalysisJob | null>(null);
+  const [is_analyzing, set_is_analyzing] = useState(false);
   const player_ref = useRef<PlayerHandle>(null);
   const poll_controller_ref = useRef<AbortController | null>(null);
+  const analysis_controller_ref = useRef<AbortController | null>(null);
 
   const selected_asset =
     assets.find((asset) => asset.asset_id === selected_asset_id) ?? null;
@@ -52,11 +57,34 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    return () => poll_controller_ref.current?.abort();
+    return () => {
+      poll_controller_ref.current?.abort();
+      analysis_controller_ref.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
     set_current_time(0);
+  }, [selected_asset_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    set_segments([]);
+    set_analysis_job(null);
+    set_is_analyzing(false);
+    if (!selected_asset_id) return;
+    const controller = new AbortController();
+    get_segments(selected_asset_id, controller.signal)
+      .then((result) => {
+        if (!cancelled) set_segments(result);
+      })
+      .catch(() => {
+        // 该视频还没有分析结果时后端返回 404，保持空列表即可。
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [selected_asset_id]);
 
   async function refresh_assets(signal?: AbortSignal) {
@@ -155,6 +183,32 @@ export function App() {
     player_ref.current?.seek_to(seconds);
   }
 
+  async function start_analysis() {
+    if (!selected_asset_id) return;
+    analysis_controller_ref.current?.abort();
+    const controller = new AbortController();
+    analysis_controller_ref.current = controller;
+    set_is_analyzing(true);
+    set_page_error(null);
+    try {
+      const job = await analyze_asset(selected_asset_id, controller.signal);
+      set_analysis_job(job);
+      if (job.stage !== "complete") {
+        const final_job = await poll_analysis(job, set_analysis_job, controller.signal);
+        if (final_job.stage === "failed") {
+          set_page_error(final_job.error_message ?? "分析失败");
+          return;
+        }
+      }
+      set_segments(await get_segments(selected_asset_id, controller.signal));
+    } catch (error: unknown) {
+      if (!is_abort_error(error)) set_page_error(error_message(error));
+    } finally {
+      set_is_analyzing(false);
+      if (analysis_controller_ref.current === controller) analysis_controller_ref.current = null;
+    }
+  }
+
   function add_marker_at_current_time() {
     const actual_time = player_ref.current?.current_time() ?? current_time;
     const duration = selected_asset?.duration_seconds;
@@ -211,12 +265,16 @@ export function App() {
               storage_error={storage_error}
               current_time={current_time}
               player_ref={player_ref}
+              segments={segments}
+              analysis_job={analysis_job}
+              is_analyzing={is_analyzing}
               on_time_change={set_current_time}
               on_add_marker={add_marker_at_current_time}
               on_remove_marker={remove_marker}
               on_add_tag={add_tag}
               on_remove_tag={remove_tag}
               on_seek={seek_to}
+              on_analyze={start_analysis}
             />
           ) : null}
         </main>
@@ -432,24 +490,32 @@ function PlayerPanel({
   storage_error,
   current_time,
   player_ref,
+  segments,
+  analysis_job,
+  is_analyzing,
   on_time_change,
   on_add_marker,
   on_remove_marker,
   on_add_tag,
   on_remove_tag,
   on_seek,
+  on_analyze,
 }: {
   selected_asset: MediaAsset | null;
   markers: { id: string; time_seconds: number; label: string; tags: string[] }[];
   storage_error: boolean;
   current_time: number;
   player_ref: React.RefObject<PlayerHandle | null>;
+  segments: MediaSegment[];
+  analysis_job: AnalysisJob | null;
+  is_analyzing: boolean;
   on_time_change: (seconds: number) => void;
   on_add_marker: () => void;
   on_remove_marker: (id: string) => void;
   on_add_tag: (marker_id: string, tag: string) => void;
   on_remove_tag: (marker_id: string, tag: string) => void;
   on_seek: (seconds: number) => void;
+  on_analyze: () => void;
 }) {
   return (
     <section className="panel player_panel" aria-labelledby="player_title">
@@ -570,6 +636,64 @@ function PlayerPanel({
               回到 00:00
             </button>
           </div>
+
+          <div className="analysis_section">
+            <div className="analysis_heading">
+              <h3>分析片段</h3>
+              <button
+                type="button"
+                onClick={on_analyze}
+                disabled={is_analyzing}
+              >
+                {is_analyzing ? "分析中…" : "开始分析"}
+              </button>
+            </div>
+            {analysis_job && analysis_job.stage !== "complete" && analysis_job.stage !== "failed" ? (
+              <div className="analysis_progress" aria-live="polite">
+                {analysis_job.message} · {analysis_job.progress_percent.toFixed(0)}%
+              </div>
+            ) : null}
+            {segments.length === 0 ? (
+              <p className="analysis_empty">
+                {is_analyzing
+                  ? "正在提取文字并分析重点画面，请稍候…"
+                  : "尚未分析。点击“开始分析”提取文字并生成重点画面描述。"}
+              </p>
+            ) : (
+              <ul className="segment_list">
+                {segments.map((segment) => (
+                  <li key={segment.segment_id}>
+                    <button
+                      className="segment_item"
+                      type="button"
+                      onClick={() => on_seek(segment.start_seconds)}
+                      title="点击跳转到该片段"
+                    >
+                      {segment.key_frame_paths[0] ? (
+                        <img
+                          className="segment_frame"
+                          src={frame_url(selected_asset.asset_id, segment.key_frame_paths[0])}
+                          alt=""
+                          loading="lazy"
+                        />
+                      ) : null}
+                      <span className="segment_body">
+                        <strong>
+                          {format_time(segment.start_seconds)} – {format_time(segment.end_seconds)}
+                        </strong>
+                        {segment.visual_description ? (
+                          <p>{segment.visual_description}</p>
+                        ) : null}
+                        {segment.transcript_text ? (
+                          <small>{segment.transcript_text}</small>
+                        ) : null}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </>
       ) : (
         <div className="player_empty">
@@ -620,6 +744,10 @@ function player_storyboard(asset: MediaAsset) {
 
 function format_codecs(asset: MediaAsset): string {
   return [asset.video_codec, asset.audio_codec].filter(Boolean).join(" / ") || "待探测";
+}
+
+function frame_url(asset_id: string, frame_path: string): string {
+  return media_url(`/api/media/assets/${encodeURIComponent(asset_id)}/frames/${frame_path}`);
 }
 
 function error_message(error: unknown): string {

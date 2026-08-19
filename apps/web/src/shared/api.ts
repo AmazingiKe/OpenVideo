@@ -3,6 +3,7 @@ import type {
   DownloadJob,
   HealthResponse,
   MediaAsset,
+  MediaSegment,
   ProbeResponse,
   Transcript,
 } from "./types";
@@ -76,6 +77,10 @@ export function get_analysis(job_id: string, signal?: AbortSignal): Promise<Anal
 
 export function get_transcript(asset_id: string, signal?: AbortSignal): Promise<Transcript> {
   return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/transcript`, { signal });
+}
+
+export function get_segments(asset_id: string, signal?: AbortSignal): Promise<MediaSegment[]> {
+  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/segments`, { signal });
 }
 
 export function media_url(path: string): string;
