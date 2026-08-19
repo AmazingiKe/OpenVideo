@@ -1,4 +1,11 @@
-import { MediaPlayer, MediaProvider, useMediaPlayer, useMediaRemote, useMediaStore } from "@vidstack/react";
+import {
+  MediaPlayer,
+  MediaProvider,
+  VolumeSlider,
+  useMediaPlayer,
+  useMediaRemote,
+  useMediaStore,
+} from "@vidstack/react";
 import "@vidstack/react/player/styles/base.css";
 import { PlyrLayout, plyrLayoutIcons } from "@vidstack/react/player/layouts/plyr";
 import "@vidstack/react/player/styles/plyr/theme.css";
@@ -35,18 +42,22 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   { src, markers = [], thumbnails = null, on_time_change },
   ref,
 ) {
-  const player_ref = useRef<PlayerRef>(null);
+  // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
+  const seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
+  const current_time_fn_ref = useRef<(() => number) | null>(null);
 
   useImperativeHandle(ref, () => ({
-    seek_to: (seconds: number) => {
-      player_ref.current?.seek(seconds);
-    },
-    current_time: () => player_ref.current?.current_time() ?? 0,
-  }));
+    seek_to: (seconds: number) => seek_fn_ref.current?.(seconds),
+    current_time: () => current_time_fn_ref.current?.() ?? 0,
+  }), []);
 
-  const set_player_ref = useCallback((instance: PlayerRef | null) => {
-    player_ref.current = instance;
-  }, []);
+  const on_player_ready = useCallback(
+    (instance: PlayerRef | null) => {
+      seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
+      current_time_fn_ref.current = instance ? () => instance.current_time() : null;
+    },
+    [],
+  );
 
   const plyr_markers = markers.map((marker) => ({
     time: marker.time_seconds,
@@ -77,9 +88,10 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         icons={plyrLayoutIcons}
         markers={plyr_markers}
         thumbnails={plyr_thumbnails}
+        slots={{ volumeSlider: <PlayerVolumeSlider /> }}
         clickToPlay
       />
-      <PlayerStateBridge on_ref={set_player_ref} on_time_change={on_time_change} />
+      <PlayerStateBridge on_player_ready={on_player_ready} on_time_change={on_time_change} />
     </MediaPlayer>
   );
 });
@@ -90,11 +102,25 @@ type PlayerRef = {
   current_time: () => number;
 };
 
+function PlayerVolumeSlider() {
+  return (
+    <VolumeSlider.Root
+      className="plyr__slider openvideo_volume_slider"
+      data-plyr="volume"
+      aria-label="音量"
+      step={0.1}
+    >
+      <div className="plyr__slider__track" />
+      <div className="plyr__slider__thumb" />
+    </VolumeSlider.Root>
+  );
+}
+
 function PlayerStateBridge({
-  on_ref,
+  on_player_ready,
   on_time_change,
 }: {
-  on_ref: (instance: PlayerRef | null) => void;
+  on_player_ready: (instance: PlayerRef | null) => void;
   on_time_change?: (seconds: number) => void;
 }) {
   const player = useMediaPlayer();
@@ -104,12 +130,15 @@ function PlayerStateBridge({
 
   useEffect(() => {
     if (!player) return;
-    on_ref({
+    // 直接读取 remote/player 的当前值，不把它们放入依赖数组，
+    // 避免 remote 对象引用变化时产生短暂的 null 窗口。
+    on_player_ready({
       seek: (seconds: number) => remote.seek(seconds),
       current_time: () => player.currentTime,
     });
-    return () => on_ref(null);
-  }, [player, remote, on_ref]);
+    return () => on_player_ready(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player]);
 
   useEffect(() => {
     if (!on_time_change) return;

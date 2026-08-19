@@ -28,6 +28,16 @@
   object-fit: contain;
 }
 
+.openvideo_volume_slider {
+  touch-action: none;
+}
+
+/* Plyr 主题对 track/thumb 设置了 transition，拖动时会产生跟手延迟，强制关闭。 */
+.openvideo_volume_slider .plyr__slider__track,
+.openvideo_volume_slider .plyr__slider__thumb {
+  transition: none !important;
+}
+
 .player_toolbar {
   display: flex;
   flex-wrap: wrap;
