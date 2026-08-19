@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { format_time } from "../format";
-import { uuid7 } from "../identifiers";
+import { format_time } from "../../shared/format";
+import { uuid7 } from "../../shared/identifiers";
 
 
 export type PlayerMarker = {

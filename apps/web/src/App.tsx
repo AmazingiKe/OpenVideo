@@ -1,12 +1,12 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Clapperboard } from "lucide-react";
 
-import { ApiError, create_download, get_health, list_assets, media_url } from "./api";
-import { format_duration, format_time } from "./format";
-import { Player, PlayerHandle } from "./player/Player";
-import { use_asset_markers } from "./player/use_asset_markers";
-import { poll_download } from "./poll_download";
-import type { DownloadJob, HealthResponse, MediaAsset } from "./types";
+import { ApiError, create_download, get_health, list_assets, media_url } from "./shared/api";
+import { format_duration, format_time } from "./shared/format";
+import { Player, PlayerHandle } from "./features/player/Player";
+import { use_asset_markers } from "./features/player/use_asset_markers";
+import { poll_download } from "./shared/poll_download";
+import type { DownloadJob, HealthResponse, MediaAsset } from "./shared/types";
 
 const terminal_stages = new Set(["complete", "failed"]);
 
