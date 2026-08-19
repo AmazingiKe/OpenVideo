@@ -14,6 +14,9 @@ class AnalysisStage(StrEnum):
     PENDING = "pending"
     EXTRACTING_AUDIO = "extracting_audio"
     TRANSCRIBING = "transcribing"
+    SELECTING_MOMENTS = "selecting_moments"
+    EXTRACTING_FRAMES = "extracting_frames"
+    DESCRIBING_VISUALS = "describing_visuals"
     COMPLETE = "complete"
     FAILED = "failed"
 

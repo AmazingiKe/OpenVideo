@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 from datetime import UTC, datetime
@@ -5,13 +7,14 @@ from pathlib import Path
 from threading import RLock
 
 from openvideo.core.analysis_models import Transcript
-from openvideo.core.models import MediaAsset, MediaAssetResponse, MediaAssetStatus, SourcePlatform
+from openvideo.core.models import MediaAsset, MediaAssetResponse, MediaAssetStatus, MediaSegment, SourcePlatform
 from openvideo.core.models import ThumbnailStoryboardResponse, ThumbnailStoryboardTile
 from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 METADATA_FILE_NAME = "metadata.json"
 TRANSCRIPT_FILE_NAME = "transcript.json"
+SEGMENTS_FILE_NAME = "segments.json"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
 SPRITE_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail-sprite"
@@ -188,6 +191,31 @@ class MediaLibrary:
             return Transcript.model_validate_json(transcript_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
+
+    def save_segments(self, segments: list[MediaSegment]) -> None:
+        if not segments:
+            return
+        asset_id = segments[0].asset_id
+        directory = self.asset_directory(asset_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        segments_path = directory / SEGMENTS_FILE_NAME
+        temporary_path = directory / f"{SEGMENTS_FILE_NAME}.tmp"
+        temporary_path.write_text(
+            json.dumps([segment.model_dump() for segment in segments], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, segments_path)
+
+    def load_segments(self, asset_id: str) -> list[MediaSegment]:
+        directory = self.asset_directory(asset_id)
+        segments_path = directory / SEGMENTS_FILE_NAME
+        if not segments_path.is_file():
+            return []
+        try:
+            payload = json.loads(segments_path.read_text(encoding="utf-8"))
+            return [MediaSegment.model_validate(item) for item in payload]
+        except (OSError, ValueError):
+            return []
 
     def _write_asset(self, asset: MediaAsset) -> None:
         directory = self.asset_directory(asset.asset_id)

@@ -16,6 +16,7 @@ from openvideo.core.models import (
     DownloadJob,
     MediaAssetResponse,
     MediaAssetStatus,
+    MediaSegment,
     SourcePlatform,
 )
 from openvideo.settings import Settings, load_settings
@@ -193,6 +194,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not transcript:
             raise HTTPException(status_code=404, detail="该视频还没有转写结果")
         return transcript
+
+    @app.get(
+        "/api/media/assets/{asset_id}/segments",
+        response_model=list[MediaSegment],
+    )
+    def get_segments(asset_id: str) -> list[MediaSegment]:
+        return analysis_manager.segments(asset_id)
+
+    @app.get("/api/media/assets/{asset_id}/frames/{frame_path:path}")
+    def get_frame(asset_id: str, frame_path: str) -> FileResponse:
+        asset = _ready_asset(library, asset_id)
+        frame_file = library.resolve_asset_file(asset, frame_path)
+        if not frame_file:
+            raise HTTPException(status_code=404, detail="关键帧不存在")
+        return FileResponse(frame_file, media_type="image/jpeg")
 
     @app.api_route(
         "/api/media/assets/{asset_id}/stream",

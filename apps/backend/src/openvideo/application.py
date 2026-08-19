@@ -15,14 +15,17 @@ from openvideo.core.models import (
     DownloadStage,
     MediaAsset,
     MediaAssetStatus,
+    MediaSegment,
     TERMINAL_DOWNLOAD_STAGES,
 )
 from openvideo.settings import Settings
+from openvideo.tools.analysis_pipeline import build_segments
 from openvideo.tools.downloader import DownloadFailure, download_video
 from openvideo.tools.media import probe_media
 from openvideo.tools.sources import SourceMatch
 from openvideo.tools.thumbnails import generate_thumbnail_sprite
 from openvideo.tools.transcribe import FasterWhisperTranscriber, transcribe_media
+from openvideo.tools.vision import OpenAiCompatibleVision
 
 
 class DownloadManager:
@@ -255,7 +258,7 @@ class AnalysisManager:
         active_job = self._active_job_for(asset_id)
         if active_job:
             return active_job
-        if self.library.load_transcript(asset_id):
+        if self.library.load_segments(asset_id):
             return self._completed_job(asset_id)
 
         job_id = f"analysis-{uuid7().hex}"
@@ -276,6 +279,9 @@ class AnalysisManager:
     def transcript(self, asset_id: str) -> Transcript | None:
         return self.library.load_transcript(asset_id)
 
+    def segments(self, asset_id: str) -> list[MediaSegment]:
+        return self.library.load_segments(asset_id)
+
     async def _run(self, job_id: str) -> None:
         job = self.get(job_id)
         if not job:
@@ -290,31 +296,63 @@ class AnalysisManager:
                 playback = self.library.resolve_asset_file(asset, asset.playback_path)
                 if not playback:
                     raise AnalysisError("视频文件不存在")
-                self._update_job(job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
-                work_directory = self.library.asset_directory(asset.asset_id) / ".analysis"
-                transcript = await asyncio.to_thread(
-                    transcribe_media,
-                    playback,
-                    asset.asset_id,
-                    asset.source_url,
-                    work_directory,
-                    self.settings.ffmpeg_path,
-                    self.settings.ffmpeg_bin_dir,
-                    self._transcriber(),
-                )
-                self._update_job(
-                    job_id,
-                    AnalysisStage.TRANSCRIBING,
-                    60,
-                    "正在将音频转写为文字",
-                )
-                self.library.save_transcript(transcript)
+                transcript = self.library.load_transcript(asset.asset_id)
+                if transcript is None:
+                    self._update_job(job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
+                    work_directory = self.library.asset_directory(asset.asset_id) / ".analysis"
+                    transcript = await asyncio.to_thread(
+                        transcribe_media,
+                        playback,
+                        asset.asset_id,
+                        asset.source_url,
+                        work_directory,
+                        self.settings.ffmpeg_path,
+                        self.settings.ffmpeg_bin_dir,
+                        self._transcriber(),
+                    )
+                    self._update_job(
+                        job_id,
+                        AnalysisStage.TRANSCRIBING,
+                        60,
+                        "正在将音频转写为文字",
+                    )
+                    self.library.save_transcript(transcript)
+
+                describer = self._describer()
+                if describer is not None:
+                    self._update_job(job_id, AnalysisStage.SELECTING_MOMENTS, 75, "正在挑选重点片段")
+                    asset_directory = self.library.asset_directory(asset.asset_id)
+                    segments = await asyncio.to_thread(
+                        build_segments,
+                        transcript,
+                        playback,
+                        asset.asset_id,
+                        asset_directory,
+                        self.settings,
+                        describer,
+                    )
+                    self._update_job(
+                        job_id,
+                        AnalysisStage.DESCRIBING_VISUALS,
+                        95,
+                        f"已生成 {len(segments)} 个带画面描述的片段",
+                    )
+                    self.library.save_segments(segments)
                 self._update_job(job_id, AnalysisStage.COMPLETE, 100, "分析完成")
             except Exception as error:
                 self._fail(job_id, str(error) or "分析失败")
             finally:
                 with self._lock:
                     self._active_job_id_by_asset_id.pop(job.asset_id, None)
+
+    def _describer(self) -> OpenAiCompatibleVision | None:
+        if not self.settings.openai_api_key:
+            return None
+        return OpenAiCompatibleVision(
+            base_url=self.settings.openai_base_url,
+            api_key=self.settings.openai_api_key,
+            model=self.settings.vision_model,
+        )
 
     def _transcriber(self) -> FasterWhisperTranscriber:
         return FasterWhisperTranscriber(
