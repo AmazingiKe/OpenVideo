@@ -8,7 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from openvideo.application import DownloadManager
+from openvideo.application import AnalysisError, AnalysisManager, DownloadManager
+from openvideo.core.analysis_models import AnalysisJob, Transcript
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.library import MediaLibrary
 from openvideo.core.models import (
@@ -73,6 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or load_settings()
     library = MediaLibrary(resolved_settings.library_path)
     manager = DownloadManager(library, resolved_settings)
+    analysis_manager = AnalysisManager(library, resolved_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -82,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="OpenVideo API", version="0.1.0", lifespan=lifespan)
     app.state.library = library
     app.state.download_manager = manager
+    app.state.analysis_manager = analysis_manager
     app.state.settings = resolved_settings
     app.add_middleware(
         CORSMiddleware,
@@ -159,6 +162,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_asset(asset_id: str) -> MediaAssetResponse:
         asset = _ready_asset(library, asset_id)
         return library.response_for(asset)
+
+    @app.post(
+        "/api/media/assets/{asset_id}/analyze",
+        response_model=AnalysisJob,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def analyze_asset(asset_id: str) -> AnalysisJob:
+        try:
+            job = analysis_manager.create(asset_id)
+        except AnalysisError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if job.stage.value != "complete":
+            analysis_manager.start(job.job_id)
+        return job
+
+    @app.get("/api/analysis/{job_id}", response_model=AnalysisJob)
+    def get_analysis(job_id: str) -> AnalysisJob:
+        job = analysis_manager.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="分析任务不存在")
+        return job
+
+    @app.get(
+        "/api/media/assets/{asset_id}/transcript",
+        response_model=Transcript,
+    )
+    def get_transcript(asset_id: str) -> Transcript:
+        transcript = analysis_manager.transcript(asset_id)
+        if not transcript:
+            raise HTTPException(status_code=404, detail="该视频还没有转写结果")
+        return transcript
 
     @app.api_route(
         "/api/media/assets/{asset_id}/stream",

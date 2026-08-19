@@ -11,7 +11,8 @@ OpenVideo 当前是一个 Web 优先的视频获取与播放雏形。前端使�
 - 将媒体资源持久化到 `library/videos/{asset_id}/`
 - 页面刷新后恢复媒体列表
 - 使用原生 HTML5 播放器播放，支持 HTTP 单区间 Range 和进度条拖动
-- 已定义 `MediaSegment` 领域模型，为后续字幕、关键帧、OCR 和文档时间戳回跳预留接口
+- 对已就绪视频发起音频转写：优先复用平台字幕，缺失时用本地 faster-whisper 提取带时间戳文字，结果持久化为 `transcript.json`
+- 已定义 `MediaSegment` 领域模型，为后续关键帧、OCR 和文档时间戳回跳预留接口
 
 ## 工程结构
 
@@ -111,6 +112,9 @@ API 地址为 `http://<服务器IP>:8000`。若需收紧跨域来源，可通过
 | `OPENVIDEO_FFMPEG_PATH` | 从 `PATH` 查找 | ffmpeg 完整路径 |
 | `OPENVIDEO_FFPROBE_PATH` | 从 `PATH` 查找 | ffprobe 完整路径 |
 | `OPENVIDEO_CORS_ORIGINS` | `*`（放行所有来源） | 允许访问 API 的 Web 来源，逗号分隔；局域网访问可保持默认 |
+| `OPENVIDEO_WHISPER_MODEL` | `small` | 本地 ASR 模型大小，可选 `tiny`/`base`/`small`/`medium`/`large`，首次使用自动下载 |
+| `OPENVIDEO_WHISPER_LANGUAGE` | `zh` | 本地 ASR 转写语言，留空则自动检测 |
+| `OPENVIDEO_WHISPER_COMPUTE_TYPE` | `int8` | 本地 ASR 量化精度，CPU 上建议 `int8` |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 
 若从 `apps/backend` 启动且未配置媒体库路径，默认运行数据会在 `apps/backend/library`。希望统一保存在仓库根目录时，可在启动前设置：
@@ -143,8 +147,7 @@ pnpm build:web
 
 ## 下一步
 
-1. 为播放器生成真正的 `MediaSegment[]`
-2. 优先读取平台字幕，没有字幕时接入本地 ASR
-3. 点击片段或文档时间戳跳转到播放器位置
-4. 增加场景切分、关键帧、OCR 和视觉模型描述
-5. 在同一 Web 前端外层增加 Tauri 桌面封装
+1. 为播放器生成真正的 `MediaSegment[]`（把转写文本切分为可回跳片段）
+2. 点击片段或文档时间戳跳转到播放器位置
+3. 增加场景切分、关键帧、OCR 和视觉模型描述
+4. 在同一 Web 前端外层增加 Tauri 桌面封装

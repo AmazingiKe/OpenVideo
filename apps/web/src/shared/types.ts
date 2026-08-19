@@ -47,6 +47,37 @@ export type DownloadJob = {
   updated_at: string;
 };
 
+export type AnalysisStage =
+  | "pending"
+  | "extracting_audio"
+  | "transcribing"
+  | "complete"
+  | "failed";
+
+export type AnalysisJob = {
+  job_id: string;
+  asset_id: string;
+  stage: AnalysisStage;
+  progress_percent: number;
+  message: string;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TranscriptSegment = {
+  start_seconds: number;
+  end_seconds: number;
+  text: string;
+};
+
+export type Transcript = {
+  asset_id: string;
+  language: string | null;
+  segments: TranscriptSegment[];
+  created_at: string;
+};
+
 export type ThumbnailStoryboard = {
   url: string;
   tile_width: number;

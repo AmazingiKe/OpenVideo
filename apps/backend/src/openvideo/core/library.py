@@ -4,12 +4,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 
+from openvideo.core.analysis_models import Transcript
 from openvideo.core.models import MediaAsset, MediaAssetResponse, MediaAssetStatus, SourcePlatform
 from openvideo.core.models import ThumbnailStoryboardResponse, ThumbnailStoryboardTile
 from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 METADATA_FILE_NAME = "metadata.json"
+TRANSCRIPT_FILE_NAME = "transcript.json"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
 SPRITE_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail-sprite"
@@ -165,6 +167,27 @@ class MediaLibrary:
             tile_height=storyboard.tile_height,
             tiles=tiles,
         )
+
+    def save_transcript(self, transcript: Transcript) -> None:
+        directory = self.asset_directory(transcript.asset_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        transcript_path = directory / TRANSCRIPT_FILE_NAME
+        temporary_path = directory / f"{TRANSCRIPT_FILE_NAME}.tmp"
+        temporary_path.write_text(
+            transcript.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, transcript_path)
+
+    def load_transcript(self, asset_id: str) -> Transcript | None:
+        directory = self.asset_directory(asset_id)
+        transcript_path = directory / TRANSCRIPT_FILE_NAME
+        if not transcript_path.is_file():
+            return None
+        try:
+            return Transcript.model_validate_json(transcript_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
 
     def _write_asset(self, asset: MediaAsset) -> None:
         directory = self.asset_directory(asset.asset_id)

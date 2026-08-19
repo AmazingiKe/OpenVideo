@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 
 # API 无鉴权且面向局域网开放，默认放行所有来源；可用 OPENVIDEO_CORS_ORIGINS 收紧。
 DEFAULT_CORS_ORIGINS = ("*",)
+# 本地 ASR 默认值：small 模型兼顾准确度与 CPU 可运行性，中文优先。
+DEFAULT_WHISPER_MODEL = "small"
+DEFAULT_WHISPER_LANGUAGE = "zh"
+DEFAULT_WHISPER_COMPUTE_TYPE = "int8"
 
 
 class Settings(BaseModel):
@@ -13,6 +17,9 @@ class Settings(BaseModel):
     ffmpeg_path: str | None = None
     ffprobe_path: str | None = None
     cors_origins: list[str] = Field(default_factory=lambda: list(DEFAULT_CORS_ORIGINS))
+    whisper_model: str = DEFAULT_WHISPER_MODEL
+    whisper_language: str | None = DEFAULT_WHISPER_LANGUAGE
+    whisper_compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE
 
     @property
     def ffmpeg_bin_dir(self) -> Path:
@@ -35,4 +42,9 @@ def load_settings() -> Settings:
         ffmpeg_path=os.getenv("OPENVIDEO_FFMPEG_PATH") or None,
         ffprobe_path=os.getenv("OPENVIDEO_FFPROBE_PATH") or None,
         cors_origins=cors_origins,
+        whisper_model=os.getenv("OPENVIDEO_WHISPER_MODEL", DEFAULT_WHISPER_MODEL),
+        whisper_language=os.getenv("OPENVIDEO_WHISPER_LANGUAGE", DEFAULT_WHISPER_LANGUAGE) or None,
+        whisper_compute_type=os.getenv(
+            "OPENVIDEO_WHISPER_COMPUTE_TYPE", DEFAULT_WHISPER_COMPUTE_TYPE
+        ),
     )

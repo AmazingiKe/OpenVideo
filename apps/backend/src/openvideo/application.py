@@ -2,6 +2,12 @@ import asyncio
 from datetime import UTC, datetime
 from threading import RLock
 
+from openvideo.core.analysis_models import (
+    AnalysisJob,
+    AnalysisStage,
+    TERMINAL_ANALYSIS_STAGES,
+    Transcript,
+)
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.models import (
@@ -16,6 +22,7 @@ from openvideo.tools.downloader import DownloadFailure, download_video
 from openvideo.tools.media import probe_media
 from openvideo.tools.sources import SourceMatch
 from openvideo.tools.thumbnails import generate_thumbnail_sprite
+from openvideo.tools.transcribe import FasterWhisperTranscriber, transcribe_media
 
 
 class DownloadManager:
@@ -223,4 +230,141 @@ class DownloadManager:
             stage=DownloadStage.COMPLETE,
             progress_percent=100,
             message="该视频已在媒体库中",
+        )
+
+
+class AnalysisError(RuntimeError):
+    """分析任务无法创建或执行时抛出。"""
+
+
+class AnalysisManager:
+    """分析任务把转写等长耗时计算与短生命周期 HTTP 请求隔离开。"""
+
+    def __init__(self, library: MediaLibrary, settings: Settings) -> None:
+        self.library = library
+        self.settings = settings
+        self._jobs: dict[str, AnalysisJob] = {}
+        self._active_job_id_by_asset_id: dict[str, str] = {}
+        self._lock = RLock()
+        self._analysis_lock = asyncio.Lock()
+
+    def create(self, asset_id: str) -> AnalysisJob:
+        asset = self.library.get(asset_id)
+        if not asset or asset.status != MediaAssetStatus.READY:
+            raise AnalysisError("视频尚未就绪，无法分析")
+        active_job = self._active_job_for(asset_id)
+        if active_job:
+            return active_job
+        if self.library.load_transcript(asset_id):
+            return self._completed_job(asset_id)
+
+        job_id = f"analysis-{uuid7().hex}"
+        job = AnalysisJob(job_id=job_id, asset_id=asset_id)
+        with self._lock:
+            self._jobs[job_id] = job
+            self._active_job_id_by_asset_id[asset_id] = job_id
+        return job.model_copy(deep=True)
+
+    def start(self, job_id: str) -> None:
+        asyncio.create_task(self._run(job_id))
+
+    def get(self, job_id: str) -> AnalysisJob | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return job.model_copy(deep=True) if job else None
+
+    def transcript(self, asset_id: str) -> Transcript | None:
+        return self.library.load_transcript(asset_id)
+
+    async def _run(self, job_id: str) -> None:
+        job = self.get(job_id)
+        if not job:
+            return
+        asset = self.library.get(job.asset_id)
+        if not asset:
+            self._fail(job_id, "找不到分析任务对应的媒体资源")
+            return
+
+        async with self._analysis_lock:
+            try:
+                playback = self.library.resolve_asset_file(asset, asset.playback_path)
+                if not playback:
+                    raise AnalysisError("视频文件不存在")
+                self._update_job(job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
+                work_directory = self.library.asset_directory(asset.asset_id) / ".analysis"
+                transcript = await asyncio.to_thread(
+                    transcribe_media,
+                    playback,
+                    asset.asset_id,
+                    asset.source_url,
+                    work_directory,
+                    self.settings.ffmpeg_path,
+                    self.settings.ffmpeg_bin_dir,
+                    self._transcriber(),
+                )
+                self._update_job(
+                    job_id,
+                    AnalysisStage.TRANSCRIBING,
+                    60,
+                    "正在将音频转写为文字",
+                )
+                self.library.save_transcript(transcript)
+                self._update_job(job_id, AnalysisStage.COMPLETE, 100, "分析完成")
+            except Exception as error:
+                self._fail(job_id, str(error) or "分析失败")
+            finally:
+                with self._lock:
+                    self._active_job_id_by_asset_id.pop(job.asset_id, None)
+
+    def _transcriber(self) -> FasterWhisperTranscriber:
+        return FasterWhisperTranscriber(
+            model_size=self.settings.whisper_model,
+            language=self.settings.whisper_language,
+            compute_type=self.settings.whisper_compute_type,
+        )
+
+    def _update_job(
+        self,
+        job_id: str,
+        stage: AnalysisStage,
+        progress_percent: float,
+        message: str,
+        error_message: str | None = None,
+    ) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job.stage in TERMINAL_ANALYSIS_STAGES:
+                return
+            job.stage = stage
+            job.progress_percent = min(max(progress_percent, job.progress_percent), 100)
+            job.message = message
+            job.error_message = error_message
+            job.updated_at = datetime.now(UTC)
+
+    def _fail(self, job_id: str, message: str) -> None:
+        job = self.get(job_id)
+        if not job:
+            return
+        self._update_job(
+            job_id,
+            AnalysisStage.FAILED,
+            job.progress_percent,
+            "分析失败",
+            message,
+        )
+
+    def _active_job_for(self, asset_id: str) -> AnalysisJob | None:
+        with self._lock:
+            job_id = self._active_job_id_by_asset_id.get(asset_id)
+            job = self._jobs.get(job_id) if job_id else None
+            return job.model_copy(deep=True) if job else None
+
+    @staticmethod
+    def _completed_job(asset_id: str) -> AnalysisJob:
+        return AnalysisJob(
+            job_id=f"analysis-{uuid7().hex}",
+            asset_id=asset_id,
+            stage=AnalysisStage.COMPLETE,
+            progress_percent=100,
+            message="该视频已完成文字提取",
         )

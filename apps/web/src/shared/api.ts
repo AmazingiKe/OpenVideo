@@ -1,4 +1,11 @@
-import type { DownloadJob, HealthResponse, MediaAsset, ProbeResponse } from "./types";
+import type {
+  AnalysisJob,
+  DownloadJob,
+  HealthResponse,
+  MediaAsset,
+  ProbeResponse,
+  Transcript,
+} from "./types";
 
 const api_base_url = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -54,6 +61,21 @@ export function get_download(job_id: string, signal?: AbortSignal): Promise<Down
 
 export function list_assets(signal?: AbortSignal): Promise<MediaAsset[]> {
   return request_json("/api/media/assets", { signal });
+}
+
+export function analyze_asset(asset_id: string, signal?: AbortSignal): Promise<AnalysisJob> {
+  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/analyze`, {
+    method: "POST",
+    signal,
+  });
+}
+
+export function get_analysis(job_id: string, signal?: AbortSignal): Promise<AnalysisJob> {
+  return request_json(`/api/analysis/${encodeURIComponent(job_id)}`, { signal });
+}
+
+export function get_transcript(asset_id: string, signal?: AbortSignal): Promise<Transcript> {
+  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/transcript`, { signal });
 }
 
 export function media_url(path: string): string;

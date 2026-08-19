@@ -1,0 +1,83 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.library import MediaLibrary
+from openvideo.tools.transcribe import (
+    TranscriptionFailure,
+    _parse_json3_subtitles,
+    extract_audio,
+)
+
+
+TRANSCRIPT_ASSET_ID = "asset-0123456789abcdef0123456789abcdef"
+
+
+def test_parses_json3_subtitles_with_timestamps(tmp_path: Path):
+    subtitle_path = tmp_path / "subtitle.zh-Hans.json3"
+    subtitle_path.write_text(
+        json.dumps(
+            {
+                "events": [
+                    {
+                        "tStartMs": 1200,
+                        "dDurationMs": 1800,
+                        "segs": [{"utf8": "第一句"}, {"utf8": " 内容"}],
+                    },
+                    {"tStartMs": 5000, "dDurationMs": 1000, "segs": [{"utf8": "第二句"}]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    transcript = _parse_json3_subtitles(subtitle_path)
+
+    assert transcript.segments[0].start_seconds == pytest.approx(1.2)
+    assert transcript.segments[0].end_seconds == pytest.approx(3.0)
+    assert transcript.segments[0].text == "第一句 内容"
+    assert transcript.segments[1].text == "第二句"
+
+
+def test_extract_audio_requires_existing_media(tmp_path: Path):
+    with pytest.raises(TranscriptionFailure, match="视频文件不存在"):
+        extract_audio(
+            tmp_path / "missing.mp4",
+            tmp_path / "work",
+            configured_ffmpeg_path=None,
+        )
+
+
+def test_transcript_model_serializes_segments():
+    transcript = Transcript(asset_id=TRANSCRIPT_ASSET_ID)
+
+    assert transcript.model_dump()["segments"] == []
+
+
+def test_library_roundtrips_transcript(tmp_path: Path):
+    library = MediaLibrary(tmp_path)
+    library.load()
+    transcript = Transcript(
+        asset_id=TRANSCRIPT_ASSET_ID,
+        language="zh",
+        segments=[
+            TranscriptSegment(start_seconds=0.0, end_seconds=2.5, text="第一句"),
+            TranscriptSegment(start_seconds=2.5, end_seconds=5.0, text="第二句"),
+        ],
+    )
+
+    library.save_transcript(transcript)
+    recovered = library.load_transcript(TRANSCRIPT_ASSET_ID)
+
+    assert recovered is not None
+    assert recovered.language == "zh"
+    assert [segment.text for segment in recovered.segments] == ["第一句", "第二句"]
+
+
+def test_library_load_transcript_returns_none_when_missing(tmp_path: Path):
+    library = MediaLibrary(tmp_path)
+    library.load()
+
+    assert library.load_transcript(TRANSCRIPT_ASSET_ID) is None
