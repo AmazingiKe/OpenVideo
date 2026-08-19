@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from openvideo.core.models import MediaAsset, MediaAssetStatus
+from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
@@ -23,6 +23,7 @@ def create_client(tmp_path: Path) -> TestClient:
         MediaAsset(
             asset_id=ASSET_ID,
             source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+            source_platform=SourcePlatform.BILIBILI,
             source_video_id="BV1xx411c7mD",
             title="测试视频",
             status=MediaAssetStatus.READY,

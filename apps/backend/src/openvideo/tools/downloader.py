@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from openvideo.core.models import SourcePlatform
 from openvideo.tools.media import resolve_tool
 
 
@@ -16,6 +17,16 @@ PROGRESS_PREFIX = "openvideo-progress:"
 PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
 COMMAND_TIMEOUT_SECONDS = 60 * 60 * 6
 MAX_DIAGNOSTIC_LINES = 30
+PLAYLIST_PROBE_LIMIT = 100
+
+# 浏览器 <video> 直接播放依赖 H.264/AAC；各平台按可得性给出优先级递减的 format 表达式。
+_FORMAT_BY_PLATFORM = {
+    SourcePlatform.BILIBILI: (
+        "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+        "bestvideo[vcodec^=avc1]+bestaudio/best[ext=mp4]/best"
+    ),
+    SourcePlatform.YOUTUBE: "best[ext=mp4]/best",
+}
 
 
 class DownloadFailure(RuntimeError):
@@ -41,6 +52,26 @@ class DownloadedMedia:
     thumbnail_file: Path | None
 
 
+@dataclass(frozen=True)
+class PlaylistEntry:
+    source_video_id: str
+    url: str
+    title: str | None
+    duration_seconds: float | None
+    uploader: str | None
+
+
+@dataclass(frozen=True)
+class PlaylistProbe:
+    """探测结果：区分单视频与播放列表，条目仅含快速可得的浅层信息。"""
+
+    is_playlist: bool
+    title: str | None
+    entries: list[PlaylistEntry]
+    truncated: bool
+    total_count: int
+
+
 ProgressCallback = Callable[[float, str], None]
 StageCallback = Callable[[str], None]
 
@@ -51,15 +82,20 @@ def yt_dlp_available() -> bool:
     return result.returncode == 0
 
 
-def download_bilibili_video(
+def download_video(
     source_url: str,
+    platform: SourcePlatform,
     asset_directory: Path,
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None,
     on_progress: ProgressCallback,
     on_stage: StageCallback,
+    cookie_source: Path | None = None,
 ) -> DownloadedMedia:
-    """下载先进入隔离目录，只有工具成功退出并验证文件后才发布给播放器。"""
+    """下载先进入隔离目录，只有工具成功退出并验证文件后才发布给播放器。
+
+    cookie_source 为登录下载预留：本版所有平台均为公开免登录，调用方恒传 None。
+    """
     if not yt_dlp_available():
         raise DownloadFailure("未安装 yt-dlp，请先执行 uv sync")
     ffmpeg_path = resolve_tool(configured_ffmpeg_path, "ffmpeg", project_bin_dir)
@@ -71,8 +107,8 @@ def download_bilibili_video(
         shutil.rmtree(staging_directory)
     staging_directory.mkdir(parents=True)
 
-    on_stage("正在读取 Bilibili 视频信息")
-    metadata = _read_metadata(source_url)
+    on_stage("正在读取视频信息")
+    metadata = _read_metadata(source_url, platform, cookie_source)
     on_stage("正在下载视频和音频")
     temporary_template = staging_directory / "download.%(ext)s"
     command = [
@@ -83,10 +119,15 @@ def download_bilibili_video(
         "--progress",
         "--no-playlist",
         "--no-warnings",
+        *_platform_arguments(platform),
+        "--retries",
+        "10",
+        "--fragment-retries",
+        "10",
         "--ffmpeg-location",
         ffmpeg_path,
         "--format",
-        "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1]+bestaudio/best[ext=mp4]/best",
+        _FORMAT_BY_PLATFORM[platform],
         "--merge-output-format",
         "mp4",
         "--write-thumbnail",
@@ -98,6 +139,7 @@ def download_bilibili_video(
         f"after_move:{OUTPUT_PREFIX}%(filepath)s",
         "--output",
         str(temporary_template),
+        *_cookie_arguments(cookie_source),
         source_url,
     ]
     output_file = _run_download(command, staging_directory, on_progress)
@@ -111,7 +153,11 @@ def download_bilibili_video(
     )
 
 
-def _read_metadata(source_url: str) -> DownloadMetadata:
+def _read_metadata(
+    source_url: str,
+    platform: SourcePlatform,
+    cookie_source: Path | None = None,
+) -> DownloadMetadata:
     command = [
         sys.executable,
         "-m",
@@ -120,6 +166,8 @@ def _read_metadata(source_url: str) -> DownloadMetadata:
         "--no-warnings",
         "--skip-download",
         "--dump-single-json",
+        *_platform_arguments(platform),
+        *_cookie_arguments(cookie_source),
         source_url,
     ]
     result = subprocess.run(
@@ -134,7 +182,7 @@ def _read_metadata(source_url: str) -> DownloadMetadata:
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as error:
-        raise DownloadFailure("无法解析 Bilibili 视频信息") from error
+        raise DownloadFailure("无法解析视频信息") from error
     source_video_id = _required_text(payload.get("id"), "未识别到视频 ID")
     title = _required_text(payload.get("title"), "未识别到视频标题")
     return DownloadMetadata(
@@ -147,6 +195,89 @@ def _read_metadata(source_url: str) -> DownloadMetadata:
         height=_optional_int(payload.get("height")),
         thumbnail_url=_optional_text(payload.get("thumbnail")),
     )
+
+
+def probe_playlist(source_url: str, cookie_source: Path | None = None) -> PlaylistProbe:
+    """快速探测地址是单视频还是播放列表；播放列表只拉浅层条目，不触发下载。"""
+    command = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--no-warnings",
+        "--skip-download",
+        "--flat-playlist",
+        "--dump-single-json",
+        "--playlist-end",
+        str(PLAYLIST_PROBE_LIMIT),
+        *_cookie_arguments(cookie_source),
+        source_url,
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise DownloadFailure(_friendly_failure(result.stderr or result.stdout))
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise DownloadFailure("无法解析视频信息") from error
+    return parse_playlist_payload(payload)
+
+
+def parse_playlist_payload(payload: dict) -> PlaylistProbe:
+    """把 yt-dlp 的 --flat-playlist JSON 转成探测结果，供单测直接复用。"""
+    raw_entries = payload.get("entries")
+    if not isinstance(raw_entries, list):
+        entry = _single_entry(payload)
+        return PlaylistProbe(
+            is_playlist=False,
+            title=None,
+            entries=[entry] if entry else [],
+            truncated=False,
+            total_count=1 if entry else 0,
+        )
+    entries = [entry for item in raw_entries if (entry := _single_entry(item))]
+    total_count = _optional_int(payload.get("playlist_count")) or len(entries)
+    return PlaylistProbe(
+        is_playlist=True,
+        title=_optional_text(payload.get("title")),
+        entries=entries,
+        truncated=total_count > len(entries),
+        total_count=total_count,
+    )
+
+
+def _single_entry(item: object) -> PlaylistEntry | None:
+    if not isinstance(item, dict):
+        return None
+    video_id = _optional_text(item.get("id"))
+    if not video_id:
+        return None
+    return PlaylistEntry(
+        source_video_id=video_id,
+        url=_optional_text(item.get("url")) or _optional_text(item.get("webpage_url")) or "",
+        title=_optional_text(item.get("title")),
+        duration_seconds=_optional_float(item.get("duration")),
+        uploader=_optional_text(item.get("uploader")),
+    )
+
+
+def _platform_arguments(platform: SourcePlatform) -> list[str]:
+    # YouTube 当前对默认 android_vr 客户端返回的媒体直链可能 403；android 客户端提供可直接下载的 MP4。
+    if platform == SourcePlatform.YOUTUBE:
+        return ["--extractor-args", "youtube:player_client=android"]
+    return []
+
+
+def _cookie_arguments(cookie_source: Path | None) -> list[str]:
+    # 预留位：本版恒为 None，将来登录下载时传入 cookies 文件路径。
+    if cookie_source is None:
+        return []
+    return ["--cookies", str(cookie_source)]
 
 
 def _run_download(
@@ -242,10 +373,10 @@ def _friendly_failure(diagnostic: str) -> str:
     if "login" in lowered or "cookie" in lowered:
         return "该视频可能需要登录，当前版本只支持公开视频免费下载"
     if "unsupported url" in lowered:
-        return "yt-dlp 无法识别该 Bilibili 地址"
+        return "yt-dlp 无法识别该视频地址"
     if "private" in lowered or "permission" in lowered:
         return "该视频不可公开访问"
-    return "视频下载失败，请确认地址有效且网络可以访问 Bilibili"
+    return "视频下载失败，请确认地址有效且网络可以访问对应平台"
 
 
 def _required_text(value: object, message: str) -> str:

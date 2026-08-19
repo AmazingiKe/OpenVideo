@@ -1,4 +1,4 @@
-import type { DownloadJob, HealthResponse, MediaAsset } from "./types";
+import type { DownloadJob, HealthResponse, MediaAsset, ProbeResponse } from "./types";
 
 const api_base_url = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -30,11 +30,21 @@ export function get_health(signal?: AbortSignal): Promise<HealthResponse> {
   return request_json("/api/health", { signal });
 }
 
-export function create_download(source_url: string): Promise<DownloadJob> {
-  return request_json("/api/downloads", {
+export function probe_source(source_url: string, signal?: AbortSignal): Promise<ProbeResponse> {
+  return request_json("/api/downloads/probe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_url }),
+    signal,
+  });
+}
+
+export function create_download(source_urls: string[], signal?: AbortSignal): Promise<DownloadJob[]> {
+  return request_json("/api/downloads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_urls }),
+    signal,
   });
 }
 

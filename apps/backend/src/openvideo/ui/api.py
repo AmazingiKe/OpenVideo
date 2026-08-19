@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+import asyncio
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,15 +11,26 @@ from pydantic import BaseModel
 from openvideo.application import DownloadManager
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import DownloadJob, DownloadRequest, MediaAssetResponse, MediaAssetStatus
+from openvideo.core.models import (
+    DownloadJob,
+    MediaAssetResponse,
+    MediaAssetStatus,
+    SourcePlatform,
+)
 from openvideo.settings import Settings, load_settings
-from openvideo.tools.bilibili import InvalidBilibiliUrl, validate_bilibili_url
-from openvideo.tools.downloader import yt_dlp_available
+from openvideo.tools.downloader import (
+    DownloadFailure,
+    PlaylistProbe,
+    probe_playlist,
+    yt_dlp_available,
+)
 from openvideo.tools.media import media_tool_status
+from openvideo.tools.sources import UnsupportedSourceError, resolve_source
 
 
 STREAM_CHUNK_SIZE = 1024 * 1024
 VIDEO_MEDIA_TYPE = "video/mp4"
+MAX_BATCH_DOWNLOADS = 100
 
 
 class DependencyStatus(BaseModel):
@@ -30,6 +42,31 @@ class DependencyStatus(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     dependencies: DependencyStatus
+
+
+class ProbeRequest(BaseModel):
+    source_url: str
+
+
+class ProbeEntry(BaseModel):
+    source_video_id: str
+    url: str
+    title: str | None
+    duration_seconds: float | None
+    uploader: str | None
+
+
+class ProbeResponse(BaseModel):
+    platform: SourcePlatform
+    is_playlist: bool
+    title: str | None
+    entries: list[ProbeEntry]
+    truncated: bool
+    total_count: int
+
+
+class BatchDownloadRequest(BaseModel):
+    source_urls: list[str]
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -69,20 +106,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         service_status = "ready" if dependencies.yt_dlp and dependencies.ffmpeg else "degraded"
         return HealthResponse(status=service_status, dependencies=dependencies)
 
+    @app.post("/api/downloads/probe", response_model=ProbeResponse)
+    async def probe_download(request: ProbeRequest) -> ProbeResponse:
+        try:
+            match = resolve_source(request.source_url)
+        except UnsupportedSourceError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        probe_target = match.playlist_url or match.normalized_url
+        try:
+            probe = await asyncio.to_thread(probe_playlist, probe_target)
+        except DownloadFailure as error:
+            raise HTTPException(status_code=502, detail=str(error) or "无法读取视频信息") from error
+        return _probe_response(match.platform, probe)
+
     @app.post(
         "/api/downloads",
-        response_model=DownloadJob,
+        response_model=list[DownloadJob],
         status_code=status.HTTP_202_ACCEPTED,
     )
-    async def create_download(request: DownloadRequest) -> DownloadJob:
-        try:
-            source = validate_bilibili_url(request.source_url)
-        except InvalidBilibiliUrl as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        job = manager.create(source)
-        if job.stage.value != "complete":
-            manager.start(job.job_id)
-        return job
+    async def create_downloads(request: BatchDownloadRequest) -> list[DownloadJob]:
+        if not request.source_urls:
+            raise HTTPException(status_code=422, detail="请至少提供一个视频地址")
+        if len(request.source_urls) > MAX_BATCH_DOWNLOADS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"单次最多下载 {MAX_BATCH_DOWNLOADS} 个视频",
+            )
+        matches = []
+        for source_url in request.source_urls:
+            try:
+                matches.append(resolve_source(source_url))
+            except UnsupportedSourceError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+        jobs = manager.create_batch(matches)
+        for job in jobs:
+            if job.stage.value != "complete":
+                manager.start(job.job_id)
+        return jobs
 
     @app.get("/api/downloads/{job_id}", response_model=DownloadJob)
     def get_download(job_id: str) -> DownloadJob:
@@ -166,6 +226,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return FileResponse(sprite_file, media_type="image/jpeg")
 
     return app
+
+
+def _probe_response(platform: SourcePlatform, probe: PlaylistProbe) -> ProbeResponse:
+    return ProbeResponse(
+        platform=platform,
+        is_playlist=probe.is_playlist,
+        title=probe.title,
+        entries=[
+            ProbeEntry(
+                source_video_id=entry.source_video_id,
+                url=_entry_download_url(platform, entry.source_video_id, entry.url),
+                title=entry.title,
+                duration_seconds=entry.duration_seconds,
+                uploader=entry.uploader,
+            )
+            for entry in probe.entries
+        ],
+        truncated=probe.truncated,
+        total_count=probe.total_count,
+    )
+
+
+def _entry_download_url(platform: SourcePlatform, video_id: str, raw_url: str) -> str:
+    """把浅层条目补全成 resolve_source 能识别的规范单视频地址。
+
+    yt-dlp 的 --flat-playlist 对不同平台返回完整 URL 或裸 ID，统一按平台重建，
+    确保批量下载端点里的每个地址都能通过来源校验。
+    """
+    if platform == SourcePlatform.BILIBILI:
+        return f"https://www.bilibili.com/video/{video_id}"
+    if platform == SourcePlatform.YOUTUBE:
+        return f"https://www.youtube.com/watch?v={video_id}"
+    return raw_url
 
 
 def _ready_asset(library: MediaLibrary, asset_id: str):

@@ -12,9 +12,9 @@ from openvideo.core.models import (
     TERMINAL_DOWNLOAD_STAGES,
 )
 from openvideo.settings import Settings
-from openvideo.tools.bilibili import BilibiliSource
-from openvideo.tools.downloader import DownloadFailure, download_bilibili_video
+from openvideo.tools.downloader import DownloadFailure, download_video
 from openvideo.tools.media import probe_media
+from openvideo.tools.sources import SourceMatch
 from openvideo.tools.thumbnails import generate_thumbnail_sprite
 
 
@@ -29,9 +29,12 @@ class DownloadManager:
         self._lock = RLock()
         self._download_lock = asyncio.Lock()
 
-    def create(self, source: BilibiliSource) -> DownloadJob:
+    def create(self, source: SourceMatch) -> DownloadJob:
         if source.source_video_id:
-            existing_asset = self.library.find_by_source_video_id(source.source_video_id)
+            existing_asset = self.library.find_by_source_video_id(
+                source.platform,
+                source.source_video_id,
+            )
             if existing_asset:
                 active_job = self._active_job_for(existing_asset.asset_id)
                 if active_job:
@@ -44,6 +47,7 @@ class DownloadManager:
         asset = MediaAsset(
             asset_id=asset_id,
             source_url=source.normalized_url,
+            source_platform=source.platform,
             source_video_id=source.source_video_id,
         )
         job = DownloadJob(job_id=job_id, asset_id=asset_id)
@@ -52,6 +56,10 @@ class DownloadManager:
             self._jobs[job_id] = job
             self._active_job_id_by_asset_id[asset_id] = job_id
         return job.model_copy(deep=True)
+
+    def create_batch(self, sources: list[SourceMatch]) -> list[DownloadJob]:
+        """为多个来源各建一个任务，返回与输入一一对应的任务列表。"""
+        return [self.create(source) for source in sources]
 
     def start(self, job_id: str) -> None:
         asyncio.create_task(self._run(job_id))
@@ -81,8 +89,9 @@ class DownloadManager:
             self.library.save(asset)
             try:
                 downloaded = await asyncio.to_thread(
-                    download_bilibili_video,
+                    download_video,
                     asset.source_url,
+                    asset.source_platform,
                     self.library.asset_directory(asset.asset_id),
                     self.settings.ffmpeg_path,
                     self.settings.ffmpeg_bin_dir,

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import MediaAsset, MediaAssetStatus
+from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
 
 
 ASSET_ID = "asset-0123456789abcdef0123456789abcdef"
@@ -16,6 +16,7 @@ def test_saves_and_recovers_ready_asset(tmp_path: Path):
     asset = MediaAsset(
         asset_id=ASSET_ID,
         source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+        source_platform=SourcePlatform.BILIBILI,
         source_video_id="BV1xx411c7mD",
         title="测试视频",
         status=MediaAssetStatus.READY,
@@ -34,6 +35,22 @@ def test_saves_and_recovers_ready_asset(tmp_path: Path):
     assert str(tmp_path) not in response.model_dump_json()
 
 
+def test_source_video_id_deduplication_is_scoped_to_platform(tmp_path: Path):
+    library = MediaLibrary(tmp_path)
+    library.load()
+    library.save(
+        MediaAsset(
+            asset_id=ASSET_ID,
+            source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+            source_platform=SourcePlatform.BILIBILI,
+            source_video_id="shared-id",
+        )
+    )
+
+    assert library.find_by_source_video_id(SourcePlatform.BILIBILI, "shared-id") is not None
+    assert library.find_by_source_video_id(SourcePlatform.YOUTUBE, "shared-id") is None
+
+
 def test_marks_interrupted_asset_as_failed(tmp_path: Path):
     library = MediaLibrary(tmp_path)
     library.load()
@@ -41,6 +58,7 @@ def test_marks_interrupted_asset_as_failed(tmp_path: Path):
         MediaAsset(
             asset_id=ASSET_ID,
             source_url="https://b23.tv/AbC123",
+            source_platform=SourcePlatform.BILIBILI,
             status=MediaAssetStatus.DOWNLOADING,
         )
     )

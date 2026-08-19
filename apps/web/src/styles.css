@@ -178,6 +178,42 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 }
 .input_row button:hover:not(:disabled) { background: var(--primary_dark); }
 
+.playlist_probe {
+  margin: 0 22px 22px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0a141b;
+}
+.playlist_probe p { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+.playlist_entries { max-height: 320px; margin-bottom: 14px; overflow-y: auto; border-block: 1px solid var(--line); }
+.playlist_entry {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--line);
+  color: #d9e4e7;
+  font-size: 13px;
+}
+.playlist_entry:last-child { border-bottom: 0; }
+.playlist_entry input { width: 16px; height: 16px; accent-color: var(--accent); }
+.playlist_entry span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playlist_entry small { color: var(--muted); font-family: "DM Mono", monospace; }
+.playlist_probe > button {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  color: #fff;
+  background: var(--primary);
+  font-weight: 600;
+}
+.download_jobs { display: grid; gap: 10px; margin: 0 22px 22px; }
+.download_jobs .progress_card { margin: 0; }
+
 .progress_card { margin: 0 22px 22px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: #0a141b; }
 .progress_copy { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 10px; color: var(--muted); font-size: 13px; }
 .progress_copy strong { color: var(--accent); font-family: "DM Mono", monospace; }

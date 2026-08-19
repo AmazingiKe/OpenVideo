@@ -1,12 +1,12 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Clapperboard } from "lucide-react";
 
-import { ApiError, create_download, get_health, list_assets, media_url } from "./shared/api";
+import { ApiError, create_download, get_health, list_assets, media_url, probe_source } from "./shared/api";
 import { format_duration, format_time } from "./shared/format";
 import { Player, PlayerHandle } from "./features/player/Player";
 import { use_asset_markers } from "./features/player/use_asset_markers";
 import { poll_download } from "./shared/poll_download";
-import type { DownloadJob, HealthResponse, MediaAsset } from "./shared/types";
+import type { DownloadJob, HealthResponse, MediaAsset, ProbeResponse } from "./shared/types";
 
 const terminal_stages = new Set(["complete", "failed"]);
 
@@ -24,7 +24,9 @@ export function App() {
   const [health, set_health] = useState<HealthResponse | null>(null);
   const [assets, set_assets] = useState<MediaAsset[]>([]);
   const [selected_asset_id, set_selected_asset_id] = useState<string | null>(null);
-  const [active_job, set_active_job] = useState<DownloadJob | null>(null);
+  const [active_jobs, set_active_jobs] = useState<DownloadJob[]>([]);
+  const [probe_result, set_probe_result] = useState<ProbeResponse | null>(null);
+  const [selected_probe_urls, set_selected_probe_urls] = useState<Set<string>>(new Set());
   const [is_submitting, set_is_submitting] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [current_time, set_current_time] = useState(0);
@@ -72,36 +74,72 @@ export function App() {
     event.preventDefault();
     const normalized_url = source_url.trim();
     if (!normalized_url) {
-      set_page_error("请先粘贴 Bilibili 视频地址");
+      set_page_error("请先粘贴 Bilibili 或 YouTube 视频地址");
       return;
     }
-    poll_controller_ref.current?.abort();
-    const controller = new AbortController();
-    poll_controller_ref.current = controller;
     set_is_submitting(true);
     set_page_error(null);
     try {
-      const job = await create_download(normalized_url);
-      set_active_job(job);
-      const final_job = terminal_stages.has(job.stage)
-        ? job
-        : await poll_download(job, set_active_job, controller.signal);
-      set_active_job(final_job);
-      if (final_job.stage === "complete") {
-        await refresh_assets(controller.signal);
-        set_selected_asset_id(final_job.asset_id);
-        set_source_url("");
-      } else {
-        set_page_error(final_job.error_message ?? "视频下载失败");
+      const probe = await probe_source(normalized_url);
+      if (probe.is_playlist && probe.entries.length > 1) {
+        set_probe_result(probe);
+        set_selected_probe_urls(new Set(probe.entries.map((entry) => entry.url)));
+        return;
       }
+      const urls = probe.entries.length > 0 ? [probe.entries[0].url] : [normalized_url];
+      await start_downloads(urls);
     } catch (error: unknown) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
-      if (poll_controller_ref.current === controller) {
-        set_is_submitting(false);
-        poll_controller_ref.current = null;
-      }
+      set_is_submitting(false);
     }
+  }
+
+  async function submit_selected_playlist() {
+    const urls = [...selected_probe_urls];
+    if (urls.length === 0) {
+      set_page_error("请至少选择一个视频");
+      return;
+    }
+    set_is_submitting(true);
+    set_page_error(null);
+    try {
+      set_probe_result(null);
+      await start_downloads(urls);
+    } catch (error: unknown) {
+      if (!is_abort_error(error)) set_page_error(error_message(error));
+    } finally {
+      set_is_submitting(false);
+    }
+  }
+
+  async function start_downloads(urls: string[]) {
+    poll_controller_ref.current?.abort();
+    const controller = new AbortController();
+    poll_controller_ref.current = controller;
+    const jobs = await create_download(urls, controller.signal);
+    set_active_jobs(jobs);
+    const final_jobs = await Promise.all(
+      jobs.map((job) => terminal_stages.has(job.stage)
+        ? Promise.resolve(job)
+        : poll_download(
+          job,
+          (updated_job) => set_active_jobs((current) => current.map(
+            (item) => item.job_id === updated_job.job_id ? updated_job : item,
+          )),
+          controller.signal,
+        )),
+    );
+    set_active_jobs(final_jobs);
+    const completed_jobs = final_jobs.filter((job) => job.stage === "complete");
+    const failed_job = final_jobs.find((job) => job.stage === "failed");
+    if (completed_jobs.length > 0) {
+      await refresh_assets(controller.signal);
+      set_selected_asset_id(completed_jobs[completed_jobs.length - 1].asset_id);
+      set_source_url("");
+    }
+    if (failed_job) set_page_error(failed_job.error_message ?? "部分视频下载失败");
+    if (poll_controller_ref.current === controller) poll_controller_ref.current = null;
   }
 
   async function pick_tool(tool: ToolKey) {
@@ -143,9 +181,18 @@ export function App() {
               is_submitting={is_submitting}
               dependencies_ready={dependencies_ready}
               health={health}
-              active_job={active_job}
+              active_jobs={active_jobs}
+              probe_result={probe_result}
+              selected_probe_urls={selected_probe_urls}
               page_error={page_error}
               on_submit={submit_download}
+              on_submit_playlist={submit_selected_playlist}
+              on_toggle_probe_url={(url) => set_selected_probe_urls((current) => {
+                const next = new Set(current);
+                if (next.has(url)) next.delete(url);
+                else next.add(url);
+                return next;
+              })}
             />
           ) : null}
 
@@ -233,28 +280,36 @@ function DownloadPanel({
   is_submitting,
   dependencies_ready,
   health,
-  active_job,
+  active_jobs,
+  probe_result,
+  selected_probe_urls,
   page_error,
   on_submit,
+  on_submit_playlist,
+  on_toggle_probe_url,
 }: {
   source_url: string;
   set_source_url: (value: string) => void;
   is_submitting: boolean;
   dependencies_ready: boolean;
   health: HealthResponse | null;
-  active_job: DownloadJob | null;
+  active_jobs: DownloadJob[];
+  probe_result: ProbeResponse | null;
+  selected_probe_urls: Set<string>;
   page_error: string | null;
   on_submit: (event: FormEvent) => void;
+  on_submit_playlist: () => void;
+  on_toggle_probe_url: (url: string) => void;
 }) {
   return (
     <section className="panel" aria-labelledby="download_title">
       <div className="panel_heading">
-        <h2 id="download_title">获取 Bilibili 视频</h2>
-        <span className="panel_note">公开单视频 · HTTPS</span>
+        <h2 id="download_title">获取在线视频</h2>
+        <span className="panel_note">Bilibili · YouTube · HTTPS</span>
       </div>
 
       <form className="download_form" onSubmit={on_submit}>
-        <label htmlFor="source_url">视频地址</label>
+        <label htmlFor="source_url">视频或播放列表地址</label>
         <div className="input_row">
           <input
             id="source_url"
@@ -262,17 +317,53 @@ function DownloadPanel({
             type="url"
             value={source_url}
             onChange={(event) => set_source_url(event.target.value)}
-            placeholder="https://www.bilibili.com/video/BV..."
+            placeholder="https://www.bilibili.com/video/BV... 或 YouTube 地址"
             disabled={is_submitting}
             autoComplete="off"
           />
           <button type="submit" disabled={is_submitting || health === null || !dependencies_ready}>
-            {is_submitting ? "处理中…" : "开始下载"}
+            {is_submitting ? "处理中…" : "检测并下载"}
           </button>
         </div>
       </form>
 
-      {active_job ? <DownloadProgress job={active_job} /> : null}
+      {probe_result ? (
+        <div className="playlist_probe">
+          <div className="progress_copy">
+            <strong>{probe_result.title ?? "播放列表"}</strong>
+            <span>已选择 {selected_probe_urls.size} / {probe_result.entries.length}</span>
+          </div>
+          {probe_result.truncated ? (
+            <p>共 {probe_result.total_count} 个视频，当前展示前 {probe_result.entries.length} 个。</p>
+          ) : null}
+          <div className="playlist_entries">
+            {probe_result.entries.map((entry) => (
+              <label key={entry.source_video_id} className="playlist_entry">
+                <input
+                  type="checkbox"
+                  checked={selected_probe_urls.has(entry.url)}
+                  onChange={() => on_toggle_probe_url(entry.url)}
+                />
+                <span>{entry.title ?? entry.source_video_id}</span>
+                <small>{format_duration(entry.duration_seconds)}</small>
+              </label>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={is_submitting || selected_probe_urls.size === 0}
+            onClick={on_submit_playlist}
+          >
+            下载选中的 {selected_probe_urls.size} 个视频
+          </button>
+        </div>
+      ) : null}
+
+      {active_jobs.length > 0 ? (
+        <div className="download_jobs">
+          {active_jobs.map((job) => <DownloadProgress key={job.job_id} job={job} />)}
+        </div>
+      ) : null}
       {page_error ? (
         <div className="error_message" role="alert">
           {page_error}

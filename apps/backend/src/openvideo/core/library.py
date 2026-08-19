@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 
-from openvideo.core.models import MediaAsset, MediaAssetResponse, MediaAssetStatus
+from openvideo.core.models import MediaAsset, MediaAssetResponse, MediaAssetStatus, SourcePlatform
 from openvideo.core.models import ThumbnailStoryboardResponse, ThumbnailStoryboardTile
 from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
@@ -63,11 +63,20 @@ class MediaLibrary:
             assets = [asset.model_copy(deep=True) for asset in self._assets.values()]
         return sorted(assets, key=lambda asset: asset.created_at, reverse=True)
 
-    def find_by_source_video_id(self, source_video_id: str) -> MediaAsset | None:
+    def find_by_source_video_id(
+        self,
+        platform: SourcePlatform,
+        source_video_id: str,
+    ) -> MediaAsset | None:
         normalized_id = source_video_id.casefold()
         with self._lock:
             for asset in self._assets.values():
-                if asset.source_video_id and asset.source_video_id.casefold() == normalized_id:
+                same_platform = asset.source_platform == platform
+                same_video = (
+                    asset.source_video_id is not None
+                    and asset.source_video_id.casefold() == normalized_id
+                )
+                if same_platform and same_video:
                     return asset.model_copy(deep=True)
         return None
 

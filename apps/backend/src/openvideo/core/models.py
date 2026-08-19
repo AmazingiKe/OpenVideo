@@ -4,6 +4,11 @@ from enum import StrEnum
 from pydantic import BaseModel, Field, HttpUrl
 
 
+class SourcePlatform(StrEnum):
+    BILIBILI = "bilibili"
+    YOUTUBE = "youtube"
+
+
 class MediaAssetStatus(StrEnum):
     PENDING = "pending"
     DOWNLOADING = "downloading"
@@ -27,7 +32,7 @@ TERMINAL_DOWNLOAD_STAGES = {DownloadStage.COMPLETE, DownloadStage.FAILED}
 class MediaAsset(BaseModel):
     asset_id: str
     source_url: str
-    source_platform: str = "bilibili"
+    source_platform: SourcePlatform
     source_video_id: str | None = None
     title: str = "等待读取视频信息"
     author_name: str | None = None
@@ -68,7 +73,7 @@ class ThumbnailStoryboardResponse(BaseModel):
 class MediaAssetResponse(BaseModel):
     asset_id: str
     source_url: str
-    source_platform: str
+    source_platform: SourcePlatform
     source_video_id: str | None
     title: str
     author_name: str | None
@@ -96,10 +101,6 @@ class DownloadJob(BaseModel):
     error_message: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class DownloadRequest(BaseModel):
-    source_url: str
 
 
 class MediaSegment(BaseModel):

@@ -1,11 +1,12 @@
 # OpenVideo
 
-OpenVideo 当前是一个 Web 优先的视频获取与播放雏形。前端使用 React，后端使用 FastAPI，通过 yt-dlp 获取 Bilibili 公开视频，并通过支持 HTTP Range 的本地接口供浏览器播放。
+OpenVideo 当前是一个 Web 优先的视频获取与播放雏形。前端使用 React，后端使用 FastAPI，通过 yt-dlp 获取 Bilibili 与 YouTube 公开视频，并通过支持 HTTP Range 的本地接口供浏览器播放。
 
 ## 当前能力
 
-- 接受 `https://www.bilibili.com/video/BV...` 与 `https://b23.tv/...` 单视频地址
-- 异步执行下载，展示读取信息、下载、处理、完成或失败状态
+- 接受 Bilibili、b23.tv、YouTube 与 youtu.be 的视频和播放列表地址
+- 自动识别平台并探测播放列表，支持勾选条目后批量加入下载队列
+- 异步串行执行下载，逐项展示读取信息、下载、处理、完成或失败状态
 - 使用 yt-dlp 选择 H.264/AAC 优先的视频流，并调用 ffmpeg 合并为 MP4
 - 将媒体资源持久化到 `library/videos/{asset_id}/`
 - 页面刷新后恢复媒体列表
@@ -17,10 +18,10 @@ OpenVideo 当前是一个 Web 优先的视频获取与播放雏形。前端使�
 ```text
 OpenVideo/
 ├── apps/
-│   ├── api/                 FastAPI、yt-dlp、媒体库与 Range 播放
+│   ├── backend/             FastAPI、yt-dlp、媒体库与 Range 播放
 │   │   ├── src/openvideo/
 │   │   │   ├── core/        数据模型、媒体库、字节范围
-│   │   │   ├── tools/       Bilibili、yt-dlp、ffmpeg/ffprobe
+│   │   │   ├── tools/       平台来源、yt-dlp、ffmpeg/ffprobe
 │   │   │   ├── ui/          HTTP API
 │   │   │   └── application.py
 │   │   └── tests/
@@ -136,7 +137,7 @@ pnpm build:web
 
 ## 当前边界
 
-第一版只支持公开、无需登录的 Bilibili 单视频，不支持会员/付费/DRM、Cookie 登录、播放列表、合集批量、直播、弹幕和评论。下载任务只保存在当前 API 进程内；服务重启后未完成资源会被标记为失败，已完成资源仍可播放。
+当前支持公开、无需登录的 Bilibili 与 YouTube 视频和播放列表，不支持会员/付费/DRM、Cookie 登录、直播、弹幕和评论。登录下载所需的能力接口已预留，但本版不会读取或保存用户 Cookie。下载任务只保存在当前 API 进程内；服务重启后未完成资源会被标记为失败，已完成资源仍可播放。
 
 当前下载并发限制为 1，适合本地单用户雏形。视频标题和用户输入不会参与服务器文件路径，前端也不会获得媒体库绝对路径。
 

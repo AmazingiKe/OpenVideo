@@ -4,6 +4,25 @@ export type DependencyStatus = {
   ffprobe: boolean;
 };
 
+export type SourcePlatform = "bilibili" | "youtube";
+
+export type ProbeEntry = {
+  source_video_id: string;
+  url: string;
+  title: string | null;
+  duration_seconds: number | null;
+  uploader: string | null;
+};
+
+export type ProbeResponse = {
+  platform: SourcePlatform;
+  is_playlist: boolean;
+  title: string | null;
+  entries: ProbeEntry[];
+  truncated: boolean;
+  total_count: number;
+};
+
 export type HealthResponse = {
   status: "ready" | "degraded";
   dependencies: DependencyStatus;
