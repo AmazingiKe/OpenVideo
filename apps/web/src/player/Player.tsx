@@ -2,13 +2,14 @@ import { MediaPlayer, MediaProvider, useMediaPlayer, useMediaRemote, useMediaSto
 import "@vidstack/react/player/styles/base.css";
 import { PlyrLayout, plyrLayoutIcons } from "@vidstack/react/player/layouts/plyr";
 import "@vidstack/react/player/styles/plyr/theme.css";
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 
 import "./player.css";
 
 
 export type PlayerHandle = {
   seek_to: (seconds: number) => void;
+  current_time: () => number;
 };
 
 type TimelineMarker = {
@@ -40,7 +41,12 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     seek_to: (seconds: number) => {
       player_ref.current?.seek(seconds);
     },
+    current_time: () => player_ref.current?.current_time() ?? 0,
   }));
+
+  const set_player_ref = useCallback((instance: PlayerRef | null) => {
+    player_ref.current = instance;
+  }, []);
 
   const plyr_markers = markers.map((marker) => ({
     time: marker.time_seconds,
@@ -73,12 +79,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         thumbnails={plyr_thumbnails}
         clickToPlay
       />
-      <PlayerStateBridge
-        on_ref={(instance) => {
-          player_ref.current = instance;
-        }}
-        on_time_change={on_time_change}
-      />
+      <PlayerStateBridge on_ref={set_player_ref} on_time_change={on_time_change} />
     </MediaPlayer>
   );
 });
@@ -86,13 +87,14 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
 type PlayerRef = {
   seek: (seconds: number) => void;
+  current_time: () => number;
 };
 
 function PlayerStateBridge({
   on_ref,
   on_time_change,
 }: {
-  on_ref: (instance: PlayerRef) => void;
+  on_ref: (instance: PlayerRef | null) => void;
   on_time_change?: (seconds: number) => void;
 }) {
   const player = useMediaPlayer();
@@ -104,7 +106,9 @@ function PlayerStateBridge({
     if (!player) return;
     on_ref({
       seek: (seconds: number) => remote.seek(seconds),
+      current_time: () => player.currentTime,
     });
+    return () => on_ref(null);
   }, [player, remote, on_ref]);
 
   useEffect(() => {

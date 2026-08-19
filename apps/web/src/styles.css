@@ -114,6 +114,7 @@ main { display: grid; gap: 24px; padding-top: 24px; }
 
 @media (max-width: 600px) {
   .input_row { grid-template-columns: 1fr; }
+  .video_frame { padding: 6px; }
   .input_row button { min-height: 52px; }
   .section_note { display: none; }
   .media_details { grid-template-columns: 1fr; }

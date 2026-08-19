@@ -12,27 +12,32 @@ export type PlayerMarker = {
 };
 
 const STORAGE_PREFIX = "openvideo.player.markers";
+const MARKER_TIME_PRECISION = 10;
+const MINIMUM_MARKER_GAP_SECONDS = 0.1;
 
 export function use_asset_markers(asset_id: string) {
   const [markers, set_markers] = useState<PlayerMarker[]>(() => load_markers(asset_id));
+  const [storage_error, set_storage_error] = useState(false);
 
   useEffect(() => {
     set_markers(load_markers(asset_id));
+    set_storage_error(false);
   }, [asset_id]);
 
   const add_marker = useCallback(
     (time_seconds: number) => {
+      if (!Number.isFinite(time_seconds) || time_seconds < 0) return;
       set_markers((current) => {
-        const rounded = Math.floor(time_seconds);
+        const rounded = Math.round(time_seconds * MARKER_TIME_PRECISION) / MARKER_TIME_PRECISION;
         const too_close = current.some(
-          (marker) => Math.abs(marker.time_seconds - rounded) < 1,
+          (marker) => Math.abs(marker.time_seconds - rounded) < MINIMUM_MARKER_GAP_SECONDS,
         );
         if (too_close) return current;
         const next = [
           ...current,
-          { id: uuid7(), time_seconds: rounded, label: format_time(rounded), tags: [] },
+          { id: `marker-${uuid7().replaceAll("-", "")}`, time_seconds: rounded, label: format_time(rounded), tags: [] },
         ].sort((left, right) => left.time_seconds - right.time_seconds);
-        save_markers(asset_id, next);
+        set_storage_error(!save_markers(asset_id, next));
         return next;
       });
     },
@@ -44,11 +49,17 @@ export function use_asset_markers(asset_id: string) {
       const normalized_tag = tag.trim();
       if (!normalized_tag) return;
       set_markers((current) => {
-        const next = current.map((marker) => {
-          if (marker.id !== marker_id || marker.tags.includes(normalized_tag)) return marker;
-          return { ...marker, tags: [...marker.tags, normalized_tag] };
-        });
-        save_markers(asset_id, next);
+        const marker = current.find((candidate) => candidate.id === marker_id);
+        const duplicate_tag = marker?.tags.some(
+          (current_tag) => current_tag.localeCompare(normalized_tag, undefined, { sensitivity: "accent" }) === 0,
+        );
+        if (!marker || duplicate_tag) return current;
+        const next = current.map((candidate) => (
+          candidate.id === marker_id
+            ? { ...candidate, tags: [...candidate.tags, normalized_tag] }
+            : candidate
+        ));
+        set_storage_error(!save_markers(asset_id, next));
         return next;
       });
     },
@@ -58,12 +69,15 @@ export function use_asset_markers(asset_id: string) {
   const remove_tag = useCallback(
     (marker_id: string, tag: string) => {
       set_markers((current) => {
+        if (!current.some((marker) => marker.id === marker_id && marker.tags.includes(tag))) {
+          return current;
+        }
         const next = current.map((marker) => (
           marker.id === marker_id
             ? { ...marker, tags: marker.tags.filter((current_tag) => current_tag !== tag) }
             : marker
         ));
-        save_markers(asset_id, next);
+        set_storage_error(!save_markers(asset_id, next));
         return next;
       });
     },
@@ -73,15 +87,16 @@ export function use_asset_markers(asset_id: string) {
   const remove_marker = useCallback(
     (marker_id: string) => {
       set_markers((current) => {
+        if (!current.some((marker) => marker.id === marker_id)) return current;
         const next = current.filter((marker) => marker.id !== marker_id);
-        save_markers(asset_id, next);
+        set_storage_error(!save_markers(asset_id, next));
         return next;
       });
     },
     [asset_id],
   );
 
-  return { markers, add_marker, add_tag, remove_tag, remove_marker };
+  return { markers, storage_error, add_marker, add_tag, remove_tag, remove_marker };
 }
 
 function load_markers(asset_id: string): PlayerMarker[] {
@@ -99,11 +114,12 @@ function load_markers(asset_id: string): PlayerMarker[] {
   }
 }
 
-function save_markers(asset_id: string, markers: PlayerMarker[]): void {
+function save_markers(asset_id: string, markers: PlayerMarker[]): boolean {
   try {
     localStorage.setItem(storage_key(asset_id), JSON.stringify(markers));
+    return true;
   } catch {
-    // 本地存储不可用或已满时静默放弃，不影响播放。
+    return false;
   }
 }
 

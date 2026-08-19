@@ -24,7 +24,7 @@ export function App() {
   const selected_asset =
     assets.find((asset) => asset.asset_id === selected_asset_id) ?? null;
 
-  const { markers, add_marker, add_tag, remove_tag, remove_marker } = use_asset_markers(
+  const { markers, storage_error, add_marker, add_tag, remove_tag, remove_marker } = use_asset_markers(
     selected_asset?.asset_id ?? "",
   );
 
@@ -42,6 +42,10 @@ export function App() {
   useEffect(() => {
     return () => poll_controller_ref.current?.abort();
   }, []);
+
+  useEffect(() => {
+    set_current_time(0);
+  }, [selected_asset_id]);
 
   async function refresh_assets(signal?: AbortSignal) {
     const next_assets = await list_assets(signal);
@@ -92,6 +96,15 @@ export function App() {
 
   function seek_to(seconds: number) {
     player_ref.current?.seek_to(seconds);
+  }
+
+  function add_marker_at_current_time() {
+    const actual_time = player_ref.current?.current_time() ?? current_time;
+    const duration = selected_asset?.duration_seconds;
+    const bounded_time = duration === null || duration === undefined
+      ? Math.max(0, actual_time)
+      : Math.min(Math.max(0, actual_time), duration);
+    add_marker(bounded_time);
   }
 
   const dependencies_ready = Boolean(health?.dependencies.yt_dlp && health.dependencies.ffmpeg);
@@ -165,7 +178,10 @@ export function App() {
                   <li key={asset.asset_id}>
                     <button
                       className={asset.asset_id === selected_asset_id ? "asset_item selected" : "asset_item"}
-                      onClick={() => set_selected_asset_id(asset.asset_id)}
+                      onClick={() => {
+                        set_current_time(0);
+                        set_selected_asset_id(asset.asset_id);
+                      }}
                       aria-pressed={asset.asset_id === selected_asset_id}
                     >
                       <span className="asset_thumbnail">
@@ -216,10 +232,15 @@ export function App() {
                     className="add_marker_button"
                     type="button"
                     disabled={current_time <= 0}
-                    onClick={() => add_marker(current_time)}
+                    onClick={add_marker_at_current_time}
                   >
                     添加标记 @ {format_time(current_time)}
                   </button>
+                  {storage_error ? (
+                    <span className="marker_storage_error" role="status">
+                      无法保存到浏览器，当前修改仅在本次页面中有效。
+                    </span>
+                  ) : null}
                   {markers.length === 0 ? (
                     <span className="marker_empty_hint">
                       在播放中点击按钮添加时间点标记，点击标记可跳转到对应位置。
@@ -274,10 +295,13 @@ export function App() {
                               <input
                                 name="tag"
                                 type="text"
-                                placeholder="添加 Tag"
-                                aria-label={`${marker.label} 的 Tag`}
+                                placeholder="添加标签"
+                                aria-label={`${marker.label} 的标签`}
                                 maxLength={40}
                               />
+                              <button type="submit" aria-label={`为 ${marker.label} 添加标签`}>
+                                添加
+                              </button>
                             </form>
                           </div>
                         </div>

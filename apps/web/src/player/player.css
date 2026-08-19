@@ -108,8 +108,18 @@
 
 .marker_time_button:hover,
 .marker_remove_button:hover,
-.marker_tag button:hover {
+.marker_tag button:hover,
+.marker_tag_form button:hover {
   background: rgba(255, 212, 121, 0.25);
+}
+
+.marker_time_button:focus-visible,
+.marker_remove_button:focus-visible,
+.marker_tag button:focus-visible,
+.marker_tag_form button:focus-visible,
+.add_marker_button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .marker_tag {
@@ -130,8 +140,14 @@
   line-height: 1;
 }
 
+.marker_tag_form {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .marker_tag_form input {
-  width: 76px;
+  width: 108px;
   padding: 3px 6px;
   border: 1px dashed #526a5a;
   border-radius: 3px;
@@ -149,7 +165,45 @@
   color: #78857d;
 }
 
+.marker_tag_form button {
+  min-height: 26px;
+  padding: 3px 7px;
+  border: 1px solid #526a5a;
+  border-radius: 3px;
+  color: #c8f7d6;
+  background: #173426;
+  font: inherit;
+}
+
+.marker_storage_error {
+  color: #ffc491;
+  font-size: 12px;
+}
+
 .marker_empty_hint {
   color: var(--muted);
   font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .player_toolbar {
+    padding: 12px 10px;
+  }
+
+  .marker_chips {
+    width: 100%;
+    flex-wrap: nowrap;
+    padding: 2px;
+    overflow-x: auto;
+  }
+
+  .marker_chip {
+    flex: none;
+  }
+
+  .marker_remove_button,
+  .marker_tag button {
+    min-width: 32px;
+    min-height: 32px;
+  }
 }
