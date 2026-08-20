@@ -1,51 +1,64 @@
-import type { AnalysisJob, DownloadJob } from "../../shared/types";
-
+export type TaskRecord = {
+  task_id: string;
+  task_type: "download" | "analysis";
+  stage: string;
+  message: string;
+  progress_percent: number;
+  error_message: string | null;
+};
 
 type TaskDrawerProps = {
   open: boolean;
-  download_jobs: DownloadJob[];
-  analysis_job: AnalysisJob | null;
+  task_records: TaskRecord[];
   on_toggle: () => void;
 };
 
-export function TaskDrawer({ open, download_jobs, analysis_job, on_toggle }: TaskDrawerProps) {
-  const task_count = download_jobs.length + (analysis_job ? 1 : 0);
+const stage_labels: Record<string, string> = {
+  pending: "等待中",
+  reading_metadata: "读取信息",
+  downloading: "下载中",
+  processing: "处理中",
+  extracting_audio: "提取音频",
+  transcribing: "转写中",
+  selecting_moments: "挑选片段",
+  extracting_frames: "提取关键帧",
+  describing_visuals: "生成画面描述",
+  complete: "已完成",
+  failed: "失败",
+};
+
+export function TaskDrawer({ open, task_records, on_toggle }: TaskDrawerProps) {
   return (
     <section className={open ? "task_drawer open" : "task_drawer"} aria-label="任务中心">
       <button className="task_drawer_toggle" type="button" onClick={on_toggle} aria-expanded={open}>
         <span>任务中心</span>
-        <span>{task_count} 项</span>
+        <span>{task_records.length} 项</span>
       </button>
       {open ? (
         <div className="task_list">
-          {download_jobs.map((job) => <TaskProgress key={job.job_id} name="下载" message={job.message} progress={job.progress_percent} error={job.error_message} />)}
-          {analysis_job ? <TaskProgress name="分析" message={analysis_job.message} progress={analysis_job.progress_percent} error={analysis_job.error_message} /> : null}
-          {task_count === 0 ? <p>暂无运行或最近的任务。</p> : null}
+          {task_records.map((task) => <TaskProgress key={task.task_id} task={task} />)}
+          {task_records.length === 0 ? <p>暂无任务记录。</p> : null}
         </div>
       ) : null}
     </section>
   );
 }
 
-function TaskProgress({
-  name,
-  message,
-  progress,
-  error,
-}: {
-  name: string;
-  message: string;
-  progress: number;
-  error: string | null;
-}) {
-  const bounded_progress = Math.min(Math.max(progress, 0), 100);
+function TaskProgress({ task }: { task: TaskRecord }) {
+  const bounded_progress = Math.min(Math.max(task.progress_percent, 0), 100);
+  const task_name = task.task_type === "download" ? "下载" : "分析";
+  const stage_label = stage_labels[task.stage] ?? task.stage;
   return (
     <article className="task_progress">
-      <div><strong>{name}</strong><span>{message}</span><b>{bounded_progress.toFixed(0)}%</b></div>
+      <div>
+        <strong>{task_name}</strong>
+        <span>{stage_label} · {task.message}</span>
+        <b>{bounded_progress.toFixed(0)}%</b>
+      </div>
       <div className="task_progress_track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={bounded_progress}>
         <span style={{ width: `${bounded_progress}%` }} />
       </div>
-      {error ? <p role="alert">{error}</p> : null}
+      {task.error_message ? <p role="alert">{task.error_message}</p> : null}
     </article>
   );
 }

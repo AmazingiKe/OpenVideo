@@ -45,10 +45,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid #0a84ff66; outlin
 .pane_title { display: flex; align-items: center; justify-content: space-between; min-height: 54px; padding: 0 16px; border-bottom: 1px solid var(--line-subtle); }
 .pane_title h2 { margin: 0; font-size: 13px; font-weight: 600; }
 .pane_title span { display: grid; min-width: 21px; min-height: 21px; place-items: center; border-radius: 10px; color: var(--muted); background: #2c2c2e; font: 11px ui-monospace, "SF Mono", monospace; }
-.asset_filters { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line-subtle); overflow-x: auto; }
-.asset_filters button { flex: none; padding: 5px 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; }
-.asset_filters button.active { color: var(--text); background: #3a3a3c; font-weight: 500; }
-.asset_filters button:hover { color: var(--text); background: var(--surface-hover); }
 .workbench_asset_list { margin: 0; padding: 8px; list-style: none; }
 .workbench_asset_list li + li { margin-top: 4px; }
 .workbench_asset_list button { display: grid; width: 100%; grid-template-columns: 74px minmax(0, 1fr) 7px; gap: 9px; align-items: center; padding: 7px; border: 1px solid transparent; border-radius: 8px; color: inherit; text-align: left; background: transparent; }

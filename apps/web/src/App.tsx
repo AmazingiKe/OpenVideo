@@ -24,22 +24,21 @@ import type {
 } from "./shared/types";
 import { use_asset_markers } from "./features/player/use_asset_markers";
 import { type PlayerHandle } from "./features/player/Player";
-import { AssetLibrary, type AssetFilter } from "./features/workbench/AssetLibrary";
+import { AssetLibrary } from "./features/workbench/AssetLibrary";
 import { ImportDialog } from "./features/workbench/ImportDialog";
 import { Inspector } from "./features/workbench/Inspector";
-import { TaskDrawer } from "./features/workbench/TaskDrawer";
+import { TaskDrawer, type TaskRecord } from "./features/workbench/TaskDrawer";
 import { VideoWorkspace } from "./features/workbench/VideoWorkspace";
 
 
 const terminal_download_stages = new Set(["complete", "failed"]);
+const MAX_TASK_RECORDS = 100;
 
 export function App() {
   const [health, set_health] = useState<HealthResponse | null>(null);
   const [assets, set_assets] = useState<MediaAsset[]>([]);
   const [selected_asset_id, set_selected_asset_id] = useState<string | null>(null);
-  const [asset_filter, set_asset_filter] = useState<AssetFilter>("all");
-  const [active_download_jobs, set_active_download_jobs] = useState<DownloadJob[]>([]);
-  const [analysis_job, set_analysis_job] = useState<AnalysisJob | null>(null);
+  const [task_records, set_task_records] = useState<TaskRecord[]>([]);
   const [segments, set_segments] = useState<MediaSegment[]>([]);
   const [transcript, set_transcript] = useState<Transcript | null>(null);
   const [current_time, set_current_time] = useState(0);
@@ -83,11 +82,9 @@ export function App() {
     if (!selected_asset_id) {
       set_segments([]);
       set_transcript(null);
-      set_analysis_job(null);
       return;
     }
     const controller = new AbortController();
-    set_analysis_job(null);
     void load_asset_analysis(selected_asset_id, controller.signal)
       .then(({ loaded_segments, loaded_transcript }) => {
         set_segments(loaded_segments);
@@ -157,20 +154,18 @@ export function App() {
     const controller = new AbortController();
     download_controller_ref.current = controller;
     const jobs = await create_download(urls, controller.signal);
-    set_active_download_jobs(jobs);
+    jobs.forEach(record_download_job);
     set_is_task_drawer_open(true);
     const final_jobs = await Promise.all(jobs.map((job) => (
       terminal_download_stages.has(job.stage)
         ? Promise.resolve(job)
         : poll_download(
           job,
-          (updated_job) => set_active_download_jobs((current) => current.map((item) => (
-            item.job_id === updated_job.job_id ? updated_job : item
-          ))),
+          record_download_job,
           controller.signal,
         )
     )));
-    set_active_download_jobs(final_jobs);
+    final_jobs.forEach(record_download_job);
     const completed_jobs = final_jobs.filter((job) => job.stage === "complete");
     const failed_job = final_jobs.find((job) => job.stage === "failed");
     if (completed_jobs.length > 0) {
@@ -192,8 +187,8 @@ export function App() {
     set_is_task_drawer_open(true);
     try {
       const job = await analyze_asset(selected_asset_id, controller.signal);
-      set_analysis_job(job);
-      const final_job = job.stage === "complete" ? job : await poll_analysis(job, set_analysis_job, controller.signal);
+      record_analysis_job(job);
+      const final_job = job.stage === "complete" ? job : await poll_analysis(job, record_analysis_job, controller.signal);
       if (final_job.stage === "failed") {
         set_page_error(final_job.error_message ?? "分析失败");
         return;
@@ -224,6 +219,37 @@ export function App() {
     set_selected_probe_urls(new Set());
   }
 
+  function record_download_job(job: DownloadJob) {
+    record_task({
+      task_id: job.job_id,
+      task_type: "download",
+      stage: job.stage,
+      message: job.message,
+      progress_percent: job.progress_percent,
+      error_message: job.error_message,
+    });
+  }
+
+  function record_analysis_job(job: AnalysisJob) {
+    record_task({
+      task_id: job.job_id,
+      task_type: "analysis",
+      stage: job.stage,
+      message: job.message,
+      progress_percent: job.progress_percent,
+      error_message: job.error_message,
+    });
+  }
+
+  function record_task(task: TaskRecord) {
+    set_task_records((current) => {
+      const previous_task = current.find((item) => item.task_id === task.task_id);
+      const remaining_tasks = current.filter((item) => item.task_id !== task.task_id);
+      const next_tasks = previous_task ? [task, ...remaining_tasks] : [task, ...current];
+      return next_tasks.slice(0, MAX_TASK_RECORDS);
+    });
+  }
+
   return (
     <div className="workbench_shell">
       <header className="workbench_header">
@@ -241,9 +267,7 @@ export function App() {
       <main className="workbench_main">
         <AssetLibrary
           assets={assets}
-          active_filter={asset_filter}
           selected_asset_id={selected_asset_id}
-          on_filter={set_asset_filter}
           on_select={set_selected_asset_id}
         />
         <VideoWorkspace
@@ -268,8 +292,7 @@ export function App() {
       {page_error ? <p className="workbench_error" role="alert">{page_error}</p> : null}
       <TaskDrawer
         open={is_task_drawer_open}
-        download_jobs={active_download_jobs}
-        analysis_job={analysis_job}
+        task_records={task_records}
         on_toggle={() => set_is_task_drawer_open((open) => !open)}
       />
       <ImportDialog
