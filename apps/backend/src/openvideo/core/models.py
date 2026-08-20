@@ -113,3 +113,12 @@ class MediaSegment(BaseModel):
     key_frame_paths: list[str] = Field(default_factory=list)
     visual_description: str | None = None
     ocr_text: str | None = None
+
+
+class MediaMarker(BaseModel):
+    """手工标记将用户关注的时间点与媒体资产一同保存，供不同界面复用。"""
+
+    marker_id: str
+    asset_id: str
+    time_seconds: float = Field(ge=0)
+    tags: list[str] = Field(default_factory=list)

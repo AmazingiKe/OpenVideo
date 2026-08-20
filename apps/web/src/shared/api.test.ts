@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, create_download, media_url, probe_source } from "./api";
+import { ApiError, create_marker, create_download, media_url, probe_source, update_marker } from "./api";
 
 
 afterEach(() => vi.restoreAllMocks());
@@ -76,5 +76,35 @@ describe("api client", () => {
   it("keeps relative media paths on the current API origin", () => {
     expect(media_url("/api/media/assets/a/stream")).toBe("/api/media/assets/a/stream");
     expect(media_url(null)).toBeUndefined();
+  });
+
+  it("creates and updates persisted media markers", async () => {
+    const marker = {
+      marker_id: "marker-0123456789abcdef0123456789abcdef",
+      asset_id: "asset-0123456789abcdef0123456789abcdef",
+      time_seconds: 12.5,
+      tags: ["重点"],
+    };
+    const fetch_mock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(marker), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...marker, tags: ["关键帧"] }), { status: 200 }));
+
+    await expect(create_marker(marker.asset_id, marker.time_seconds, marker.tags)).resolves.toEqual(marker);
+    await expect(update_marker(marker.asset_id, marker.marker_id, ["关键帧"])).resolves.toEqual({
+      ...marker,
+      tags: ["关键帧"],
+    });
+    expect(fetch_mock).toHaveBeenNthCalledWith(1, `/api/media/assets/${marker.asset_id}/markers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ time_seconds: 12.5, tags: ["重点"] }),
+      signal: undefined,
+    });
+    expect(fetch_mock).toHaveBeenNthCalledWith(2, `/api/media/assets/${marker.asset_id}/markers/${marker.marker_id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags: ["关键帧"] }),
+      signal: undefined,
+    });
   });
 });

@@ -3,6 +3,7 @@ import type {
   DownloadJob,
   HealthResponse,
   MediaAsset,
+  MediaMarker,
   MediaSegment,
   ProbeResponse,
   Transcript,
@@ -81,6 +82,55 @@ export function get_transcript(asset_id: string, signal?: AbortSignal): Promise<
 
 export function get_segments(asset_id: string, signal?: AbortSignal): Promise<MediaSegment[]> {
   return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/segments`, { signal });
+}
+
+export function get_markers(asset_id: string, signal?: AbortSignal): Promise<MediaMarker[]> {
+  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/markers`, { signal });
+}
+
+export function create_marker(
+  asset_id: string,
+  time_seconds: number,
+  tags: string[],
+  signal?: AbortSignal,
+): Promise<MediaMarker> {
+  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/markers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ time_seconds, tags }),
+    signal,
+  });
+}
+
+export function update_marker(
+  asset_id: string,
+  marker_id: string,
+  tags: string[],
+  signal?: AbortSignal,
+): Promise<MediaMarker> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/markers/${encodeURIComponent(marker_id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags }),
+      signal,
+    },
+  );
+}
+
+export async function delete_marker(
+  asset_id: string,
+  marker_id: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(
+    `${api_base_url}/api/media/assets/${encodeURIComponent(asset_id)}/markers/${encodeURIComponent(marker_id)}`,
+    { method: "DELETE", signal },
+  );
+  if (!response.ok) {
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
+  }
 }
 
 export function media_url(path: string): string;

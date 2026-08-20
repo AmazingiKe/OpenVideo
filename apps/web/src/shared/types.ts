@@ -93,6 +93,13 @@ export type MediaSegment = {
   ocr_text: string | null;
 };
 
+export type MediaMarker = {
+  marker_id: string;
+  asset_id: string;
+  time_seconds: number;
+  tags: string[];
+};
+
 export type ThumbnailStoryboard = {
   url: string;
   tile_width: number;

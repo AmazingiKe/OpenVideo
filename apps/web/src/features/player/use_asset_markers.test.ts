@@ -1,66 +1,71 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { use_asset_markers } from "./use_asset_markers";
+import { create_marker, delete_marker, get_markers, update_marker } from "../../shared/api";
 
 
 const ASSET_ID = "asset-test";
 
+vi.mock("../../shared/api", () => ({
+  create_marker: vi.fn(),
+  delete_marker: vi.fn(),
+  get_markers: vi.fn(),
+  update_marker: vi.fn(),
+}));
+
 beforeEach(() => {
-  localStorage.clear();
+  vi.mocked(get_markers).mockResolvedValue([]);
 });
 
 describe("use_asset_markers", () => {
-  it("adds and persists markers per asset", () => {
+  it("loads and creates markers through the media API", async () => {
+    vi.mocked(get_markers).mockResolvedValueOnce([
+      { marker_id: "marker-existing", asset_id: ASSET_ID, time_seconds: 8, tags: [] },
+    ]);
+    vi.mocked(create_marker).mockResolvedValueOnce({
+      marker_id: "marker-new",
+      asset_id: ASSET_ID,
+      time_seconds: 12.9,
+      tags: [],
+    });
     const { result } = renderHook(() => use_asset_markers(ASSET_ID));
+    await waitFor(() => expect(result.current.markers).toHaveLength(1));
+
+    await act(async () => result.current.add_marker(12.9));
+
+    expect(create_marker).toHaveBeenCalledWith(ASSET_ID, 12.9, []);
+    expect(result.current.markers.map((marker) => marker.time_seconds)).toEqual([8, 12.9]);
+  });
+
+  it("updates tags and deletes markers through the media API", async () => {
+    vi.mocked(get_markers).mockResolvedValueOnce([
+      { marker_id: "marker-a", asset_id: ASSET_ID, time_seconds: 12, tags: ["重点"] },
+    ]);
+    vi.mocked(update_marker).mockResolvedValueOnce({
+      marker_id: "marker-a",
+      asset_id: ASSET_ID,
+      time_seconds: 12,
+      tags: ["关键帧"],
+    });
+    const { result } = renderHook(() => use_asset_markers(ASSET_ID));
+    await waitFor(() => expect(result.current.markers).toHaveLength(1));
+
+    await act(async () => result.current.update_marker_tags("marker-a", ["关键帧"]));
+    expect(update_marker).toHaveBeenCalledWith(ASSET_ID, "marker-a", ["关键帧"]);
+    expect(result.current.markers[0].tags).toEqual(["关键帧"]);
+
+    await act(async () => result.current.remove_marker("marker-a"));
+    expect(delete_marker).toHaveBeenCalledWith(ASSET_ID, "marker-a");
     expect(result.current.markers).toEqual([]);
-
-    act(() => result.current.add_marker(12.9));
-    act(() => result.current.add_marker(30.2));
-    expect(result.current.markers.map((marker) => marker.time_seconds)).toEqual([12.9, 30.2]);
-
-    const reloaded = renderHook(() => use_asset_markers(ASSET_ID));
-    expect(reloaded.result.current.markers).toHaveLength(2);
-  });
-
-  it("adds and removes tags from a marker", () => {
-    const { result } = renderHook(() => use_asset_markers(ASSET_ID));
-    act(() => result.current.add_marker(12));
-    const marker_id = result.current.markers[0].id;
-
-    act(() => result.current.add_tag(marker_id, "重点画面"));
-    act(() => result.current.add_tag(marker_id, "重点画面"));
-    expect(result.current.markers[0].tags).toEqual(["重点画面"]);
-
-    act(() => result.current.remove_tag(marker_id, "重点画面"));
-    expect(result.current.markers[0].tags).toEqual([]);
-  });
-
-  it("ignores markers within one second and removes by id", () => {
-    const { result } = renderHook(() => use_asset_markers(ASSET_ID));
-    act(() => result.current.add_marker(100));
-    act(() => result.current.add_marker(100.04));
-    expect(result.current.markers).toHaveLength(1);
-
-    const marker_id = result.current.markers[0].id;
-    act(() => result.current.remove_marker(marker_id));
-    expect(result.current.markers).toEqual([]);
-  });
-
-  it("isolates markers between different assets", () => {
-    const first = renderHook(() => use_asset_markers("asset-a"));
-    act(() => first.result.current.add_marker(5));
-
-    const second = renderHook(() => use_asset_markers("asset-b"));
-    expect(second.result.current.markers).toEqual([]);
-    expect(renderHook(() => use_asset_markers("asset-a")).result.current.markers).toHaveLength(1);
   });
 
   it("reloads markers when the asset changes", () => {
-    localStorage.setItem(
-      "openvideo.player.markers.asset-b",
-      JSON.stringify([{ id: "marker-b", time_seconds: 8, label: "00:08", tags: [] }]),
-    );
+    vi.mocked(get_markers)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { marker_id: "marker-b", asset_id: "asset-b", time_seconds: 8, tags: [] },
+      ]);
     const { result, rerender } = renderHook(
       ({ asset_id }) => use_asset_markers(asset_id),
       { initialProps: { asset_id: "asset-a" } },
@@ -68,49 +73,6 @@ describe("use_asset_markers", () => {
 
     rerender({ asset_id: "asset-b" });
 
-    expect(result.current.markers.map((marker) => marker.time_seconds)).toEqual([8]);
-  });
-
-  it("reports storage failures without dropping the in-memory change", () => {
-    const set_item = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new DOMException("quota exceeded", "QuotaExceededError");
-    });
-    const { result } = renderHook(() => use_asset_markers(ASSET_ID));
-
-    act(() => result.current.add_marker(4.25));
-
-    expect(result.current.markers[0].time_seconds).toBe(4.3);
-    expect(result.current.storage_error).toBe(true);
-    set_item.mockRestore();
-  });
-
-  it("ignores invalid times and treats tag casing as duplicate", () => {
-    const { result } = renderHook(() => use_asset_markers(ASSET_ID));
-    act(() => {
-      result.current.add_marker(Number.NaN);
-      result.current.add_marker(-1);
-      result.current.add_marker(2);
-    });
-    const marker_id = result.current.markers[0].id;
-    act(() => {
-      result.current.add_tag(marker_id, "Tag");
-      result.current.add_tag(marker_id, "tag");
-    });
-
-    expect(result.current.markers).toHaveLength(1);
-    expect(result.current.markers[0].tags).toEqual(["Tag"]);
-  });
-
-  it("discards malformed stored values", () => {
-    localStorage.setItem("openvideo.player.markers.asset-bad", '{"not":"array"}');
-    const { result } = renderHook(() => use_asset_markers("asset-bad"));
-    expect(result.current.markers).toEqual([]);
-
-    localStorage.setItem(
-      "openvideo.player.markers.asset-bad",
-      JSON.stringify([{ id: "x", time_seconds: -3 }]),
-    );
-    const reloaded = renderHook(() => use_asset_markers("asset-bad"));
-    expect(reloaded.result.current.markers).toEqual([]);
+    return waitFor(() => expect(result.current.markers.map((marker) => marker.time_seconds)).toEqual([8]));
   });
 });

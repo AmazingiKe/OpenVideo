@@ -7,7 +7,14 @@ from pathlib import Path
 from threading import RLock
 
 from openvideo.core.analysis_models import Transcript
-from openvideo.core.models import MediaAsset, MediaAssetResponse, MediaAssetStatus, MediaSegment, SourcePlatform
+from openvideo.core.models import (
+    MediaAsset,
+    MediaAssetResponse,
+    MediaAssetStatus,
+    MediaMarker,
+    MediaSegment,
+    SourcePlatform,
+)
 from openvideo.core.models import ThumbnailStoryboardResponse, ThumbnailStoryboardTile
 from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
@@ -15,6 +22,7 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 METADATA_FILE_NAME = "metadata.json"
 TRANSCRIPT_FILE_NAME = "transcript.json"
 SEGMENTS_FILE_NAME = "segments.json"
+MARKERS_FILE_NAME = "markers.json"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
 SPRITE_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail-sprite"
@@ -217,6 +225,55 @@ class MediaLibrary:
         except (OSError, ValueError):
             return []
 
+    def load_markers(self, asset_id: str) -> list[MediaMarker]:
+        directory = self.asset_directory(asset_id)
+        markers_path = directory / MARKERS_FILE_NAME
+        if not markers_path.is_file():
+            return []
+        try:
+            payload = json.loads(markers_path.read_text(encoding="utf-8"))
+            markers = [MediaMarker.model_validate(item) for item in payload]
+        except (OSError, ValueError):
+            return []
+        return sorted(markers, key=lambda marker: marker.time_seconds)
+
+    def create_marker(self, marker: MediaMarker) -> MediaMarker:
+        self._validate_marker_id(marker.marker_id)
+        markers = self.load_markers(marker.asset_id)
+        markers.append(marker)
+        self._save_markers(marker.asset_id, markers)
+        return marker.model_copy(deep=True)
+
+    def update_marker_tags(
+        self,
+        asset_id: str,
+        marker_id: str,
+        tags: list[str],
+    ) -> MediaMarker | None:
+        self._validate_marker_id(marker_id)
+        markers = self.load_markers(asset_id)
+        updated_marker: MediaMarker | None = None
+        updated_markers = []
+        for marker in markers:
+            if marker.marker_id == marker_id:
+                updated_marker = marker.model_copy(update={"tags": tags})
+                updated_markers.append(updated_marker)
+            else:
+                updated_markers.append(marker)
+        if updated_marker is None:
+            return None
+        self._save_markers(asset_id, updated_markers)
+        return updated_marker
+
+    def delete_marker(self, asset_id: str, marker_id: str) -> bool:
+        self._validate_marker_id(marker_id)
+        markers = self.load_markers(asset_id)
+        remaining_markers = [marker for marker in markers if marker.marker_id != marker_id]
+        if len(remaining_markers) == len(markers):
+            return False
+        self._save_markers(asset_id, remaining_markers)
+        return True
+
     def _write_asset(self, asset: MediaAsset) -> None:
         directory = self.asset_directory(asset.asset_id)
         directory.mkdir(parents=True, exist_ok=True)
@@ -226,6 +283,22 @@ class MediaLibrary:
         temporary_path.write_text(payload, encoding="utf-8")
         os.replace(temporary_path, metadata_path)
 
+    def _save_markers(self, asset_id: str, markers: list[MediaMarker]) -> None:
+        directory = self.asset_directory(asset_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        markers_path = directory / MARKERS_FILE_NAME
+        temporary_path = directory / f"{MARKERS_FILE_NAME}.tmp"
+        sorted_markers = sorted(markers, key=lambda marker: marker.time_seconds)
+        temporary_path.write_text(
+            json.dumps(
+                [marker.model_dump() for marker in sorted_markers],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, markers_path)
+
     @staticmethod
     def _validate_asset_id(asset_id: str) -> None:
         if not asset_id.startswith("asset-"):
@@ -233,3 +306,11 @@ class MediaLibrary:
         suffix = asset_id.removeprefix("asset-")
         if len(suffix) != 32 or any(character not in "0123456789abcdef" for character in suffix):
             raise ValueError("资源 ID 无效")
+
+    @staticmethod
+    def _validate_marker_id(marker_id: str) -> None:
+        if not marker_id.startswith("marker-"):
+            raise ValueError("标记 ID 无效")
+        suffix = marker_id.removeprefix("marker-")
+        if len(suffix) != 32 or any(character not in "0123456789abcdef" for character in suffix):
+            raise ValueError("标记 ID 无效")

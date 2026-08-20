@@ -6,16 +6,18 @@ import asyncio
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from openvideo.application import AnalysisError, AnalysisManager, DownloadManager
 from openvideo.core.analysis_models import AnalysisJob, Transcript
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.library import MediaLibrary
+from openvideo.core.identifiers import uuid7
 from openvideo.core.models import (
     DownloadJob,
     MediaAssetResponse,
     MediaAssetStatus,
+    MediaMarker,
     MediaSegment,
     SourcePlatform,
 )
@@ -71,6 +73,15 @@ class BatchDownloadRequest(BaseModel):
     source_urls: list[str]
 
 
+class MarkerCreateRequest(BaseModel):
+    time_seconds: float = Field(ge=0)
+    tags: list[str] = Field(default_factory=list)
+
+
+class MarkerUpdateRequest(BaseModel):
+    tags: list[str]
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or load_settings()
     library = MediaLibrary(resolved_settings.library_path)
@@ -91,7 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "HEAD"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "HEAD"],
         allow_headers=["Content-Type", "Range"],
     )
 
@@ -201,6 +212,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     def get_segments(asset_id: str) -> list[MediaSegment]:
         return analysis_manager.segments(asset_id)
+
+    @app.get(
+        "/api/media/assets/{asset_id}/markers",
+        response_model=list[MediaMarker],
+    )
+    def get_markers(asset_id: str) -> list[MediaMarker]:
+        _ready_asset(library, asset_id)
+        return library.load_markers(asset_id)
+
+    @app.post(
+        "/api/media/assets/{asset_id}/markers",
+        response_model=MediaMarker,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_marker(asset_id: str, request: MarkerCreateRequest) -> MediaMarker:
+        _ready_asset(library, asset_id)
+        marker = MediaMarker(
+            marker_id=f"marker-{uuid7().hex}",
+            asset_id=asset_id,
+            time_seconds=request.time_seconds,
+            tags=request.tags,
+        )
+        return library.create_marker(marker)
+
+    @app.patch(
+        "/api/media/assets/{asset_id}/markers/{marker_id}",
+        response_model=MediaMarker,
+    )
+    def update_marker(
+        asset_id: str,
+        marker_id: str,
+        request: MarkerUpdateRequest,
+    ) -> MediaMarker:
+        _ready_asset(library, asset_id)
+        try:
+            marker = library.update_marker_tags(asset_id, marker_id, request.tags)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="标记不存在") from error
+        if marker is None:
+            raise HTTPException(status_code=404, detail="标记不存在")
+        return marker
+
+    @app.delete(
+        "/api/media/assets/{asset_id}/markers/{marker_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_marker(asset_id: str, marker_id: str) -> Response:
+        _ready_asset(library, asset_id)
+        try:
+            deleted = library.delete_marker(asset_id, marker_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="标记不存在") from error
+        if not deleted:
+            raise HTTPException(status_code=404, detail="标记不存在")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/api/media/assets/{asset_id}/frames/{frame_path:path}")
     def get_frame(asset_id: str, frame_path: str) -> FileResponse:
