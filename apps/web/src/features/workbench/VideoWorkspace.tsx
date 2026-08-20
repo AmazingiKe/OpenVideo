@@ -13,6 +13,8 @@ type VideoWorkspaceProps = {
   player_ref: RefObject<PlayerHandle | null>;
   on_time_change: (seconds: number) => void;
   on_add_marker: () => void;
+  is_analyzing: boolean;
+  on_start_analysis: () => void;
 };
 
 export function VideoWorkspace({
@@ -22,6 +24,8 @@ export function VideoWorkspace({
   player_ref,
   on_time_change,
   on_add_marker,
+  is_analyzing,
+  on_start_analysis,
 }: VideoWorkspaceProps) {
   if (!asset?.playback_url) {
     return (
@@ -59,6 +63,9 @@ export function VideoWorkspace({
         />
       </div>
       <div className="workspace_video_actions">
+        <button className="workspace_primary_action" type="button" onClick={on_start_analysis} disabled={is_analyzing}>
+          {is_analyzing ? "分析中…" : "开始分析"}
+        </button>
         <button type="button" onClick={on_add_marker} disabled={current_time <= 0}>
           添加标记 @ {format_time(current_time)}
         </button>

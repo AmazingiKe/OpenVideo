@@ -58,12 +58,23 @@ describe("App", () => {
 
     render(<App />);
 
+    await waitFor(() => expect(screen.getByRole("heading", { name: "管理在线视频下载" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "开始分析" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "检测并选择视频" })).toBeInTheDocument();
+    const download_module = screen.getByRole("link", { name: "视频下载" });
+    expect(download_module).toHaveAttribute("aria-current", "page");
+
+    fireEvent.click(screen.getByRole("link", { name: "视频分析" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "演示视频" })).toBeInTheDocument());
     expect(screen.getByLabelText("媒体库")).toBeInTheDocument();
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("视频检查器")).toBeInTheDocument();
     expect(screen.queryByText("下载中的视频")).not.toBeInTheDocument();
     expect(screen.queryByText("失败的视频")).not.toBeInTheDocument();
+
+    expect(window.location.pathname).toBe("/analysis");
+    expect(download_module).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "视频分析" })).toHaveAttribute("aria-current", "page");
 
     fireEvent.click(screen.getByRole("tab", { name: "转写" }));
     expect(screen.getByText("可回跳的转写。")).toBeInTheDocument();

@@ -13,7 +13,7 @@ type TaskDrawerProps = {
   on_toggle: () => void;
 };
 
-const stage_labels: Record<string, string> = {
+export const TASK_STAGE_LABELS: Record<string, string> = {
   pending: "等待中",
   reading_metadata: "读取信息",
   downloading: "下载中",
@@ -47,7 +47,7 @@ export function TaskDrawer({ open, task_records, on_toggle }: TaskDrawerProps) {
 function TaskProgress({ task }: { task: TaskRecord }) {
   const bounded_progress = Math.min(Math.max(task.progress_percent, 0), 100);
   const task_name = task.task_type === "download" ? "下载" : "分析";
-  const stage_label = stage_labels[task.stage] ?? task.stage;
+  const stage_label = TASK_STAGE_LABELS[task.stage] ?? task.stage;
   return (
     <article className="task_progress">
       <div>

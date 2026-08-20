@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { Clapperboard } from "lucide-react";
+import { Clapperboard, Download, FileText, ScanSearch } from "lucide-react";
 
 import {
   analyze_asset,
@@ -25,14 +25,28 @@ import type {
 import { use_asset_markers } from "./features/player/use_asset_markers";
 import { type PlayerHandle } from "./features/player/Player";
 import { AssetLibrary } from "./features/workbench/AssetLibrary";
+import { DownloadWorkspace } from "./features/workbench/DownloadWorkspace";
 import { ImportDialog } from "./features/workbench/ImportDialog";
 import { Inspector } from "./features/workbench/Inspector";
+import { SummaryWorkspace } from "./features/workbench/SummaryWorkspace";
 import { TaskDrawer, type TaskRecord } from "./features/workbench/TaskDrawer";
 import { VideoWorkspace } from "./features/workbench/VideoWorkspace";
 
 
 const terminal_download_stages = new Set(["complete", "failed"]);
 const MAX_TASK_RECORDS = 100;
+const WORKSPACE_MODULES = [
+  { id: "download", label: "视频下载", path: "/downloads", icon: Download },
+  { id: "analysis", label: "视频分析", path: "/analysis", icon: ScanSearch },
+  { id: "summary", label: "分析总结", path: "/summary", icon: FileText },
+] as const;
+
+type WorkspaceModule = (typeof WORKSPACE_MODULES)[number];
+type WorkspaceModuleId = WorkspaceModule["id"];
+
+function workspace_module_id_from_path(pathname: string): WorkspaceModuleId {
+  return WORKSPACE_MODULES.find((module) => module.path === pathname)?.id ?? "download";
+}
 
 export function App() {
   const [health, set_health] = useState<HealthResponse | null>(null);
@@ -50,6 +64,9 @@ export function App() {
   const [is_analyzing, set_is_analyzing] = useState(false);
   const [is_task_drawer_open, set_is_task_drawer_open] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
+  const [active_workspace_module, set_active_workspace_module] = useState<WorkspaceModuleId>(() => (
+    workspace_module_id_from_path(window.location.pathname)
+  ));
   const player_ref = useRef<PlayerHandle>(null);
   const download_controller_ref = useRef<AbortController | null>(null);
   const analysis_controller_ref = useRef<AbortController | null>(null);
@@ -72,6 +89,18 @@ export function App() {
   useEffect(() => () => {
     download_controller_ref.current?.abort();
     analysis_controller_ref.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    const current_module = WORKSPACE_MODULES.find((module) => module.path === window.location.pathname);
+    if (!current_module) window.history.replaceState(null, "", "/downloads");
+
+    function sync_workspace_module() {
+      set_active_workspace_module(workspace_module_id_from_path(window.location.pathname));
+    }
+
+    window.addEventListener("popstate", sync_workspace_module);
+    return () => window.removeEventListener("popstate", sync_workspace_module);
   }, []);
 
   useEffect(() => {
@@ -250,44 +279,66 @@ export function App() {
     });
   }
 
+  function navigate_to_workspace_module(module: WorkspaceModule) {
+    if (window.location.pathname !== module.path) window.history.pushState(null, "", module.path);
+    set_active_workspace_module(module.id);
+  }
+
   return (
     <div className="workbench_shell">
       <header className="workbench_header">
-        <div className="workbench_brand"><Clapperboard aria-hidden="true" /><strong>OpenVideo</strong><span>视频工作台</span></div>
-        <div className="workbench_header_actions">
-          <span className={health?.status === "ready" ? "health_status ready" : "health_status"}>
-            {health?.status === "ready" ? "媒体工具就绪" : "检查媒体工具"}
-          </span>
-          <button type="button" onClick={() => set_is_import_open(true)}>导入视频</button>
-          <button type="button" onClick={() => void start_analysis()} disabled={!selected_asset || is_analyzing}>
-            {is_analyzing ? "分析中…" : "开始分析"}
-          </button>
-        </div>
+        <div className="workbench_brand"><Clapperboard aria-hidden="true" /><strong>OpenVideo</strong></div>
+        <nav className="workbench_navigation" aria-label="工作区导航">
+          {WORKSPACE_MODULES.map((module) => (
+            <WorkspaceNavigationLink
+              key={module.id}
+              module={module}
+              active={active_workspace_module === module.id}
+              on_navigate={navigate_to_workspace_module}
+            />
+          ))}
+        </nav>
       </header>
-      <main className="workbench_main">
-        <AssetLibrary
-          assets={assets}
-          selected_asset_id={selected_asset_id}
-          on_select={set_selected_asset_id}
-        />
-        <VideoWorkspace
-          asset={selected_asset}
-          markers={markers}
-          current_time={current_time}
-          player_ref={player_ref}
-          on_time_change={set_current_time}
-          on_add_marker={add_marker_at_current_time}
-        />
-        <Inspector
-          asset_id={selected_asset?.asset_id ?? ""}
-          transcript={transcript}
-          segments={segments}
-          markers={markers}
-          marker_error={marker_error}
-          on_seek={(seconds) => player_ref.current?.seek_to(seconds)}
-          on_remove_marker={(marker_id) => void remove_marker(marker_id)}
-          on_update_marker_tags={(marker_id, tags) => void update_marker_tags(marker_id, tags)}
-        />
+      <main className={active_workspace_module === "analysis" ? "workbench_main" : "module_main"}>
+        {active_workspace_module === "download" ? (
+          <DownloadWorkspace
+            health={health}
+            task_records={task_records}
+            on_open_import={() => set_is_import_open(true)}
+          />
+        ) : null}
+        {active_workspace_module === "analysis" ? (
+          <>
+            <AssetLibrary
+              assets={assets}
+              selected_asset_id={selected_asset_id}
+              on_select={set_selected_asset_id}
+            />
+            <VideoWorkspace
+              asset={selected_asset}
+              markers={markers}
+              current_time={current_time}
+              player_ref={player_ref}
+              on_time_change={set_current_time}
+              on_add_marker={add_marker_at_current_time}
+              is_analyzing={is_analyzing}
+              on_start_analysis={() => void start_analysis()}
+            />
+            <Inspector
+              asset_id={selected_asset?.asset_id ?? ""}
+              transcript={transcript}
+              segments={segments}
+              markers={markers}
+              marker_error={marker_error}
+              on_seek={(seconds) => player_ref.current?.seek_to(seconds)}
+              on_remove_marker={(marker_id) => void remove_marker(marker_id)}
+              on_update_marker_tags={(marker_id, tags) => void update_marker_tags(marker_id, tags)}
+            />
+          </>
+        ) : null}
+        {active_workspace_module === "summary" ? (
+          <SummaryWorkspace selected_asset={selected_asset} segments={segments} transcript={transcript} />
+        ) : null}
       </main>
       {page_error ? <p className="workbench_error" role="alert">{page_error}</p> : null}
       <TaskDrawer
@@ -315,6 +366,30 @@ export function App() {
         on_submit_playlist={() => void submit_selected_playlist()}
       />
     </div>
+  );
+}
+
+type WorkspaceNavigationLinkProps = {
+  module: WorkspaceModule;
+  active: boolean;
+  on_navigate: (module: WorkspaceModule) => void;
+};
+
+function WorkspaceNavigationLink({ module, active, on_navigate }: WorkspaceNavigationLinkProps) {
+  const ModuleIcon = module.icon;
+  return (
+    <a
+      href={module.path}
+      className={active ? "active" : undefined}
+      aria-current={active ? "page" : undefined}
+      onClick={(event) => {
+        event.preventDefault();
+        on_navigate(module);
+      }}
+    >
+      <ModuleIcon aria-hidden="true" />
+      {module.label}
+    </a>
   );
 }
 
