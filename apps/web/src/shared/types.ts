@@ -4,7 +4,7 @@ export type DependencyStatus = {
   ffprobe: boolean;
 };
 
-export type SourcePlatform = "bilibili" | "youtube";
+export type SourcePlatform = "bilibili" | "douyin" | "youtube";
 
 export type ProbeEntry = {
   source_video_id: string;
@@ -110,7 +110,7 @@ export type ThumbnailStoryboard = {
 export type MediaAsset = {
   asset_id: string;
   source_url: string;
-  source_platform: string;
+  source_platform: SourcePlatform;
   source_video_id: string | null;
   title: string;
   author_name: string | null;

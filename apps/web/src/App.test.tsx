@@ -4,12 +4,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import {
+  create_download,
   get_health,
   get_markers,
   get_segments,
   get_transcript,
   list_assets,
+  probe_source,
 } from "./shared/api";
+import type { MediaAsset } from "./shared/types";
 
 
 const ASSET_ID = "asset-0123456789abcdef0123456789abcdef";
@@ -55,12 +58,34 @@ describe("App", () => {
       created_at: "2026-01-01T00:00:00Z",
       segments: [{ start_seconds: 5, end_seconds: 8, text: "可回跳的转写。" }],
     });
+    vi.mocked(probe_source).mockResolvedValue({
+      platform: "bilibili",
+      is_playlist: false,
+      title: "已检测的视频",
+      entries: [{
+        source_video_id: "BV1xx411c7mD",
+        url: "https://www.bilibili.com/video/BV1xx411c7mD",
+        title: "已检测的视频",
+        duration_seconds: 60,
+        uploader: "示例作者",
+      }],
+      truncated: false,
+      total_count: 1,
+    });
 
     render(<App />);
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "管理在线视频下载" })).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "开始分析" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "检测并选择视频" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "检测" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("视频或播放列表地址"), {
+      target: { value: "https://www.bilibili.com/video/BV1xx411c7mD" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "检测" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "已检测的视频" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "下载选中的 1 个视频" })).toBeInTheDocument();
+    expect(create_download).not.toHaveBeenCalled();
     const download_module = screen.getByRole("link", { name: "视频下载" });
     expect(download_module).toHaveAttribute("aria-current", "page");
 
@@ -89,7 +114,7 @@ function create_asset({
   status: "ready" | "downloading" | "failed";
   title: string;
   playback_url: string | null;
-}) {
+}): MediaAsset {
   return {
     asset_id: status === "ready" ? ASSET_ID : `asset-${status}000000000000000000000000`,
     source_url: "https://www.bilibili.com/video/BV1xx411c7mD",

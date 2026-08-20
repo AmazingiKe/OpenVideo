@@ -1,4 +1,4 @@
-from openvideo.tools.downloader import parse_playlist_payload
+from openvideo.tools.downloader import _friendly_failure, parse_playlist_payload
 
 
 def test_single_video_payload_is_not_playlist():
@@ -62,3 +62,8 @@ def test_playlist_payload_skips_entries_without_id():
     }
     probe = parse_playlist_payload(payload)
     assert [entry.source_video_id for entry in probe.entries] == ["aaaaaaaaaaa"]
+
+
+def test_reports_fresh_cookie_requirement_without_requesting_browser_cookies():
+    message = _friendly_failure("ERROR: [Douyin] video: Fresh cookies are needed")
+    assert "不会读取或保存浏览器 Cookie" in message

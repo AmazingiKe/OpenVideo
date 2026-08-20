@@ -25,6 +25,7 @@ _FORMAT_BY_PLATFORM = {
         "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
         "bestvideo[vcodec^=avc1]+bestaudio/best[ext=mp4]/best"
     ),
+    SourcePlatform.DOUYIN: "best[ext=mp4]/best",
     SourcePlatform.YOUTUBE: "best[ext=mp4]/best",
 }
 
@@ -370,6 +371,8 @@ def _publish_thumbnail(staging_directory: Path, asset_directory: Path) -> Path |
 
 def _friendly_failure(diagnostic: str) -> str:
     lowered = diagnostic.casefold()
+    if "fresh cookies" in lowered:
+        return "平台要求新的会话信息，当前版本不会读取或保存浏览器 Cookie，请稍后重试"
     if "login" in lowered or "cookie" in lowered:
         return "该视频可能需要登录，当前版本只支持公开视频免费下载"
     if "unsupported url" in lowered:

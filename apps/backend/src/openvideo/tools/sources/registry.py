@@ -2,11 +2,12 @@ from urllib.parse import urlsplit
 
 from openvideo.tools.sources.base import SourceMatch, UnsupportedSourceError
 from openvideo.tools.sources.bilibili import BilibiliSource
+from openvideo.tools.sources.douyin import DouyinSource
 from openvideo.tools.sources.youtube import YoutubeSource
 
 
 MAX_SOURCE_URL_LENGTH = 2048
-_REGISTERED_SOURCES = (BilibiliSource(), YoutubeSource())
+_REGISTERED_SOURCES = (BilibiliSource(), DouyinSource(), YoutubeSource())
 
 
 def resolve_source(source_url: str) -> SourceMatch:
@@ -39,4 +40,4 @@ def resolve_source(source_url: str) -> SourceMatch:
             raise UnsupportedSourceError(str(error)) from error
         if match is not None:
             return match
-    raise UnsupportedSourceError("目前只支持 Bilibili 或 YouTube 视频、合集与播放列表")
+    raise UnsupportedSourceError("目前只支持 Bilibili、抖音或 YouTube 公开视频")

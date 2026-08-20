@@ -26,7 +26,6 @@ import { use_asset_markers } from "./features/player/use_asset_markers";
 import { type PlayerHandle } from "./features/player/Player";
 import { AssetLibrary } from "./features/workbench/AssetLibrary";
 import { DownloadWorkspace } from "./features/workbench/DownloadWorkspace";
-import { ImportDialog } from "./features/workbench/ImportDialog";
 import { Inspector } from "./features/workbench/Inspector";
 import { SummaryWorkspace } from "./features/workbench/SummaryWorkspace";
 import { TaskDrawer, type TaskRecord } from "./features/workbench/TaskDrawer";
@@ -59,7 +58,6 @@ export function App() {
   const [source_url, set_source_url] = useState("");
   const [probe_result, set_probe_result] = useState<ProbeResponse | null>(null);
   const [selected_probe_urls, set_selected_probe_urls] = useState<Set<string>>(new Set());
-  const [is_import_open, set_is_import_open] = useState(false);
   const [is_submitting, set_is_submitting] = useState(false);
   const [is_analyzing, set_is_analyzing] = useState(false);
   const [is_task_drawer_open, set_is_task_drawer_open] = useState(false);
@@ -134,25 +132,19 @@ export function App() {
     });
   }
 
-  async function submit_import(event: FormEvent<HTMLFormElement>) {
+  async function submit_source_probe(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const normalized_url = source_url.trim();
     if (!normalized_url) {
-      set_page_error("请先粘贴 Bilibili 或 YouTube 视频地址");
+      set_page_error("请先粘贴 Bilibili、抖音或 YouTube 视频地址");
       return;
     }
     set_is_submitting(true);
     set_page_error(null);
     try {
       const probe = await probe_source(normalized_url);
-      if (probe.is_playlist && probe.entries.length > 1) {
-        set_probe_result(probe);
-        set_selected_probe_urls(new Set(probe.entries.map((entry) => entry.url)));
-        return;
-      }
-      const urls = probe.entries.length > 0 ? [probe.entries[0].url] : [normalized_url];
-      await start_downloads(urls);
-      close_import_dialog();
+      set_probe_result(probe);
+      set_selected_probe_urls(new Set(probe.entries.map((entry) => entry.url)));
     } catch (error: unknown) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
@@ -160,7 +152,7 @@ export function App() {
     }
   }
 
-  async function submit_selected_playlist() {
+  async function start_selected_downloads() {
     const urls = [...selected_probe_urls];
     if (urls.length === 0) {
       set_page_error("请至少选择一个视频");
@@ -170,7 +162,8 @@ export function App() {
     set_page_error(null);
     try {
       await start_downloads(urls);
-      close_import_dialog();
+      set_probe_result(null);
+      set_selected_probe_urls(new Set());
     } catch (error: unknown) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
@@ -242,12 +235,6 @@ export function App() {
     void add_marker(bounded_time);
   }
 
-  function close_import_dialog() {
-    set_is_import_open(false);
-    set_probe_result(null);
-    set_selected_probe_urls(new Set());
-  }
-
   function record_download_job(job: DownloadJob) {
     record_task({
       task_id: job.job_id,
@@ -304,7 +291,20 @@ export function App() {
           <DownloadWorkspace
             health={health}
             task_records={task_records}
-            on_open_import={() => set_is_import_open(true)}
+            source_url={source_url}
+            probe_result={probe_result}
+            selected_urls={selected_probe_urls}
+            is_submitting={is_submitting}
+            error={page_error}
+            on_source_url_change={set_source_url}
+            on_submit_probe={submit_source_probe}
+            on_toggle_url={(url) => set_selected_probe_urls((current) => {
+              const next = new Set(current);
+              if (next.has(url)) next.delete(url);
+              else next.add(url);
+              return next;
+            })}
+            on_start_download={() => void start_selected_downloads()}
           />
         ) : null}
         {active_workspace_module === "analysis" ? (
@@ -340,30 +340,11 @@ export function App() {
           <SummaryWorkspace selected_asset={selected_asset} segments={segments} transcript={transcript} />
         ) : null}
       </main>
-      {page_error ? <p className="workbench_error" role="alert">{page_error}</p> : null}
+      {page_error && active_workspace_module !== "download" ? <p className="workbench_error" role="alert">{page_error}</p> : null}
       <TaskDrawer
         open={is_task_drawer_open}
         task_records={task_records}
         on_toggle={() => set_is_task_drawer_open((open) => !open)}
-      />
-      <ImportDialog
-        open={is_import_open}
-        source_url={source_url}
-        health={health}
-        is_submitting={is_submitting}
-        probe_result={probe_result}
-        selected_urls={selected_probe_urls}
-        error={page_error}
-        on_close={close_import_dialog}
-        on_source_url_change={set_source_url}
-        on_submit={submit_import}
-        on_toggle_url={(url) => set_selected_probe_urls((current) => {
-          const next = new Set(current);
-          if (next.has(url)) next.delete(url);
-          else next.add(url);
-          return next;
-        })}
-        on_submit_playlist={() => void submit_selected_playlist()}
       />
     </div>
   );

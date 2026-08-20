@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 class SourcePlatform(StrEnum):
     BILIBILI = "bilibili"
+    DOUYIN = "douyin"
     YOUTUBE = "youtube"
 
 

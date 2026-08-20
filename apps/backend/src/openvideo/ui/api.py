@@ -372,6 +372,8 @@ def _entry_download_url(platform: SourcePlatform, video_id: str, raw_url: str) -
     """
     if platform == SourcePlatform.BILIBILI:
         return f"https://www.bilibili.com/video/{video_id}"
+    if platform == SourcePlatform.DOUYIN:
+        return f"https://www.douyin.com/video/{video_id}"
     if platform == SourcePlatform.YOUTUBE:
         return f"https://www.youtube.com/watch?v={video_id}"
     return raw_url

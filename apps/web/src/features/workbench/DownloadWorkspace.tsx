@@ -1,16 +1,38 @@
+import { type FormEvent } from "react";
 import { Link2, ListVideo, ScrollText } from "lucide-react";
 
-import type { HealthResponse } from "../../shared/types";
+import { format_duration } from "../../shared/format";
+import type { HealthResponse, ProbeResponse } from "../../shared/types";
 import { TASK_STAGE_LABELS, type TaskRecord } from "./TaskDrawer";
 
 
 type DownloadWorkspaceProps = {
   health: HealthResponse | null;
   task_records: TaskRecord[];
-  on_open_import: () => void;
+  source_url: string;
+  probe_result: ProbeResponse | null;
+  selected_urls: Set<string>;
+  is_submitting: boolean;
+  error: string | null;
+  on_source_url_change: (value: string) => void;
+  on_submit_probe: (event: FormEvent<HTMLFormElement>) => void;
+  on_toggle_url: (url: string) => void;
+  on_start_download: () => void;
 };
 
-export function DownloadWorkspace({ health, task_records, on_open_import }: DownloadWorkspaceProps) {
+export function DownloadWorkspace({
+  health,
+  task_records,
+  source_url,
+  probe_result,
+  selected_urls,
+  is_submitting,
+  error,
+  on_source_url_change,
+  on_submit_probe,
+  on_toggle_url,
+  on_start_download,
+}: DownloadWorkspaceProps) {
   const download_tasks = task_records.filter((task) => task.task_type === "download");
   const dependencies_ready = Boolean(health?.dependencies.yt_dlp && health.dependencies.ffmpeg);
 
@@ -27,10 +49,53 @@ export function DownloadWorkspace({ health, task_records, on_open_import }: Down
         <section className="module_card download_source_card">
           <Link2 aria-hidden="true" />
           <h2>检测视频链接</h2>
-          <p>支持 Bilibili、YouTube 与播放列表。检测完成后可选择要下载的集数。</p>
-          <button type="button" onClick={on_open_import} disabled={!dependencies_ready}>检测并选择视频</button>
+          <p>支持 Bilibili、抖音、YouTube 与播放列表。检测完成后可选择要下载的集数。</p>
+          <form className="download_source_form" onSubmit={on_submit_probe}>
+            <label htmlFor="source_url">视频或播放列表地址</label>
+            <div>
+              <input
+                id="source_url"
+                type="url"
+                value={source_url}
+                onChange={(event) => on_source_url_change(event.target.value)}
+                placeholder="粘贴视频地址"
+                disabled={is_submitting}
+              />
+              <button type="submit" disabled={is_submitting || !dependencies_ready}>
+                {is_submitting ? "检测中…" : "检测"}
+              </button>
+            </div>
+          </form>
+          {error ? <p className="module_error" role="alert">{error}</p> : null}
           {!dependencies_ready ? <small>正在检查 yt-dlp 与 ffmpeg 是否可用。</small> : null}
         </section>
+        {probe_result ? (
+          <section className="module_card download_selection_card">
+            <header>
+              <div><ListVideo aria-hidden="true" /><h2>{probe_result.title ?? "检测结果"}</h2></div>
+              <span>已选 {selected_urls.size} / {probe_result.entries.length}</span>
+            </header>
+            <ul className="download_selection_list">
+              {probe_result.entries.map((entry) => (
+                <li key={entry.source_video_id}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={selected_urls.has(entry.url)}
+                      onChange={() => on_toggle_url(entry.url)}
+                      disabled={is_submitting}
+                    />
+                    <span>{entry.title ?? entry.source_video_id}</span>
+                    <small>{format_duration(entry.duration_seconds)}</small>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <button type="button" onClick={on_start_download} disabled={is_submitting || selected_urls.size === 0}>
+              下载选中的 {selected_urls.size} 个视频
+            </button>
+          </section>
+        ) : null}
         <section className="module_card download_queue_card">
           <header>
             <div><ListVideo aria-hidden="true" /><h2>下载队列</h2></div>
