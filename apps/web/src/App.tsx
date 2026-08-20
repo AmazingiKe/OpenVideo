@@ -19,6 +19,7 @@ import type {
   HealthResponse,
   MediaAsset,
   MediaSegment,
+  ProbeEntry,
   ProbeResponse,
   Transcript,
 } from "./shared/types";
@@ -28,7 +29,7 @@ import { AssetLibrary } from "./features/workbench/AssetLibrary";
 import { DownloadWorkspace } from "./features/workbench/DownloadWorkspace";
 import { Inspector } from "./features/workbench/Inspector";
 import { SummaryWorkspace } from "./features/workbench/SummaryWorkspace";
-import { TaskDrawer, type TaskRecord } from "./features/workbench/TaskDrawer";
+import { type TaskRecord } from "./features/workbench/tasks";
 import { VideoWorkspace } from "./features/workbench/VideoWorkspace";
 
 
@@ -60,7 +61,6 @@ export function App() {
   const [selected_probe_urls, set_selected_probe_urls] = useState<Set<string>>(new Set());
   const [is_submitting, set_is_submitting] = useState(false);
   const [is_analyzing, set_is_analyzing] = useState(false);
-  const [is_task_drawer_open, set_is_task_drawer_open] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [active_workspace_module, set_active_workspace_module] = useState<WorkspaceModuleId>(() => (
     workspace_module_id_from_path(window.location.pathname)
@@ -144,7 +144,7 @@ export function App() {
     try {
       const probe = await probe_source(normalized_url);
       set_probe_result(probe);
-      set_selected_probe_urls(new Set(probe.entries.map((entry) => entry.url)));
+      set_selected_probe_urls(initial_selected_probe_urls(probe.entries, normalized_url));
     } catch (error: unknown) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
@@ -177,7 +177,6 @@ export function App() {
     download_controller_ref.current = controller;
     const jobs = await create_download(urls, controller.signal);
     jobs.forEach(record_download_job);
-    set_is_task_drawer_open(true);
     const final_jobs = await Promise.all(jobs.map((job) => (
       terminal_download_stages.has(job.stage)
         ? Promise.resolve(job)
@@ -206,7 +205,6 @@ export function App() {
     analysis_controller_ref.current = controller;
     set_is_analyzing(true);
     set_page_error(null);
-    set_is_task_drawer_open(true);
     try {
       const job = await analyze_asset(selected_asset_id, controller.signal);
       record_analysis_job(job);
@@ -294,6 +292,7 @@ export function App() {
             source_url={source_url}
             probe_result={probe_result}
             selected_urls={selected_probe_urls}
+            current_source_video_id={source_video_id_from_url(source_url)}
             is_submitting={is_submitting}
             error={page_error}
             on_source_url_change={set_source_url}
@@ -304,6 +303,7 @@ export function App() {
               else next.add(url);
               return next;
             })}
+            on_replace_selection={(urls) => set_selected_probe_urls(new Set(urls))}
             on_start_download={() => void start_selected_downloads()}
           />
         ) : null}
@@ -341,13 +341,30 @@ export function App() {
         ) : null}
       </main>
       {page_error && active_workspace_module !== "download" ? <p className="workbench_error" role="alert">{page_error}</p> : null}
-      <TaskDrawer
-        open={is_task_drawer_open}
-        task_records={task_records}
-        on_toggle={() => set_is_task_drawer_open((open) => !open)}
-      />
     </div>
   );
+}
+
+function initial_selected_probe_urls(entries: ProbeEntry[], source_url: string): Set<string> {
+  const current_source_video_id = source_video_id_from_url(source_url);
+  const current_entry = entries.find((entry) => entry.source_video_id === current_source_video_id);
+  return current_entry ? new Set([current_entry.url]) : new Set();
+}
+
+function source_video_id_from_url(source_url: string): string | null {
+  try {
+    const url = new URL(source_url);
+    const path_parts = url.pathname.split("/").filter(Boolean);
+    if (url.hostname.endsWith("youtube.com")) return url.searchParams.get("v");
+    if (url.hostname === "youtu.be") return path_parts[0] ?? null;
+    if (url.hostname.endsWith("bilibili.com") || url.hostname === "b23.tv") {
+      return path_parts.at(-1) ?? null;
+    }
+    if (url.hostname.endsWith("douyin.com") && path_parts[0] === "video") return path_parts[1] ?? null;
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 type WorkspaceNavigationLinkProps = {

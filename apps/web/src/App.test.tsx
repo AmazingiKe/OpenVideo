@@ -60,7 +60,7 @@ describe("App", () => {
     });
     vi.mocked(probe_source).mockResolvedValue({
       platform: "bilibili",
-      is_playlist: false,
+      is_playlist: true,
       title: "已检测的视频",
       entries: [{
         source_video_id: "BV1xx411c7mD",
@@ -68,9 +68,15 @@ describe("App", () => {
         title: "已检测的视频",
         duration_seconds: 60,
         uploader: "示例作者",
+      }, {
+        source_video_id: "BV1yy411c7mD",
+        url: "https://www.bilibili.com/video/BV1yy411c7mD",
+        title: "同一合集的其他视频",
+        duration_seconds: 120,
+        uploader: "示例作者",
       }],
       truncated: false,
-      total_count: 1,
+      total_count: 2,
     });
 
     render(<App />);
@@ -84,6 +90,15 @@ describe("App", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "检测" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "已检测的视频" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "下载选中的 1 个视频" })).toBeInTheDocument();
+    const entries = screen.getAllByRole("checkbox");
+    expect(entries[0]).toBeChecked();
+    expect(entries[1]).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "全选" }));
+    expect(screen.getByRole("button", { name: "下载选中的 2 个视频" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清空" }));
+    expect(screen.getByRole("button", { name: "下载选中的 0 个视频" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "当前集" }));
     expect(screen.getByRole("button", { name: "下载选中的 1 个视频" })).toBeInTheDocument();
     expect(create_download).not.toHaveBeenCalled();
     const download_module = screen.getByRole("link", { name: "视频下载" });
