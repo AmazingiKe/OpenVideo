@@ -1,4 +1,8 @@
-from openvideo.tools.downloader import _friendly_failure, parse_playlist_payload
+import httpx
+
+from openvideo.core.models import SourcePlatform
+from openvideo.tools import downloader
+from openvideo.tools.downloader import _friendly_failure, parse_playlist_payload, probe_source
 
 
 def test_single_video_payload_is_not_playlist():
@@ -67,3 +71,59 @@ def test_playlist_payload_skips_entries_without_id():
 def test_reports_fresh_cookie_requirement_without_requesting_browser_cookies():
     message = _friendly_failure("ERROR: [Douyin] video: Fresh cookies are needed")
     assert "不会读取或保存浏览器 Cookie" in message
+
+
+def test_bilibili_ugc_season_probe_returns_all_episodes(monkeypatch):
+    payload = {
+        "code": 0,
+        "data": {
+            "ugc_season": {
+                "title": "示例合集",
+                "sections": [{
+                    "episodes": [
+                        {
+                            "bvid": "BV1xx411c7mD",
+                            "title": "第一集",
+                            "arc": {
+                                "duration": 60,
+                                "author": {"name": "示例作者"},
+                            },
+                        },
+                        {
+                            "bvid": "BV1xx411c7mE",
+                            "title": "第二集",
+                            "arc": {"duration": 90},
+                        },
+                    ],
+                }],
+            },
+        },
+    }
+    request_arguments = {}
+
+    def get_bilibili_view(*args, **kwargs):
+        request_arguments.update(kwargs)
+        return httpx.Response(
+            200,
+            json=payload,
+            request=httpx.Request("GET", "https://api.bilibili.com/x/web-interface/view"),
+        )
+
+    monkeypatch.setattr(
+        downloader.httpx,
+        "get",
+        get_bilibili_view,
+    )
+
+    probe = probe_source(
+        "https://www.bilibili.com/video/BV1xx411c7mD",
+        SourcePlatform.BILIBILI,
+        "BV1xx411c7mD",
+    )
+
+    assert probe.is_playlist is True
+    assert probe.title == "示例合集"
+    assert probe.total_count == 2
+    assert [entry.source_video_id for entry in probe.entries] == ["BV1xx411c7mD", "BV1xx411c7mE"]
+    assert probe.entries[0].uploader == "示例作者"
+    assert request_arguments["headers"]["Referer"] == "https://www.bilibili.com/"

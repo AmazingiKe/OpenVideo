@@ -8,6 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 from openvideo.core.models import SourcePlatform
 from openvideo.tools.media import resolve_tool
 
@@ -18,6 +20,15 @@ PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
 COMMAND_TIMEOUT_SECONDS = 60 * 60 * 6
 MAX_DIAGNOSTIC_LINES = 30
 PLAYLIST_PROBE_LIMIT = 100
+BILIBILI_VIEW_API_URL = "https://api.bilibili.com/x/web-interface/view"
+BILIBILI_VIEW_TIMEOUT_SECONDS = 20
+BILIBILI_VIEW_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.bilibili.com/",
+}
 
 # 浏览器 <video> 直接播放依赖 H.264/AAC；各平台按可得性给出优先级递减的 format 表达式。
 _FORMAT_BY_PLATFORM = {
@@ -195,6 +206,93 @@ def _read_metadata(
         width=_optional_int(payload.get("width")),
         height=_optional_int(payload.get("height")),
         thumbnail_url=_optional_text(payload.get("thumbnail")),
+    )
+
+
+def probe_source(
+    source_url: str,
+    platform: SourcePlatform,
+    source_video_id: str | None,
+    cookie_source: Path | None = None,
+) -> PlaylistProbe:
+    """先补全平台独有的合集信息，再回退到 yt-dlp 的通用列表探测。"""
+    if platform == SourcePlatform.BILIBILI and source_video_id:
+        season_probe = probe_bilibili_ugc_season(source_video_id)
+        if season_probe is not None:
+            return season_probe
+    return probe_playlist(source_url, cookie_source)
+
+
+def probe_bilibili_ugc_season(source_video_id: str) -> PlaylistProbe | None:
+    """Bilibili 普通视频 URL 不携带合集参数时，仍从视频详情中找出其所属的 UGC 合集。"""
+    try:
+        response = httpx.get(
+            BILIBILI_VIEW_API_URL,
+            params={"bvid": source_video_id},
+            headers=BILIBILI_VIEW_HEADERS,
+            timeout=BILIBILI_VIEW_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("code") != 0:
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    season = data.get("ugc_season")
+    if not isinstance(season, dict):
+        return None
+
+    entries = _bilibili_season_entries(season)
+    if not entries:
+        return None
+    total_count = len(entries)
+    visible_entries = entries[:PLAYLIST_PROBE_LIMIT]
+    return PlaylistProbe(
+        is_playlist=True,
+        title=_optional_text(season.get("title")),
+        entries=visible_entries,
+        truncated=total_count > len(visible_entries),
+        total_count=total_count,
+    )
+
+
+def _bilibili_season_entries(season: dict) -> list[PlaylistEntry]:
+    entries: list[PlaylistEntry] = []
+    sections = season.get("sections")
+    if not isinstance(sections, list):
+        return entries
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        episodes = section.get("episodes")
+        if not isinstance(episodes, list):
+            continue
+        for episode in episodes:
+            entry = _bilibili_season_entry(episode)
+            if entry is not None:
+                entries.append(entry)
+    return entries
+
+
+def _bilibili_season_entry(episode: object) -> PlaylistEntry | None:
+    if not isinstance(episode, dict):
+        return None
+    source_video_id = _optional_text(episode.get("bvid"))
+    if not source_video_id:
+        return None
+    arc = episode.get("arc")
+    metadata = arc if isinstance(arc, dict) else {}
+    author = metadata.get("author")
+    author_data = author if isinstance(author, dict) else {}
+    return PlaylistEntry(
+        source_video_id=source_video_id,
+        url=f"https://www.bilibili.com/video/{source_video_id}",
+        title=_optional_text(episode.get("title")) or _optional_text(metadata.get("title")),
+        duration_seconds=_optional_float(metadata.get("duration")),
+        uploader=_optional_text(author_data.get("name")),
     )
 
 

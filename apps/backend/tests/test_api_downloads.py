@@ -6,7 +6,7 @@ from openvideo.ui import api
 
 
 def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
-    def probe_douyin(_: str) -> PlaylistProbe:
+    def probe_douyin(*_: object) -> PlaylistProbe:
         return PlaylistProbe(
             is_playlist=False,
             title=None,
@@ -23,7 +23,7 @@ def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
             total_count=1,
         )
 
-    monkeypatch.setattr(api, "probe_playlist", probe_douyin)
+    monkeypatch.setattr(api, "probe_source", probe_douyin)
     app = api.create_app(Settings(library_path=tmp_path))
     with TestClient(app) as client:
         response = client.post(

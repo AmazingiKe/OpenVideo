@@ -25,7 +25,7 @@ from openvideo.settings import Settings, load_settings
 from openvideo.tools.downloader import (
     DownloadFailure,
     PlaylistProbe,
-    probe_playlist,
+    probe_source,
     yt_dlp_available,
 )
 from openvideo.tools.media import media_tool_status
@@ -129,7 +129,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(error)) from error
         probe_target = match.playlist_url or match.normalized_url
         try:
-            probe = await asyncio.to_thread(probe_playlist, probe_target)
+            probe = await asyncio.to_thread(
+                probe_source,
+                probe_target,
+                match.platform,
+                match.source_video_id,
+            )
         except DownloadFailure as error:
             raise HTTPException(status_code=502, detail=str(error) or "无法读取视频信息") from error
         return _probe_response(match.platform, probe)
