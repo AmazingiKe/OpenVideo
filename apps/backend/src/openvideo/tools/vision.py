@@ -23,7 +23,7 @@ class VisionDescriptionError(RuntimeError):
 class VisionDescriber(Protocol):
     """可插拔的画面描述实现，统一返回自然语言描述。"""
 
-    def describe(self, image_path: Path, prompt: str) -> str:
+    def describe(self, image_paths: list[Path], prompt: str) -> str:
         ...
 
 
@@ -35,8 +35,13 @@ class OpenAiCompatibleVision:
         self.api_key = api_key
         self.model = model
 
-    def describe(self, image_path: Path, prompt: str) -> str:
-        image_url = _image_data_url(image_path)
+    def describe(self, image_paths: list[Path], prompt: str) -> str:
+        if not image_paths:
+            raise VisionDescriptionError("至少需要一张关键帧")
+        image_messages = [
+            {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}}
+            for image_path in image_paths
+        ]
         payload = {
             "model": self.model,
             "messages": [
@@ -44,7 +49,7 @@ class OpenAiCompatibleVision:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": image_url}},
+                        *image_messages,
                     ],
                 }
             ],

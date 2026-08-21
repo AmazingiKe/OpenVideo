@@ -14,7 +14,7 @@ class AnalysisStage(StrEnum):
     PENDING = "pending"
     EXTRACTING_AUDIO = "extracting_audio"
     TRANSCRIBING = "transcribing"
-    SELECTING_MOMENTS = "selecting_moments"
+    BUILDING_TIMELINE = "building_timeline"
     EXTRACTING_FRAMES = "extracting_frames"
     DESCRIBING_VISUALS = "describing_visuals"
     COMPLETE = "complete"
@@ -22,6 +22,17 @@ class AnalysisStage(StrEnum):
 
 
 TERMINAL_ANALYSIS_STAGES = {AnalysisStage.COMPLETE, AnalysisStage.FAILED}
+
+
+class AnalysisMode(StrEnum):
+    FULL = "full"
+    MARKERS = "markers"
+
+
+class AnalysisCapability(StrEnum):
+    TRANSCRIPT = "transcript"
+    TIMELINE = "timeline"
+    VISUAL = "visual"
 
 
 class TranscriptSegment(BaseModel):
@@ -42,6 +53,9 @@ class Transcript(BaseModel):
 class AnalysisJob(BaseModel):
     job_id: str
     asset_id: str
+    mode: AnalysisMode = AnalysisMode.FULL
+    marker_ids: list[str] = Field(default_factory=list)
+    capabilities: list[AnalysisCapability] = Field(default_factory=list)
     stage: AnalysisStage = AnalysisStage.PENDING
     progress_percent: float = 0
     message: str = "等待开始"

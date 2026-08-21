@@ -51,15 +51,21 @@ export type AnalysisStage =
   | "pending"
   | "extracting_audio"
   | "transcribing"
-  | "selecting_moments"
+  | "building_timeline"
   | "extracting_frames"
   | "describing_visuals"
   | "complete"
   | "failed";
 
+export type AnalysisMode = "full" | "markers";
+export type AnalysisCapability = "transcript" | "timeline" | "visual";
+
 export type AnalysisJob = {
   job_id: string;
   asset_id: string;
+  mode: AnalysisMode;
+  marker_ids: string[];
+  capabilities: AnalysisCapability[];
   stage: AnalysisStage;
   progress_percent: number;
   message: string;
@@ -86,11 +92,15 @@ export type MediaSegment = {
   asset_id: string;
   start_seconds: number;
   end_seconds: number;
+  title: string;
+  detailed_summary: string | null;
   transcript_text: string | null;
   speaker_name: string | null;
   key_frame_paths: string[];
   visual_description: string | null;
   ocr_text: string | null;
+  marker_ids: string[];
+  tags: string[];
 };
 
 export type MediaMarker = {

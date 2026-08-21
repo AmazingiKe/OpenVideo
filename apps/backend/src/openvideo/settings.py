@@ -13,7 +13,6 @@ DEFAULT_WHISPER_COMPUTE_TYPE = "int8"
 # 视觉模型走 OpenAI 兼容接口，默认官方地址，可通过环境变量指向任意兼容网关。
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_VISION_MODEL = "gpt-5.6-terra"
-DEFAULT_VISION_FRAME_INTERVAL = 2.0
 
 
 class Settings(BaseModel):
@@ -27,7 +26,6 @@ class Settings(BaseModel):
     openai_base_url: str = DEFAULT_OPENAI_BASE_URL
     openai_api_key: str | None = None
     vision_model: str = DEFAULT_VISION_MODEL
-    vision_frame_interval: float = DEFAULT_VISION_FRAME_INTERVAL
 
     @property
     def ffmpeg_bin_dir(self) -> Path:
@@ -58,14 +56,4 @@ def load_settings() -> Settings:
         openai_base_url=os.getenv("OPENVIDEO_OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL),
         openai_api_key=os.getenv("OPENVIDEO_OPENAI_API_KEY") or None,
         vision_model=os.getenv("OPENVIDEO_VISION_MODEL", DEFAULT_VISION_MODEL),
-        vision_frame_interval=_optional_float(
-            os.getenv("OPENVIDEO_VISION_FRAME_INTERVAL"), DEFAULT_VISION_FRAME_INTERVAL
-        ),
     )
-
-
-def _optional_float(value: str | None, default: float) -> float:
-    try:
-        return float(value) if value else default
-    except ValueError:
-        return default

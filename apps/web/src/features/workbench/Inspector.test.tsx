@@ -41,11 +41,15 @@ describe("Inspector", () => {
           asset_id: ASSET_ID,
           start_seconds: 30,
           end_seconds: 40,
+          title: "工具演示",
+          detailed_summary: "人物正在演示工具。",
           transcript_text: "画面中的说明。",
           speaker_name: null,
           key_frame_paths: [],
           visual_description: "人物正在演示工具。",
           ocr_text: null,
+          marker_ids: [],
+          tags: [],
         }]}
         markers={[]}
         marker_error={null}
@@ -55,7 +59,7 @@ describe("Inspector", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /人物正在演示工具/ }));
+    fireEvent.click(screen.getByRole("button", { name: /工具演示/ }));
 
     expect(seek_to).toHaveBeenCalledWith(30);
   });

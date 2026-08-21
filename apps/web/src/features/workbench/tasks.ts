@@ -14,7 +14,7 @@ export const TASK_STAGE_LABELS: Record<string, string> = {
   processing: "处理中",
   extracting_audio: "提取音频",
   transcribing: "转写中",
-  selecting_moments: "挑选片段",
+  building_timeline: "构建时间轴",
   extracting_frames: "提取关键帧",
   describing_visuals: "生成画面描述",
   complete: "已完成",

@@ -5,7 +5,7 @@ import { media_url } from "../../shared/api";
 import type { MediaMarker, MediaSegment, Transcript } from "../../shared/types";
 
 
-type InspectorTab = "transcript" | "segments" | "markers";
+type InspectorTab = "transcript" | "timeline" | "markers";
 
 type InspectorProps = {
   asset_id: string;
@@ -20,7 +20,7 @@ type InspectorProps = {
 
 const inspector_tabs: { key: InspectorTab; label: string }[] = [
   { key: "transcript", label: "转写" },
-  { key: "segments", label: "分析片段" },
+  { key: "timeline", label: "时间轴" },
   { key: "markers", label: "标记" },
 ];
 
@@ -34,7 +34,7 @@ export function Inspector({
   on_remove_marker,
   on_update_marker_tags,
 }: InspectorProps) {
-  const [active_tab, set_active_tab] = useState<InspectorTab>("segments");
+  const [active_tab, set_active_tab] = useState<InspectorTab>("timeline");
 
   return (
     <aside className="inspector" aria-label="视频检查器">
@@ -56,7 +56,7 @@ export function Inspector({
         {active_tab === "transcript" ? (
           <TranscriptList transcript={transcript} on_seek={on_seek} />
         ) : null}
-        {active_tab === "segments" ? (
+        {active_tab === "timeline" ? (
           <SegmentList asset_id={asset_id} segments={segments} on_seek={on_seek} />
         ) : null}
         {active_tab === "markers" ? (
@@ -107,7 +107,7 @@ function SegmentList({
   on_seek: (seconds: number) => void;
 }) {
   if (segments.length === 0) {
-    return <EmptyInspectorState>尚未生成重点片段。开始分析后将在这里展示关键帧与画面描述。</EmptyInspectorState>;
+    return <EmptyInspectorState>尚未生成时间轴事件。可分析全片，或围绕标记生成重点事件。</EmptyInspectorState>;
   }
   return (
     <ol className="inspector_segment_list">
@@ -116,7 +116,7 @@ function SegmentList({
           <button
             type="button"
             onClick={() => on_seek(segment.start_seconds)}
-            aria-label={`${format_time(segment.start_seconds)} ${segment.visual_description ?? "分析片段"}`}
+            aria-label={`${format_time(segment.start_seconds)} ${segment.title}`}
           >
             {segment.key_frame_paths[0] ? (
               <img
@@ -127,8 +127,11 @@ function SegmentList({
             ) : null}
             <span>
               <time>{format_time(segment.start_seconds)} – {format_time(segment.end_seconds)}</time>
-              {segment.visual_description ? <strong>{segment.visual_description}</strong> : null}
-              {segment.transcript_text ? <small>{segment.transcript_text}</small> : null}
+              <strong>{segment.title}</strong>
+              {segment.tags.length > 0 ? (
+                <span className="timeline_event_tags">{segment.tags.map((tag) => <b key={tag}>{tag}</b>)}</span>
+              ) : null}
+              {segment.detailed_summary ? <small>{segment.detailed_summary}</small> : null}
             </span>
           </button>
         </li>
@@ -204,6 +207,8 @@ function MarkerTagForm({
   marker: MediaMarker;
   on_update_marker_tags: (marker_id: string, tags: string[]) => void;
 }) {
+  const preset_tags = ["重点", "公式", "疑问", "案例"];
+
   function submit_tag(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -214,10 +219,23 @@ function MarkerTagForm({
   }
 
   return (
-    <form className="marker_tag_form" onSubmit={submit_tag}>
-      <input name="tag" aria-label="添加标签" maxLength={40} placeholder="标签" />
-      <button type="submit">添加</button>
-    </form>
+    <>
+      <div className="marker_tag_presets" aria-label="分析标签">
+        {preset_tags.filter((tag) => !marker.tags.includes(tag)).map((tag) => (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => on_update_marker_tags(marker.marker_id, [...marker.tags, tag])}
+          >
+            + {tag}
+          </button>
+        ))}
+      </div>
+      <form className="marker_tag_form" onSubmit={submit_tag}>
+        <input name="tag" aria-label="添加标签" maxLength={40} placeholder="自定义" />
+        <button type="submit">添加</button>
+      </form>
+    </>
   );
 }
 

@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from openvideo.application import AnalysisError, AnalysisManager, DownloadManager
-from openvideo.core.analysis_models import AnalysisJob, Transcript
+from openvideo.core.analysis_models import AnalysisJob, AnalysisMode, Transcript
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.library import MediaLibrary
 from openvideo.core.identifiers import uuid7
@@ -82,6 +82,12 @@ class MarkerUpdateRequest(BaseModel):
     tags: list[str]
 
 
+class AnalysisCreateRequest(BaseModel):
+    mode: AnalysisMode = AnalysisMode.FULL
+    marker_ids: list[str] = Field(default_factory=list)
+    force: bool = False
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or load_settings()
     library = MediaLibrary(resolved_settings.library_path)
@@ -91,6 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         library.load()
+        analysis_manager.restore()
         yield
 
     app = FastAPI(title="OpenVideo API", version="0.1.0", lifespan=lifespan)
@@ -185,9 +192,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response_model=AnalysisJob,
         status_code=status.HTTP_202_ACCEPTED,
     )
-    async def analyze_asset(asset_id: str) -> AnalysisJob:
+    async def analyze_asset(
+        asset_id: str,
+        request: AnalysisCreateRequest = AnalysisCreateRequest(),
+    ) -> AnalysisJob:
         try:
-            job = analysis_manager.create(asset_id)
+            job = analysis_manager.create(
+                asset_id,
+                request.mode,
+                request.marker_ids,
+                request.force,
+            )
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         if job.stage.value != "complete":

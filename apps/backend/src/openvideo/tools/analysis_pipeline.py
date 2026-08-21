@@ -1,27 +1,31 @@
-"""把转写文本编排成带画面描述的 MediaSegment。
-
-管线顺序：启发式选重点片段 → 抽取关键帧 → 调用视觉模型描述画面 →
-组装成领域层 MediaSegment。视觉描述器为空时跳过画面分析，仅保留文本与关键帧。
-"""
+"""把转写、用户标记和代表画面编排为时间轴事件。"""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
-from openvideo.core.analysis import select_key_moments
-from openvideo.core.analysis_models import Transcript
+from openvideo.core.analysis import TimelineMoment, select_timeline_moments
+from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, Transcript
 from openvideo.core.identifiers import uuid7
-from openvideo.core.models import MediaSegment
+from openvideo.core.models import MediaMarker, MediaSegment
 from openvideo.settings import Settings
-from openvideo.tools.frames import extract_frames
-from openvideo.tools.vision import VisionDescriber
+from openvideo.tools.frames import FrameExtractionError, extract_frames
+from openvideo.tools.scenes import detect_scene_boundaries
+from openvideo.tools.vision import VisionDescriber, VisionDescriptionError
 
 
-VISUAL_PROMPT = (
-    "这是视频重点片段的画面。请用中文简洁描述：画面里的人物、场景，"
-    "以及出现的文字、板书、幻灯片或代码等内容。"
-)
 FRAMES_DIRECTORY_NAME = ".analysis/frames"
+FRAME_POSITIONS = (0.2, 0.5, 0.8)
+MAX_PROMPT_TRANSCRIPT_CHARACTERS = 6000
+TITLE_MAX_CHARACTERS = 32
+TAG_ANALYSIS_INSTRUCTIONS = {
+    "重点": "提炼必须记住的核心结论及其依据",
+    "公式": "解释公式、符号、推导步骤和适用条件",
+    "疑问": "指出可能的疑点、缺失前提和需要继续核实的内容",
+    "案例": "说明案例背景、过程、结果以及它证明的观点",
+}
+AnalysisProgress = Callable[[AnalysisStage, float, str], None]
 
 
 def build_segments(
@@ -29,43 +33,150 @@ def build_segments(
     media_path: Path,
     asset_id: str,
     asset_directory: Path,
+    duration_seconds: float | None,
     settings: Settings,
     describer: VisionDescriber | None,
+    mode: AnalysisMode,
+    markers: list[MediaMarker],
+    progress_callback: AnalysisProgress,
 ) -> list[MediaSegment]:
-    """从转写生成 MediaSegment 列表；无画面描述器时也保留文本与关键帧。"""
-    moments = select_key_moments(transcript)
-    if not moments:
-        return []
-
-    time_points = [_midpoint(moment) for moment in moments]
-    frames_directory = asset_directory / FRAMES_DIRECTORY_NAME
-    frames = extract_frames(
+    """基础音频分析始终产出事件，视觉能力缺失或局部失败不会丢失文本结果。"""
+    scene_boundaries = detect_scene_boundaries(
         media_path,
-        time_points,
-        frames_directory,
         settings.ffmpeg_path,
         settings.ffmpeg_bin_dir,
     )
-
+    moments = select_timeline_moments(
+        transcript,
+        mode,
+        markers,
+        duration_seconds,
+        scene_boundaries,
+    )
     segments: list[MediaSegment] = []
-    for moment, frame_path in zip(moments, frames):
-        description = describer.describe(frame_path, VISUAL_PROMPT) if describer else None
-        segments.append(
-            MediaSegment(
-                segment_id=f"segment-{uuid7().hex}",
-                asset_id=asset_id,
-                start_seconds=moment.start_seconds,
-                end_seconds=moment.end_seconds,
-                transcript_text=moment.transcript_text or None,
-                key_frame_paths=[_relative_to_asset(asset_directory, frame_path)],
-                visual_description=description,
-            )
+    progress_span = 20 / max(len(moments), 1)
+    for index, moment in enumerate(moments):
+        event_number = index + 1
+        progress_callback(
+            AnalysisStage.EXTRACTING_FRAMES,
+            75 + progress_span * index,
+            f"正在提取第 {event_number}/{len(moments)} 个事件的关键帧",
         )
+        segments.append(_build_segment(
+            moment,
+            media_path,
+            asset_id,
+            asset_directory,
+            settings,
+            describer,
+            lambda: progress_callback(
+                AnalysisStage.DESCRIBING_VISUALS,
+                75 + progress_span * (index + 0.5),
+                f"正在分析第 {event_number}/{len(moments)} 个事件",
+            ),
+        ))
     return segments
 
 
-def _midpoint(moment) -> float:
-    return (moment.start_seconds + moment.end_seconds) / 2
+def _build_segment(
+    moment: TimelineMoment,
+    media_path: Path,
+    asset_id: str,
+    asset_directory: Path,
+    settings: Settings,
+    describer: VisionDescriber | None,
+    on_describing_visuals: Callable[[], None],
+) -> MediaSegment:
+    segment_id = f"segment-{uuid7().hex}"
+    frames = _extract_event_frames(
+        moment,
+        media_path,
+        asset_directory / FRAMES_DIRECTORY_NAME / segment_id,
+        settings,
+    )
+    if describer is not None and frames:
+        on_describing_visuals()
+    visual_description = _describe_event(moment, frames, describer)
+    transcript_text = moment.transcript_text or None
+    return MediaSegment(
+        segment_id=segment_id,
+        asset_id=asset_id,
+        start_seconds=moment.start_seconds,
+        end_seconds=moment.end_seconds,
+        title=_event_title(moment),
+        detailed_summary=visual_description or transcript_text,
+        transcript_text=transcript_text,
+        key_frame_paths=[_relative_to_asset(asset_directory, frame) for frame in frames],
+        visual_description=visual_description,
+        marker_ids=list(moment.marker_ids),
+        tags=list(moment.tags),
+    )
+
+
+def _extract_event_frames(
+    moment: TimelineMoment,
+    media_path: Path,
+    frames_directory: Path,
+    settings: Settings,
+) -> list[Path]:
+    duration = max(moment.end_seconds - moment.start_seconds, 0.1)
+    time_points = [
+        moment.start_seconds + duration * position
+        for position in FRAME_POSITIONS
+    ]
+    try:
+        return extract_frames(
+            media_path,
+            time_points,
+            frames_directory,
+            settings.ffmpeg_path,
+            settings.ffmpeg_bin_dir,
+        )
+    except FrameExtractionError:
+        return []
+
+
+def _describe_event(
+    moment: TimelineMoment,
+    frames: list[Path],
+    describer: VisionDescriber | None,
+) -> str | None:
+    if describer is None or not frames:
+        return None
+    try:
+        return describer.describe(frames, _analysis_prompt(moment))
+    except VisionDescriptionError:
+        return None
+
+
+def _analysis_prompt(moment: TimelineMoment) -> str:
+    tag_instructions = [
+        TAG_ANALYSIS_INSTRUCTIONS[tag]
+        for tag in moment.tags
+        if tag in TAG_ANALYSIS_INSTRUCTIONS
+    ]
+    custom_tags = [tag for tag in moment.tags if tag not in TAG_ANALYSIS_INSTRUCTIONS]
+    focus = "；".join(tag_instructions) or "总结这段课程讲解的主题、过程和结论"
+    if custom_tags:
+        focus = f"{focus}；同时关注用户标签：{'、'.join(custom_tags)}"
+    transcript = moment.transcript_text[:MAX_PROMPT_TRANSCRIPT_CHARACTERS]
+    return (
+        "你正在分析同一视频片段按时间排列的多张画面。"
+        f"分析目标：{focus}。"
+        "请结合转写和画面，用中文输出一段可复习的详细笔记；"
+        "区分视频明确表达的内容与合理推断，不得补造事实。"
+        f"\n转写：{transcript or '该片段没有可用转写，请只依据画面。'}"
+    )
+
+
+def _event_title(moment: TimelineMoment) -> str:
+    if moment.tags:
+        return " / ".join(moment.tags)[:TITLE_MAX_CHARACTERS]
+    text = moment.transcript_text.strip()
+    if not text:
+        return "无转写事件"
+    first_sentence = text.split("。", 1)[0].split("！", 1)[0].split("？", 1)[0]
+    return first_sentence[:TITLE_MAX_CHARACTERS]
 
 
 def _relative_to_asset(asset_directory: Path, frame_path: Path) -> str:

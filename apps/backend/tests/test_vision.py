@@ -30,7 +30,7 @@ def test_describe_returns_content(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     describer = OpenAiCompatibleVision("https://api.example.com/v1", "secret", "gpt-5.6-terra")
 
-    result = describer.describe(frame, "请描述画面")
+    result = describer.describe([frame], "请描述画面")
 
     assert result == "这是一段画面描述"
     assert captured["url"] == "https://api.example.com/v1/chat/completions"
@@ -41,4 +41,4 @@ def test_describe_requires_existing_frame(tmp_path: Path):
     describer = OpenAiCompatibleVision("https://api.example.com/v1", "secret", "model")
 
     with pytest.raises(VisionDescriptionError, match="关键帧不存在"):
-        describer.describe(tmp_path / "missing.jpg", "请描述画面")
+        describer.describe([tmp_path / "missing.jpg"], "请描述画面")

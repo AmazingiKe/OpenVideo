@@ -62,6 +62,27 @@ def test_analyze_creates_job(tmp_path: Path, monkeypatch):
     assert job["job_id"].startswith("analysis-")
 
 
+def test_marker_analysis_records_selected_marker_scope(tmp_path: Path, monkeypatch):
+    def fake_transcribe(*args, **kwargs) -> Transcript:
+        return Transcript(asset_id=ASSET_ID, language="zh", segments=[])
+
+    monkeypatch.setattr(application_module, "transcribe_media", fake_transcribe)
+    with create_client(tmp_path) as client:
+        marker = client.post(
+            f"/api/media/assets/{ASSET_ID}/markers",
+            json={"time_seconds": 12.5, "tags": ["公式"]},
+        ).json()
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/analyze",
+            json={"mode": "markers", "marker_ids": [marker["marker_id"]], "force": True},
+        )
+
+    assert response.status_code == 202
+    job = response.json()
+    assert job["mode"] == "markers"
+    assert job["marker_ids"] == [marker["marker_id"]]
+
+
 def test_segments_returns_empty_when_missing(tmp_path: Path):
     with create_client(tmp_path) as client:
         response = client.get(f"/api/media/assets/{ASSET_ID}/segments")
@@ -91,6 +112,7 @@ def test_segments_and_frame_roundtrip(tmp_path: Path):
         )
     )
     library.save_segments(
+        ASSET_ID,
         [
             MediaSegment(
                 segment_id="segment-0123456789abcdef0123456789abcdef",

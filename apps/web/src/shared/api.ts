@@ -1,5 +1,6 @@
 import type {
   AnalysisJob,
+  AnalysisMode,
   DownloadJob,
   HealthResponse,
   MediaAsset,
@@ -65,9 +66,16 @@ export function list_assets(signal?: AbortSignal): Promise<MediaAsset[]> {
   return request_json("/api/media/assets", { signal });
 }
 
-export function analyze_asset(asset_id: string, signal?: AbortSignal): Promise<AnalysisJob> {
+export function analyze_asset(
+  asset_id: string,
+  mode: AnalysisMode,
+  marker_ids: string[],
+  signal?: AbortSignal,
+): Promise<AnalysisJob> {
   return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/analyze`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, marker_ids, force: true }),
     signal,
   });
 }

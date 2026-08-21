@@ -15,6 +15,7 @@ import { poll_analysis } from "./shared/poll_analysis";
 import { poll_download } from "./shared/poll_download";
 import type {
   AnalysisJob,
+  AnalysisMode,
   DownloadJob,
   HealthResponse,
   MediaAsset,
@@ -198,7 +199,7 @@ export function App() {
     if (download_controller_ref.current === controller) download_controller_ref.current = null;
   }
 
-  async function start_analysis() {
+  async function start_analysis(mode: AnalysisMode, marker_ids: string[]) {
     if (!selected_asset_id) return;
     analysis_controller_ref.current?.abort();
     const controller = new AbortController();
@@ -206,7 +207,7 @@ export function App() {
     set_is_analyzing(true);
     set_page_error(null);
     try {
-      const job = await analyze_asset(selected_asset_id, controller.signal);
+      const job = await analyze_asset(selected_asset_id, mode, marker_ids, controller.signal);
       record_analysis_job(job);
       const final_job = job.stage === "complete" ? job : await poll_analysis(job, record_analysis_job, controller.signal);
       if (final_job.stage === "failed") {
@@ -322,7 +323,7 @@ export function App() {
               on_time_change={set_current_time}
               on_add_marker={add_marker_at_current_time}
               is_analyzing={is_analyzing}
-              on_start_analysis={() => void start_analysis()}
+              on_start_analysis={(mode, marker_ids) => void start_analysis(mode, marker_ids)}
             />
             <Inspector
               asset_id={selected_asset?.asset_id ?? ""}

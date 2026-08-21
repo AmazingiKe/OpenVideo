@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 from threading import RLock
 
 from openvideo.core.analysis_models import (
+    AnalysisCapability,
     AnalysisJob,
+    AnalysisMode,
     AnalysisStage,
     TERMINAL_ANALYSIS_STAGES,
     Transcript,
@@ -15,6 +17,7 @@ from openvideo.core.models import (
     DownloadStage,
     MediaAsset,
     MediaAssetStatus,
+    MediaMarker,
     MediaSegment,
     TERMINAL_DOWNLOAD_STAGES,
 )
@@ -251,25 +254,55 @@ class AnalysisManager:
         self._lock = RLock()
         self._analysis_lock = asyncio.Lock()
 
-    def create(self, asset_id: str) -> AnalysisJob:
+    def create(
+        self,
+        asset_id: str,
+        mode: AnalysisMode,
+        marker_ids: list[str],
+        force: bool,
+    ) -> AnalysisJob:
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法分析")
         active_job = self._active_job_for(asset_id)
         if active_job:
             return active_job
-        if self.library.load_segments(asset_id):
-            return self._completed_job(asset_id)
+        resolved_marker_ids = self._validated_marker_ids(asset_id, mode, marker_ids)
+        existing_segments = self.library.load_segments(asset_id)
+        has_full_timeline = any(not segment.marker_ids for segment in existing_segments)
+        if mode == AnalysisMode.FULL and has_full_timeline and not force:
+            return self._completed_job(asset_id, mode, [])
 
         job_id = f"analysis-{uuid7().hex}"
-        job = AnalysisJob(job_id=job_id, asset_id=asset_id)
+        job = AnalysisJob(
+            job_id=job_id,
+            asset_id=asset_id,
+            mode=mode,
+            marker_ids=resolved_marker_ids,
+        )
         with self._lock:
             self._jobs[job_id] = job
             self._active_job_id_by_asset_id[asset_id] = job_id
+        self.library.save_analysis_job(job)
         return job.model_copy(deep=True)
 
     def start(self, job_id: str) -> None:
         asyncio.create_task(self._run(job_id))
+
+    def restore(self) -> None:
+        """服务重启后恢复未完成任务，复用已经落盘的转写与事件产物。"""
+        for saved_job in self.library.load_analysis_jobs():
+            job = saved_job.model_copy(deep=True)
+            if job.stage not in TERMINAL_ANALYSIS_STAGES:
+                job.stage = AnalysisStage.PENDING
+                job.message = "等待恢复分析"
+                job.error_message = None
+                with self._lock:
+                    self._active_job_id_by_asset_id[job.asset_id] = job.job_id
+            with self._lock:
+                self._jobs[job.job_id] = job
+            if job.stage == AnalysisStage.PENDING:
+                self.start(job.job_id)
 
     def get(self, job_id: str) -> AnalysisJob | None:
         with self._lock:
@@ -317,28 +350,52 @@ class AnalysisManager:
                         "正在将音频转写为文字",
                     )
                     self.library.save_transcript(transcript)
+                self._add_capability(job_id, AnalysisCapability.TRANSCRIPT)
 
                 describer = self._describer()
-                if describer is not None:
-                    self._update_job(job_id, AnalysisStage.SELECTING_MOMENTS, 75, "正在挑选重点片段")
-                    asset_directory = self.library.asset_directory(asset.asset_id)
-                    segments = await asyncio.to_thread(
-                        build_segments,
-                        transcript,
-                        playback,
-                        asset.asset_id,
-                        asset_directory,
-                        self.settings,
-                        describer,
-                    )
-                    self._update_job(
+                self._update_job(job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件")
+                markers = self._job_markers(job)
+                asset_directory = self.library.asset_directory(asset.asset_id)
+                segments = await asyncio.to_thread(
+                    build_segments,
+                    transcript,
+                    playback,
+                    asset.asset_id,
+                    asset_directory,
+                    asset.duration_seconds,
+                    self.settings,
+                    describer,
+                    job.mode,
+                    markers,
+                    lambda stage, progress, message: self._update_job(
                         job_id,
-                        AnalysisStage.DESCRIBING_VISUALS,
-                        95,
-                        f"已生成 {len(segments)} 个带画面描述的片段",
-                    )
-                    self.library.save_segments(segments)
-                self._update_job(job_id, AnalysisStage.COMPLETE, 100, "分析完成")
+                        stage,
+                        progress,
+                        message,
+                    ),
+                )
+                self._add_capability(job_id, AnalysisCapability.TIMELINE)
+                if describer is not None and any(segment.visual_description for segment in segments):
+                    self._add_capability(job_id, AnalysisCapability.VISUAL)
+                completed_stage = (
+                    AnalysisStage.DESCRIBING_VISUALS
+                    if describer is not None
+                    else AnalysisStage.EXTRACTING_FRAMES
+                )
+                self._update_job(
+                    job_id,
+                    completed_stage,
+                    95,
+                    f"已生成 {len(segments)} 个时间轴事件",
+                )
+                merged_segments = self._merge_segments(job, segments)
+                self.library.save_segments(asset.asset_id, merged_segments)
+                message = (
+                    "分析完成"
+                    if describer is not None
+                    else "音频时间轴分析完成（未配置视觉模型）"
+                )
+                self._update_job(job_id, AnalysisStage.COMPLETE, 100, message)
             except Exception as error:
                 self._fail(job_id, str(error) or "分析失败")
             finally:
@@ -361,6 +418,61 @@ class AnalysisManager:
             compute_type=self.settings.whisper_compute_type,
         )
 
+    def _validated_marker_ids(
+        self,
+        asset_id: str,
+        mode: AnalysisMode,
+        marker_ids: list[str],
+    ) -> list[str]:
+        if mode == AnalysisMode.FULL:
+            return []
+        markers = self.library.load_markers(asset_id)
+        available_ids = {marker.marker_id for marker in markers}
+        resolved_ids = (
+            list(dict.fromkeys(marker_ids))
+            if marker_ids
+            else [marker.marker_id for marker in markers]
+        )
+        if not resolved_ids:
+            raise AnalysisError("请先添加至少一个标记")
+        if any(marker_id not in available_ids for marker_id in resolved_ids):
+            raise AnalysisError("分析请求包含不存在的标记")
+        return resolved_ids
+
+    def _job_markers(self, job: AnalysisJob) -> list[MediaMarker]:
+        if job.mode == AnalysisMode.FULL:
+            return []
+        selected_ids = set(job.marker_ids)
+        return [
+            marker
+            for marker in self.library.load_markers(job.asset_id)
+            if marker.marker_id in selected_ids
+        ]
+
+    def _merge_segments(
+        self,
+        job: AnalysisJob,
+        new_segments: list[MediaSegment],
+    ) -> list[MediaSegment]:
+        existing = self.library.load_segments(job.asset_id)
+        if job.mode == AnalysisMode.FULL:
+            retained = [segment for segment in existing if segment.marker_ids]
+        else:
+            selected_ids = set(job.marker_ids)
+            retained = [
+                segment
+                for segment in existing
+                if not selected_ids.intersection(segment.marker_ids)
+            ]
+        return sorted([*retained, *new_segments], key=lambda segment: segment.start_seconds)
+
+    def _add_capability(self, job_id: str, capability: AnalysisCapability) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job and capability not in job.capabilities:
+                job.capabilities.append(capability)
+                self.library.save_analysis_job(job)
+
     def _update_job(
         self,
         job_id: str,
@@ -378,6 +490,7 @@ class AnalysisManager:
             job.message = message
             job.error_message = error_message
             job.updated_at = datetime.now(UTC)
+            self.library.save_analysis_job(job)
 
     def _fail(self, job_id: str, message: str) -> None:
         job = self.get(job_id)
@@ -398,11 +511,18 @@ class AnalysisManager:
             return job.model_copy(deep=True) if job else None
 
     @staticmethod
-    def _completed_job(asset_id: str) -> AnalysisJob:
+    def _completed_job(
+        asset_id: str,
+        mode: AnalysisMode,
+        marker_ids: list[str],
+    ) -> AnalysisJob:
         return AnalysisJob(
             job_id=f"analysis-{uuid7().hex}",
             asset_id=asset_id,
+            mode=mode,
+            marker_ids=marker_ids,
+            capabilities=[AnalysisCapability.TRANSCRIPT, AnalysisCapability.TIMELINE],
             stage=AnalysisStage.COMPLETE,
             progress_percent=100,
-            message="该视频已完成文字提取",
+            message="该视频已有时间轴分析结果",
         )

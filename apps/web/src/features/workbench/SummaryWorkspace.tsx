@@ -1,7 +1,7 @@
 import { FileText, Layers3, MessageSquareText } from "lucide-react";
 
 import type { MediaAsset, MediaSegment, Transcript } from "../../shared/types";
-import { format_duration } from "../../shared/format";
+import { format_duration, format_time } from "../../shared/format";
 
 
 type SummaryWorkspaceProps = {
@@ -42,8 +42,20 @@ export function SummaryWorkspace({ selected_asset, segments, transcript }: Summa
           <span>个可回跳的重点内容</span>
         </section>
         <section className="module_card summary_preview_card">
-          <h2>总结预览</h2>
-          <p>完成分析后，此区域将展示可编辑的视频摘要、关键观点与片段索引。</p>
+          <h2>时间轴笔记</h2>
+          {segments.length === 0 ? (
+            <p>完成全片或标记分析后，这里将按时间展示可回跳的结构化笔记。</p>
+          ) : (
+            <ol className="summary_timeline">
+              {segments.map((segment) => (
+                <li key={segment.segment_id}>
+                  <time>{format_time(segment.start_seconds)} – {format_time(segment.end_seconds)}</time>
+                  <strong>{segment.title}</strong>
+                  <p>{segment.detailed_summary ?? segment.transcript_text ?? "该事件暂无文字说明。"}</p>
+                </li>
+              ))}
+            </ol>
+          )}
         </section>
       </div>
     </section>

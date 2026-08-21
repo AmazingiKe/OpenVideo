@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 
-from openvideo.core.analysis_models import Transcript
+from openvideo.core.analysis_models import AnalysisJob, Transcript
 from openvideo.core.models import (
     MediaAsset,
     MediaAssetResponse,
@@ -22,6 +22,7 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 METADATA_FILE_NAME = "metadata.json"
 TRANSCRIPT_FILE_NAME = "transcript.json"
 SEGMENTS_FILE_NAME = "segments.json"
+ANALYSIS_JOB_FILE_NAME = ".analysis/job.json"
 MARKERS_FILE_NAME = "markers.json"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
@@ -200,10 +201,9 @@ class MediaLibrary:
         except (OSError, ValueError):
             return None
 
-    def save_segments(self, segments: list[MediaSegment]) -> None:
-        if not segments:
-            return
-        asset_id = segments[0].asset_id
+    def save_segments(self, asset_id: str, segments: list[MediaSegment]) -> None:
+        if any(segment.asset_id != asset_id for segment in segments):
+            raise ValueError("时间轴事件不属于同一个媒体资源")
         directory = self.asset_directory(asset_id)
         directory.mkdir(parents=True, exist_ok=True)
         segments_path = directory / SEGMENTS_FILE_NAME
@@ -213,6 +213,25 @@ class MediaLibrary:
             encoding="utf-8",
         )
         os.replace(temporary_path, segments_path)
+
+    def save_analysis_job(self, job: AnalysisJob) -> None:
+        job_path = self.asset_directory(job.asset_id) / ANALYSIS_JOB_FILE_NAME
+        job_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = job_path.with_suffix(".tmp")
+        temporary_path.write_text(job.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(temporary_path, job_path)
+
+    def load_analysis_jobs(self) -> list[AnalysisJob]:
+        jobs: list[AnalysisJob] = []
+        for asset in self.list():
+            job_path = self.asset_directory(asset.asset_id) / ANALYSIS_JOB_FILE_NAME
+            if not job_path.is_file():
+                continue
+            try:
+                jobs.append(AnalysisJob.model_validate_json(job_path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+        return jobs
 
     def load_segments(self, asset_id: str) -> list[MediaSegment]:
         directory = self.asset_directory(asset_id)

@@ -109,11 +109,15 @@ class MediaSegment(BaseModel):
     asset_id: str
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
+    title: str = "时间轴事件"
+    detailed_summary: str | None = None
     transcript_text: str | None = None
     speaker_name: str | None = None
     key_frame_paths: list[str] = Field(default_factory=list)
     visual_description: str | None = None
     ocr_text: str | None = None
+    marker_ids: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
 
 class MediaMarker(BaseModel):

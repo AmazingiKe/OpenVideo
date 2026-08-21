@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, create_marker, create_download, media_url, probe_source, update_marker } from "./api";
+import { analyze_asset, ApiError, create_marker, create_download, media_url, probe_source, update_marker } from "./api";
 
 
 afterEach(() => vi.restoreAllMocks());
@@ -71,6 +71,33 @@ describe("api client", () => {
       }),
     );
     await expect(create_download(["bad"])).rejects.toEqual(new ApiError("地址无效", 422));
+  });
+
+  it("submits a marker-scoped analysis request", async () => {
+    const response = {
+      job_id: "analysis-1",
+      asset_id: "asset-1",
+      mode: "markers",
+      marker_ids: ["marker-1"],
+      capabilities: [],
+      stage: "pending",
+      progress_percent: 0,
+      message: "等待开始",
+      error_message: null,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(response), { status: 202 }),
+    );
+
+    await expect(analyze_asset("asset-1", "markers", ["marker-1"])).resolves.toEqual(response);
+    expect(fetch_mock).toHaveBeenCalledWith("/api/media/assets/asset-1/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "markers", marker_ids: ["marker-1"], force: true }),
+      signal: undefined,
+    });
   });
 
   it("keeps relative media paths on the current API origin", () => {
