@@ -1,5 +1,11 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { Clapperboard, Download, FileText, ScanSearch } from "lucide-react";
+import {
+  Clapperboard,
+  Download,
+  FileText,
+  ScanSearch,
+  Settings as SettingsIcon,
+} from "lucide-react";
 
 import {
   analyze_asset,
@@ -34,6 +40,7 @@ import { DownloadWorkspace } from "./features/workbench/DownloadWorkspace";
 import { SummaryWorkspace } from "./features/workbench/SummaryWorkspace";
 import { type TaskRecord } from "./features/workbench/tasks";
 import { VideoWorkspace } from "./features/workbench/VideoWorkspace";
+import { SettingsPage } from "./features/settings/SettingsPage";
 
 const terminal_download_stages = new Set(["complete", "failed"]);
 const MAX_TASK_RECORDS = 100;
@@ -45,8 +52,10 @@ const WORKSPACE_MODULES = [
 
 type WorkspaceModule = (typeof WORKSPACE_MODULES)[number];
 type WorkspaceModuleId = WorkspaceModule["id"];
+type ActivePage = WorkspaceModuleId | "settings";
 
-function workspace_module_id_from_path(pathname: string): WorkspaceModuleId {
+function active_page_from_path(pathname: string): ActivePage {
+  if (pathname === "/settings") return "settings";
   return (
     WORKSPACE_MODULES.find((module) => module.path === pathname)?.id ??
     "download"
@@ -72,10 +81,9 @@ export function App() {
   const [is_analyzing, set_is_analyzing] = useState(false);
   const [is_transcribing, set_is_transcribing] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
-  const [active_workspace_module, set_active_workspace_module] =
-    useState<WorkspaceModuleId>(() =>
-      workspace_module_id_from_path(window.location.pathname),
-    );
+  const [active_page, set_active_page] = useState<ActivePage>(() =>
+    active_page_from_path(window.location.pathname),
+  );
   const player_ref = useRef<PlayerHandle>(null);
   const download_controller_ref = useRef<AbortController | null>(null);
   const analysis_controller_ref = useRef<AbortController | null>(null);
@@ -112,19 +120,18 @@ export function App() {
   );
 
   useEffect(() => {
-    const current_module = WORKSPACE_MODULES.find(
-      (module) => module.path === window.location.pathname,
-    );
-    if (!current_module) window.history.replaceState(null, "", "/downloads");
+    const current_path = window.location.pathname;
+    const has_current_page =
+      current_path === "/settings" ||
+      WORKSPACE_MODULES.some((module) => module.path === current_path);
+    if (!has_current_page) window.history.replaceState(null, "", "/downloads");
 
-    function sync_workspace_module() {
-      set_active_workspace_module(
-        workspace_module_id_from_path(window.location.pathname),
-      );
+    function sync_active_page() {
+      set_active_page(active_page_from_path(window.location.pathname));
     }
 
-    window.addEventListener("popstate", sync_workspace_module);
-    return () => window.removeEventListener("popstate", sync_workspace_module);
+    window.addEventListener("popstate", sync_active_page);
+    return () => window.removeEventListener("popstate", sync_active_page);
   }, []);
 
   useEffect(() => {
@@ -361,7 +368,13 @@ export function App() {
   function navigate_to_workspace_module(module: WorkspaceModule) {
     if (window.location.pathname !== module.path)
       window.history.pushState(null, "", module.path);
-    set_active_workspace_module(module.id);
+    set_active_page(module.id);
+  }
+
+  function navigate_to_settings() {
+    if (window.location.pathname !== "/settings")
+      window.history.pushState(null, "", "/settings");
+    set_active_page("settings");
   }
 
   return (
@@ -376,20 +389,34 @@ export function App() {
             <WorkspaceNavigationLink
               key={module.id}
               module={module}
-              active={active_workspace_module === module.id}
+              active={active_page === module.id}
               on_navigate={navigate_to_workspace_module}
             />
           ))}
         </nav>
+        <a
+          className={
+            active_page === "settings"
+              ? "topbar_settings_link active"
+              : "topbar_settings_link"
+          }
+          href="/settings"
+          aria-label="设置"
+          aria-current={active_page === "settings" ? "page" : undefined}
+          onClick={(event) => {
+            event.preventDefault();
+            navigate_to_settings();
+          }}
+        >
+          <SettingsIcon aria-hidden="true" />
+        </a>
       </header>
       <main
         className={
-          active_workspace_module === "analysis"
-            ? "workbench_main"
-            : "module_main"
+          active_page === "analysis" ? "workbench_main" : "module_main"
         }
       >
-        {active_workspace_module === "download" ? (
+        {active_page === "download" ? (
           <DownloadWorkspace
             health={health}
             task_records={task_records}
@@ -415,7 +442,7 @@ export function App() {
             on_start_download={() => void start_selected_downloads()}
           />
         ) : null}
-        {active_workspace_module === "analysis" ? (
+        {active_page === "analysis" ? (
           <>
             <AssetLibrary
               assets={assets}
@@ -455,15 +482,18 @@ export function App() {
             />
           </>
         ) : null}
-        {active_workspace_module === "summary" ? (
+        {active_page === "summary" ? (
           <SummaryWorkspace
             selected_asset={selected_asset}
             segments={segments}
             transcript={transcript}
           />
         ) : null}
+        {active_page === "settings" ? <SettingsPage /> : null}
       </main>
-      {page_error && active_workspace_module !== "download" ? (
+      {page_error &&
+      active_page !== "download" &&
+      active_page !== "settings" ? (
         <p className="workbench_error" role="alert">
           {page_error}
         </p>
