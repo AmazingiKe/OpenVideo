@@ -72,22 +72,6 @@ class MediaLibrary:
         self._lock = RLock()
 
     @classmethod
-    def create_in_parent(cls, parent_path: Path, name: str) -> MediaLibrary:
-        normalized_name = name.strip()
-        if not normalized_name or Path(normalized_name).name != normalized_name:
-            raise InvalidLibraryError("资料库名称无效")
-        root_path = parent_path.resolve() / f"{normalized_name}.openvideo-library"
-        if root_path.exists():
-            raise InvalidLibraryError("目标资料库目录已存在")
-        root_path.mkdir(parents=False)
-        try:
-            return cls._initialize(root_path, normalized_name)
-        except Exception:
-            if root_path.exists() and not any(root_path.iterdir()):
-                root_path.rmdir()
-            raise
-
-    @classmethod
     def initialize_directory(cls, root_path: Path) -> MediaLibrary:
         resolved_path = root_path.resolve()
         if not resolved_path.is_dir():

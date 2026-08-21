@@ -6,10 +6,12 @@ import pytest
 from openvideo.core.library import InvalidLibraryError, LibraryLockedError, MediaLibrary
 
 
-def test_creates_library_in_parent_with_uuid7_manifest(tmp_path: Path):
-    library = MediaLibrary.create_in_parent(tmp_path, "课程")
+def test_initializes_directory_with_uuid7_manifest(tmp_path: Path):
+    library_path = tmp_path / "课程"
+    library_path.mkdir()
+    library = MediaLibrary.initialize_directory(library_path)
 
-    assert library.library_path.name == "课程.openvideo-library"
+    assert library.library_path.name == "课程"
     manifest = json.loads((library.library_path / "library.json").read_text(encoding="utf-8"))
     assert manifest["library_id"].startswith("library-")
     assert len(manifest["library_id"]) == len("library-") + 32

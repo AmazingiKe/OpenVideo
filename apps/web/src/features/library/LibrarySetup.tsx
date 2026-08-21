@@ -1,14 +1,14 @@
-import { Database, TriangleAlert } from "lucide-react";
+import { Database, Info } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { LibraryPathForm } from "@/features/library/LibraryPathForm";
 import type { LibraryDescription } from "@/shared/types";
 
 export function LibrarySetup({
-  error,
+  notice,
   on_library_opened,
 }: {
-  error?: string | null;
+  notice?: string | null;
   on_library_opened: (library: LibraryDescription) => void;
 }) {
   return (
@@ -33,19 +33,15 @@ export function LibrarySetup({
             </p>
           </div>
         </header>
-        {error ? (
-          <Alert variant="destructive">
-            <TriangleAlert aria-hidden="true" />
-            <AlertTitle>无法读取上次的资料库</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-        <div className="grid items-start gap-6 lg:grid-cols-3">
-          <LibraryPathForm action="parent" on_success={on_library_opened} />
-          <LibraryPathForm
-            action="empty_directory"
-            on_success={on_library_opened}
-          />
+        <Alert>
+          <Info aria-hidden="true" />
+          <AlertTitle>请选择或创建资料库</AlertTitle>
+          <AlertDescription>
+            {notice ?? "打开已有资料库，或选择一个空文件夹创建新的资料库。"}
+          </AlertDescription>
+        </Alert>
+        <div className="grid items-start gap-6 md:grid-cols-2">
+          <LibraryPathForm action="initialize" on_success={on_library_opened} />
           <LibraryPathForm action="open" on_success={on_library_opened} />
         </div>
       </section>

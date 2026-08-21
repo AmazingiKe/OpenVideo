@@ -14,6 +14,6 @@ type Story = StoryObj<typeof meta>;
 
 export const Idle: Story = {};
 
-export const InvalidPreviousLibrary: Story = {
-  args: { error: "上次打开的目录已移动或不再是有效资料库。" },
+export const PreviousLibraryUnavailable: Story = {
+  args: { notice: "请选择一个资料库，或选择一个空文件夹创建新的资料库。" },
 };

@@ -31,27 +31,22 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("LibraryPathForm", () => {
-  it("validates required values before creating in a parent directory", () => {
-    render(<LibraryPathForm action="parent" on_success={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "新建资料库" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("请填写完整");
+  it("validates the folder path before initializing", () => {
+    render(<LibraryPathForm action="initialize" on_success={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "初始化文件夹" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("请填写文件夹");
     expect(create_library).not.toHaveBeenCalled();
   });
 
   it("initializes an empty directory", async () => {
     const on_success = vi.fn();
-    render(
-      <LibraryPathForm action="empty_directory" on_success={on_success} />,
-    );
-    fireEvent.change(screen.getByLabelText("空目录绝对路径"), {
+    render(<LibraryPathForm action="initialize" on_success={on_success} />);
+    fireEvent.change(screen.getByLabelText("文件夹绝对路径"), {
       target: { value: "D:\\课程" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "初始化目录" }));
+    fireEvent.click(screen.getByRole("button", { name: "初始化文件夹" }));
     await waitFor(() => expect(on_success).toHaveBeenCalledWith(library));
-    expect(create_library).toHaveBeenCalledWith({
-      mode: "empty_directory",
-      path: "D:\\课程",
-    });
+    expect(create_library).toHaveBeenCalledWith("D:\\课程");
   });
 
   it("opens an existing library", async () => {

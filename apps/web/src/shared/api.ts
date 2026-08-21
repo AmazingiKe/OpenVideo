@@ -49,15 +49,13 @@ export function get_library(
 }
 
 export function create_library(
-  request:
-    | { mode: "parent"; path: string; name: string }
-    | { mode: "empty_directory"; path: string },
+  path: string,
   signal?: AbortSignal,
 ): Promise<LibraryDescription> {
   return request_json("/api/library/create", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ path }),
     signal,
   });
 }

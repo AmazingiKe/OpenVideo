@@ -77,6 +77,8 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "选择 OpenVideo 资料库" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("请选择或创建资料库");
+    expect(screen.queryByText("无法读取上次的资料库")).not.toBeInTheDocument();
     expect(list_assets).not.toHaveBeenCalled();
   });
   it("keeps the library, video and timeline together in one workbench", async () => {

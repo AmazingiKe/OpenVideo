@@ -23,17 +23,15 @@ const LibraryContext = createContext<LibraryContextValue | null>(null);
 export function LibraryProvider({ children }: { children: ReactNode }) {
   const [library, set_library] = useState<LibraryDescription | null>(null);
   const [loading, set_loading] = useState(true);
-  const [error, set_error] = useState<string | null>(null);
+  const [notice, set_notice] = useState<string | null>(null);
 
   const load_library = useCallback(async (signal?: AbortSignal) => {
     try {
       set_library(await get_library(signal));
-      set_error(null);
-    } catch (cause) {
+      set_notice(null);
+    } catch {
       if (!signal?.aborted) {
-        set_error(
-          cause instanceof Error ? cause.message : "无法读取资料库状态",
-        );
+        set_notice("请选择一个资料库，或选择一个空文件夹创建新的资料库。");
       }
     } finally {
       if (!signal?.aborted) set_loading(false);
@@ -65,7 +63,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   if (!library) {
     return (
       <LibrarySetup
-        error={error}
+        notice={notice}
         on_library_opened={(opened_library) => set_library(opened_library)}
       />
     );

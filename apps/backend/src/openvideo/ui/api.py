@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
 import os
-from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -110,9 +109,7 @@ class TranscriptionCreateRequest(BaseModel):
 
 
 class LibraryCreateRequest(BaseModel):
-    mode: Literal["parent", "empty_directory"]
     path: str
-    name: str | None = None
 
 
 class LibraryOpenRequest(BaseModel):
@@ -329,11 +326,7 @@ def create_app(
         _ensure_switch_allowed(manager, analysis_manager)
         requested_path = _absolute_library_path(request.path)
         try:
-            opened = (
-                MediaLibrary.create_in_parent(requested_path, request.name or "")
-                if request.mode == "parent"
-                else MediaLibrary.initialize_directory(requested_path)
-            )
+            opened = MediaLibrary.initialize_directory(requested_path)
         except (LibraryError, OSError) as error:
             error_code = error.code if isinstance(error, LibraryError) else "library_create_failed"
             _library_error(422, error_code, str(error))

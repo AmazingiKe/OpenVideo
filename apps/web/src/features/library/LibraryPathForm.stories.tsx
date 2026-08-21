@@ -13,6 +13,6 @@ type Story = StoryObj<typeof meta>;
 
 export const OpenExisting: Story = {};
 
-export const CreateInParent: Story = { args: { action: "parent" } };
+export const InitializeFolder: Story = { args: { action: "initialize" } };
 
 export const ManagedByEnvironment: Story = { args: { disabled: true } };

@@ -134,12 +134,8 @@ export function SettingsPage() {
             </AlertDescription>
           </Alert>
         ) : (
-          <div className="grid items-start gap-6 lg:grid-cols-3">
-            <LibraryPathForm action="parent" on_success={set_library} />
-            <LibraryPathForm
-              action="empty_directory"
-              on_success={set_library}
-            />
+          <div className="grid items-start gap-6 lg:grid-cols-2">
+            <LibraryPathForm action="initialize" on_success={set_library} />
             <LibraryPathForm action="open" on_success={set_library} />
           </div>
         )}

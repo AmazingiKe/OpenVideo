@@ -21,7 +21,7 @@ def test_library_gate_create_close_and_reopen(tmp_path: Path):
 
         created = client.post(
             "/api/library/create",
-            json={"mode": "empty_directory", "path": str(library_path)},
+            json={"path": str(library_path)},
         )
         assert created.status_code == 201
         assert created.json()["root_path"] == str(library_path.resolve())
@@ -41,7 +41,7 @@ def test_failed_switch_keeps_current_library(tmp_path: Path):
     with TestClient(app) as client:
         created = client.post(
             "/api/library/create",
-            json={"mode": "empty_directory", "path": str(library_path)},
+            json={"path": str(library_path)},
         ).json()
         failed = client.post("/api/library/open", json={"path": str(tmp_path / "missing")})
         assert failed.status_code == 422
