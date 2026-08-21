@@ -3,6 +3,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
+  useEffect,
   useState,
 } from "react";
 
@@ -62,24 +63,34 @@ export function AnalysisTimeline({
     duration * index / RULER_INTERVAL_COUNT
   ));
 
+  useEffect(() => {
+    function add_marker_with_shortcut(event: globalThis.KeyboardEvent) {
+      if (
+        event.repeat
+        || !event.ctrlKey
+        || event.key.toLowerCase() !== "m"
+        || is_text_editing_target(event.target)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void on_add_marker(bounded_time);
+    }
+
+    window.addEventListener("keydown", add_marker_with_shortcut);
+    return () => window.removeEventListener("keydown", add_marker_with_shortcut);
+  }, [bounded_time, on_add_marker]);
+
   return (
     <section className="analysis_timeline" aria-label="剪辑时间轴">
       <header className="analysis_timeline_header">
+        <output aria-label="当前播放时间">
+          {format_time(bounded_time)} / {format_time(duration)}
+        </output>
         <div>
           <strong>时间轴</strong>
           <span>{transcript_segments.length} 条转写 · {segments.length} 个事件 · {markers.length} 个标记</span>
         </div>
-        <button
-          type="button"
-          className="timeline_add_marker"
-          onClick={() => void on_add_marker(bounded_time)}
-          disabled={bounded_time <= 0}
-        >
-          + 标记 @ {format_time(bounded_time)}
-        </button>
-        <output aria-label="当前播放时间">
-          {format_time(bounded_time)} / {format_time(duration)}
-        </output>
       </header>
       <div className="timeline_editor">
         <div className="timeline_track_labels" aria-hidden="true">
@@ -96,11 +107,13 @@ export function AnalysisTimeline({
           aria-valuemin={0}
           aria-valuemax={duration}
           aria-valuenow={bounded_time}
+          title="拖动定位；右键或按 Ctrl+M 添加标记"
           onPointerDown={(event) => start_timeline_scrub(event, duration)}
           onPointerMove={(event) => continue_timeline_scrub(event, duration)}
           onPointerUp={(event) => finish_timeline_scrub(event)}
           onPointerCancel={(event) => finish_timeline_scrub(event)}
           onKeyDown={(event) => scrub_with_keyboard(event, bounded_time, duration)}
+          onContextMenu={(event) => add_marker_from_context_menu(event, duration)}
         >
           <div className="timeline_ruler" aria-hidden="true">
             {ruler_ticks.map((tick) => (
@@ -111,8 +124,6 @@ export function AnalysisTimeline({
           </div>
           <div
             className="timeline_marker_track"
-            onDoubleClick={(event) => add_marker_from_track(event, duration)}
-            title="双击轨道添加标记"
           >
             {markers.map((marker) => (
               <button
@@ -266,8 +277,12 @@ export function AnalysisTimeline({
     }
   }
 
-  function add_marker_from_track(event: MouseEvent<HTMLDivElement>, track_duration: number) {
-    if (event.target !== event.currentTarget) return;
+  function add_marker_from_context_menu(
+    event: MouseEvent<HTMLDivElement>,
+    track_duration: number,
+  ) {
+    if (is_text_editing_target(event.target)) return;
+    event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
     const position = (event.clientX - bounds.left) / bounds.width;
     void on_add_marker(Math.min(Math.max(position * track_duration, 0), track_duration));
@@ -322,6 +337,11 @@ export function AnalysisTimeline({
 
 function is_interactive_target(target: EventTarget): boolean {
   return target instanceof Element && target.closest("button, input, form") !== null;
+}
+
+function is_text_editing_target(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && target.closest("input, textarea, [contenteditable='true']") !== null;
 }
 
 function timeline_duration(

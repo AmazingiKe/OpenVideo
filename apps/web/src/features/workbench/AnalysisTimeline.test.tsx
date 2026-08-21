@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisTimeline } from "./AnalysisTimeline";
@@ -43,11 +43,46 @@ describe("AnalysisTimeline", () => {
     expect(screen.getByLabelText("当前播放时间")).toHaveTextContent("00:30 / 02:00");
     fireEvent.keyDown(screen.getByRole("slider", { name: "时间轴拖动区域" }), { key: "ArrowRight" });
     fireEvent.click(screen.getByRole("button", { name: /矩阵推导/ }));
-    fireEvent.click(screen.getByRole("button", { name: "+ 标记 @ 00:30" }));
+    fireEvent.keyDown(window, { key: "m", ctrlKey: true });
 
     expect(seek_to).toHaveBeenNthCalledWith(1, 31);
     expect(seek_to).toHaveBeenNthCalledWith(2, 45);
     expect(add_marker).toHaveBeenCalledWith(30);
+  });
+
+  it("adds a marker at the right-clicked timeline position", () => {
+    const add_marker = vi.fn();
+    const timeline_view = render(
+      <AnalysisTimeline
+        duration_seconds={120}
+        current_time={0}
+        transcript={null}
+        markers={[]}
+        marker_error={null}
+        segments={[]}
+        on_seek={vi.fn()}
+        on_add_marker={add_marker}
+        on_remove_marker={vi.fn()}
+        on_update_marker_tags={vi.fn()}
+        on_update_transcript={vi.fn()}
+      />,
+    );
+    const timeline = within(timeline_view.container).getByRole("slider", { name: "时间轴拖动区域" });
+    vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({
+      left: 100,
+      right: 500,
+      width: 400,
+      top: 0,
+      bottom: 200,
+      height: 200,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.contextMenu(timeline, { clientX: 300 });
+
+    expect(add_marker).toHaveBeenCalledWith(60);
   });
 
   it("edits and saves a transcript clip on the timeline", async () => {

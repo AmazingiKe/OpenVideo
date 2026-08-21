@@ -183,11 +183,10 @@ button:focus-visible, input:focus-visible { outline: 3px solid #0a84ff66; outlin
 
 .analysis_timeline { display: grid; min-width: 0; grid-column: 1 / -1; grid-row: 2; grid-template-rows: 38px minmax(0, 1fr); border-top: 1px solid #505054; background: #151516; }
 .analysis_timeline_header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 0 14px; border-bottom: 1px solid var(--line-subtle); }
-.analysis_timeline_header > div { display: flex; min-width: 0; align-items: baseline; gap: 9px; }
+.analysis_timeline_header > div { display: flex; min-width: 0; align-items: baseline; gap: 9px; margin-left: auto; }
 .analysis_timeline_header strong { font-size: 11px; font-weight: 600; }
 .analysis_timeline_header span { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .analysis_timeline_header output { flex: 0 0 auto; color: #d1d1d6; font: 10px "Microsoft YaHei", "微软雅黑", sans-serif; }
-.timeline_add_marker { min-height: 24px; margin-left: auto; padding: 0 8px; border: 1px solid #7e6a22; border-radius: 4px; color: #ffe46b; background: #3c330f; font-size: 9px; }
 .timeline_editor { display: grid; min-width: 0; grid-template-columns: 82px minmax(0, 1fr); }
 .timeline_track_labels { display: grid; grid-template-rows: 28px 32px 48px minmax(48px, 1fr); border-right: 1px solid var(--line); color: var(--muted); background: #1b1b1d; font-size: 9px; }
 .timeline_track_labels span { display: flex; align-items: center; padding: 0 10px; border-bottom: 1px solid var(--line-subtle); }
