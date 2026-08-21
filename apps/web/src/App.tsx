@@ -4,7 +4,8 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/app/AppShell";
 import { AssetCatalogProvider } from "@/app/asset_catalog";
 import { TaskManagerProvider } from "@/app/task_manager";
-import { LibraryProvider, use_library } from "@/app/library";
+import { LibraryProvider, use_library_state } from "@/app/library";
+import { LibrarySetup } from "@/features/library/LibrarySetup";
 
 const DownloadsPage = lazy(() =>
   import("@/pages/DownloadsPage").then((module) => ({
@@ -31,14 +32,30 @@ export function App() {
   return (
     <BrowserRouter>
       <LibraryProvider>
-        <LibraryWorkspace />
+        <ApplicationRoutes />
       </LibraryProvider>
     </BrowserRouter>
   );
 }
 
-function LibraryWorkspace() {
-  const { library } = use_library();
+function ApplicationRoutes() {
+  return (
+    <Routes>
+      <Route path="/initialize" element={<InitializeLibraryPage />} />
+      <Route path="*" element={<LibraryGate />} />
+    </Routes>
+  );
+}
+
+function InitializeLibraryPage() {
+  const { library, notice, set_library } = use_library_state();
+  if (library) return <Navigate to="/downloads" replace />;
+  return <LibrarySetup notice={notice} on_library_opened={set_library} />;
+}
+
+function LibraryGate() {
+  const { library } = use_library_state();
+  if (!library) return <Navigate to="/initialize" replace />;
   return (
     <AssetCatalogProvider key={library.library_id}>
       <TaskManagerProvider>

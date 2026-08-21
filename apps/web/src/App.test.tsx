@@ -49,6 +49,7 @@ vi.mock("./features/player/Player", () => ({
 
 describe("App", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/");
     vi.mocked(get_library).mockResolvedValue({
       library_id: "library-0123456789abcdef0123456789abcdef",
       name: "测试资料库",
@@ -79,7 +80,20 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("请选择或创建资料库");
     expect(screen.queryByText("无法读取上次的资料库")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/initialize");
     expect(list_assets).not.toHaveBeenCalled();
+  });
+
+  it("redirects the initialization route when a library is already open", async () => {
+    window.history.replaceState(null, "", "/initialize");
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/downloads"));
   });
   it("keeps the library, video and timeline together in one workbench", async () => {
     vi.mocked(get_health).mockResolvedValue({

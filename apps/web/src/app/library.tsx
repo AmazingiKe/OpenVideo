@@ -8,17 +8,19 @@ import {
   useState,
 } from "react";
 
-import { LibrarySetup } from "@/features/library/LibrarySetup";
+import { Spinner } from "@/components/ui/spinner";
 import { get_library } from "@/shared/api";
 import type { LibraryDescription } from "@/shared/types";
-import { Spinner } from "@/components/ui/spinner";
 
 type LibraryContextValue = {
-  library: LibraryDescription;
+  library: LibraryDescription | null;
   set_library: (library: LibraryDescription | null) => void;
+  notice: string | null;
 };
 
-const LibraryContext = createContext<LibraryContextValue | null>(null);
+const LibraryContext = createContext<LibraryContextValue | undefined>(
+  undefined,
+);
 
 export function LibraryProvider({ children }: { children: ReactNode }) {
   const [library, set_library] = useState<LibraryDescription | null>(null);
@@ -45,8 +47,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   }, [load_library]);
 
   const value = useMemo(
-    () => (library ? { library, set_library } : null),
-    [library],
+    () => ({ library, set_library, notice }),
+    [library, notice],
   );
 
   if (loading) {
@@ -60,25 +62,24 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!library) {
-    return (
-      <LibrarySetup
-        notice={notice}
-        on_library_opened={(opened_library) => set_library(opened_library)}
-      />
-    );
-  }
-
   return (
     <LibraryContext.Provider value={value}>{children}</LibraryContext.Provider>
   );
 }
 
-export function use_library(): LibraryContextValue {
+export function use_library_state(): LibraryContextValue {
   // 项目命名规范要求 snake_case；该函数仍是标准 React Hook。
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const value = useContext(LibraryContext);
   if (!value)
-    throw new Error("use_library 必须在已打开资料库的 LibraryProvider 内使用");
+    throw new Error("use_library_state 必须在 LibraryProvider 内使用");
   return value;
+}
+
+export function use_library(): LibraryContextValue & {
+  library: LibraryDescription;
+} {
+  const value = use_library_state();
+  if (!value.library) throw new Error("当前没有打开的资料库");
+  return { ...value, library: value.library };
 }
