@@ -84,12 +84,14 @@ describe("VideoWorkspace", () => {
 
     const controls = within(workspace.container);
     fireEvent.click(controls.getByRole("button", { name: "后退 10 秒" }));
+    fireEvent.click(controls.getByRole("button", { name: "后退 10 秒" }));
     fireEvent.click(controls.getByRole("button", { name: "播放" }));
     fireEvent.click(controls.getByRole("button", { name: "快进 10 秒" }));
 
     expect(seek_to).toHaveBeenNthCalledWith(1, 10);
+    expect(seek_to).toHaveBeenNthCalledWith(2, 0);
     expect(toggle_playback).toHaveBeenCalledOnce();
-    expect(seek_to).toHaveBeenNthCalledWith(2, 30);
+    expect(seek_to).toHaveBeenNthCalledWith(3, 10);
   });
 });
 

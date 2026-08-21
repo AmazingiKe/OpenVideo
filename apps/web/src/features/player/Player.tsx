@@ -14,6 +14,9 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import "./player.css";
 
 
+const SEEK_CONFIRMATION_TOLERANCE_SECONDS = 0.5;
+const SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS = 1_500;
+
 export type PlayerHandle = {
   seek_to: (seconds: number) => void;
   current_time: () => number;
@@ -46,19 +49,30 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 ) {
   // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
   const seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
-  const current_time_fn_ref = useRef<(() => number) | null>(null);
   const toggle_playback_fn_ref = useRef<(() => void) | null>(null);
+  const current_time_value_ref = useRef(0);
+  const pending_seek_ref = useRef<{ time_seconds: number; requested_at: number } | null>(null);
+  const on_time_change_ref = useRef(on_time_change);
+
+  useEffect(() => {
+    on_time_change_ref.current = on_time_change;
+  }, [on_time_change]);
 
   useImperativeHandle(ref, () => ({
-    seek_to: (seconds: number) => seek_fn_ref.current?.(seconds),
-    current_time: () => current_time_fn_ref.current?.() ?? 0,
+    seek_to: (seconds: number) => {
+      const bounded_time = Math.max(0, seconds);
+      current_time_value_ref.current = bounded_time;
+      pending_seek_ref.current = { time_seconds: bounded_time, requested_at: performance.now() };
+      on_time_change_ref.current?.(bounded_time);
+      seek_fn_ref.current?.(bounded_time);
+    },
+    current_time: () => current_time_value_ref.current,
     toggle_playback: () => toggle_playback_fn_ref.current?.(),
   }), []);
 
   const on_player_ready = useCallback(
     (instance: PlayerRef | null) => {
       seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
-      current_time_fn_ref.current = instance ? () => instance.current_time() : null;
       toggle_playback_fn_ref.current = instance ? () => instance.toggle_playback() : null;
     },
     [],
@@ -98,7 +112,20 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       />
       <PlayerStateBridge
         on_player_ready={on_player_ready}
-        on_time_change={on_time_change}
+        on_time_change={(seconds) => {
+          const pending_seek = pending_seek_ref.current;
+          const is_waiting_for_seek = pending_seek !== null
+            && performance.now() - pending_seek.requested_at < SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS;
+          if (
+            is_waiting_for_seek
+            && Math.abs(seconds - pending_seek.time_seconds) > SEEK_CONFIRMATION_TOLERANCE_SECONDS
+          ) {
+            return;
+          }
+          pending_seek_ref.current = null;
+          current_time_value_ref.current = seconds;
+          on_time_change_ref.current?.(seconds);
+        }}
         on_pause_change={on_pause_change}
       />
     </MediaPlayer>
@@ -108,7 +135,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
 type PlayerRef = {
   seek: (seconds: number) => void;
-  current_time: () => number;
   toggle_playback: () => void;
 };
 
@@ -146,7 +172,6 @@ function PlayerStateBridge({
     // 避免 remote 对象引用变化时产生短暂的 null 窗口。
     on_player_ready({
       seek: (seconds: number) => remote.seek(seconds),
-      current_time: () => player.currentTime,
       toggle_playback: () => {
         if (player.paused) void remote.play();
         else void remote.pause();

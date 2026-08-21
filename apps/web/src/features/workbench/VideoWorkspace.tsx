@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Pause, Play, RotateCcw, RotateCw } from "lucide-react";
 
 import { Player, type PlayerHandle } from "../player/Player";
@@ -33,10 +33,16 @@ export function VideoWorkspace({
   const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(new Set());
   const [is_paused, set_is_paused] = useState(true);
+  const transport_time_ref = useRef<number | null>(null);
 
   useEffect(() => {
     set_selected_marker_ids(new Set(markers.map((marker) => marker.marker_id)));
   }, [asset?.asset_id, markers]);
+
+  useEffect(() => {
+    transport_time_ref.current = null;
+    set_is_paused(true);
+  }, [asset?.asset_id]);
 
   if (!asset?.playback_url) {
     return (
@@ -70,18 +76,29 @@ export function VideoWorkspace({
             label: format_time(marker.time_seconds),
           }))}
           thumbnails={player_storyboard(asset)}
-          on_time_change={on_time_change}
+          on_time_change={(seconds) => {
+            transport_time_ref.current = seconds;
+            on_time_change(seconds);
+          }}
           on_pause_change={set_is_paused}
         />
       </div>
       <div className="video_transport" aria-label="播放控制">
-        <button type="button" onClick={() => seek_relative(player_ref, -10)} aria-label="后退 10 秒">
+        <button
+          type="button"
+          onClick={() => seek_relative(player_ref, transport_time_ref, -10)}
+          aria-label="后退 10 秒"
+        >
           <RotateCcw aria-hidden="true" />
         </button>
         <button type="button" onClick={() => player_ref.current?.toggle_playback()} aria-label={is_paused ? "播放" : "暂停"}>
           {is_paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
         </button>
-        <button type="button" onClick={() => seek_relative(player_ref, 10)} aria-label="快进 10 秒">
+        <button
+          type="button"
+          onClick={() => seek_relative(player_ref, transport_time_ref, 10)}
+          aria-label="快进 10 秒"
+        >
           <RotateCw aria-hidden="true" />
         </button>
       </div>
@@ -152,10 +169,17 @@ export function VideoWorkspace({
   );
 }
 
-function seek_relative(player_ref: RefObject<PlayerHandle | null>, offset_seconds: number) {
+function seek_relative(
+  player_ref: RefObject<PlayerHandle | null>,
+  transport_time_ref: RefObject<number | null>,
+  offset_seconds: number,
+) {
   const player = player_ref.current;
   if (!player) return;
-  player.seek_to(Math.max(0, player.current_time() + offset_seconds));
+  const current_time = transport_time_ref.current ?? player.current_time();
+  const next_time = Math.max(0, current_time + offset_seconds);
+  transport_time_ref.current = next_time;
+  player.seek_to(next_time);
 }
 
 function toggle_marker(current: Set<string>, marker_id: string): Set<string> {

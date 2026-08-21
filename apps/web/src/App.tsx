@@ -301,6 +301,11 @@ export function App() {
     }
   }
 
+  function seek_player(seconds: number) {
+    set_current_time(seconds);
+    player_ref.current?.seek_to(seconds);
+  }
+
   function navigate_to_workspace_module(module: WorkspaceModule) {
     if (window.location.pathname !== module.path) window.history.pushState(null, "", module.path);
     set_active_workspace_module(module.id);
@@ -369,7 +374,7 @@ export function App() {
               segments={segments}
               markers={markers}
               marker_error={marker_error}
-              on_seek={(seconds) => player_ref.current?.seek_to(seconds)}
+              on_seek={seek_player}
               on_add_marker={(seconds) => add_marker(seconds)}
               on_remove_marker={(marker_id) => remove_marker(marker_id)}
               on_update_marker_tags={(marker_id, tags) => update_marker_tags(marker_id, tags)}
