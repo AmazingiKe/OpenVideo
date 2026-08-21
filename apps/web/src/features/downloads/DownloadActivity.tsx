@@ -1,0 +1,168 @@
+import { Download, FileClock, ServerCog, TerminalSquare } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Progress } from "@/components/ui/progress";
+import { TASK_STAGE_LABELS, type TaskRecord } from "@/features/workbench/tasks";
+
+export function DownloadActivity({ tasks }: { tasks: TaskRecord[] }) {
+  return (
+    <section className="flex flex-col gap-4" aria-labelledby="activity_title">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 id="activity_title" className="text-lg font-semibold">
+            下载活动
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            查看后台任务的实时进度与处理记录。
+          </p>
+        </div>
+        <Badge variant="outline">{tasks.length} 项任务</Badge>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ActivityCard
+          icon={FileClock}
+          title="任务队列"
+          description="当前与最近完成的下载任务。"
+        >
+          {tasks.length === 0 ? (
+            <DownloadEmpty
+              icon={Download}
+              title="队列还是空的"
+              description="检测链接并选择视频后，任务会显示在这里。"
+            />
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {tasks.map((task) => (
+                <DownloadTask key={task.task_id} task={task} />
+              ))}
+            </ul>
+          )}
+        </ActivityCard>
+        <ActivityCard
+          icon={TerminalSquare}
+          title="运行日志"
+          description="处理阶段、提示与错误信息。"
+        >
+          {tasks.length === 0 ? (
+            <DownloadEmpty
+              icon={ServerCog}
+              title="暂无运行记录"
+              description="任务开始后，这里会同步显示处理阶段。"
+            />
+          ) : (
+            <ul className="overflow-hidden rounded-lg border">
+              {tasks.map((task) => (
+                <li
+                  key={task.task_id}
+                  className="grid gap-1 border-b px-3 py-2.5 last:border-b-0 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3"
+                >
+                  <span className="text-xs font-medium">
+                    {TASK_STAGE_LABELS[task.stage] ?? task.stage}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {task.error_message ?? task.message}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </ActivityCard>
+      </div>
+    </section>
+  );
+}
+
+function ActivityCard({
+  icon: ActivityIcon,
+  title,
+  description,
+  children,
+}: {
+  icon: typeof Download;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <ActivityIcon
+            className="size-4 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <CardTitle role="heading" aria-level={3}>
+            {title}
+          </CardTitle>
+        </div>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
+}
+
+function DownloadEmpty({
+  icon: EmptyIcon,
+  title,
+  description,
+}: {
+  icon: typeof Download;
+  title: string;
+  description: string;
+}) {
+  return (
+    <Empty className="min-h-40 border">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <EmptyIcon aria-hidden="true" />
+        </EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
+function DownloadTask({ task }: { task: TaskRecord }) {
+  const progress = Math.min(Math.max(task.progress_percent, 0), 100);
+  const stage_label = TASK_STAGE_LABELS[task.stage] ?? task.stage;
+  return (
+    <li className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
+        <Badge variant={task.stage === "failed" ? "destructive" : "secondary"}>
+          {stage_label}
+        </Badge>
+        <span className="truncate text-xs text-muted-foreground">
+          {task.message}
+        </span>
+        <span className="text-xs font-medium tabular-nums">
+          {progress.toFixed(0)}%
+        </span>
+      </div>
+      <Progress
+        value={progress}
+        aria-label={`${stage_label} ${progress.toFixed(0)}%`}
+      />
+      {task.error_message ? (
+        <p className="text-xs text-destructive" role="alert">
+          {task.error_message}
+        </p>
+      ) : null}
+    </li>
+  );
+}

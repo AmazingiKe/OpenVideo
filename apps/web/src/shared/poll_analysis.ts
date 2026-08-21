@@ -1,7 +1,7 @@
 import { get_analysis } from "./api";
 import type { AnalysisJob } from "./types";
 
-export const analysis_poll_interval_ms = 1000;
+const analysis_poll_interval_ms = 1000;
 const max_poll_attempts = 60 * 60 * 6;
 const terminal_stages = new Set(["complete", "failed"]);
 

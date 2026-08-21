@@ -140,10 +140,10 @@ describe("App", () => {
       screen.getByRole("button", { name: "下载 1 个视频" }),
     ).toBeInTheDocument();
     expect(create_download).not.toHaveBeenCalled();
-    const download_module = screen.getByRole("link", { name: "视频下载" });
+    const download_module = screen.getByRole("link", { name: "下载" });
     expect(download_module).toHaveAttribute("aria-current", "page");
 
-    fireEvent.click(screen.getByRole("link", { name: "视频分析" }));
+    fireEvent.click(screen.getByRole("link", { name: "分析" }));
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "演示视频" }),
@@ -157,12 +157,40 @@ describe("App", () => {
 
     expect(window.location.pathname).toBe("/analysis");
     expect(download_module).not.toHaveAttribute("aria-current");
-    expect(screen.getByRole("link", { name: "视频分析" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "分析" })).toHaveAttribute(
       "aria-current",
       "page",
     );
 
     expect(screen.getByText("可回跳的转写。")).toBeInTheDocument();
+  });
+
+  it("redirects unknown paths to downloads", async () => {
+    window.history.replaceState(null, "", "/missing");
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/downloads"));
+    expect(screen.getByRole("link", { name: "下载" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("does not load media data on the settings page", async () => {
+    window.history.replaceState(null, "", "/settings");
+    vi.mocked(list_assets).mockClear();
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "配置 OpenVideo 工作环境" }),
+    ).toBeInTheDocument();
+    expect(list_assets).not.toHaveBeenCalled();
   });
 });
 

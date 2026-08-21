@@ -5,7 +5,7 @@ export function format_duration(duration_seconds: number | null): string {
   return format_clock(total_seconds);
 }
 
-export function format_clock(total_seconds: number): string {
+function format_clock(total_seconds: number): string {
   const hours = Math.floor(total_seconds / 3600);
   const minutes = Math.floor((total_seconds % 3600) / 60);
   const seconds = total_seconds % 60;

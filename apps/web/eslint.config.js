@@ -27,7 +27,11 @@ export default typescript_eslint.config(
     },
   },
   {
-    files: ["src/features/player/use_asset_markers.ts"],
+    files: [
+      "src/**/use_*.{ts,tsx}",
+      "src/app/asset_catalog.tsx",
+      "src/app/task_manager.tsx",
+    ],
     rules: {
       // 项目要求 hook 使用 snake_case，与插件的 useX 命名识别规则不兼容。
       "react-hooks/rules-of-hooks": "off",

@@ -36,7 +36,7 @@
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  --destructive: oklch(0.5 0.2 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -73,7 +73,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #0a84ff66; outlin
 .topbar_settings_link svg { width: 16px; height: 16px; }
 .workbench_brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .workbench_brand svg { width: 18px; color: var(--text); }
-.workbench_brand strong { font-size: 14px; letter-spacing: -.01em; }
+.workbench_brand strong { color: var(--text); font-size: 14px; letter-spacing: -.01em; }
 .workbench_navigation { display: flex; align-self: stretch; align-items: stretch; }
 .workbench_navigation a { position: relative; display: flex; gap: 6px; padding: 0 14px; align-items: center; color: var(--app-muted); font-size: 12px; font-weight: 500; text-decoration: none; white-space: nowrap; }
 .workbench_navigation svg { width: 15px; height: 15px; }

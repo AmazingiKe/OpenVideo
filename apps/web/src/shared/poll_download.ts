@@ -1,8 +1,8 @@
 import { get_download } from "./api";
 import type { DownloadJob } from "./types";
 
-export const poll_interval_ms = 1000;
-export const max_poll_attempts = 60 * 60 * 6;
+const poll_interval_ms = 1000;
+const max_poll_attempts = 60 * 60 * 6;
 
 export async function poll_download(
   initial_job: DownloadJob,

@@ -1,10 +1,10 @@
-export type DependencyStatus = {
+type DependencyStatus = {
   yt_dlp: boolean;
   ffmpeg: boolean;
   ffprobe: boolean;
 };
 
-export type SourcePlatform = "bilibili" | "douyin" | "youtube";
+type SourcePlatform = "bilibili" | "douyin" | "youtube";
 
 export type ProbeEntry = {
   source_video_id: string;
@@ -28,7 +28,7 @@ export type HealthResponse = {
   dependencies: DependencyStatus;
 };
 
-export type DownloadStage =
+type DownloadStage =
   | "pending"
   | "reading_metadata"
   | "downloading"
@@ -47,7 +47,7 @@ export type DownloadJob = {
   updated_at: string;
 };
 
-export type AnalysisStage =
+type AnalysisStage =
   | "pending"
   | "extracting_audio"
   | "transcribing"
@@ -59,7 +59,7 @@ export type AnalysisStage =
 
 export type AnalysisMode = "full" | "markers";
 export type AnalysisOperation = "transcription" | "analysis";
-export type AnalysisCapability = "transcript" | "timeline" | "visual";
+type AnalysisCapability = "transcript" | "timeline" | "visual";
 
 export type AnalysisJob = {
   job_id: string;
@@ -112,7 +112,7 @@ export type MediaMarker = {
   tags: string[];
 };
 
-export type ThumbnailStoryboard = {
+type ThumbnailStoryboard = {
   url: string;
   tile_width: number;
   tile_height: number;
