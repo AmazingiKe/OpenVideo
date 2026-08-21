@@ -28,6 +28,27 @@ export type HealthResponse = {
   dependencies: DependencyStatus;
 };
 
+export type LibraryDescription = {
+  library_id: string;
+  name: string;
+  root_path: string;
+  format_version: number;
+  created_at: string;
+};
+
+export type Preferences = {
+  ffmpeg_path: string | null;
+  ffprobe_path: string | null;
+  whisper_model: string;
+  whisper_language: string | null;
+  whisper_compute_type: string;
+  openai_base_url: string;
+  openai_api_key: string | null;
+  vision_model: string;
+  managed_fields: string[];
+  library_path_managed: boolean;
+};
+
 type DownloadStage =
   | "pending"
   | "reading_metadata"

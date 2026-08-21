@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
+from openvideo.core.library import MediaLibrary
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
@@ -15,10 +16,7 @@ CONTENT = bytes(range(100))
 
 
 def create_client(tmp_path: Path) -> TestClient:
-    app = create_app(Settings(library_path=tmp_path))
-    client = TestClient(app)
-    client.__enter__()
-    library = app.state.library
+    library = MediaLibrary.initialize_directory(tmp_path)
     asset_directory = library.asset_directory(ASSET_ID)
     asset_directory.mkdir(parents=True, exist_ok=True)
     (asset_directory / "playback.mp4").write_bytes(CONTENT)
@@ -33,7 +31,8 @@ def create_client(tmp_path: Path) -> TestClient:
             playback_path="playback.mp4",
         )
     )
-    return client
+    library.close()
+    return TestClient(create_app(Settings(library_path=tmp_path)))
 
 
 def test_analyze_returns_404_for_missing_asset(tmp_path: Path):
@@ -143,13 +142,11 @@ def test_segments_returns_empty_when_missing(tmp_path: Path):
 
 
 def test_segments_and_frame_roundtrip(tmp_path: Path):
-    app = create_app(Settings(library_path=tmp_path))
-    library = app.state.library
-    library.load()
+    library = MediaLibrary.initialize_directory(tmp_path)
     asset_directory = library.asset_directory(ASSET_ID)
     asset_directory.mkdir(parents=True, exist_ok=True)
     (asset_directory / "playback.mp4").write_bytes(CONTENT)
-    frames_directory = asset_directory / ".analysis" / "frames"
+    frames_directory = asset_directory / "artifacts" / "frames"
     frames_directory.mkdir(parents=True, exist_ok=True)
     (frames_directory / "frame.jpg").write_bytes(b"jpeg-bytes")
     library.save(
@@ -172,16 +169,18 @@ def test_segments_and_frame_roundtrip(tmp_path: Path):
                 start_seconds=0,
                 end_seconds=30,
                 transcript_text="重点内容",
-                key_frame_paths=[".analysis/frames/frame.jpg"],
+                key_frame_paths=["artifacts/frames/frame.jpg"],
                 visual_description="画面描述",
             )
         ]
     )
+    library.close()
+    app = create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
         segments_response = client.get(f"/api/media/assets/{ASSET_ID}/segments")
         frame_response = client.get(
-            f"/api/media/assets/{ASSET_ID}/frames/.analysis/frames/frame.jpg"
+            f"/api/media/assets/{ASSET_ID}/frames/artifacts/frames/frame.jpg"
         )
 
     assert segments_response.status_code == 200

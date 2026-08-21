@@ -15,7 +15,7 @@ from openvideo.tools.scenes import detect_scene_boundaries
 from openvideo.tools.vision import VisionDescriber, VisionDescriptionError
 
 
-FRAMES_DIRECTORY_NAME = ".analysis/frames"
+FRAMES_DIRECTORY_NAME = "frames"
 FRAME_POSITIONS = (0.2, 0.5, 0.8)
 MAX_PROMPT_TRANSCRIPT_CHARACTERS = 6000
 TITLE_MAX_CHARACTERS = 32

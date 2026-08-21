@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { forwardRef, useImperativeHandle } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import {
   create_download,
   get_health,
+  get_library,
+  get_preferences,
   get_markers,
   get_segments,
   get_transcript,
@@ -22,6 +24,8 @@ vi.mock("./shared/api", () => ({
   create_marker: vi.fn(),
   delete_marker: vi.fn(),
   get_health: vi.fn(),
+  get_library: vi.fn(),
+  get_preferences: vi.fn(),
   get_markers: vi.fn(),
   get_segments: vi.fn(),
   get_transcript: vi.fn(),
@@ -44,6 +48,37 @@ vi.mock("./features/player/Player", () => ({
 }));
 
 describe("App", () => {
+  beforeEach(() => {
+    vi.mocked(get_library).mockResolvedValue({
+      library_id: "library-0123456789abcdef0123456789abcdef",
+      name: "测试资料库",
+      root_path: "D:\\OpenVideo",
+      format_version: 1,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    vi.mocked(get_preferences).mockResolvedValue({
+      ffmpeg_path: null,
+      ffprobe_path: null,
+      whisper_model: "small",
+      whisper_language: "zh",
+      whisper_compute_type: "int8",
+      openai_base_url: "https://api.openai.com/v1",
+      openai_api_key: null,
+      vision_model: "gpt-5.6-terra",
+      managed_fields: [],
+      library_path_managed: false,
+    });
+  });
+
+  it("shows the library setup before mounting workspace providers", async () => {
+    vi.mocked(get_library).mockResolvedValue(null);
+    vi.mocked(list_assets).mockClear();
+    render(<App />);
+    expect(
+      await screen.findByRole("heading", { name: "选择 OpenVideo 资料库" }),
+    ).toBeInTheDocument();
+    expect(list_assets).not.toHaveBeenCalled();
+  });
   it("keeps the library, video and timeline together in one workbench", async () => {
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",

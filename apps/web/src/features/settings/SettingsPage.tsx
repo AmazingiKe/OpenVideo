@@ -1,15 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Bot,
-  BrainCircuit,
   Database,
   Info,
-  RotateCcw,
   Save,
   Settings2,
+  TriangleAlert,
   Wrench,
 } from "lucide-react";
 
+import { use_library } from "@/app/library";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldDescription,
@@ -29,32 +28,63 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { LibraryPathForm } from "@/features/library/LibraryPathForm";
+import { get_preferences, update_preferences } from "@/shared/api";
+import type { Preferences } from "@/shared/types";
 
-const DEFAULT_SETTINGS = {
-  library_path: "./library",
-  ffmpeg_path: "",
-  ffprobe_path: "",
-  whisper_model: "small",
-  whisper_language: "zh",
-  whisper_compute_type: "int8",
-  openai_base_url: "https://api.openai.com/v1",
-  openai_api_key: "",
-  vision_model: "gpt-5.6-terra",
-};
-
-type SettingsDraft = typeof DEFAULT_SETTINGS;
+type EditableField = Exclude<
+  keyof Preferences,
+  "managed_fields" | "library_path_managed"
+>;
 
 export function SettingsPage() {
-  const [settings, set_settings] = useState<SettingsDraft>(DEFAULT_SETTINGS);
-  const [detect_language, set_detect_language] = useState(false);
+  const { library, set_library } = use_library();
+  const [preferences, set_preferences] = useState<Preferences | null>(null);
+  const [saving, set_saving] = useState(false);
+  const [message, set_message] = useState<string | null>(null);
 
-  function update_setting(field: keyof SettingsDraft, value: string) {
-    set_settings((current) => ({ ...current, [field]: value }));
+  useEffect(() => {
+    const controller = new AbortController();
+    get_preferences(controller.signal)
+      .then(set_preferences)
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          set_message(error instanceof Error ? error.message : "读取设置失败");
+        }
+      });
+    return () => controller.abort();
+  }, []);
+
+  function update_field(field: EditableField, value: string) {
+    set_preferences((current) =>
+      current ? { ...current, [field]: value || null } : current,
+    );
   }
 
-  function reset_settings() {
-    set_settings(DEFAULT_SETTINGS);
-    set_detect_language(false);
+  async function save() {
+    if (!preferences) return;
+    set_saving(true);
+    set_message(null);
+    try {
+      set_preferences(
+        await update_preferences({
+          ffmpeg_path: preferences.ffmpeg_path,
+          ffprobe_path: preferences.ffprobe_path,
+          whisper_model: preferences.whisper_model,
+          whisper_language: preferences.whisper_language,
+          whisper_compute_type: preferences.whisper_compute_type,
+          openai_base_url: preferences.openai_base_url,
+          openai_api_key: preferences.openai_api_key,
+          vision_model: preferences.vision_model,
+        }),
+      );
+      set_message("设置已保存");
+    } catch (error) {
+      set_message(error instanceof Error ? error.message : "保存设置失败");
+    } finally {
+      set_saving(false);
+    }
   }
 
   return (
@@ -62,315 +92,238 @@ export function SettingsPage() {
       className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 md:px-8 md:py-10"
       aria-labelledby="settings_page_title"
     >
-      <header className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-        <div className="max-w-2xl">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary">
-            <Settings2 className="size-4" aria-hidden="true" />
+      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div className="flex max-w-2xl flex-col gap-3">
+          <span className="flex items-center gap-2 text-sm font-medium text-primary">
+            <Settings2 aria-hidden="true" />
             系统设置
-          </div>
+          </span>
           <h1
             id="settings_page_title"
             className="text-2xl font-semibold tracking-tight sm:text-3xl"
           >
             配置 OpenVideo 工作环境
           </h1>
-          <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
-            管理媒体存储、本地转写和 AI 视觉分析所使用的服务参数。
+          <p className="text-muted-foreground">
+            管理当前资料库、本地媒体工具、转写和 AI 分析参数。
           </p>
         </div>
-        <Badge className="w-fit" variant="outline">
-          配置草稿
-        </Badge>
+        <Badge variant="outline">仅保存在本机</Badge>
       </header>
 
-      <Alert>
-        <Info aria-hidden="true" />
-        <AlertTitle>当前配置由后端环境变量管理</AlertTitle>
-        <AlertDescription>
-          此页面先用于确认设置结构与交互。保存接口接入前，修改不会影响正在运行的任务。
-        </AlertDescription>
-      </Alert>
+      <SettingsCard
+        icon={Database}
+        title="当前资料库"
+        description="切换成功后，资源与任务状态会按资料库重新加载。"
+      >
+        <div className="flex flex-col gap-2">
+          <p className="font-medium">{library.name}</p>
+          <p className="font-mono text-xs break-all text-muted-foreground">
+            {library.root_path}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            格式版本 {library.format_version}
+          </p>
+        </div>
+        {preferences?.library_path_managed ? (
+          <Alert>
+            <Info aria-hidden="true" />
+            <AlertTitle>资料库由环境变量管理</AlertTitle>
+            <AlertDescription>
+              当前进程无法创建、切换或关闭资料库。
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <div className="grid items-start gap-6 lg:grid-cols-3">
+            <LibraryPathForm action="parent" on_success={set_library} />
+            <LibraryPathForm
+              action="empty_directory"
+              on_success={set_library}
+            />
+            <LibraryPathForm action="open" on_success={set_library} />
+          </div>
+        )}
+      </SettingsCard>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
-        <nav
-          className="flex gap-2 overflow-x-auto rounded-xl border bg-card p-2 lg:sticky lg:top-6 lg:flex-col"
-          aria-label="设置分类"
+      {!preferences ? (
+        <div
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+          role="status"
         >
-          <SettingsSectionLink href="#storage_settings" icon={Database}>
-            存储与工具
-          </SettingsSectionLink>
-          <SettingsSectionLink
-            href="#transcription_settings"
-            icon={BrainCircuit}
-          >
-            本地转写
-          </SettingsSectionLink>
-          <SettingsSectionLink href="#ai_settings" icon={Bot}>
-            AI 分析
-          </SettingsSectionLink>
-        </nav>
-
-        <div className="flex min-w-0 flex-col gap-6">
+          <Spinner /> 正在读取设置
+        </div>
+      ) : (
+        <>
+          {preferences.managed_fields.length > 0 ? (
+            <Alert>
+              <Info aria-hidden="true" />
+              <AlertTitle>部分字段由环境变量管理</AlertTitle>
+              <AlertDescription>
+                标记为“环境变量”的字段只读，环境变量值始终优先。
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <SettingsCard
-            id="storage_settings"
-            icon={Database}
-            title="存储与工具"
-            description="设置媒体库位置，以及视频处理工具的可执行文件路径。"
+            icon={Wrench}
+            title="媒体工具与转写"
+            description="留空时从应用工具目录和系统 PATH 查找。"
           >
             <FieldGroup>
-              <SettingsInput
-                id="library_path"
-                label="媒体库路径"
-                value={settings.library_path}
-                description="视频、缩略图、转写和分析结果会集中保存在此目录。"
-                placeholder="./library"
-                on_value_change={(value) =>
-                  update_setting("library_path", value)
-                }
-              />
               <div className="grid gap-5 md:grid-cols-2">
-                <SettingsInput
-                  id="ffmpeg_path"
+                <PreferenceInput
+                  field="ffmpeg_path"
                   label="FFmpeg 路径"
-                  value={settings.ffmpeg_path}
-                  description="留空时从系统 PATH 和项目工具目录查找。"
-                  placeholder="自动检测"
-                  on_value_change={(value) =>
-                    update_setting("ffmpeg_path", value)
-                  }
+                  value={preferences.ffmpeg_path ?? ""}
+                  preferences={preferences}
+                  on_change={update_field}
                 />
-                <SettingsInput
-                  id="ffprobe_path"
+                <PreferenceInput
+                  field="ffprobe_path"
                   label="FFprobe 路径"
-                  value={settings.ffprobe_path}
-                  description="留空时跟随 FFmpeg 的查找规则。"
-                  placeholder="自动检测"
-                  on_value_change={(value) =>
-                    update_setting("ffprobe_path", value)
-                  }
+                  value={preferences.ffprobe_path ?? ""}
+                  preferences={preferences}
+                  on_change={update_field}
                 />
-              </div>
-            </FieldGroup>
-          </SettingsCard>
-
-          <SettingsCard
-            id="transcription_settings"
-            icon={BrainCircuit}
-            title="本地转写"
-            description="配置 Whisper 模型、语言提示和本地推理精度。"
-          >
-            <FieldGroup>
-              <div className="grid gap-5 md:grid-cols-2">
-                <SettingsInput
-                  id="whisper_model"
+                <PreferenceInput
+                  field="whisper_model"
                   label="Whisper 模型"
-                  value={settings.whisper_model}
-                  description="可使用 tiny、base、small、medium 或 large。"
-                  placeholder="small"
-                  on_value_change={(value) =>
-                    update_setting("whisper_model", value)
-                  }
+                  value={preferences.whisper_model}
+                  preferences={preferences}
+                  on_change={update_field}
                 />
-                <SettingsInput
-                  id="whisper_compute_type"
+                <PreferenceInput
+                  field="whisper_language"
+                  label="转写语言"
+                  value={preferences.whisper_language ?? ""}
+                  preferences={preferences}
+                  on_change={update_field}
+                />
+                <PreferenceInput
+                  field="whisper_compute_type"
                   label="计算精度"
-                  value={settings.whisper_compute_type}
-                  description="CPU 环境推荐使用 int8。"
-                  placeholder="int8"
-                  on_value_change={(value) =>
-                    update_setting("whisper_compute_type", value)
-                  }
+                  value={preferences.whisper_compute_type}
+                  preferences={preferences}
+                  on_change={update_field}
                 />
               </div>
-              <Field data-disabled={detect_language}>
-                <FieldLabel htmlFor="whisper_language">转写语言</FieldLabel>
-                <Input
-                  id="whisper_language"
-                  value={settings.whisper_language}
-                  onChange={(event) =>
-                    update_setting("whisper_language", event.target.value)
-                  }
-                  placeholder="zh"
-                  disabled={detect_language}
-                />
-                <FieldDescription>
-                  输入 ISO 语言代码，或启用自动检测。
-                </FieldDescription>
-              </Field>
-              <Field className="flex-row items-start">
-                <Checkbox
-                  id="detect_language"
-                  aria-label="自动检测语言"
-                  checked={detect_language}
-                  onCheckedChange={(checked) =>
-                    set_detect_language(checked === true)
-                  }
-                />
-                <div className="flex flex-col gap-1">
-                  <FieldLabel htmlFor="detect_language">
-                    自动检测语言
-                  </FieldLabel>
-                  <FieldDescription>
-                    不向 Whisper 提供固定语言提示，适合多语言素材。
-                  </FieldDescription>
-                </div>
-              </Field>
             </FieldGroup>
           </SettingsCard>
-
           <SettingsCard
-            id="ai_settings"
             icon={Bot}
             title="AI 分析"
             description="连接 OpenAI 兼容接口，为关键帧补充视觉理解。"
           >
             <FieldGroup>
-              <SettingsInput
-                id="openai_base_url"
+              <PreferenceInput
+                field="openai_base_url"
                 label="接口地址"
-                value={settings.openai_base_url}
-                description="支持 OpenAI 官方接口或兼容网关。"
-                placeholder="https://api.openai.com/v1"
-                type="url"
-                on_value_change={(value) =>
-                  update_setting("openai_base_url", value)
-                }
+                value={preferences.openai_base_url}
+                preferences={preferences}
+                on_change={update_field}
               />
               <div className="grid gap-5 md:grid-cols-2">
-                <SettingsInput
-                  id="openai_api_key"
+                <PreferenceInput
+                  field="openai_api_key"
                   label="API 密钥"
-                  value={settings.openai_api_key}
-                  description="留空时仅生成音频时间轴。"
-                  placeholder="未配置"
+                  value={preferences.openai_api_key ?? ""}
                   type="password"
-                  on_value_change={(value) =>
-                    update_setting("openai_api_key", value)
-                  }
+                  description="密钥将以明文保存在本机 preferences.json。"
+                  preferences={preferences}
+                  on_change={update_field}
                 />
-                <SettingsInput
-                  id="vision_model"
+                <PreferenceInput
+                  field="vision_model"
                   label="视觉模型"
-                  value={settings.vision_model}
-                  description="用于多帧画面与转写内容的联合分析。"
-                  placeholder="gpt-5.6-terra"
-                  on_value_change={(value) =>
-                    update_setting("vision_model", value)
-                  }
+                  value={preferences.vision_model}
+                  preferences={preferences}
+                  on_change={update_field}
                 />
               </div>
             </FieldGroup>
           </SettingsCard>
-
+          {message ? (
+            <Alert
+              variant={message === "设置已保存" ? "default" : "destructive"}
+            >
+              <TriangleAlert aria-hidden="true" />
+              <AlertTitle>{message}</AlertTitle>
+            </Alert>
+          ) : null}
           <Card>
-            <CardFooter className="flex-col justify-between gap-4 sm:flex-row">
-              <p className="text-sm text-muted-foreground">
-                保存能力将在后端设置接口接入后启用。
-              </p>
-              <div className="flex w-full gap-2 sm:w-auto">
-                <Button
-                  className="flex-1 sm:flex-none"
-                  type="button"
-                  variant="outline"
-                  onClick={reset_settings}
-                >
-                  <RotateCcw data-icon="inline-start" />
-                  恢复默认值
-                </Button>
-                <Button className="flex-1 sm:flex-none" type="button" disabled>
+            <CardFooter className="justify-end">
+              <Button type="button" onClick={save} disabled={saving}>
+                {saving ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
                   <Save data-icon="inline-start" />
-                  保存设置
-                </Button>
-              </div>
+                )}
+                {saving ? "正在保存" : "保存设置"}
+              </Button>
             </CardFooter>
           </Card>
-        </div>
-      </div>
+        </>
+      )}
     </section>
   );
 }
 
-function SettingsSectionLink({
-  href,
-  icon: LinkIcon,
-  children,
-}: {
-  href: string;
-  icon: typeof Database;
-  children: string;
-}) {
-  return (
-    <a
-      className="flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-      href={href}
-    >
-      <LinkIcon className="size-4" aria-hidden="true" />
-      {children}
-    </a>
-  );
-}
-
 function SettingsCard({
-  id,
-  icon: SectionIcon,
+  icon: Icon,
   title,
   description,
   children,
 }: {
-  id: string;
-  icon: typeof Wrench;
+  icon: typeof Database;
   title: string;
   description: string;
   children: React.ReactNode;
 }) {
   return (
-    <Card id={id} className="scroll-mt-6">
-      <CardHeader className="border-b">
-        <div className="flex items-start gap-3">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-muted text-foreground">
-            <SectionIcon aria-hidden="true" />
-          </div>
-          <div>
-            <CardTitle role="heading" aria-level={2}>
-              {title}
-            </CardTitle>
-            <CardDescription>{description}</CardDescription>
-          </div>
-        </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Icon aria-hidden="true" />
+          {title}
+        </CardTitle>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className="flex flex-col gap-6">{children}</CardContent>
     </Card>
   );
 }
 
-function SettingsInput({
-  id,
+function PreferenceInput({
+  field,
   label,
   value,
-  description,
-  placeholder,
+  preferences,
+  on_change,
   type = "text",
-  on_value_change,
+  description,
 }: {
-  id: string;
+  field: EditableField;
   label: string;
   value: string;
-  description: string;
-  placeholder: string;
-  type?: "text" | "url" | "password";
-  on_value_change: (value: string) => void;
+  preferences: Preferences;
+  on_change: (field: EditableField, value: string) => void;
+  type?: "text" | "password";
+  description?: string;
 }) {
+  const managed = preferences.managed_fields.includes(field);
   return (
-    <Field>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+    <Field data-disabled={managed}>
+      <FieldLabel htmlFor={field}>
+        {label}
+        {managed ? <Badge variant="secondary">环境变量</Badge> : null}
+      </FieldLabel>
       <Input
-        id={id}
+        id={field}
         type={type}
         value={value}
-        onChange={(event) => on_value_change(event.target.value)}
-        placeholder={placeholder}
+        onChange={(event) => on_change(field, event.target.value)}
+        disabled={managed}
       />
-      <FieldDescription>{description}</FieldDescription>
+      {description ? <FieldDescription>{description}</FieldDescription> : null}
     </Field>
   );
 }

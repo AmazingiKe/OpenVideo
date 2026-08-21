@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/app/AppShell";
 import { AssetCatalogProvider } from "@/app/asset_catalog";
 import { TaskManagerProvider } from "@/app/task_manager";
+import { LibraryProvider, use_library } from "@/app/library";
 
 const DownloadsPage = lazy(() =>
   import("@/pages/DownloadsPage").then((module) => ({
@@ -29,19 +30,28 @@ const SettingsPage = lazy(() =>
 export function App() {
   return (
     <BrowserRouter>
-      <AssetCatalogProvider>
-        <TaskManagerProvider>
-          <Routes>
-            <Route element={<AppShell />}>
-              <Route path="/downloads" element={<DownloadsPage />} />
-              <Route path="/analysis" element={<AnalysisPage />} />
-              <Route path="/summary" element={<SummaryPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/downloads" replace />} />
-            </Route>
-          </Routes>
-        </TaskManagerProvider>
-      </AssetCatalogProvider>
+      <LibraryProvider>
+        <LibraryWorkspace />
+      </LibraryProvider>
     </BrowserRouter>
+  );
+}
+
+function LibraryWorkspace() {
+  const { library } = use_library();
+  return (
+    <AssetCatalogProvider key={library.library_id}>
+      <TaskManagerProvider>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="/downloads" element={<DownloadsPage />} />
+            <Route path="/analysis" element={<AnalysisPage />} />
+            <Route path="/summary" element={<SummaryPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/downloads" replace />} />
+          </Route>
+        </Routes>
+      </TaskManagerProvider>
+    </AssetCatalogProvider>
   );
 }

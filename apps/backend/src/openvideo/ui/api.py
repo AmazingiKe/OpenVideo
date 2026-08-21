@@ -2,10 +2,12 @@ from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
+import os
+from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from openvideo.application import (
@@ -16,7 +18,12 @@ from openvideo.application import (
 )
 from openvideo.core.analysis_models import AnalysisJob, AnalysisMode, Transcript
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
-from openvideo.core.library import MediaLibrary
+from openvideo.core.library import (
+    InvalidLibraryError,
+    LibraryDescription,
+    LibraryError,
+    MediaLibrary,
+)
 from openvideo.core.identifiers import uuid7
 from openvideo.core.models import (
     DownloadJob,
@@ -26,7 +33,8 @@ from openvideo.core.models import (
     MediaSegment,
     SourcePlatform,
 )
-from openvideo.settings import Settings, load_settings
+from openvideo.preferences import PreferenceStore
+from openvideo.settings import Settings, load_settings, preferences_from_settings
 from openvideo.tools.downloader import (
     DownloadFailure,
     PlaylistProbe,
@@ -101,17 +109,87 @@ class TranscriptionCreateRequest(BaseModel):
     force: bool = False
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    resolved_settings = settings or load_settings()
-    library = MediaLibrary(resolved_settings.library_path)
-    manager = DownloadManager(library, resolved_settings)
-    analysis_manager = AnalysisManager(library, resolved_settings)
+class LibraryCreateRequest(BaseModel):
+    mode: Literal["parent", "empty_directory"]
+    path: str
+    name: str | None = None
+
+
+class LibraryOpenRequest(BaseModel):
+    path: str
+
+
+class PreferencesPatch(BaseModel):
+    ffmpeg_path: str | None = None
+    ffprobe_path: str | None = None
+    whisper_model: str | None = None
+    whisper_language: str | None = None
+    whisper_compute_type: str | None = None
+    openai_base_url: str | None = None
+    openai_api_key: str | None = None
+    vision_model: str | None = None
+
+
+class PreferencesResponse(BaseModel):
+    ffmpeg_path: str | None
+    ffprobe_path: str | None
+    whisper_model: str
+    whisper_language: str | None
+    whisper_compute_type: str
+    openai_base_url: str
+    openai_api_key: str | None
+    vision_model: str
+    managed_fields: list[str]
+    library_path_managed: bool
+
+
+def create_app(
+    settings: Settings | None = None,
+    preference_store: PreferenceStore | None = None,
+) -> FastAPI:
+    preference_store = preference_store or PreferenceStore()
+    resolved_settings = settings or load_settings(preference_store)
+    library: MediaLibrary | None = None
+    manager: DownloadManager | None = None
+    analysis_manager: AnalysisManager | None = None
+
+    async def install_library(opened_library: MediaLibrary) -> None:
+        nonlocal library, manager, analysis_manager
+        library = opened_library
+        manager = DownloadManager(opened_library, resolved_settings)
+        analysis_manager = AnalysisManager(opened_library, resolved_settings)
+        analysis_manager.restore()
+        app.state.library = opened_library
+        app.state.download_manager = manager
+        app.state.analysis_manager = analysis_manager
+
+    def require_library() -> MediaLibrary:
+        if library is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "library_not_open", "message": "尚未打开资料库"},
+            )
+        return library
+
+    def save_current_path(path: str | None) -> None:
+        if os.getenv("OPENVIDEO_LIBRARY_PATH") is None:
+            preference_store.save(preferences_from_settings(resolved_settings, path))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        library.load()
-        analysis_manager.restore()
-        yield
+        if library is None and resolved_settings.library_path:
+            try:
+                if (resolved_settings.library_path / "library.json").is_file():
+                    await install_library(MediaLibrary.open(resolved_settings.library_path))
+                elif settings is not None and not any(resolved_settings.library_path.iterdir()):
+                    await install_library(MediaLibrary.initialize_directory(resolved_settings.library_path))
+            except (LibraryError, OSError):
+                pass
+        try:
+            yield
+        finally:
+            if library:
+                library.close()
 
     app = FastAPI(title="OpenVideo API", version="0.1.0", lifespan=lifespan)
     app.state.library = library
@@ -223,6 +301,93 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if job.stage.value != "complete":
             analysis_manager.start(job.job_id)
         return job
+
+    @app.exception_handler(HTTPException)
+    async def http_error(_: Request, error: HTTPException):
+        if isinstance(error.detail, dict) and "code" in error.detail:
+            return JSONResponse(status_code=error.status_code, content=error.detail)
+        return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
+
+    @app.middleware("http")
+    async def require_open_library(request: Request, call_next):
+        managed_prefixes = ("/api/media", "/api/downloads", "/api/analysis")
+        if request.url.path.startswith(managed_prefixes) and library is None:
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={"code": "library_not_open", "message": "尚未打开资料库"},
+            )
+        return await call_next(request)
+
+    @app.get("/api/library", response_model=LibraryDescription | None)
+    def get_library() -> LibraryDescription | None:
+        return library.description if library else None
+
+    @app.post("/api/library/create", response_model=LibraryDescription, status_code=201)
+    async def create_library(request: LibraryCreateRequest) -> LibraryDescription:
+        if os.getenv("OPENVIDEO_LIBRARY_PATH"):
+            _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法切换")
+        _ensure_switch_allowed(manager, analysis_manager)
+        requested_path = _absolute_library_path(request.path)
+        try:
+            opened = (
+                MediaLibrary.create_in_parent(requested_path, request.name or "")
+                if request.mode == "parent"
+                else MediaLibrary.initialize_directory(requested_path)
+            )
+        except (LibraryError, OSError) as error:
+            error_code = error.code if isinstance(error, LibraryError) else "library_create_failed"
+            _library_error(422, error_code, str(error))
+        if library:
+            library.close()
+        await install_library(opened)
+        save_current_path(str(opened.library_path))
+        return opened.description
+
+    @app.post("/api/library/open", response_model=LibraryDescription)
+    async def open_library(request: LibraryOpenRequest) -> LibraryDescription:
+        if os.getenv("OPENVIDEO_LIBRARY_PATH"):
+            _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法切换")
+        target = _absolute_library_path(request.path)
+        if library and target == library.library_path:
+            return library.description
+        _ensure_switch_allowed(manager, analysis_manager)
+        try:
+            opened = MediaLibrary.open(target)
+        except (LibraryError, OSError) as error:
+            error_code = error.code if isinstance(error, LibraryError) else "library_open_failed"
+            _library_error(422, error_code, str(error))
+        if library:
+            library.close()
+        await install_library(opened)
+        save_current_path(str(opened.library_path))
+        return opened.description
+
+    @app.delete("/api/library", status_code=204)
+    def close_library() -> Response:
+        nonlocal library, manager, analysis_manager
+        if os.getenv("OPENVIDEO_LIBRARY_PATH"):
+            _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法关闭")
+        _ensure_switch_allowed(manager, analysis_manager)
+        if library:
+            library.close()
+        library = None
+        manager = None
+        analysis_manager = None
+        app.state.library = None
+        save_current_path(None)
+        return Response(status_code=204)
+
+    @app.get("/api/preferences", response_model=PreferencesResponse)
+    def get_preferences() -> PreferencesResponse:
+        return _preferences_response(resolved_settings)
+
+    @app.patch("/api/preferences", response_model=PreferencesResponse)
+    def update_preferences(request: PreferencesPatch) -> PreferencesResponse:
+        for field, value in request.model_dump(exclude_unset=True).items():
+            if field not in resolved_settings.managed_fields:
+                setattr(resolved_settings, field, value)
+        save_current_path(str(library.library_path) if library else None)
+        return _preferences_response(resolved_settings)
 
     @app.post(
         "/api/media/assets/{asset_id}/transcribe",
@@ -435,6 +600,36 @@ def _probe_response(platform: SourcePlatform, probe: PlaylistProbe) -> ProbeResp
         ],
         truncated=probe.truncated,
         total_count=probe.total_count,
+    )
+
+
+def _library_error(status_code: int, code: str, message: str):
+    raise HTTPException(status_code=status_code, detail={"code": code, "message": message})
+
+
+def _absolute_library_path(raw_path: str) -> Path:
+    path = Path(raw_path)
+    if not path.is_absolute():
+        _library_error(422, "library_path_not_absolute", "资料库路径必须是绝对路径")
+    return path.resolve()
+
+
+def _ensure_switch_allowed(
+    manager: DownloadManager | None,
+    analysis_manager: AnalysisManager | None,
+) -> None:
+    if (manager and manager.has_active_jobs()) or (
+        analysis_manager and analysis_manager.has_active_jobs()
+    ):
+        _library_error(409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库")
+
+
+def _preferences_response(settings: Settings) -> PreferencesResponse:
+    values = settings.model_dump(exclude={"library_path", "cors_origins", "managed_fields"})
+    return PreferencesResponse(
+        **values,
+        managed_fields=sorted(settings.managed_fields),
+        library_path_managed=os.getenv("OPENVIDEO_LIBRARY_PATH") is not None,
     )
 
 

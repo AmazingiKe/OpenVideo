@@ -1,59 +1,69 @@
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from openvideo.preferences import PreferenceStore, Preferences
 
-# API 无鉴权且面向局域网开放，默认放行所有来源；可用 OPENVIDEO_CORS_ORIGINS 收紧。
-DEFAULT_CORS_ORIGINS = ("*",)
-# 本地 ASR 默认值：small 模型兼顾准确度与 CPU 可运行性，中文优先。
-DEFAULT_WHISPER_MODEL = "small"
-DEFAULT_WHISPER_LANGUAGE = "zh"
-DEFAULT_WHISPER_COMPUTE_TYPE = "int8"
-# 视觉模型走 OpenAI 兼容接口，默认官方地址，可通过环境变量指向任意兼容网关。
-DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_VISION_MODEL = "gpt-5.6-terra"
+
+DEFAULT_CORS_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
+SETTING_ENVIRONMENTS = {
+    "ffmpeg_path": "OPENVIDEO_FFMPEG_PATH",
+    "ffprobe_path": "OPENVIDEO_FFPROBE_PATH",
+    "whisper_model": "OPENVIDEO_WHISPER_MODEL",
+    "whisper_language": "OPENVIDEO_WHISPER_LANGUAGE",
+    "whisper_compute_type": "OPENVIDEO_WHISPER_COMPUTE_TYPE",
+    "openai_base_url": "OPENVIDEO_OPENAI_BASE_URL",
+    "openai_api_key": "OPENVIDEO_OPENAI_API_KEY",
+    "vision_model": "OPENVIDEO_VISION_MODEL",
+}
 
 
 class Settings(BaseModel):
-    library_path: Path
+    library_path: Path | None = None
     ffmpeg_path: str | None = None
     ffprobe_path: str | None = None
     cors_origins: list[str] = Field(default_factory=lambda: list(DEFAULT_CORS_ORIGINS))
-    whisper_model: str = DEFAULT_WHISPER_MODEL
-    whisper_language: str | None = DEFAULT_WHISPER_LANGUAGE
-    whisper_compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE
-    openai_base_url: str = DEFAULT_OPENAI_BASE_URL
+    whisper_model: str = "small"
+    whisper_language: str | None = "zh"
+    whisper_compute_type: str = "int8"
+    openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: str | None = None
-    vision_model: str = DEFAULT_VISION_MODEL
+    vision_model: str = "gpt-5.6-terra"
+    managed_fields: set[str] = Field(default_factory=set)
 
     @property
     def ffmpeg_bin_dir(self) -> Path:
-        # 项目内工具目录与媒体库同级的 tools/ffmpeg/bin，便于免安装直接使用。
-        return self.library_path.parent / "tools" / "ffmpeg" / "bin"
+        configured = os.getenv("OPENVIDEO_TOOLS_PATH")
+        return Path(configured).resolve() if configured else Path.cwd() / "tools" / "ffmpeg" / "bin"
 
 
-def load_settings() -> Settings:
-    """把进程环境集中转换成运行配置，避免路径和安全边界散落在业务代码中。"""
-    default_library_path = Path.cwd() / "library"
-    library_path = Path(os.getenv("OPENVIDEO_LIBRARY_PATH", default_library_path)).resolve()
+def load_settings(store: PreferenceStore | None = None) -> Settings:
+    preferences = (store or PreferenceStore()).load()
+    values = preferences.model_dump(exclude={"current_library_path"})
+    managed_fields: set[str] = set()
+    for field, environment_name in SETTING_ENVIRONMENTS.items():
+        if environment_name in os.environ:
+            values[field] = os.environ[environment_name] or None
+            managed_fields.add(field)
     raw_origins = os.getenv("OPENVIDEO_CORS_ORIGINS")
-    cors_origins = (
+    origins = (
         [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
         if raw_origins
         else list(DEFAULT_CORS_ORIGINS)
     )
+    environment_library = os.getenv("OPENVIDEO_LIBRARY_PATH")
+    library_path = environment_library or preferences.current_library_path
     return Settings(
-        library_path=library_path,
-        ffmpeg_path=os.getenv("OPENVIDEO_FFMPEG_PATH") or None,
-        ffprobe_path=os.getenv("OPENVIDEO_FFPROBE_PATH") or None,
-        cors_origins=cors_origins,
-        whisper_model=os.getenv("OPENVIDEO_WHISPER_MODEL", DEFAULT_WHISPER_MODEL),
-        whisper_language=os.getenv("OPENVIDEO_WHISPER_LANGUAGE", DEFAULT_WHISPER_LANGUAGE) or None,
-        whisper_compute_type=os.getenv(
-            "OPENVIDEO_WHISPER_COMPUTE_TYPE", DEFAULT_WHISPER_COMPUTE_TYPE
-        ),
-        openai_base_url=os.getenv("OPENVIDEO_OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL),
-        openai_api_key=os.getenv("OPENVIDEO_OPENAI_API_KEY") or None,
-        vision_model=os.getenv("OPENVIDEO_VISION_MODEL", DEFAULT_VISION_MODEL),
+        library_path=Path(library_path).resolve() if library_path else None,
+        cors_origins=origins,
+        managed_fields=managed_fields,
+        **values,
     )
+
+
+def preferences_from_settings(settings: Settings, current_library_path: str | None) -> Preferences:
+    values = settings.model_dump(exclude={"library_path", "cors_origins", "managed_fields"})
+    return Preferences(current_library_path=current_library_path, **values)

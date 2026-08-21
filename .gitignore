@@ -12,7 +12,7 @@ __pycache__/
 .ruff_cache/
 
 # Runtime data
-library/
+/library/
 
 # 本地媒体工具二进制
 tools/ffmpeg/

@@ -3,11 +3,13 @@ import type {
   AnalysisMode,
   DownloadJob,
   HealthResponse,
+  LibraryDescription,
   MediaAsset,
   MediaMarker,
   MediaSegment,
   ProbeResponse,
   Transcript,
+  Preferences,
 } from "./types";
 
 const api_base_url = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -26,14 +28,77 @@ async function request_json<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
     try {
-      const payload = (await response.json()) as { detail?: string };
-      if (payload.detail) message = payload.detail;
+      const payload = (await response.json()) as {
+        detail?: string;
+        message?: string;
+      };
+      if (payload.message) message = payload.message;
+      else if (payload.detail) message = payload.detail;
     } catch {
       // 非 JSON 错误仍保留状态码，避免解析失败掩盖真实请求错误。
     }
     throw new ApiError(message, response.status);
   }
   return (await response.json()) as T;
+}
+
+export function get_library(
+  signal?: AbortSignal,
+): Promise<LibraryDescription | null> {
+  return request_json("/api/library", { signal });
+}
+
+export function create_library(
+  request:
+    | { mode: "parent"; path: string; name: string }
+    | { mode: "empty_directory"; path: string },
+  signal?: AbortSignal,
+): Promise<LibraryDescription> {
+  return request_json("/api/library/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+    signal,
+  });
+}
+
+export function open_library(
+  path: string,
+  signal?: AbortSignal,
+): Promise<LibraryDescription> {
+  return request_json("/api/library/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+    signal,
+  });
+}
+
+export async function close_library(signal?: AbortSignal): Promise<void> {
+  const response = await fetch(`${api_base_url}/api/library`, {
+    method: "DELETE",
+    signal,
+  });
+  if (!response.ok)
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
+}
+
+export function get_preferences(signal?: AbortSignal): Promise<Preferences> {
+  return request_json("/api/preferences", { signal });
+}
+
+export function update_preferences(
+  preferences: Partial<
+    Omit<Preferences, "managed_fields" | "library_path_managed">
+  >,
+  signal?: AbortSignal,
+): Promise<Preferences> {
+  return request_json("/api/preferences", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(preferences),
+    signal,
+  });
 }
 
 export function get_health(signal?: AbortSignal): Promise<HealthResponse> {

@@ -38,7 +38,9 @@ class DownloadManager:
     def __init__(self, library: MediaLibrary, settings: Settings) -> None:
         self.library = library
         self.settings = settings
-        self._jobs: dict[str, DownloadJob] = {}
+        self._jobs: dict[str, DownloadJob] = {
+            job.job_id: job for job in library.list_download_jobs()
+        }
         self._active_job_id_by_asset_id: dict[str, str] = {}
         self._lock = RLock()
         self._download_lock = asyncio.Lock()
@@ -66,6 +68,7 @@ class DownloadManager:
         )
         job = DownloadJob(job_id=job_id, asset_id=asset_id)
         self.library.save(asset)
+        self.library.save_download_job(job)
         with self._lock:
             self._jobs[job_id] = job
             self._active_job_id_by_asset_id[asset_id] = job_id
@@ -82,6 +85,10 @@ class DownloadManager:
         with self._lock:
             job = self._jobs.get(job_id)
             return job.model_copy(deep=True) if job else None
+
+    def has_active_jobs(self) -> bool:
+        with self._lock:
+            return any(job.stage not in TERMINAL_DOWNLOAD_STAGES for job in self._jobs.values())
 
     async def _run(self, job_id: str) -> None:
         job = self.get(job_id)
@@ -106,7 +113,7 @@ class DownloadManager:
                     download_video,
                     asset.source_url,
                     asset.source_platform,
-                    self.library.asset_directory(asset.asset_id),
+                    self.library.media_directory(asset.asset_id),
                     self.settings.ffmpeg_path,
                     self.settings.ffmpeg_bin_dir,
                     lambda progress, message: self._update_job(
@@ -116,6 +123,7 @@ class DownloadManager:
                         message,
                     ),
                     lambda message: self._update_stage_message(job_id, message),
+                    staging_directory=self.library.temporary_directory(job_id),
                 )
                 self._update_job(
                     job_id,
@@ -144,9 +152,13 @@ class DownloadManager:
                 asset.height = probe.height or metadata.height
                 asset.video_codec = probe.video_codec
                 asset.audio_codec = probe.audio_codec
-                asset.playback_path = downloaded.playback_file.name
+                asset.playback_path = downloaded.playback_file.relative_to(
+                    self.library.asset_directory(asset.asset_id)
+                ).as_posix()
                 asset.thumbnail_path = (
-                    downloaded.thumbnail_file.name
+                    downloaded.thumbnail_file.relative_to(
+                        self.library.asset_directory(asset.asset_id)
+                    ).as_posix()
                     if downloaded.thumbnail_file
                     else None
                 )
@@ -154,13 +166,15 @@ class DownloadManager:
                 storyboard = await asyncio.to_thread(
                     generate_thumbnail_sprite,
                     downloaded.playback_file,
-                    self.library.asset_directory(asset.asset_id),
+                    self.library.media_directory(asset.asset_id),
                     asset.duration_seconds,
                     self.settings.ffmpeg_path,
                     self.settings.ffmpeg_bin_dir,
                 )
                 if storyboard:
-                    asset.thumbnail_sprite_path = storyboard.sprite_path
+                    asset.thumbnail_sprite_path = (
+                        self.library.media_directory(asset.asset_id) / storyboard.sprite_path
+                    ).relative_to(self.library.asset_directory(asset.asset_id)).as_posix()
                     asset.thumbnail_tile_width = storyboard.tile_width
                     asset.thumbnail_tile_height = storyboard.tile_height
                     asset.thumbnail_interval_seconds = storyboard.interval_seconds
@@ -344,6 +358,10 @@ class AnalysisManager:
             job = self._jobs.get(job_id)
             return job.model_copy(deep=True) if job else None
 
+    def has_active_jobs(self) -> bool:
+        with self._lock:
+            return any(job.stage not in TERMINAL_ANALYSIS_STAGES for job in self._jobs.values())
+
     def transcript(self, asset_id: str) -> Transcript | None:
         return self.library.load_transcript(asset_id)
 
@@ -390,7 +408,7 @@ class AnalysisManager:
                 )
                 if should_transcribe:
                     self._update_job(job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
-                    work_directory = self.library.asset_directory(asset.asset_id) / ".analysis"
+                    work_directory = self.library.temporary_directory(job_id)
                     transcript = await asyncio.to_thread(
                         transcribe_media,
                         playback,
@@ -417,7 +435,7 @@ class AnalysisManager:
                 describer = self._describer()
                 self._update_job(job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件")
                 markers = self._job_markers(job)
-                asset_directory = self.library.asset_directory(asset.asset_id)
+                asset_directory = self.library.artifacts_directory(asset.asset_id)
                 segments = await asyncio.to_thread(
                     build_segments,
                     transcript,
@@ -436,6 +454,11 @@ class AnalysisManager:
                         message,
                     ),
                 )
+                for segment in segments:
+                    segment.key_frame_paths = [
+                        f"artifacts/{relative_path}"
+                        for relative_path in segment.key_frame_paths
+                    ]
                 self._add_capability(job_id, AnalysisCapability.TIMELINE)
                 if describer is not None and any(segment.visual_description for segment in segments):
                     self._add_capability(job_id, AnalysisCapability.VISUAL)
@@ -552,6 +575,7 @@ class AnalysisManager:
             job.message = message
             job.error_message = error_message
             job.updated_at = datetime.now(UTC)
+            self.library.save_download_job(job)
             self.library.save_analysis_job(job)
 
     def _fail(self, job_id: str, message: str) -> None:

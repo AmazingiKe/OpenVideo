@@ -398,6 +398,8 @@ dependencies = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "httpx" },
+    { name = "platformdirs" },
+    { name = "portalocker" },
     { name = "pydantic" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "yt-dlp" },
@@ -414,6 +416,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.116,<1" },
     { name = "faster-whisper", specifier = ">=1.1,<2" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "platformdirs", specifier = ">=4.11,<5" },
+    { name = "portalocker", specifier = ">=4.1,<5" },
     { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<1" },
     { name = "yt-dlp", specifier = ">=2025.3.31" },
@@ -435,12 +439,30 @@ wheels = [
 ]
 
 [[package]]
+name = "platformdirs"
+version = "4.11.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/d7/e7bfbc86e9f99ff7807e24de7703f032e9c9ba80bb355cf26e0e9bc5a75e/platformdirs-4.11.3.tar.gz", hash = "sha256:66a73d38a849810252df809a3d8bcbda8e26f6c189920e7535ad608a48dbb5ab", size = 33050, upload-time = "2026-08-13T22:43:27.52Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/a9/c34aebedd3a4c9afe5101b1b8713710b3fec18087c8a36c35d2f909861bd/platformdirs-4.11.3-py3-none-any.whl", hash = "sha256:5ed065d443751de711da036041a7a214122efc4a4de393b3f4137ba5576540e7", size = 23491, upload-time = "2026-08-13T22:43:26.121Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
+name = "portalocker"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/45/f7/24b2821a077e0d85197a8c4093a4f71f78713d0a6f216c3f7cc90f7a5cc4/portalocker-4.1.0.tar.gz", hash = "sha256:91d0ff02d6f5f9a2dbf1ef1367ddb05b83136b2676707a1b2c8746f1f0dcd992", size = 97751, upload-time = "2026-08-02T15:05:25.159Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/91/288c883303be067c1648f1e63ea38e5f8eb5ab7123fd3a9a7366148e58b7/portalocker-4.1.0-py3-none-any.whl", hash = "sha256:d985a430d265adf31adf12bc0bf3501aea59efc495e9104c057e5dfb7394c226", size = 65914, upload-time = "2026-08-02T15:05:23.525Z" },
 ]
 
 [[package]]

@@ -14,11 +14,11 @@ OpenVideo 源于一个真实的学习需求：面对一小时以上的数学、�
 - 自动识别平台并探测播放列表，支持勾选条目后批量加入下载队列
 - 异步串行执行下载，逐项展示读取信息、下载、处理、完成或失败状态
 - 使用 yt-dlp 选择 H.264/AAC 优先的视频流，并调用 ffmpeg 合并为 MP4
-- 将媒体资源持久化到 `library/videos/{asset_id}/`
+- 通过 Web 创建、打开和切换可携带资料库，业务数据由 SQLite 持久化
 - Web 端采用桌面优先的视频工作台：媒体库、播放器、转写/分析检查器与任务中心同屏协作
 - 页面刷新后恢复媒体列表、手工时间点标记与标签；标记保存在对应媒体资产目录中
 - 使用原生 HTML5 播放器播放，支持 HTTP 单区间 Range 和进度条拖动
-- 对已就绪视频发起音频转写：优先复用平台字幕，缺失时用本地 faster-whisper 提取带时间戳文字，结果持久化为 `transcript.json`
+- 对已就绪视频发起音频转写：优先复用平台字幕，缺失时用本地 faster-whisper 提取带时间戳文字，结果持久化到 SQLite
 - 支持全片时间轴与标记重点两种分析模式，按语音停顿和画面变化组织课程事件
 - 为每个事件提取多张时序画面；视觉模型不可用时仍保留可回跳的音频分析结果
 - `重点`、`公式`、`疑问`、`案例` 标签会控制标记附近的分析目标与详细笔记
@@ -84,7 +84,7 @@ uv sync
 
 ```powershell
 Set-Location apps/backend
-uv run uvicorn openvideo.ui.api:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn openvideo.ui.api:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 再从仓库根目录启动 Web：
@@ -101,26 +101,16 @@ http://127.0.0.1:5173
 
 Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 
-### 局域网访问
-
-API 与 Vite 均监听 `0.0.0.0`，同一局域网内的设备可直接通过服务器 IP 访问：
-
-```text
-http://<服务器IP>:5173
-```
-
-API 地址为 `http://<服务器IP>:8000`。若需收紧跨域来源，可通过 `OPENVIDEO_CORS_ORIGINS` 指定允许的 Web 来源（逗号分隔）。
-
 ## 配置
 
 可参考 `.env.example`：
 
 | 环境变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `OPENVIDEO_LIBRARY_PATH` | 当前进程目录下的 `library` | 媒体库存放位置 |
+| `OPENVIDEO_LIBRARY_PATH` | 空 | 固定当前资料库；设置后 Web 不允许切换 |
 | `OPENVIDEO_FFMPEG_PATH` | 从 `PATH` 查找 | ffmpeg 完整路径 |
 | `OPENVIDEO_FFPROBE_PATH` | 从 `PATH` 查找 | ffprobe 完整路径 |
-| `OPENVIDEO_CORS_ORIGINS` | `*`（放行所有来源） | 允许访问 API 的 Web 来源，逗号分隔；局域网访问可保持默认 |
+| `OPENVIDEO_CORS_ORIGINS` | 本机 Vite 来源 | 允许访问 API 的本机 Web 来源，逗号分隔 |
 | `OPENVIDEO_WHISPER_MODEL` | `small` | 本地 ASR 模型大小，可选 `tiny`/`base`/`small`/`medium`/`large`，首次使用自动下载 |
 | `OPENVIDEO_WHISPER_LANGUAGE` | `zh` | 本地 ASR 转写语言，留空则自动检测 |
 | `OPENVIDEO_WHISPER_COMPUTE_TYPE` | `int8` | 本地 ASR 量化精度，CPU 上建议 `int8` |
@@ -129,11 +119,7 @@ API 地址为 `http://<服务器IP>:8000`。若需收紧跨域来源，可通过
 | `OPENVIDEO_VISION_MODEL` | `gpt-5.6-terra` | 用于多帧画面与转写联合分析的模型 |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 
-若从 `apps/backend` 启动且未配置媒体库路径，默认运行数据会在 `apps/backend/library`。希望统一保存在仓库根目录时，可在启动前设置：
-
-```powershell
-$env:OPENVIDEO_LIBRARY_PATH = (Resolve-Path ../..).Path + "\library"
-```
+未配置 `OPENVIDEO_LIBRARY_PATH` 时，应用从系统用户配置目录的 `OpenVideo/preferences.json` 恢复上次资料库；路径失效时进入初始化页。
 
 ## 测试与构建
 

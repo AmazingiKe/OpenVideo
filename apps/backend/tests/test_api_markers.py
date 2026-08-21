@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
+from openvideo.core.library import MediaLibrary
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
@@ -11,10 +12,7 @@ ASSET_ID = "asset-0123456789abcdef0123456789abcdef"
 
 
 def create_client(tmp_path: Path) -> TestClient:
-    app = create_app(Settings(library_path=tmp_path))
-    client = TestClient(app)
-    client.__enter__()
-    library = app.state.library
+    library = MediaLibrary.initialize_directory(tmp_path)
     library.save(
         MediaAsset(
             asset_id=ASSET_ID,
@@ -25,7 +23,8 @@ def create_client(tmp_path: Path) -> TestClient:
             status=MediaAssetStatus.READY,
         )
     )
-    return client
+    library.close()
+    return TestClient(create_app(Settings(library_path=tmp_path)))
 
 
 def test_marker_lifecycle_persists_with_its_media_asset(tmp_path: Path):

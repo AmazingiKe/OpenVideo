@@ -103,6 +103,7 @@ def download_video(
     on_progress: ProgressCallback,
     on_stage: StageCallback,
     cookie_source: Path | None = None,
+    staging_directory: Path | None = None,
 ) -> DownloadedMedia:
     """下载先进入隔离目录，只有工具成功退出并验证文件后才发布给播放器。
 
@@ -114,7 +115,7 @@ def download_video(
     if not ffmpeg_path:
         raise DownloadFailure("未找到 ffmpeg，请安装后加入 PATH 或配置 OPENVIDEO_FFMPEG_PATH")
 
-    staging_directory = asset_directory / ".staging"
+    staging_directory = staging_directory or asset_directory / ".staging"
     if staging_directory.exists():
         shutil.rmtree(staging_directory)
     staging_directory.mkdir(parents=True)

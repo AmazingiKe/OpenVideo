@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
+from openvideo.core.library import MediaLibrary
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
@@ -12,10 +13,7 @@ CONTENT = bytes(range(100))
 
 
 def create_client(tmp_path: Path) -> TestClient:
-    app = create_app(Settings(library_path=tmp_path))
-    client = TestClient(app)
-    client.__enter__()
-    library = app.state.library
+    library = MediaLibrary.initialize_directory(tmp_path)
     asset_directory = library.asset_directory(ASSET_ID)
     asset_directory.mkdir(parents=True, exist_ok=True)
     (asset_directory / "playback.mp4").write_bytes(CONTENT)
@@ -30,7 +28,8 @@ def create_client(tmp_path: Path) -> TestClient:
             playback_path="playback.mp4",
         )
     )
-    return client
+    library.close()
+    return TestClient(create_app(Settings(library_path=tmp_path)))
 
 
 def test_serves_full_video(tmp_path: Path):

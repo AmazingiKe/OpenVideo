@@ -5,6 +5,7 @@ import pytest
 
 from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.library import MediaLibrary
+from openvideo.core.models import MediaAsset, SourcePlatform
 from openvideo.tools.transcribe import (
     TranscriptionFailure,
     _parse_json3_subtitles,
@@ -57,8 +58,8 @@ def test_transcript_model_serializes_segments():
 
 
 def test_library_roundtrips_transcript(tmp_path: Path):
-    library = MediaLibrary(tmp_path)
-    library.load()
+    library = MediaLibrary.initialize_directory(tmp_path)
+    library.save(MediaAsset(asset_id=TRANSCRIPT_ASSET_ID, source_url="https://example.com/video", source_platform=SourcePlatform.YOUTUBE))
     transcript = Transcript(
         asset_id=TRANSCRIPT_ASSET_ID,
         language="zh",
@@ -74,10 +75,11 @@ def test_library_roundtrips_transcript(tmp_path: Path):
     assert recovered is not None
     assert recovered.language == "zh"
     assert [segment.text for segment in recovered.segments] == ["第一句", "第二句"]
+    library.close()
 
 
 def test_library_load_transcript_returns_none_when_missing(tmp_path: Path):
-    library = MediaLibrary(tmp_path)
-    library.load()
+    library = MediaLibrary.initialize_directory(tmp_path)
 
     assert library.load_transcript(TRANSCRIPT_ASSET_ID) is None
+    library.close()
