@@ -21,6 +21,7 @@ describe("VideoWorkspace", () => {
     render(
       <VideoWorkspace
         asset={create_asset()}
+        transcript={null}
         markers={[
           {
             marker_id: "marker-0123456789abcdef0123456789abcdef",
@@ -71,6 +72,7 @@ describe("VideoWorkspace", () => {
     const workspace = render(
       <VideoWorkspace
         asset={create_asset()}
+        transcript={null}
         markers={[]}
         player_ref={player_ref}
         on_time_change={vi.fn()}

@@ -11,6 +11,7 @@ import { PlyrLayout, plyrLayoutIcons } from "@vidstack/react/player/layouts/plyr
 import "@vidstack/react/player/styles/plyr/theme.css";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 
+import type { TranscriptSegment } from "../../shared/types";
 import "./player.css";
 
 
@@ -38,13 +39,14 @@ type Storyboard = {
 type PlayerProps = {
   src: string;
   markers?: TimelineMarker[];
+  subtitles?: TranscriptSegment[];
   thumbnails?: Storyboard | null;
   on_time_change?: (seconds: number) => void;
   on_pause_change?: (paused: boolean) => void;
 };
 
 export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
-  { src, markers = [], thumbnails = null, on_time_change, on_pause_change },
+  { src, markers = [], subtitles = [], thumbnails = null, on_time_change, on_pause_change },
   ref,
 ) {
   // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
@@ -103,6 +105,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       ariaLabel="OpenVideo 播放器"
     >
       <MediaProvider />
+      <SubtitleOverlay segments={subtitles} />
       <PlyrLayout
         icons={plyrLayoutIcons}
         markers={plyr_markers}
@@ -131,6 +134,21 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     </MediaPlayer>
   );
 });
+
+function SubtitleOverlay({ segments }: { segments: TranscriptSegment[] }) {
+  const { currentTime } = useMediaStore();
+  const text = active_subtitle_text(segments, currentTime);
+  if (!text) return null;
+
+  return <div className="openvideo_subtitle" aria-label="视频字幕">{text}</div>;
+}
+
+export function active_subtitle_text(segments: TranscriptSegment[], current_time: number): string | null {
+  const active_segment = segments.find((segment) => (
+    segment.start_seconds <= current_time && current_time < segment.end_seconds
+  ));
+  return active_segment?.text.trim() || null;
+}
 
 
 type PlayerRef = {

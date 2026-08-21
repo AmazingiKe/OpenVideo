@@ -4,12 +4,13 @@ import { Pause, Play, RotateCcw, RotateCw } from "lucide-react";
 import { Player, type PlayerHandle } from "../player/Player";
 import { format_duration, format_time } from "../../shared/format";
 import { media_url } from "../../shared/api";
-import type { AnalysisMode, MediaAsset, MediaMarker } from "../../shared/types";
+import type { AnalysisMode, MediaAsset, MediaMarker, Transcript } from "../../shared/types";
 
 
 type VideoWorkspaceProps = {
   asset: MediaAsset | null;
   markers: MediaMarker[];
+  transcript: Transcript | null;
   player_ref: RefObject<PlayerHandle | null>;
   on_time_change: (seconds: number) => void;
   has_transcript: boolean;
@@ -22,6 +23,7 @@ type VideoWorkspaceProps = {
 export function VideoWorkspace({
   asset,
   markers,
+  transcript,
   player_ref,
   on_time_change,
   has_transcript,
@@ -71,6 +73,7 @@ export function VideoWorkspace({
           key={asset.asset_id}
           ref={player_ref}
           src={media_url(asset.playback_url)}
+          subtitles={transcript?.segments ?? []}
           markers={markers.map((marker) => ({
             time_seconds: marker.time_seconds,
             label: format_time(marker.time_seconds),

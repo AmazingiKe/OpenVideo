@@ -359,6 +359,7 @@ export function App() {
             <VideoWorkspace
               asset={selected_asset}
               markers={markers}
+              transcript={transcript}
               player_ref={player_ref}
               on_time_change={set_current_time}
               has_transcript={transcript !== null}
