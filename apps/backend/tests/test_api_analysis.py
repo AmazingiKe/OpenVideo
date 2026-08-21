@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from openvideo.core.analysis_models import Transcript
+from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
@@ -48,26 +48,57 @@ def test_transcript_returns_404_when_missing(tmp_path: Path):
     assert response.status_code == 404
 
 
-def test_analyze_creates_job(tmp_path: Path, monkeypatch):
-    def fake_transcribe(*args, **kwargs) -> Transcript:
-        return Transcript(asset_id=ASSET_ID, language="zh", segments=[])
-
-    monkeypatch.setattr(application_module, "transcribe_media", fake_transcribe)
+def test_transcript_segment_update_is_persisted(tmp_path: Path):
     with create_client(tmp_path) as client:
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                language="zh",
+                segments=[TranscriptSegment(start_seconds=1, end_seconds=3, text="错误文字")],
+            )
+        )
+        response = client.patch(
+            f"/api/media/assets/{ASSET_ID}/transcript/segments/0",
+            json={"text": "修正后的文字"},
+        )
+        reloaded = client.get(f"/api/media/assets/{ASSET_ID}/transcript")
+
+    assert response.status_code == 200
+    assert response.json()["segments"][0]["text"] == "修正后的文字"
+    assert reloaded.json()["segments"][0]["text"] == "修正后的文字"
+
+
+def test_transcript_segment_update_rejects_blank_text(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[TranscriptSegment(start_seconds=1, end_seconds=3, text="原文字")],
+            )
+        )
+        response = client.patch(
+            f"/api/media/assets/{ASSET_ID}/transcript/segments/0",
+            json={"text": "   "},
+        )
+
+    assert response.status_code == 422
+
+
+def test_analyze_creates_job(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        client.app.state.library.save_transcript(Transcript(asset_id=ASSET_ID))
         response = client.post(f"/api/media/assets/{ASSET_ID}/analyze")
 
     assert response.status_code == 202
     job = response.json()
     assert job["asset_id"] == ASSET_ID
     assert job["job_id"].startswith("analysis-")
+    assert job["operation"] == "analysis"
 
 
-def test_marker_analysis_records_selected_marker_scope(tmp_path: Path, monkeypatch):
-    def fake_transcribe(*args, **kwargs) -> Transcript:
-        return Transcript(asset_id=ASSET_ID, language="zh", segments=[])
-
-    monkeypatch.setattr(application_module, "transcribe_media", fake_transcribe)
+def test_marker_analysis_records_selected_marker_scope(tmp_path: Path):
     with create_client(tmp_path) as client:
+        client.app.state.library.save_transcript(Transcript(asset_id=ASSET_ID))
         marker = client.post(
             f"/api/media/assets/{ASSET_ID}/markers",
             json={"time_seconds": 12.5, "tags": ["公式"]},
@@ -81,6 +112,27 @@ def test_marker_analysis_records_selected_marker_scope(tmp_path: Path, monkeypat
     job = response.json()
     assert job["mode"] == "markers"
     assert job["marker_ids"] == [marker["marker_id"]]
+
+
+def test_analysis_requires_transcription(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        response = client.post(f"/api/media/assets/{ASSET_ID}/analyze")
+
+    assert response.status_code == 409
+
+
+def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        application_module,
+        "transcribe_media",
+        lambda *args, **kwargs: Transcript(asset_id=ASSET_ID),
+    )
+    with create_client(tmp_path) as client:
+        response = client.post(f"/api/media/assets/{ASSET_ID}/transcribe")
+
+    assert response.status_code == 202
+    assert response.json()["operation"] == "transcription"
+    assert response.json()["job_id"].startswith("transcription-")
 
 
 def test_segments_returns_empty_when_missing(tmp_path: Path):

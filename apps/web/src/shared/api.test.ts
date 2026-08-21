@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { analyze_asset, ApiError, create_marker, create_download, media_url, probe_source, update_marker } from "./api";
+import {
+  analyze_asset,
+  ApiError,
+  create_marker,
+  create_download,
+  media_url,
+  probe_source,
+  transcribe_asset,
+  update_marker,
+} from "./api";
 
 
 afterEach(() => vi.restoreAllMocks());
@@ -96,6 +105,21 @@ describe("api client", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "markers", marker_ids: ["marker-1"], force: true }),
+      signal: undefined,
+    });
+  });
+
+  it("starts transcription independently from analysis", async () => {
+    const response = { job_id: "transcription-1", operation: "transcription", stage: "pending" };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(response), { status: 202 }),
+    );
+
+    await expect(transcribe_asset("asset-1")).resolves.toEqual(response);
+    expect(fetch_mock).toHaveBeenCalledWith("/api/media/assets/asset-1/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: false }),
       signal: undefined,
     });
   });

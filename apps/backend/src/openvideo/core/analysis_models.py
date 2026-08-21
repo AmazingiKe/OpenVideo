@@ -29,6 +29,11 @@ class AnalysisMode(StrEnum):
     MARKERS = "markers"
 
 
+class AnalysisOperation(StrEnum):
+    TRANSCRIPTION = "transcription"
+    ANALYSIS = "analysis"
+
+
 class AnalysisCapability(StrEnum):
     TRANSCRIPT = "transcript"
     TIMELINE = "timeline"
@@ -53,6 +58,7 @@ class Transcript(BaseModel):
 class AnalysisJob(BaseModel):
     job_id: str
     asset_id: str
+    operation: AnalysisOperation = AnalysisOperation.ANALYSIS
     mode: AnalysisMode = AnalysisMode.FULL
     marker_ids: list[str] = Field(default_factory=list)
     capabilities: list[AnalysisCapability] = Field(default_factory=list)

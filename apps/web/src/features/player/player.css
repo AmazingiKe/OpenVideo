@@ -32,6 +32,13 @@
   touch-action: none;
 }
 
+.openvideo_player .plyr__progress,
+.openvideo_player .plyr__control--overlaid,
+.openvideo_player [data-plyr="play"],
+.openvideo_player .plyr__time {
+  display: none !important;
+}
+
 /* Plyr 主题对 track/thumb 设置了 transition，拖动时会产生跟手延迟，强制关闭。 */
 .openvideo_volume_slider .plyr__slider__track,
 .openvideo_volume_slider .plyr__slider__thumb {

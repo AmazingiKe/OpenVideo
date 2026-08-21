@@ -8,7 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from openvideo.application import AnalysisError, AnalysisManager, DownloadManager
+from openvideo.application import (
+    AnalysisError,
+    AnalysisManager,
+    AnalysisPrerequisiteError,
+    DownloadManager,
+)
 from openvideo.core.analysis_models import AnalysisJob, AnalysisMode, Transcript
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.library import MediaLibrary
@@ -82,9 +87,17 @@ class MarkerUpdateRequest(BaseModel):
     tags: list[str]
 
 
+class TranscriptSegmentUpdateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=10_000)
+
+
 class AnalysisCreateRequest(BaseModel):
     mode: AnalysisMode = AnalysisMode.FULL
     marker_ids: list[str] = Field(default_factory=list)
+    force: bool = False
+
+
+class TranscriptionCreateRequest(BaseModel):
     force: bool = False
 
 
@@ -197,12 +210,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: AnalysisCreateRequest = AnalysisCreateRequest(),
     ) -> AnalysisJob:
         try:
-            job = analysis_manager.create(
+            job = analysis_manager.create_analysis(
                 asset_id,
                 request.mode,
                 request.marker_ids,
                 request.force,
             )
+        except AnalysisPrerequisiteError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except AnalysisError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if job.stage.value != "complete":
+            analysis_manager.start(job.job_id)
+        return job
+
+    @app.post(
+        "/api/media/assets/{asset_id}/transcribe",
+        response_model=AnalysisJob,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def transcribe_asset(
+        asset_id: str,
+        request: TranscriptionCreateRequest = TranscriptionCreateRequest(),
+    ) -> AnalysisJob:
+        try:
+            job = analysis_manager.create_transcription(asset_id, request.force)
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         if job.stage.value != "complete":
@@ -225,6 +257,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not transcript:
             raise HTTPException(status_code=404, detail="该视频还没有转写结果")
         return transcript
+
+    @app.patch(
+        "/api/media/assets/{asset_id}/transcript/segments/{segment_index}",
+        response_model=Transcript,
+    )
+    def update_transcript_segment(
+        asset_id: str,
+        segment_index: int,
+        request: TranscriptSegmentUpdateRequest,
+    ) -> Transcript:
+        _ready_asset(library, asset_id)
+        normalized_text = request.text.strip()
+        if not normalized_text:
+            raise HTTPException(status_code=422, detail="转写文字不能为空")
+        try:
+            return analysis_manager.update_transcript_segment(
+                asset_id,
+                segment_index,
+                normalized_text,
+            )
+        except AnalysisError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get(
         "/api/media/assets/{asset_id}/segments",

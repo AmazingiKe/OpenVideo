@@ -17,6 +17,7 @@ import "./player.css";
 export type PlayerHandle = {
   seek_to: (seconds: number) => void;
   current_time: () => number;
+  toggle_playback: () => void;
 };
 
 type TimelineMarker = {
@@ -36,25 +37,29 @@ type PlayerProps = {
   markers?: TimelineMarker[];
   thumbnails?: Storyboard | null;
   on_time_change?: (seconds: number) => void;
+  on_pause_change?: (paused: boolean) => void;
 };
 
 export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
-  { src, markers = [], thumbnails = null, on_time_change },
+  { src, markers = [], thumbnails = null, on_time_change, on_pause_change },
   ref,
 ) {
   // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
   const seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
   const current_time_fn_ref = useRef<(() => number) | null>(null);
+  const toggle_playback_fn_ref = useRef<(() => void) | null>(null);
 
   useImperativeHandle(ref, () => ({
     seek_to: (seconds: number) => seek_fn_ref.current?.(seconds),
     current_time: () => current_time_fn_ref.current?.() ?? 0,
+    toggle_playback: () => toggle_playback_fn_ref.current?.(),
   }), []);
 
   const on_player_ready = useCallback(
     (instance: PlayerRef | null) => {
       seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
       current_time_fn_ref.current = instance ? () => instance.current_time() : null;
+      toggle_playback_fn_ref.current = instance ? () => instance.toggle_playback() : null;
     },
     [],
   );
@@ -91,7 +96,11 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         slots={{ volumeSlider: <PlayerVolumeSlider /> }}
         clickToPlay
       />
-      <PlayerStateBridge on_player_ready={on_player_ready} on_time_change={on_time_change} />
+      <PlayerStateBridge
+        on_player_ready={on_player_ready}
+        on_time_change={on_time_change}
+        on_pause_change={on_pause_change}
+      />
     </MediaPlayer>
   );
 });
@@ -100,6 +109,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 type PlayerRef = {
   seek: (seconds: number) => void;
   current_time: () => number;
+  toggle_playback: () => void;
 };
 
 function PlayerVolumeSlider() {
@@ -119,9 +129,11 @@ function PlayerVolumeSlider() {
 function PlayerStateBridge({
   on_player_ready,
   on_time_change,
+  on_pause_change,
 }: {
   on_player_ready: (instance: PlayerRef | null) => void;
   on_time_change?: (seconds: number) => void;
+  on_pause_change?: (paused: boolean) => void;
 }) {
   const player = useMediaPlayer();
   const remote = useMediaRemote();
@@ -135,6 +147,10 @@ function PlayerStateBridge({
     on_player_ready({
       seek: (seconds: number) => remote.seek(seconds),
       current_time: () => player.currentTime,
+      toggle_playback: () => {
+        if (player.paused) void remote.play();
+        else void remote.pause();
+      },
     });
     return () => on_player_ready(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,6 +163,10 @@ function PlayerStateBridge({
       on_time_change(store.currentTime);
     }
   }, [store.currentTime, on_time_change]);
+
+  useEffect(() => {
+    on_pause_change?.(store.paused);
+  }, [store.paused, on_pause_change]);
 
   return null;
 }

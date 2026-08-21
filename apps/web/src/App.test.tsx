@@ -29,6 +29,8 @@ vi.mock("./shared/api", () => ({
   list_assets: vi.fn(),
   media_url: (path: string) => path,
   probe_source: vi.fn(),
+  transcribe_asset: vi.fn(),
+  update_transcript_segment: vi.fn(),
   update_marker: vi.fn(),
 }));
 
@@ -40,7 +42,7 @@ vi.mock("./features/player/Player", () => ({
 }));
 
 describe("App", () => {
-  it("keeps the library, video and inspector together in one workbench", async () => {
+  it("keeps the library, video and timeline together in one workbench", async () => {
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
       dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
@@ -108,7 +110,7 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "演示视频" })).toBeInTheDocument());
     expect(screen.getByLabelText("媒体库")).toBeInTheDocument();
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
-    expect(screen.getByLabelText("视频检查器")).toBeInTheDocument();
+    expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(screen.queryByText("下载中的视频")).not.toBeInTheDocument();
     expect(screen.queryByText("失败的视频")).not.toBeInTheDocument();
 
@@ -116,7 +118,6 @@ describe("App", () => {
     expect(download_module).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("link", { name: "视频分析" })).toHaveAttribute("aria-current", "page");
 
-    fireEvent.click(screen.getByRole("tab", { name: "转写" }));
     expect(screen.getByText("可回跳的转写。")).toBeInTheDocument();
   });
 });

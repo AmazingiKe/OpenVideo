@@ -1,5 +1,5 @@
 import { createRef, forwardRef } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { VideoWorkspace } from "./VideoWorkspace";
@@ -35,10 +35,11 @@ describe("VideoWorkspace", () => {
             tags: ["疑问"],
           },
         ]}
-        current_time={0}
         player_ref={createRef<PlayerHandle>()}
         on_time_change={vi.fn()}
-        on_add_marker={vi.fn()}
+        has_transcript={true}
+        is_transcribing={false}
+        on_start_transcription={vi.fn()}
         is_analyzing={false}
         on_start_analysis={start_analysis}
       />,
@@ -56,6 +57,39 @@ describe("VideoWorkspace", () => {
       "markers",
       ["marker-1123456789abcdef0123456789abcdef"],
     );
+  });
+
+  it("keeps transport controls below the video", () => {
+    const seek_to = vi.fn();
+    const toggle_playback = vi.fn();
+    const player_ref = createRef<PlayerHandle>();
+    player_ref.current = {
+      current_time: () => 20,
+      seek_to,
+      toggle_playback,
+    };
+    const workspace = render(
+      <VideoWorkspace
+        asset={create_asset()}
+        markers={[]}
+        player_ref={player_ref}
+        on_time_change={vi.fn()}
+        has_transcript={false}
+        is_transcribing={false}
+        on_start_transcription={vi.fn()}
+        is_analyzing={false}
+        on_start_analysis={vi.fn()}
+      />,
+    );
+
+    const controls = within(workspace.container);
+    fireEvent.click(controls.getByRole("button", { name: "后退 10 秒" }));
+    fireEvent.click(controls.getByRole("button", { name: "播放" }));
+    fireEvent.click(controls.getByRole("button", { name: "快进 10 秒" }));
+
+    expect(seek_to).toHaveBeenNthCalledWith(1, 10);
+    expect(toggle_playback).toHaveBeenCalledOnce();
+    expect(seek_to).toHaveBeenNthCalledWith(2, 30);
   });
 });
 

@@ -9,6 +9,8 @@ import {
   get_transcript,
   list_assets,
   probe_source,
+  transcribe_asset,
+  update_transcript_segment,
   type ApiError,
 } from "./shared/api";
 import { poll_analysis } from "./shared/poll_analysis";
@@ -27,8 +29,8 @@ import type {
 import { use_asset_markers } from "./features/player/use_asset_markers";
 import { type PlayerHandle } from "./features/player/Player";
 import { AssetLibrary } from "./features/workbench/AssetLibrary";
+import { AnalysisTimeline } from "./features/workbench/AnalysisTimeline";
 import { DownloadWorkspace } from "./features/workbench/DownloadWorkspace";
-import { Inspector } from "./features/workbench/Inspector";
 import { SummaryWorkspace } from "./features/workbench/SummaryWorkspace";
 import { type TaskRecord } from "./features/workbench/tasks";
 import { VideoWorkspace } from "./features/workbench/VideoWorkspace";
@@ -62,6 +64,7 @@ export function App() {
   const [selected_probe_urls, set_selected_probe_urls] = useState<Set<string>>(new Set());
   const [is_submitting, set_is_submitting] = useState(false);
   const [is_analyzing, set_is_analyzing] = useState(false);
+  const [is_transcribing, set_is_transcribing] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [active_workspace_module, set_active_workspace_module] = useState<WorkspaceModuleId>(() => (
     workspace_module_id_from_path(window.location.pathname)
@@ -225,15 +228,6 @@ export function App() {
     }
   }
 
-  function add_marker_at_current_time() {
-    const player_time = player_ref.current?.current_time() ?? current_time;
-    const duration = selected_asset?.duration_seconds;
-    const bounded_time = duration === null || duration === undefined
-      ? Math.max(0, player_time)
-      : Math.min(Math.max(0, player_time), duration);
-    void add_marker(bounded_time);
-  }
-
   function record_download_job(job: DownloadJob) {
     record_task({
       task_id: job.job_id,
@@ -263,6 +257,48 @@ export function App() {
       const next_tasks = previous_task ? [task, ...remaining_tasks] : [task, ...current];
       return next_tasks.slice(0, MAX_TASK_RECORDS);
     });
+  }
+
+  async function start_transcription() {
+    if (!selected_asset_id) return;
+    analysis_controller_ref.current?.abort();
+    const controller = new AbortController();
+    analysis_controller_ref.current = controller;
+    set_is_transcribing(true);
+    set_page_error(null);
+    try {
+      const job = await transcribe_asset(selected_asset_id, controller.signal);
+      record_analysis_job(job);
+      const final_job = job.stage === "complete"
+        ? job
+        : await poll_analysis(job, record_analysis_job, controller.signal);
+      if (final_job.stage === "failed") {
+        set_page_error(final_job.error_message ?? "转录失败");
+        return;
+      }
+      set_transcript(await get_transcript(selected_asset_id, controller.signal));
+    } catch (error: unknown) {
+      if (!is_abort_error(error)) set_page_error(error_message(error));
+    } finally {
+      set_is_transcribing(false);
+      if (analysis_controller_ref.current === controller) analysis_controller_ref.current = null;
+    }
+  }
+
+  async function save_transcript_segment(segment_index: number, text: string) {
+    if (!selected_asset_id) return;
+    set_page_error(null);
+    try {
+      const updated_transcript = await update_transcript_segment(
+        selected_asset_id,
+        segment_index,
+        text,
+      );
+      set_transcript(updated_transcript);
+    } catch (error: unknown) {
+      if (!is_abort_error(error)) set_page_error(error_message(error));
+      throw error;
+    }
   }
 
   function navigate_to_workspace_module(module: WorkspaceModule) {
@@ -318,22 +354,28 @@ export function App() {
             <VideoWorkspace
               asset={selected_asset}
               markers={markers}
-              current_time={current_time}
               player_ref={player_ref}
               on_time_change={set_current_time}
-              on_add_marker={add_marker_at_current_time}
+              has_transcript={transcript !== null}
+              is_transcribing={is_transcribing}
+              on_start_transcription={() => void start_transcription()}
               is_analyzing={is_analyzing}
               on_start_analysis={(mode, marker_ids) => void start_analysis(mode, marker_ids)}
             />
-            <Inspector
-              asset_id={selected_asset?.asset_id ?? ""}
+            <AnalysisTimeline
+              duration_seconds={selected_asset?.duration_seconds ?? null}
+              current_time={current_time}
               transcript={transcript}
               segments={segments}
               markers={markers}
               marker_error={marker_error}
               on_seek={(seconds) => player_ref.current?.seek_to(seconds)}
-              on_remove_marker={(marker_id) => void remove_marker(marker_id)}
-              on_update_marker_tags={(marker_id, tags) => void update_marker_tags(marker_id, tags)}
+              on_add_marker={(seconds) => add_marker(seconds)}
+              on_remove_marker={(marker_id) => remove_marker(marker_id)}
+              on_update_marker_tags={(marker_id, tags) => update_marker_tags(marker_id, tags)}
+              on_update_transcript={(segment_index, text) => (
+                save_transcript_segment(segment_index, text)
+              )}
             />
           </>
         ) : null}

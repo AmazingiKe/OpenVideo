@@ -58,11 +58,13 @@ export type AnalysisStage =
   | "failed";
 
 export type AnalysisMode = "full" | "markers";
+export type AnalysisOperation = "transcription" | "analysis";
 export type AnalysisCapability = "transcript" | "timeline" | "visual";
 
 export type AnalysisJob = {
   job_id: string;
   asset_id: string;
+  operation: AnalysisOperation;
   mode: AnalysisMode;
   marker_ids: string[];
   capabilities: AnalysisCapability[];

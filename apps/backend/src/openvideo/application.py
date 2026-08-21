@@ -6,6 +6,7 @@ from openvideo.core.analysis_models import (
     AnalysisCapability,
     AnalysisJob,
     AnalysisMode,
+    AnalysisOperation,
     AnalysisStage,
     TERMINAL_ANALYSIS_STAGES,
     Transcript,
@@ -243,6 +244,10 @@ class AnalysisError(RuntimeError):
     """分析任务无法创建或执行时抛出。"""
 
 
+class AnalysisPrerequisiteError(AnalysisError):
+    """分析缺少用户可补充的前置产物时抛出，以区别资源不存在。"""
+
+
 class AnalysisManager:
     """分析任务把转写等长耗时计算与短生命周期 HTTP 请求隔离开。"""
 
@@ -254,7 +259,7 @@ class AnalysisManager:
         self._lock = RLock()
         self._analysis_lock = asyncio.Lock()
 
-    def create(
+    def create_analysis(
         self,
         asset_id: str,
         mode: AnalysisMode,
@@ -264,6 +269,8 @@ class AnalysisManager:
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法分析")
+        if self.library.load_transcript(asset_id) is None:
+            raise AnalysisPrerequisiteError("请先完成视频转录，再开始内容分析")
         active_job = self._active_job_for(asset_id)
         if active_job:
             return active_job
@@ -283,6 +290,34 @@ class AnalysisManager:
         with self._lock:
             self._jobs[job_id] = job
             self._active_job_id_by_asset_id[asset_id] = job_id
+        self.library.save_analysis_job(job)
+        return job.model_copy(deep=True)
+
+    def create_transcription(self, asset_id: str, force: bool) -> AnalysisJob:
+        asset = self.library.get(asset_id)
+        if not asset or asset.status != MediaAssetStatus.READY:
+            raise AnalysisError("视频尚未就绪，无法转录")
+        active_job = self._active_job_for(asset_id)
+        if active_job:
+            return active_job
+        if self.library.load_transcript(asset_id) is not None and not force:
+            return AnalysisJob(
+                job_id=f"transcription-{uuid7().hex}",
+                asset_id=asset_id,
+                operation=AnalysisOperation.TRANSCRIPTION,
+                capabilities=[AnalysisCapability.TRANSCRIPT],
+                stage=AnalysisStage.COMPLETE,
+                progress_percent=100,
+                message="该视频已有转录结果",
+            )
+        job = AnalysisJob(
+            job_id=f"transcription-{uuid7().hex}",
+            asset_id=asset_id,
+            operation=AnalysisOperation.TRANSCRIPTION,
+        )
+        with self._lock:
+            self._jobs[job.job_id] = job
+            self._active_job_id_by_asset_id[asset_id] = job.job_id
         self.library.save_analysis_job(job)
         return job.model_copy(deep=True)
 
@@ -312,6 +347,25 @@ class AnalysisManager:
     def transcript(self, asset_id: str) -> Transcript | None:
         return self.library.load_transcript(asset_id)
 
+    def update_transcript_segment(
+        self,
+        asset_id: str,
+        segment_index: int,
+        text: str,
+    ) -> Transcript:
+        transcript = self.library.load_transcript(asset_id)
+        if transcript is None:
+            raise AnalysisError("该视频还没有转写结果")
+        if segment_index < 0 or segment_index >= len(transcript.segments):
+            raise AnalysisError("转写片段不存在")
+        updated_segments = list(transcript.segments)
+        updated_segments[segment_index] = updated_segments[segment_index].model_copy(
+            update={"text": text}
+        )
+        updated_transcript = transcript.model_copy(update={"segments": updated_segments})
+        self.library.save_transcript(updated_transcript)
+        return updated_transcript
+
     def segments(self, asset_id: str) -> list[MediaSegment]:
         return self.library.load_segments(asset_id)
 
@@ -330,7 +384,11 @@ class AnalysisManager:
                 if not playback:
                     raise AnalysisError("视频文件不存在")
                 transcript = self.library.load_transcript(asset.asset_id)
-                if transcript is None:
+                should_transcribe = (
+                    transcript is None
+                    or job.operation == AnalysisOperation.TRANSCRIPTION
+                )
+                if should_transcribe:
                     self._update_job(job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
                     work_directory = self.library.asset_directory(asset.asset_id) / ".analysis"
                     transcript = await asyncio.to_thread(
@@ -351,6 +409,10 @@ class AnalysisManager:
                     )
                     self.library.save_transcript(transcript)
                 self._add_capability(job_id, AnalysisCapability.TRANSCRIPT)
+
+                if job.operation == AnalysisOperation.TRANSCRIPTION:
+                    self._update_job(job_id, AnalysisStage.COMPLETE, 100, "转录完成")
+                    return
 
                 describer = self._describer()
                 self._update_job(job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件")
@@ -496,11 +558,16 @@ class AnalysisManager:
         job = self.get(job_id)
         if not job:
             return
+        failure_message = (
+            "转录失败"
+            if job.operation == AnalysisOperation.TRANSCRIPTION
+            else "分析失败"
+        )
         self._update_job(
             job_id,
             AnalysisStage.FAILED,
             job.progress_percent,
-            "分析失败",
+            failure_message,
             message,
         )
 

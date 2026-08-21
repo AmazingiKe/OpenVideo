@@ -1,4 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
+import { Pause, Play, RotateCcw, RotateCw } from "lucide-react";
 
 import { Player, type PlayerHandle } from "../player/Player";
 import { format_duration, format_time } from "../../shared/format";
@@ -9,10 +10,11 @@ import type { AnalysisMode, MediaAsset, MediaMarker } from "../../shared/types";
 type VideoWorkspaceProps = {
   asset: MediaAsset | null;
   markers: MediaMarker[];
-  current_time: number;
   player_ref: RefObject<PlayerHandle | null>;
   on_time_change: (seconds: number) => void;
-  on_add_marker: () => void;
+  has_transcript: boolean;
+  is_transcribing: boolean;
+  on_start_transcription: () => void;
   is_analyzing: boolean;
   on_start_analysis: (mode: AnalysisMode, marker_ids: string[]) => void;
 };
@@ -20,15 +22,17 @@ type VideoWorkspaceProps = {
 export function VideoWorkspace({
   asset,
   markers,
-  current_time,
   player_ref,
   on_time_change,
-  on_add_marker,
+  has_transcript,
+  is_transcribing,
+  on_start_transcription,
   is_analyzing,
   on_start_analysis,
 }: VideoWorkspaceProps) {
   const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(new Set());
+  const [is_paused, set_is_paused] = useState(true);
 
   useEffect(() => {
     set_selected_marker_ids(new Set(markers.map((marker) => marker.marker_id)));
@@ -67,15 +71,31 @@ export function VideoWorkspace({
           }))}
           thumbnails={player_storyboard(asset)}
           on_time_change={on_time_change}
+          on_pause_change={set_is_paused}
         />
       </div>
-      <div className="workspace_video_actions">
-        <button type="button" onClick={on_add_marker} disabled={current_time <= 0}>
-          添加标记 @ {format_time(current_time)}
+      <div className="video_transport" aria-label="播放控制">
+        <button type="button" onClick={() => seek_relative(player_ref, -10)} aria-label="后退 10 秒">
+          <RotateCcw aria-hidden="true" />
         </button>
-        <span>{markers.length === 0 ? "播放中可添加标记，之后在右侧统一管理。" : `已添加 ${markers.length} 个标记`}</span>
+        <button type="button" onClick={() => player_ref.current?.toggle_playback()} aria-label={is_paused ? "播放" : "暂停"}>
+          {is_paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
+        </button>
+        <button type="button" onClick={() => seek_relative(player_ref, 10)} aria-label="快进 10 秒">
+          <RotateCw aria-hidden="true" />
+        </button>
       </div>
       <section className="analysis_controls" aria-label="分析控制">
+        <div className="processing_actions">
+          <button
+            type="button"
+            onClick={on_start_transcription}
+            disabled={is_transcribing || is_analyzing || has_transcript}
+          >
+            {is_transcribing ? "转录中…" : has_transcript ? "转录已完成" : "生成转录"}
+          </button>
+          <span>转录生成可编辑文字；内容分析在转录完成后单独执行。</span>
+        </div>
         <div className="analysis_mode_options">
           <label>
             <input
@@ -83,6 +103,7 @@ export function VideoWorkspace({
               name="analysis_mode"
               checked={analysis_mode === "full"}
               onChange={() => set_analysis_mode("full")}
+              disabled={!has_transcript}
             />
             全片时间轴
           </label>
@@ -92,7 +113,7 @@ export function VideoWorkspace({
               name="analysis_mode"
               checked={analysis_mode === "markers"}
               onChange={() => set_analysis_mode("markers")}
-              disabled={markers.length === 0}
+              disabled={!has_transcript || markers.length === 0}
             />
             标记重点分析
           </label>
@@ -116,7 +137,12 @@ export function VideoWorkspace({
           className="workspace_primary_action"
           type="button"
           onClick={() => on_start_analysis(analysis_mode, [...selected_marker_ids])}
-          disabled={is_analyzing || (analysis_mode === "markers" && selected_marker_ids.size === 0)}
+          disabled={
+            !has_transcript
+            || is_transcribing
+            || is_analyzing
+            || (analysis_mode === "markers" && selected_marker_ids.size === 0)
+          }
         >
           {is_analyzing ? "分析中…" : analysis_mode === "full" ? "分析全片" : `分析 ${selected_marker_ids.size} 个标记`}
         </button>
@@ -124,6 +150,12 @@ export function VideoWorkspace({
       {asset.description ? <p className="workspace_description">{asset.description}</p> : null}
     </section>
   );
+}
+
+function seek_relative(player_ref: RefObject<PlayerHandle | null>, offset_seconds: number) {
+  const player = player_ref.current;
+  if (!player) return;
+  player.seek_to(Math.max(0, player.current_time() + offset_seconds));
 }
 
 function toggle_marker(current: Set<string>, marker_id: string): Set<string> {
