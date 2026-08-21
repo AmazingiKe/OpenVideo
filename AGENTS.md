@@ -1,4 +1,4 @@
-# 项目协作规则
+# AI Agent项目协作规则
 
 ## Git 提交
 
@@ -7,7 +7,6 @@
 - 中文说明应简洁描述本次变更的目的和范围，不得省略类型前缀。
 - commit的内容只能是中文，禁止英文或拼音。
 - commit 只能 commit自己修改的内容，不可以 commit 其他人修改的内容。
-
 
 ## 代码质量（AI 必须遵守）
 
@@ -179,3 +178,7 @@ for node in cmds.ls(type="file"):
 - Light/Dark Mode 必须共用语义 token，并覆盖 hover、focus、selected、disabled、loading、empty、success、warning、error 状态。
 - 优先采用 shadcn/ui、Radix UI、Lucide 和现有项目组件；Motion Primitives、Magic UI、Aceternity UI 仅在确有功能价值时按需引入。
 
+### 13. 在回复内容
+
+- 回复内容禁止使用冗长的句子去进行回复，需要使用简洁的语言去进行回复
+- 在回复结论或者建议时尽量使用列表等方式去进行表达
