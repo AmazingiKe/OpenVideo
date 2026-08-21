@@ -19,7 +19,11 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { create_library, open_library } from "@/shared/api";
+import {
+  create_library,
+  open_library,
+  select_library_directory,
+} from "@/shared/api";
 import type { LibraryDescription } from "@/shared/types";
 
 export type LibraryAction = "initialize" | "open";
@@ -51,10 +55,25 @@ export function LibraryPathForm({
   disabled?: boolean;
 }) {
   const [path, set_path] = useState("");
+  const [selecting, set_selecting] = useState(false);
   const [submitting, set_submitting] = useState(false);
   const [error, set_error] = useState<string | null>(null);
   const content = ACTION_CONTENT[action];
   const ActionIcon = content.icon;
+  const busy = selecting || submitting;
+
+  async function choose_directory() {
+    set_selecting(true);
+    set_error(null);
+    try {
+      const selected_path = await select_library_directory();
+      if (selected_path) set_path(selected_path);
+    } catch (cause) {
+      set_error(cause instanceof Error ? cause.message : "无法选择文件夹");
+    } finally {
+      set_selecting(false);
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -93,16 +112,31 @@ export function LibraryPathForm({
               <FieldLabel htmlFor={`${action}_path`}>
                 {content.path_label}
               </FieldLabel>
-              <Input
-                id={`${action}_path`}
-                value={path}
-                onChange={(event) => set_path(event.target.value)}
-                placeholder="D:\\OpenVideo"
-                disabled={disabled || submitting}
-                aria-invalid={Boolean(error)}
-              />
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <Input
+                  id={`${action}_path`}
+                  value={path}
+                  onChange={(event) => set_path(event.target.value)}
+                  placeholder="D:\\OpenVideo"
+                  disabled={disabled || busy}
+                  aria-invalid={Boolean(error)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={choose_directory}
+                  disabled={disabled || busy}
+                >
+                  {selecting ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : (
+                    <FolderOpen data-icon="inline-start" />
+                  )}
+                  {selecting ? "正在选择" : "选择文件夹"}
+                </Button>
+              </div>
               <FieldDescription>
-                Web 版仅接受本机文件系统的绝对路径。
+                可直接选择本机文件夹，也可手动输入绝对路径。
               </FieldDescription>
             </Field>
             {error ? (
@@ -114,11 +148,7 @@ export function LibraryPathForm({
           </FieldGroup>
         </CardContent>
         <CardFooter>
-          <Button
-            className="w-full"
-            type="submit"
-            disabled={disabled || submitting}
-          >
+          <Button className="w-full" type="submit" disabled={disabled || busy}>
             {submitting ? (
               <Spinner data-icon="inline-start" />
             ) : (

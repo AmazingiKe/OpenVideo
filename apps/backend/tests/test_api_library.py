@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
+from openvideo.ui.directory_picker import DirectoryPickerError
 
 
 def test_library_gate_create_close_and_reopen(tmp_path: Path):
@@ -46,3 +47,51 @@ def test_failed_switch_keeps_current_library(tmp_path: Path):
         failed = client.post("/api/library/open", json={"path": str(tmp_path / "missing")})
         assert failed.status_code == 422
         assert client.get("/api/library").json()["library_id"] == created["library_id"]
+
+
+def test_select_directory_returns_absolute_path(tmp_path: Path):
+    app = create_app(
+        Settings(),
+        PreferenceStore(tmp_path / "preferences.json"),
+        directory_picker=lambda: str(tmp_path),
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/library/select-directory", json={})
+
+    assert response.status_code == 200
+    assert response.json() == {"path": str(tmp_path)}
+
+
+def test_cancel_directory_selection_returns_null(tmp_path: Path):
+    app = create_app(
+        Settings(),
+        PreferenceStore(tmp_path / "preferences.json"),
+        directory_picker=lambda: None,
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/library/select-directory", json={})
+
+    assert response.status_code == 200
+    assert response.json() == {"path": None}
+
+
+def test_unavailable_directory_picker_returns_stable_error(tmp_path: Path):
+    def unavailable_picker() -> str | None:
+        raise DirectoryPickerError("无法打开系统文件夹选择器")
+
+    app = create_app(
+        Settings(),
+        PreferenceStore(tmp_path / "preferences.json"),
+        directory_picker=unavailable_picker,
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/library/select-directory", json={})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "code": "directory_picker_unavailable",
+        "message": "无法打开系统文件夹选择器",
+    }

@@ -72,6 +72,21 @@ export function open_library(
   });
 }
 
+export async function select_library_directory(
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const selection = await request_json<{ path: string | null }>(
+    "/api/library/select-directory",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal,
+    },
+  );
+  return selection.path;
+}
+
 export async function close_library(signal?: AbortSignal): Promise<void> {
   const response = await fetch(`${api_base_url}/api/library`, {
     method: "DELETE",

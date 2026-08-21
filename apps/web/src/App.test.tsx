@@ -32,6 +32,7 @@ vi.mock("./shared/api", () => ({
   list_assets: vi.fn(),
   media_url: (path: string) => path,
   probe_source: vi.fn(),
+  select_library_directory: vi.fn(),
   transcribe_asset: vi.fn(),
   update_transcript_segment: vi.fn(),
   update_marker: vi.fn(),

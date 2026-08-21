@@ -7,6 +7,7 @@ import {
   create_download,
   media_url,
   probe_source,
+  select_library_directory,
   transcribe_asset,
   update_marker,
 } from "./api";
@@ -14,6 +15,23 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("api client", () => {
+  it("requests a local directory selection", async () => {
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ path: "D:\\课程" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(select_library_directory()).resolves.toBe("D:\\课程");
+    expect(fetch_mock).toHaveBeenCalledWith("/api/library/select-directory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: undefined,
+    });
+  });
+
   it("submits a typed download request", async () => {
     const response = [
       {

@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
@@ -42,6 +42,7 @@ from openvideo.tools.downloader import (
 )
 from openvideo.tools.media import media_tool_status
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
+from openvideo.ui.directory_picker import DirectoryPickerError, select_directory
 
 
 STREAM_CHUNK_SIZE = 1024 * 1024
@@ -116,6 +117,10 @@ class LibraryOpenRequest(BaseModel):
     path: str
 
 
+class DirectorySelectionResponse(BaseModel):
+    path: str | None
+
+
 class PreferencesPatch(BaseModel):
     ffmpeg_path: str | None = None
     ffprobe_path: str | None = None
@@ -143,12 +148,15 @@ class PreferencesResponse(BaseModel):
 def create_app(
     settings: Settings | None = None,
     preference_store: PreferenceStore | None = None,
+    directory_picker: Callable[[], str | None] | None = None,
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
     library: MediaLibrary | None = None
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
+    pick_directory = directory_picker or select_directory
+    directory_picker_lock = asyncio.Lock()
 
     async def install_library(opened_library: MediaLibrary) -> None:
         nonlocal library, manager, analysis_manager
@@ -318,6 +326,20 @@ def create_app(
     @app.get("/api/library", response_model=LibraryDescription | None)
     def get_library() -> LibraryDescription | None:
         return library.description if library else None
+
+    @app.post(
+        "/api/library/select-directory",
+        response_model=DirectorySelectionResponse,
+    )
+    async def choose_library_directory() -> DirectorySelectionResponse:
+        if directory_picker_lock.locked():
+            _library_error(409, "directory_picker_busy", "文件夹选择器已打开")
+        try:
+            async with directory_picker_lock:
+                selected_path = await asyncio.to_thread(pick_directory)
+        except DirectoryPickerError as error:
+            _library_error(503, "directory_picker_unavailable", str(error))
+        return DirectorySelectionResponse(path=selected_path)
 
     @app.post("/api/library/create", response_model=LibraryDescription, status_code=201)
     async def create_library(request: LibraryCreateRequest) -> LibraryDescription:

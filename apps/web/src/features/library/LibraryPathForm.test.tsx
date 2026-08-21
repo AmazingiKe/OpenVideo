@@ -7,12 +7,17 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { create_library, open_library } from "@/shared/api";
+import {
+  create_library,
+  open_library,
+  select_library_directory,
+} from "@/shared/api";
 import { LibraryPathForm } from "./LibraryPathForm";
 
 vi.mock("@/shared/api", () => ({
   create_library: vi.fn(),
   open_library: vi.fn(),
+  select_library_directory: vi.fn(),
 }));
 
 const library = {
@@ -26,6 +31,7 @@ const library = {
 beforeEach(() => {
   vi.mocked(create_library).mockResolvedValue(library);
   vi.mocked(open_library).mockResolvedValue(library);
+  vi.mocked(select_library_directory).mockResolvedValue(null);
 });
 
 afterEach(cleanup);
@@ -47,6 +53,17 @@ describe("LibraryPathForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "初始化文件夹" }));
     await waitFor(() => expect(on_success).toHaveBeenCalledWith(library));
     expect(create_library).toHaveBeenCalledWith("D:\\课程");
+  });
+
+  it("fills the input with the selected local directory", async () => {
+    vi.mocked(select_library_directory).mockResolvedValue("D:\\课程");
+    render(<LibraryPathForm action="initialize" on_success={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "选择文件夹" }));
+
+    expect(await screen.findByLabelText("文件夹绝对路径")).toHaveValue(
+      "D:\\课程",
+    );
   });
 
   it("opens an existing library", async () => {

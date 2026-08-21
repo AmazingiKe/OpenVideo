@@ -21,6 +21,7 @@ vi.mock("@/shared/api", () => ({
   create_library: vi.fn(),
   get_preferences: vi.fn(),
   open_library: vi.fn(),
+  select_library_directory: vi.fn(),
   update_preferences: vi.fn(),
 }));
 
