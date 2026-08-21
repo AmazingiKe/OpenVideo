@@ -16,7 +16,9 @@ export function uuid7(): string {
 }
 
 function format_hex(bytes: Uint8Array): string {
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
   return [
     hex.slice(0, 8),
     hex.slice(8, 12),

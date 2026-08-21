@@ -10,7 +10,6 @@ import {
 import { format_time } from "../../shared/format";
 import type { MediaMarker, MediaSegment, Transcript } from "../../shared/types";
 
-
 const RULER_INTERVAL_COUNT = 8;
 const MINIMUM_DURATION_SECONDS = 1;
 const MINIMUM_EVENT_WIDTH_PERCENT = 0.8;
@@ -43,11 +42,17 @@ export function AnalysisTimeline({
   on_update_marker_tags,
   on_update_transcript,
 }: AnalysisTimelineProps) {
-  const [editing_transcript_index, set_editing_transcript_index] = useState<number | null>(null);
+  const [editing_transcript_index, set_editing_transcript_index] = useState<
+    number | null
+  >(null);
   const [transcript_draft, set_transcript_draft] = useState("");
   const [is_saving_transcript, set_is_saving_transcript] = useState(false);
-  const [transcript_error, set_transcript_error] = useState<string | null>(null);
-  const [editing_marker_id, set_editing_marker_id] = useState<string | null>(null);
+  const [transcript_error, set_transcript_error] = useState<string | null>(
+    null,
+  );
+  const [editing_marker_id, set_editing_marker_id] = useState<string | null>(
+    null,
+  );
   const [marker_tags_draft, set_marker_tags_draft] = useState("");
   const transcript_segments = transcript?.segments ?? [];
   const duration = timeline_duration(
@@ -59,17 +64,18 @@ export function AnalysisTimeline({
   );
   const bounded_time = Math.min(Math.max(current_time, 0), duration);
   const playhead_percent = percentage(bounded_time, duration);
-  const ruler_ticks = Array.from({ length: RULER_INTERVAL_COUNT + 1 }, (_, index) => (
-    duration * index / RULER_INTERVAL_COUNT
-  ));
+  const ruler_ticks = Array.from(
+    { length: RULER_INTERVAL_COUNT + 1 },
+    (_, index) => (duration * index) / RULER_INTERVAL_COUNT,
+  );
 
   useEffect(() => {
     function add_marker_with_shortcut(event: globalThis.KeyboardEvent) {
       if (
-        event.repeat
-        || !event.ctrlKey
-        || event.key.toLowerCase() !== "m"
-        || is_text_editing_target(event.target)
+        event.repeat ||
+        !event.ctrlKey ||
+        event.key.toLowerCase() !== "m" ||
+        is_text_editing_target(event.target)
       ) {
         return;
       }
@@ -78,7 +84,8 @@ export function AnalysisTimeline({
     }
 
     window.addEventListener("keydown", add_marker_with_shortcut);
-    return () => window.removeEventListener("keydown", add_marker_with_shortcut);
+    return () =>
+      window.removeEventListener("keydown", add_marker_with_shortcut);
   }, [bounded_time, on_add_marker]);
 
   return (
@@ -89,7 +96,10 @@ export function AnalysisTimeline({
         </output>
         <div>
           <strong>时间轴</strong>
-          <span>{transcript_segments.length} 条转写 · {segments.length} 个事件 · {markers.length} 个标记</span>
+          <span>
+            {transcript_segments.length} 条转写 · {segments.length} 个事件 ·{" "}
+            {markers.length} 个标记
+          </span>
         </div>
       </header>
       <div className="timeline_editor">
@@ -112,25 +122,32 @@ export function AnalysisTimeline({
           onPointerMove={(event) => continue_timeline_scrub(event, duration)}
           onPointerUp={(event) => finish_timeline_scrub(event)}
           onPointerCancel={(event) => finish_timeline_scrub(event)}
-          onKeyDown={(event) => scrub_with_keyboard(event, bounded_time, duration)}
-          onContextMenu={(event) => add_marker_from_context_menu(event, duration)}
+          onKeyDown={(event) =>
+            scrub_with_keyboard(event, bounded_time, duration)
+          }
+          onContextMenu={(event) =>
+            add_marker_from_context_menu(event, duration)
+          }
         >
           <div className="timeline_ruler" aria-hidden="true">
             {ruler_ticks.map((tick) => (
-              <span key={tick} style={{ left: `${percentage(tick, duration)}%` }}>
+              <span
+                key={tick}
+                style={{ left: `${percentage(tick, duration)}%` }}
+              >
                 {format_time(tick)}
               </span>
             ))}
           </div>
-          <div
-            className="timeline_marker_track"
-          >
+          <div className="timeline_marker_track">
             {markers.map((marker) => (
               <button
                 key={marker.marker_id}
                 type="button"
                 className="timeline_marker"
-                style={{ left: `${percentage(marker.time_seconds, duration)}%` }}
+                style={{
+                  left: `${percentage(marker.time_seconds, duration)}%`,
+                }}
                 onClick={() => {
                   on_seek(marker.time_seconds);
                   set_editing_marker_id(marker.marker_id);
@@ -143,104 +160,164 @@ export function AnalysisTimeline({
             {markers.map((marker) => {
               if (editing_marker_id !== marker.marker_id) return null;
               const marker_percent = percentage(marker.time_seconds, duration);
-              const editor_position = marker_percent > MARKER_EDITOR_FLIP_PERCENT
-                ? { right: `${100 - marker_percent}%` }
-                : { left: `${marker_percent}%` };
+              const editor_position =
+                marker_percent > MARKER_EDITOR_FLIP_PERCENT
+                  ? { right: `${100 - marker_percent}%` }
+                  : { left: `${marker_percent}%` };
               return (
                 <form
                   key={`editor-${marker.marker_id}`}
                   className="timeline_marker_editor"
                   style={editor_position}
-                  onSubmit={(event) => void save_marker_tags(event, marker.marker_id)}
+                  onSubmit={(event) =>
+                    void save_marker_tags(event, marker.marker_id)
+                  }
                 >
                   <input
                     autoFocus
                     aria-label={`编辑 ${format_time(marker.time_seconds)} 标记标签`}
                     value={marker_tags_draft}
                     placeholder="重点, 公式"
-                    onChange={(event) => set_marker_tags_draft(event.currentTarget.value)}
+                    onChange={(event) =>
+                      set_marker_tags_draft(event.currentTarget.value)
+                    }
                   />
                   <button type="submit">保存</button>
-                  <button type="button" onClick={() => void delete_marker(marker.marker_id)}>删除</button>
-                  <button type="button" onClick={() => set_editing_marker_id(null)}>关闭</button>
+                  <button
+                    type="button"
+                    onClick={() => void delete_marker(marker.marker_id)}
+                  >
+                    删除
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => set_editing_marker_id(null)}
+                  >
+                    关闭
+                  </button>
                 </form>
               );
             })}
-            {marker_error ? <span className="timeline_marker_error" role="alert">{marker_error}</span> : null}
+            {marker_error ? (
+              <span className="timeline_marker_error" role="alert">
+                {marker_error}
+              </span>
+            ) : null}
           </div>
           <div className="timeline_transcript_track">
             {transcript_segments.length === 0 ? (
-              <span className="timeline_track_empty">完成转录后，文字会显示在这条轨道中</span>
-            ) : transcript_segments.map((segment, segment_index) => {
-              const placement = clip_placement(segment, duration);
-              const is_editing = editing_transcript_index === segment_index;
-              return (
-                <div
-                  key={`${segment.start_seconds}-${segment.end_seconds}-${segment_index}`}
-                  className={is_editing ? "timeline_transcript_clip editing" : "timeline_transcript_clip"}
-                  style={{ left: `${placement.left}%`, width: `${placement.width}%` }}
-                >
-                  {is_editing ? (
-                    <form
-                      onSubmit={(event) => void save_transcript(event, segment_index)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape") cancel_transcript_edit();
-                      }}
-                    >
-                      <input
-                        autoFocus
-                        aria-label={`编辑 ${format_time(segment.start_seconds)} 转写`}
-                        value={transcript_draft}
-                        maxLength={10_000}
-                        onChange={(event) => set_transcript_draft(event.currentTarget.value)}
-                        disabled={is_saving_transcript}
-                      />
-                      <button type="submit" disabled={is_saving_transcript || !transcript_draft.trim()}>
-                        {is_saving_transcript ? "保存中" : "保存"}
+              <span className="timeline_track_empty">
+                完成转录后，文字会显示在这条轨道中
+              </span>
+            ) : (
+              transcript_segments.map((segment, segment_index) => {
+                const placement = clip_placement(segment, duration);
+                const is_editing = editing_transcript_index === segment_index;
+                return (
+                  <div
+                    key={`${segment.start_seconds}-${segment.end_seconds}-${segment_index}`}
+                    className={
+                      is_editing
+                        ? "timeline_transcript_clip editing"
+                        : "timeline_transcript_clip"
+                    }
+                    style={{
+                      left: `${placement.left}%`,
+                      width: `${placement.width}%`,
+                    }}
+                  >
+                    {is_editing ? (
+                      <form
+                        onSubmit={(event) =>
+                          void save_transcript(event, segment_index)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") cancel_transcript_edit();
+                        }}
+                      >
+                        <input
+                          autoFocus
+                          aria-label={`编辑 ${format_time(segment.start_seconds)} 转写`}
+                          value={transcript_draft}
+                          maxLength={10_000}
+                          onChange={(event) =>
+                            set_transcript_draft(event.currentTarget.value)
+                          }
+                          disabled={is_saving_transcript}
+                        />
+                        <button
+                          type="submit"
+                          disabled={
+                            is_saving_transcript || !transcript_draft.trim()
+                          }
+                        >
+                          {is_saving_transcript ? "保存中" : "保存"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancel_transcript_edit}
+                          disabled={is_saving_transcript}
+                        >
+                          取消
+                        </button>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => on_seek(segment.start_seconds)}
+                        onDoubleClick={() =>
+                          start_transcript_edit(segment_index, segment.text)
+                        }
+                        aria-label={`${format_time(segment.start_seconds)} ${segment.text}`}
+                        title="单击定位，双击修改转写"
+                      >
+                        <time>{format_time(segment.start_seconds)}</time>
+                        <span>{segment.text}</span>
                       </button>
-                      <button type="button" onClick={cancel_transcript_edit} disabled={is_saving_transcript}>
-                        取消
-                      </button>
-                    </form>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => on_seek(segment.start_seconds)}
-                      onDoubleClick={() => start_transcript_edit(segment_index, segment.text)}
-                      aria-label={`${format_time(segment.start_seconds)} ${segment.text}`}
-                      title="单击定位，双击修改转写"
-                    >
-                      <time>{format_time(segment.start_seconds)}</time>
-                      <span>{segment.text}</span>
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-            {transcript_error ? <span className="timeline_transcript_error" role="alert">{transcript_error}</span> : null}
+                    )}
+                  </div>
+                );
+              })
+            )}
+            {transcript_error ? (
+              <span className="timeline_transcript_error" role="alert">
+                {transcript_error}
+              </span>
+            ) : null}
           </div>
           <div className="timeline_event_track">
             {segments.length === 0 ? (
-              <span className="timeline_track_empty">分析后，事件片段会显示在这条轨道上</span>
-            ) : segments.map((segment) => {
-              const placement = clip_placement(segment, duration);
-              return (
-                <button
-                  key={segment.segment_id}
-                  type="button"
-                  className="timeline_event_clip"
-                  style={{ left: `${placement.left}%`, width: `${placement.width}%` }}
-                  onClick={() => on_seek(segment.start_seconds)}
-                  aria-label={`${format_time(segment.start_seconds)} ${segment.title}`}
-                  title={`${format_time(segment.start_seconds)}–${format_time(segment.end_seconds)} ${segment.title}`}
-                >
-                  <strong>{segment.title}</strong>
-                  <small>{segment.tags.join(" · ")}</small>
-                </button>
-              );
-            })}
+              <span className="timeline_track_empty">
+                分析后，事件片段会显示在这条轨道上
+              </span>
+            ) : (
+              segments.map((segment) => {
+                const placement = clip_placement(segment, duration);
+                return (
+                  <button
+                    key={segment.segment_id}
+                    type="button"
+                    className="timeline_event_clip"
+                    style={{
+                      left: `${placement.left}%`,
+                      width: `${placement.width}%`,
+                    }}
+                    onClick={() => on_seek(segment.start_seconds)}
+                    aria-label={`${format_time(segment.start_seconds)} ${segment.title}`}
+                    title={`${format_time(segment.start_seconds)}–${format_time(segment.end_seconds)} ${segment.title}`}
+                  >
+                    <strong>{segment.title}</strong>
+                    <small>{segment.tags.join(" · ")}</small>
+                  </button>
+                );
+              })
+            )}
           </div>
-          <div className="timeline_playhead" style={{ left: `${playhead_percent}%` }} aria-hidden="true">
+          <div
+            className="timeline_playhead"
+            style={{ left: `${playhead_percent}%` }}
+            aria-hidden="true"
+          >
             <span />
           </div>
         </div>
@@ -260,7 +337,10 @@ export function AnalysisTimeline({
     set_transcript_error(null);
   }
 
-  async function save_transcript(event: FormEvent<HTMLFormElement>, segment_index: number) {
+  async function save_transcript(
+    event: FormEvent<HTMLFormElement>,
+    segment_index: number,
+  ) {
     event.preventDefault();
     const text = transcript_draft.trim();
     if (!text) return;
@@ -285,12 +365,20 @@ export function AnalysisTimeline({
     event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
     const position = (event.clientX - bounds.left) / bounds.width;
-    void on_add_marker(Math.min(Math.max(position * track_duration, 0), track_duration));
+    void on_add_marker(
+      Math.min(Math.max(position * track_duration, 0), track_duration),
+    );
   }
 
-  async function save_marker_tags(event: FormEvent<HTMLFormElement>, marker_id: string) {
+  async function save_marker_tags(
+    event: FormEvent<HTMLFormElement>,
+    marker_id: string,
+  ) {
     event.preventDefault();
-    const tags = marker_tags_draft.split(",").map((tag) => tag.trim()).filter(Boolean);
+    const tags = marker_tags_draft
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
     await on_update_marker_tags(marker_id, tags);
     set_editing_marker_id(null);
   }
@@ -300,13 +388,19 @@ export function AnalysisTimeline({
     set_editing_marker_id(null);
   }
 
-  function start_timeline_scrub(event: PointerEvent<HTMLDivElement>, track_duration: number) {
+  function start_timeline_scrub(
+    event: PointerEvent<HTMLDivElement>,
+    track_duration: number,
+  ) {
     if (is_interactive_target(event.target)) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     seek_from_pointer(event, track_duration);
   }
 
-  function continue_timeline_scrub(event: PointerEvent<HTMLDivElement>, track_duration: number) {
+  function continue_timeline_scrub(
+    event: PointerEvent<HTMLDivElement>,
+    track_duration: number,
+  ) {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
     seek_from_pointer(event, track_duration);
   }
@@ -317,7 +411,10 @@ export function AnalysisTimeline({
     }
   }
 
-  function seek_from_pointer(event: PointerEvent<HTMLDivElement>, track_duration: number) {
+  function seek_from_pointer(
+    event: PointerEvent<HTMLDivElement>,
+    track_duration: number,
+  ) {
     const bounds = event.currentTarget.getBoundingClientRect();
     const position = (event.clientX - bounds.left) / bounds.width;
     on_seek(Math.min(Math.max(position * track_duration, 0), track_duration));
@@ -336,12 +433,16 @@ export function AnalysisTimeline({
 }
 
 function is_interactive_target(target: EventTarget): boolean {
-  return target instanceof Element && target.closest("button, input, form") !== null;
+  return (
+    target instanceof Element && target.closest("button, input, form") !== null
+  );
 }
 
 function is_text_editing_target(target: EventTarget | null): boolean {
-  return target instanceof Element
-    && target.closest("input, textarea, [contenteditable='true']") !== null;
+  return (
+    target instanceof Element &&
+    target.closest("input, textarea, [contenteditable='true']") !== null
+  );
 }
 
 function timeline_duration(
@@ -351,9 +452,18 @@ function timeline_duration(
   segments: MediaSegment[],
   markers: MediaMarker[],
 ): number {
-  const latest_segment_time = Math.max(0, ...segments.map((segment) => segment.end_seconds));
-  const latest_transcript_time = Math.max(0, ...transcript_segments.map((segment) => segment.end_seconds));
-  const latest_marker_time = Math.max(0, ...markers.map((marker) => marker.time_seconds));
+  const latest_segment_time = Math.max(
+    0,
+    ...segments.map((segment) => segment.end_seconds),
+  );
+  const latest_transcript_time = Math.max(
+    0,
+    ...transcript_segments.map((segment) => segment.end_seconds),
+  );
+  const latest_marker_time = Math.max(
+    0,
+    ...markers.map((marker) => marker.time_seconds),
+  );
   return Math.max(
     duration_seconds ?? 0,
     current_time,
@@ -365,12 +475,21 @@ function timeline_duration(
 }
 
 function percentage(seconds: number, duration: number): number {
-  return Math.min(Math.max(seconds / duration * 100, 0), 100);
+  return Math.min(Math.max((seconds / duration) * 100, 0), 100);
 }
 
-function clip_placement(segment: { start_seconds: number; end_seconds: number }, duration: number) {
+function clip_placement(
+  segment: { start_seconds: number; end_seconds: number },
+  duration: number,
+) {
   const left = percentage(segment.start_seconds, duration);
-  const natural_width = percentage(segment.end_seconds - segment.start_seconds, duration);
-  const width = Math.min(Math.max(natural_width, MINIMUM_EVENT_WIDTH_PERCENT), 100 - left);
+  const natural_width = percentage(
+    segment.end_seconds - segment.start_seconds,
+    duration,
+  );
+  const width = Math.min(
+    Math.max(natural_width, MINIMUM_EVENT_WIDTH_PERCENT),
+    100 - left,
+  );
   return { left, width };
 }

@@ -4,8 +4,12 @@ import { Pause, Play, RotateCcw, RotateCw } from "lucide-react";
 import { Player, type PlayerHandle } from "../player/Player";
 import { format_duration, format_time } from "../../shared/format";
 import { media_url } from "../../shared/api";
-import type { AnalysisMode, MediaAsset, MediaMarker, Transcript } from "../../shared/types";
-
+import type {
+  AnalysisMode,
+  MediaAsset,
+  MediaMarker,
+  Transcript,
+} from "../../shared/types";
 
 type VideoWorkspaceProps = {
   asset: MediaAsset | null;
@@ -33,7 +37,9 @@ export function VideoWorkspace({
   on_start_analysis,
 }: VideoWorkspaceProps) {
   const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
-  const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(new Set());
+  const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
+    new Set(),
+  );
   const [is_paused, set_is_paused] = useState(true);
   const transport_time_ref = useRef<number | null>(null);
 
@@ -48,7 +54,10 @@ export function VideoWorkspace({
 
   if (!asset?.playback_url) {
     return (
-      <section className="video_workspace video_workspace_empty" aria-label="视频工作区">
+      <section
+        className="video_workspace video_workspace_empty"
+        aria-label="视频工作区"
+      >
         <span>OV</span>
         <h1>选择一个已完成的视频</h1>
         <p>视频、转写、重点片段和手工标记将在同一工作区联动。</p>
@@ -61,11 +70,20 @@ export function VideoWorkspace({
       <div className="workspace_video_header">
         <div>
           <h1>{asset.title}</h1>
-          <p>{asset.author_name ?? "未知作者"} · {format_duration(asset.duration_seconds)}</p>
+          <p>
+            {asset.author_name ?? "未知作者"} ·{" "}
+            {format_duration(asset.duration_seconds)}
+          </p>
         </div>
         <dl>
-          <div><dt>分辨率</dt><dd>{format_resolution(asset)}</dd></div>
-          <div><dt>编码</dt><dd>{format_codecs(asset)}</dd></div>
+          <div>
+            <dt>分辨率</dt>
+            <dd>{format_resolution(asset)}</dd>
+          </div>
+          <div>
+            <dt>编码</dt>
+            <dd>{format_codecs(asset)}</dd>
+          </div>
         </dl>
       </div>
       <div className="workspace_player_frame">
@@ -94,8 +112,16 @@ export function VideoWorkspace({
         >
           <RotateCcw aria-hidden="true" />
         </button>
-        <button type="button" onClick={() => player_ref.current?.toggle_playback()} aria-label={is_paused ? "播放" : "暂停"}>
-          {is_paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
+        <button
+          type="button"
+          onClick={() => player_ref.current?.toggle_playback()}
+          aria-label={is_paused ? "播放" : "暂停"}
+        >
+          {is_paused ? (
+            <Play aria-hidden="true" />
+          ) : (
+            <Pause aria-hidden="true" />
+          )}
         </button>
         <button
           type="button"
@@ -112,7 +138,11 @@ export function VideoWorkspace({
             onClick={on_start_transcription}
             disabled={is_transcribing || is_analyzing || has_transcript}
           >
-            {is_transcribing ? "转录中…" : has_transcript ? "转录已完成" : "生成转录"}
+            {is_transcribing
+              ? "转录中…"
+              : has_transcript
+                ? "转录已完成"
+                : "生成转录"}
           </button>
           <span>转录生成可编辑文字；内容分析在转录完成后单独执行。</span>
         </div>
@@ -145,7 +175,11 @@ export function VideoWorkspace({
                 <input
                   type="checkbox"
                   checked={selected_marker_ids.has(marker.marker_id)}
-                  onChange={() => set_selected_marker_ids((current) => toggle_marker(current, marker.marker_id))}
+                  onChange={() =>
+                    set_selected_marker_ids((current) =>
+                      toggle_marker(current, marker.marker_id),
+                    )
+                  }
                 />
                 <time>{format_time(marker.time_seconds)}</time>
                 <span>{marker.tags.join(" / ") || "未分类标记"}</span>
@@ -156,18 +190,26 @@ export function VideoWorkspace({
         <button
           className="workspace_primary_action"
           type="button"
-          onClick={() => on_start_analysis(analysis_mode, [...selected_marker_ids])}
+          onClick={() =>
+            on_start_analysis(analysis_mode, [...selected_marker_ids])
+          }
           disabled={
-            !has_transcript
-            || is_transcribing
-            || is_analyzing
-            || (analysis_mode === "markers" && selected_marker_ids.size === 0)
+            !has_transcript ||
+            is_transcribing ||
+            is_analyzing ||
+            (analysis_mode === "markers" && selected_marker_ids.size === 0)
           }
         >
-          {is_analyzing ? "分析中…" : analysis_mode === "full" ? "分析全片" : `分析 ${selected_marker_ids.size} 个标记`}
+          {is_analyzing
+            ? "分析中…"
+            : analysis_mode === "full"
+              ? "分析全片"
+              : `分析 ${selected_marker_ids.size} 个标记`}
         </button>
       </section>
-      {asset.description ? <p className="workspace_description">{asset.description}</p> : null}
+      {asset.description ? (
+        <p className="workspace_description">{asset.description}</p>
+      ) : null}
     </section>
   );
 }
@@ -193,11 +235,16 @@ function toggle_marker(current: Set<string>, marker_id: string): Set<string> {
 }
 
 function format_resolution(asset: MediaAsset): string {
-  return asset.width && asset.height ? `${asset.width} × ${asset.height}` : "未知";
+  return asset.width && asset.height
+    ? `${asset.width} × ${asset.height}`
+    : "未知";
 }
 
 function format_codecs(asset: MediaAsset): string {
-  return [asset.video_codec, asset.audio_codec].filter(Boolean).join(" / ") || "待探测";
+  return (
+    [asset.video_codec, asset.audio_codec].filter(Boolean).join(" / ") ||
+    "待探测"
+  );
 }
 
 function player_storyboard(asset: MediaAsset) {

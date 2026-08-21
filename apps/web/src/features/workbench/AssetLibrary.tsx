@@ -2,7 +2,6 @@ import { format_duration } from "../../shared/format";
 import { media_url } from "../../shared/api";
 import type { MediaAsset } from "../../shared/types";
 
-
 type AssetLibraryProps = {
   assets: MediaAsset[];
   selected_asset_id: string | null;
@@ -29,19 +28,31 @@ export function AssetLibrary({
           {ready_assets.map((asset) => (
             <li key={asset.asset_id}>
               <button
-                className={asset.asset_id === selected_asset_id ? "selected" : ""}
+                className={
+                  asset.asset_id === selected_asset_id ? "selected" : ""
+                }
                 type="button"
                 onClick={() => on_select(asset.asset_id)}
                 aria-pressed={asset.asset_id === selected_asset_id}
               >
                 <span className="workbench_asset_thumbnail">
-                  {asset.thumbnail_url ? <img src={media_url(asset.thumbnail_url)} alt="" /> : "▶"}
+                  {asset.thumbnail_url ? (
+                    <img src={media_url(asset.thumbnail_url)} alt="" />
+                  ) : (
+                    "▶"
+                  )}
                 </span>
                 <span className="workbench_asset_copy">
                   <strong>{asset.title}</strong>
-                  <small>{asset.author_name ?? "未知作者"} · {format_duration(asset.duration_seconds)}</small>
+                  <small>
+                    {asset.author_name ?? "未知作者"} ·{" "}
+                    {format_duration(asset.duration_seconds)}
+                  </small>
                 </span>
-                <span className={`asset_status ${asset.status}`} title={asset.status} />
+                <span
+                  className={`asset_status ${asset.status}`}
+                  title={asset.status}
+                />
               </button>
             </li>
           ))}

@@ -1,0 +1,5 @@
+dist/
+storybook-static/
+coverage/
+src/styles.css
+src/features/player/player.css

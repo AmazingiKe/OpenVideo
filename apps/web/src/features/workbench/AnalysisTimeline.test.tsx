@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisTimeline } from "./AnalysisTimeline";
 
-
 const ASSET_ID = "asset-0123456789abcdef0123456789abcdef";
 
 describe("AnalysisTimeline", () => {
@@ -17,21 +16,23 @@ describe("AnalysisTimeline", () => {
         transcript={null}
         markers={[]}
         marker_error={null}
-        segments={[{
-          segment_id: "segment-0123456789abcdef0123456789abcdef",
-          asset_id: ASSET_ID,
-          start_seconds: 45,
-          end_seconds: 60,
-          title: "矩阵推导",
-          detailed_summary: null,
-          transcript_text: null,
-          speaker_name: null,
-          key_frame_paths: [],
-          visual_description: null,
-          ocr_text: null,
-          marker_ids: [],
-          tags: ["公式"],
-        }]}
+        segments={[
+          {
+            segment_id: "segment-0123456789abcdef0123456789abcdef",
+            asset_id: ASSET_ID,
+            start_seconds: 45,
+            end_seconds: 60,
+            title: "矩阵推导",
+            detailed_summary: null,
+            transcript_text: null,
+            speaker_name: null,
+            key_frame_paths: [],
+            visual_description: null,
+            ocr_text: null,
+            marker_ids: [],
+            tags: ["公式"],
+          },
+        ]}
         on_seek={seek_to}
         on_add_marker={add_marker}
         on_remove_marker={vi.fn()}
@@ -40,8 +41,12 @@ describe("AnalysisTimeline", () => {
       />,
     );
 
-    expect(screen.getByLabelText("当前播放时间")).toHaveTextContent("00:30 / 02:00");
-    fireEvent.keyDown(screen.getByRole("slider", { name: "时间轴拖动区域" }), { key: "ArrowRight" });
+    expect(screen.getByLabelText("当前播放时间")).toHaveTextContent(
+      "00:30 / 02:00",
+    );
+    fireEvent.keyDown(screen.getByRole("slider", { name: "时间轴拖动区域" }), {
+      key: "ArrowRight",
+    });
     fireEvent.click(screen.getByRole("button", { name: /矩阵推导/ }));
     fireEvent.keyDown(window, { key: "m", ctrlKey: true });
 
@@ -67,7 +72,9 @@ describe("AnalysisTimeline", () => {
         on_update_transcript={vi.fn()}
       />,
     );
-    const timeline = within(timeline_view.container).getByRole("slider", { name: "时间轴拖动区域" });
+    const timeline = within(timeline_view.container).getByRole("slider", {
+      name: "时间轴拖动区域",
+    });
     vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({
       left: 100,
       right: 500,
@@ -95,7 +102,9 @@ describe("AnalysisTimeline", () => {
           asset_id: ASSET_ID,
           language: "zh",
           created_at: "2026-01-01",
-          segments: [{ start_seconds: 12, end_seconds: 18, text: "错误的转写" }],
+          segments: [
+            { start_seconds: 12, end_seconds: 18, text: "错误的转写" },
+          ],
         }}
         markers={[]}
         marker_error={null}
@@ -123,12 +132,14 @@ describe("AnalysisTimeline", () => {
         duration_seconds={120}
         current_time={0}
         transcript={null}
-        markers={[{
-          marker_id: "marker-0123456789abcdef0123456789abcdef",
-          asset_id: ASSET_ID,
-          time_seconds: 30,
-          tags: ["重点"],
-        }]}
+        markers={[
+          {
+            marker_id: "marker-0123456789abcdef0123456789abcdef",
+            asset_id: ASSET_ID,
+            time_seconds: 30,
+            tags: ["重点"],
+          },
+        ]}
         marker_error={null}
         segments={[]}
         on_seek={vi.fn()}

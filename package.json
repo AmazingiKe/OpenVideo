@@ -5,7 +5,13 @@
   "scripts": {
     "dev:web": "pnpm --filter @openvideo/web dev",
     "build:web": "pnpm --filter @openvideo/web build",
+    "storybook:web": "pnpm --filter @openvideo/web storybook",
+    "build:storybook": "pnpm --filter @openvideo/web build-storybook",
+    "lint:web": "pnpm --filter @openvideo/web lint",
+    "format:web": "pnpm --filter @openvideo/web format",
+    "format:check:web": "pnpm --filter @openvideo/web format:check",
     "test:web": "pnpm --filter @openvideo/web test",
+    "test:storybook": "pnpm --filter @openvideo/web test:storybook",
     "check:web": "pnpm --filter @openvideo/web check"
   }
 }

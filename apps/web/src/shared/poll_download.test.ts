@@ -4,7 +4,6 @@ import * as api from "./api";
 import { poll_download } from "./poll_download";
 import type { DownloadJob } from "./types";
 
-
 const pending_job: DownloadJob = {
   job_id: "job-1",
   asset_id: "asset-1",
@@ -24,13 +23,25 @@ afterEach(() => {
 describe("poll_download", () => {
   it("polls sequentially until completion", async () => {
     vi.useFakeTimers();
-    const downloading = { ...pending_job, stage: "downloading" as const, progress_percent: 50 };
-    const complete = { ...pending_job, stage: "complete" as const, progress_percent: 100 };
+    const downloading = {
+      ...pending_job,
+      stage: "downloading" as const,
+      progress_percent: 50,
+    };
+    const complete = {
+      ...pending_job,
+      stage: "complete" as const,
+      progress_percent: 100,
+    };
     vi.spyOn(api, "get_download")
       .mockResolvedValueOnce(downloading)
       .mockResolvedValueOnce(complete);
     const on_update = vi.fn();
-    const promise = poll_download(pending_job, on_update, new AbortController().signal);
+    const promise = poll_download(
+      pending_job,
+      on_update,
+      new AbortController().signal,
+    );
 
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(1000);
@@ -43,7 +54,11 @@ describe("poll_download", () => {
 
   it("does not poll terminal jobs", async () => {
     const get_download_spy = vi.spyOn(api, "get_download");
-    const failed = { ...pending_job, stage: "failed" as const, error_message: "失败" };
+    const failed = {
+      ...pending_job,
+      stage: "failed" as const,
+      error_message: "失败",
+    };
     await expect(
       poll_download(failed, vi.fn(), new AbortController().signal),
     ).resolves.toEqual(failed);

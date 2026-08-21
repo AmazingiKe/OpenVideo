@@ -168,3 +168,14 @@ for node in cmds.ls(type="file"):
 - 对外标识符格式为「语义前缀 + uuid7 十六进制」，例如 `asset-{uuid7.hex}`、`job-{uuid7.hex}`；校验时按前缀 + 定长十六进制处理，不允许把前缀或用户输入拼进文件路径。
 - 新增标识符字段时同样使用 UUIDv7，不得引入其他 ID 方案。
 
+## 前端设计系统与组件复用
+
+- 开始实现 UI 前，先搜索 `apps/web` 现有组件、Storybook 文档和 shadcn registry；已有组件能够组合完成时，禁止重复造组件。
+- 重复出现的 UI 或交互必须抽成单一 reusable component，并为可复用组件维护 Storybook stories。
+- 颜色、间距、圆角、阴影、字号和动效必须使用语义化 Design Tokens，禁止在业务组件中随意 hardcode color/spacing。
+- 布局遵循 8px Grid；仅在紧凑内部对齐且已有 token 时使用 4px 半步。Typography 必须形成清晰的标题、正文、标签和元数据层级。
+- 保持专业 SaaS/Tool UI 的 Visual Hierarchy，突出主任务与状态，弱化次要操作和装饰效果。
+- 所有界面必须设计 Responsive Layout，并验证键盘操作、焦点、语义 HTML、ARIA、对比度及 reduced motion 等 Accessibility 要求。
+- Light/Dark Mode 必须共用语义 token，并覆盖 hover、focus、selected、disabled、loading、empty、success、warning、error 状态。
+- 优先采用 shadcn/ui、Radix UI、Lucide 和现有项目组件；Motion Primitives、Magic UI、Aceternity UI 仅在确有功能价值时按需引入。
+

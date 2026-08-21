@@ -6,7 +6,6 @@ import { VideoWorkspace } from "./VideoWorkspace";
 import type { PlayerHandle } from "../player/Player";
 import type { MediaAsset } from "../../shared/types";
 
-
 vi.mock("../player/Player", () => ({
   Player: forwardRef(function Player() {
     return <div data-testid="player" />;
@@ -54,10 +53,9 @@ describe("VideoWorkspace", () => {
     fireEvent.click(marker_options[0]);
     fireEvent.click(screen.getByRole("button", { name: "分析 1 个标记" }));
 
-    expect(start_analysis).toHaveBeenCalledWith(
-      "markers",
-      ["marker-1123456789abcdef0123456789abcdef"],
-    );
+    expect(start_analysis).toHaveBeenCalledWith("markers", [
+      "marker-1123456789abcdef0123456789abcdef",
+    ]);
   });
 
   it("keeps transport controls below the video", () => {

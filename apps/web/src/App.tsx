@@ -35,7 +35,6 @@ import { SummaryWorkspace } from "./features/workbench/SummaryWorkspace";
 import { type TaskRecord } from "./features/workbench/tasks";
 import { VideoWorkspace } from "./features/workbench/VideoWorkspace";
 
-
 const terminal_download_stages = new Set(["complete", "failed"]);
 const MAX_TASK_RECORDS = 100;
 const WORKSPACE_MODULES = [
@@ -48,39 +47,55 @@ type WorkspaceModule = (typeof WORKSPACE_MODULES)[number];
 type WorkspaceModuleId = WorkspaceModule["id"];
 
 function workspace_module_id_from_path(pathname: string): WorkspaceModuleId {
-  return WORKSPACE_MODULES.find((module) => module.path === pathname)?.id ?? "download";
+  return (
+    WORKSPACE_MODULES.find((module) => module.path === pathname)?.id ??
+    "download"
+  );
 }
 
 export function App() {
   const [health, set_health] = useState<HealthResponse | null>(null);
   const [assets, set_assets] = useState<MediaAsset[]>([]);
-  const [selected_asset_id, set_selected_asset_id] = useState<string | null>(null);
+  const [selected_asset_id, set_selected_asset_id] = useState<string | null>(
+    null,
+  );
   const [task_records, set_task_records] = useState<TaskRecord[]>([]);
   const [segments, set_segments] = useState<MediaSegment[]>([]);
   const [transcript, set_transcript] = useState<Transcript | null>(null);
   const [current_time, set_current_time] = useState(0);
   const [source_url, set_source_url] = useState("");
   const [probe_result, set_probe_result] = useState<ProbeResponse | null>(null);
-  const [selected_probe_urls, set_selected_probe_urls] = useState<Set<string>>(new Set());
+  const [selected_probe_urls, set_selected_probe_urls] = useState<Set<string>>(
+    new Set(),
+  );
   const [is_submitting, set_is_submitting] = useState(false);
   const [is_analyzing, set_is_analyzing] = useState(false);
   const [is_transcribing, set_is_transcribing] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
-  const [active_workspace_module, set_active_workspace_module] = useState<WorkspaceModuleId>(() => (
-    workspace_module_id_from_path(window.location.pathname)
-  ));
+  const [active_workspace_module, set_active_workspace_module] =
+    useState<WorkspaceModuleId>(() =>
+      workspace_module_id_from_path(window.location.pathname),
+    );
   const player_ref = useRef<PlayerHandle>(null);
   const download_controller_ref = useRef<AbortController | null>(null);
   const analysis_controller_ref = useRef<AbortController | null>(null);
 
-  const selected_asset = assets.find((asset) => asset.asset_id === selected_asset_id) ?? null;
-  const { markers, marker_error, add_marker, update_marker_tags, remove_marker } = use_asset_markers(
-    selected_asset?.asset_id ?? "",
-  );
+  const selected_asset =
+    assets.find((asset) => asset.asset_id === selected_asset_id) ?? null;
+  const {
+    markers,
+    marker_error,
+    add_marker,
+    update_marker_tags,
+    remove_marker,
+  } = use_asset_markers(selected_asset?.asset_id ?? "");
 
   useEffect(() => {
     const controller = new AbortController();
-    void Promise.all([get_health(controller.signal), refresh_assets(controller.signal)])
+    void Promise.all([
+      get_health(controller.signal),
+      refresh_assets(controller.signal),
+    ])
       .then(([next_health]) => set_health(next_health))
       .catch((error: unknown) => {
         if (!is_abort_error(error)) set_page_error(error_message(error));
@@ -88,17 +103,24 @@ export function App() {
     return () => controller.abort();
   }, []);
 
-  useEffect(() => () => {
-    download_controller_ref.current?.abort();
-    analysis_controller_ref.current?.abort();
-  }, []);
+  useEffect(
+    () => () => {
+      download_controller_ref.current?.abort();
+      analysis_controller_ref.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
-    const current_module = WORKSPACE_MODULES.find((module) => module.path === window.location.pathname);
+    const current_module = WORKSPACE_MODULES.find(
+      (module) => module.path === window.location.pathname,
+    );
     if (!current_module) window.history.replaceState(null, "", "/downloads");
 
     function sync_workspace_module() {
-      set_active_workspace_module(workspace_module_id_from_path(window.location.pathname));
+      set_active_workspace_module(
+        workspace_module_id_from_path(window.location.pathname),
+      );
     }
 
     window.addEventListener("popstate", sync_workspace_module);
@@ -131,8 +153,14 @@ export function App() {
     const next_assets = await list_assets(signal);
     set_assets(next_assets);
     set_selected_asset_id((current_id) => {
-      if (current_id && next_assets.some((asset) => asset.asset_id === current_id)) return current_id;
-      return next_assets.find((asset) => asset.status === "ready")?.asset_id ?? null;
+      if (
+        current_id &&
+        next_assets.some((asset) => asset.asset_id === current_id)
+      )
+        return current_id;
+      return (
+        next_assets.find((asset) => asset.status === "ready")?.asset_id ?? null
+      );
     });
   }
 
@@ -148,7 +176,9 @@ export function App() {
     try {
       const probe = await probe_source(normalized_url);
       set_probe_result(probe);
-      set_selected_probe_urls(initial_selected_probe_urls(probe.entries, normalized_url));
+      set_selected_probe_urls(
+        initial_selected_probe_urls(probe.entries, normalized_url),
+      );
     } catch (error: unknown) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
@@ -181,15 +211,13 @@ export function App() {
     download_controller_ref.current = controller;
     const jobs = await create_download(urls, controller.signal);
     jobs.forEach(record_download_job);
-    const final_jobs = await Promise.all(jobs.map((job) => (
-      terminal_download_stages.has(job.stage)
-        ? Promise.resolve(job)
-        : poll_download(
-          job,
-          record_download_job,
-          controller.signal,
-        )
-    )));
+    const final_jobs = await Promise.all(
+      jobs.map((job) =>
+        terminal_download_stages.has(job.stage)
+          ? Promise.resolve(job)
+          : poll_download(job, record_download_job, controller.signal),
+      ),
+    );
     final_jobs.forEach(record_download_job);
     const completed_jobs = final_jobs.filter((job) => job.stage === "complete");
     const failed_job = final_jobs.find((job) => job.stage === "failed");
@@ -198,8 +226,10 @@ export function App() {
       set_selected_asset_id(completed_jobs[completed_jobs.length - 1].asset_id);
       set_source_url("");
     }
-    if (failed_job) set_page_error(failed_job.error_message ?? "部分视频下载失败");
-    if (download_controller_ref.current === controller) download_controller_ref.current = null;
+    if (failed_job)
+      set_page_error(failed_job.error_message ?? "部分视频下载失败");
+    if (download_controller_ref.current === controller)
+      download_controller_ref.current = null;
   }
 
   async function start_analysis(mode: AnalysisMode, marker_ids: string[]) {
@@ -210,21 +240,33 @@ export function App() {
     set_is_analyzing(true);
     set_page_error(null);
     try {
-      const job = await analyze_asset(selected_asset_id, mode, marker_ids, controller.signal);
+      const job = await analyze_asset(
+        selected_asset_id,
+        mode,
+        marker_ids,
+        controller.signal,
+      );
       record_analysis_job(job);
-      const final_job = job.stage === "complete" ? job : await poll_analysis(job, record_analysis_job, controller.signal);
+      const final_job =
+        job.stage === "complete"
+          ? job
+          : await poll_analysis(job, record_analysis_job, controller.signal);
       if (final_job.stage === "failed") {
         set_page_error(final_job.error_message ?? "分析失败");
         return;
       }
-      const loaded_analysis = await load_asset_analysis(selected_asset_id, controller.signal);
+      const loaded_analysis = await load_asset_analysis(
+        selected_asset_id,
+        controller.signal,
+      );
       set_segments(loaded_analysis.loaded_segments);
       set_transcript(loaded_analysis.loaded_transcript);
     } catch (error: unknown) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
       set_is_analyzing(false);
-      if (analysis_controller_ref.current === controller) analysis_controller_ref.current = null;
+      if (analysis_controller_ref.current === controller)
+        analysis_controller_ref.current = null;
     }
   }
 
@@ -252,9 +294,15 @@ export function App() {
 
   function record_task(task: TaskRecord) {
     set_task_records((current) => {
-      const previous_task = current.find((item) => item.task_id === task.task_id);
-      const remaining_tasks = current.filter((item) => item.task_id !== task.task_id);
-      const next_tasks = previous_task ? [task, ...remaining_tasks] : [task, ...current];
+      const previous_task = current.find(
+        (item) => item.task_id === task.task_id,
+      );
+      const remaining_tasks = current.filter(
+        (item) => item.task_id !== task.task_id,
+      );
+      const next_tasks = previous_task
+        ? [task, ...remaining_tasks]
+        : [task, ...current];
       return next_tasks.slice(0, MAX_TASK_RECORDS);
     });
   }
@@ -269,19 +317,23 @@ export function App() {
     try {
       const job = await transcribe_asset(selected_asset_id, controller.signal);
       record_analysis_job(job);
-      const final_job = job.stage === "complete"
-        ? job
-        : await poll_analysis(job, record_analysis_job, controller.signal);
+      const final_job =
+        job.stage === "complete"
+          ? job
+          : await poll_analysis(job, record_analysis_job, controller.signal);
       if (final_job.stage === "failed") {
         set_page_error(final_job.error_message ?? "转录失败");
         return;
       }
-      set_transcript(await get_transcript(selected_asset_id, controller.signal));
+      set_transcript(
+        await get_transcript(selected_asset_id, controller.signal),
+      );
     } catch (error: unknown) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
       set_is_transcribing(false);
-      if (analysis_controller_ref.current === controller) analysis_controller_ref.current = null;
+      if (analysis_controller_ref.current === controller)
+        analysis_controller_ref.current = null;
     }
   }
 
@@ -307,14 +359,18 @@ export function App() {
   }
 
   function navigate_to_workspace_module(module: WorkspaceModule) {
-    if (window.location.pathname !== module.path) window.history.pushState(null, "", module.path);
+    if (window.location.pathname !== module.path)
+      window.history.pushState(null, "", module.path);
     set_active_workspace_module(module.id);
   }
 
   return (
     <div className="workbench_shell">
       <header className="workbench_header">
-        <div className="workbench_brand"><Clapperboard aria-hidden="true" /><strong>OpenVideo</strong></div>
+        <div className="workbench_brand">
+          <Clapperboard aria-hidden="true" />
+          <strong>OpenVideo</strong>
+        </div>
         <nav className="workbench_navigation" aria-label="工作区导航">
           {WORKSPACE_MODULES.map((module) => (
             <WorkspaceNavigationLink
@@ -326,7 +382,13 @@ export function App() {
           ))}
         </nav>
       </header>
-      <main className={active_workspace_module === "analysis" ? "workbench_main" : "module_main"}>
+      <main
+        className={
+          active_workspace_module === "analysis"
+            ? "workbench_main"
+            : "module_main"
+        }
+      >
         {active_workspace_module === "download" ? (
           <DownloadWorkspace
             health={health}
@@ -339,13 +401,17 @@ export function App() {
             error={page_error}
             on_source_url_change={set_source_url}
             on_submit_probe={submit_source_probe}
-            on_toggle_url={(url) => set_selected_probe_urls((current) => {
-              const next = new Set(current);
-              if (next.has(url)) next.delete(url);
-              else next.add(url);
-              return next;
-            })}
-            on_replace_selection={(urls) => set_selected_probe_urls(new Set(urls))}
+            on_toggle_url={(url) =>
+              set_selected_probe_urls((current) => {
+                const next = new Set(current);
+                if (next.has(url)) next.delete(url);
+                else next.add(url);
+                return next;
+              })
+            }
+            on_replace_selection={(urls) =>
+              set_selected_probe_urls(new Set(urls))
+            }
             on_start_download={() => void start_selected_downloads()}
           />
         ) : null}
@@ -366,7 +432,9 @@ export function App() {
               is_transcribing={is_transcribing}
               on_start_transcription={() => void start_transcription()}
               is_analyzing={is_analyzing}
-              on_start_analysis={(mode, marker_ids) => void start_analysis(mode, marker_ids)}
+              on_start_analysis={(mode, marker_ids) =>
+                void start_analysis(mode, marker_ids)
+              }
             />
             <AnalysisTimeline
               duration_seconds={selected_asset?.duration_seconds ?? null}
@@ -378,25 +446,40 @@ export function App() {
               on_seek={seek_player}
               on_add_marker={(seconds) => add_marker(seconds)}
               on_remove_marker={(marker_id) => remove_marker(marker_id)}
-              on_update_marker_tags={(marker_id, tags) => update_marker_tags(marker_id, tags)}
-              on_update_transcript={(segment_index, text) => (
+              on_update_marker_tags={(marker_id, tags) =>
+                update_marker_tags(marker_id, tags)
+              }
+              on_update_transcript={(segment_index, text) =>
                 save_transcript_segment(segment_index, text)
-              )}
+              }
             />
           </>
         ) : null}
         {active_workspace_module === "summary" ? (
-          <SummaryWorkspace selected_asset={selected_asset} segments={segments} transcript={transcript} />
+          <SummaryWorkspace
+            selected_asset={selected_asset}
+            segments={segments}
+            transcript={transcript}
+          />
         ) : null}
       </main>
-      {page_error && active_workspace_module !== "download" ? <p className="workbench_error" role="alert">{page_error}</p> : null}
+      {page_error && active_workspace_module !== "download" ? (
+        <p className="workbench_error" role="alert">
+          {page_error}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function initial_selected_probe_urls(entries: ProbeEntry[], source_url: string): Set<string> {
+function initial_selected_probe_urls(
+  entries: ProbeEntry[],
+  source_url: string,
+): Set<string> {
   const current_source_video_id = source_video_id_from_url(source_url);
-  const current_entry = entries.find((entry) => entry.source_video_id === current_source_video_id);
+  const current_entry = entries.find(
+    (entry) => entry.source_video_id === current_source_video_id,
+  );
   return current_entry ? new Set([current_entry.url]) : new Set();
 }
 
@@ -409,7 +492,8 @@ function source_video_id_from_url(source_url: string): string | null {
     if (url.hostname.endsWith("bilibili.com") || url.hostname === "b23.tv") {
       return path_parts.at(-1) ?? null;
     }
-    if (url.hostname.endsWith("douyin.com") && path_parts[0] === "video") return path_parts[1] ?? null;
+    if (url.hostname.endsWith("douyin.com") && path_parts[0] === "video")
+      return path_parts[1] ?? null;
   } catch {
     return null;
   }
@@ -422,7 +506,11 @@ type WorkspaceNavigationLinkProps = {
   on_navigate: (module: WorkspaceModule) => void;
 };
 
-function WorkspaceNavigationLink({ module, active, on_navigate }: WorkspaceNavigationLinkProps) {
+function WorkspaceNavigationLink({
+  module,
+  active,
+  on_navigate,
+}: WorkspaceNavigationLinkProps) {
   const ModuleIcon = module.icon;
   return (
     <a
@@ -448,7 +536,10 @@ async function load_asset_analysis(asset_id: string, signal: AbortSignal) {
   return { loaded_segments, loaded_transcript };
 }
 
-async function load_optional_segments(asset_id: string, signal: AbortSignal): Promise<MediaSegment[]> {
+async function load_optional_segments(
+  asset_id: string,
+  signal: AbortSignal,
+): Promise<MediaSegment[]> {
   try {
     return await get_segments(asset_id, signal);
   } catch (error) {
@@ -457,7 +548,10 @@ async function load_optional_segments(asset_id: string, signal: AbortSignal): Pr
   }
 }
 
-async function load_optional_transcript(asset_id: string, signal: AbortSignal): Promise<Transcript | null> {
+async function load_optional_transcript(
+  asset_id: string,
+  signal: AbortSignal,
+): Promise<Transcript | null> {
   try {
     return await get_transcript(asset_id, signal);
   } catch (error) {

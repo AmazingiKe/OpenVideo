@@ -14,7 +14,6 @@ import {
 } from "./shared/api";
 import type { MediaAsset } from "./shared/types";
 
-
 const ASSET_ID = "asset-0123456789abcdef0123456789abcdef";
 
 vi.mock("./shared/api", () => ({
@@ -36,7 +35,10 @@ vi.mock("./shared/api", () => ({
 
 vi.mock("./features/player/Player", () => ({
   Player: forwardRef(function Player(_, ref) {
-    useImperativeHandle(ref, () => ({ current_time: () => 0, seek_to: vi.fn() }));
+    useImperativeHandle(ref, () => ({
+      current_time: () => 0,
+      seek_to: vi.fn(),
+    }));
     return <div data-testid="player" />;
   }),
 }));
@@ -48,9 +50,21 @@ describe("App", () => {
       dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
     });
     vi.mocked(list_assets).mockResolvedValue([
-      create_asset({ status: "ready", title: "演示视频", playback_url: "/stream" }),
-      create_asset({ status: "downloading", title: "下载中的视频", playback_url: null }),
-      create_asset({ status: "failed", title: "失败的视频", playback_url: null }),
+      create_asset({
+        status: "ready",
+        title: "演示视频",
+        playback_url: "/stream",
+      }),
+      create_asset({
+        status: "downloading",
+        title: "下载中的视频",
+        playback_url: null,
+      }),
+      create_asset({
+        status: "failed",
+        title: "失败的视频",
+        playback_url: null,
+      }),
     ]);
     vi.mocked(get_markers).mockResolvedValue([]);
     vi.mocked(get_segments).mockResolvedValue([]);
@@ -64,50 +78,77 @@ describe("App", () => {
       platform: "bilibili",
       is_playlist: true,
       title: "已检测的视频",
-      entries: [{
-        source_video_id: "BV1xx411c7mD",
-        url: "https://www.bilibili.com/video/BV1xx411c7mD",
-        title: "已检测的视频",
-        duration_seconds: 60,
-        uploader: "示例作者",
-      }, {
-        source_video_id: "BV1yy411c7mD",
-        url: "https://www.bilibili.com/video/BV1yy411c7mD",
-        title: "同一合集的其他视频",
-        duration_seconds: 120,
-        uploader: "示例作者",
-      }],
+      entries: [
+        {
+          source_video_id: "BV1xx411c7mD",
+          url: "https://www.bilibili.com/video/BV1xx411c7mD",
+          title: "已检测的视频",
+          duration_seconds: 60,
+          uploader: "示例作者",
+        },
+        {
+          source_video_id: "BV1yy411c7mD",
+          url: "https://www.bilibili.com/video/BV1yy411c7mD",
+          title: "同一合集的其他视频",
+          duration_seconds: 120,
+          uploader: "示例作者",
+        },
+      ],
       truncated: false,
       total_count: 2,
     });
 
     render(<App />);
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: "管理在线视频下载" })).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: "开始分析" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "检测" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "下载在线视频，稍后集中处理" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "开始分析" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "检测链接" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("视频或播放列表地址"), {
       target: { value: "https://www.bilibili.com/video/BV1xx411c7mD" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "检测" }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: "已检测的视频" })).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "下载选中的 1 个视频" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "检测链接" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "已检测的视频" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: "下载 1 个视频" }),
+    ).toBeInTheDocument();
     const entries = screen.getAllByRole("checkbox");
     expect(entries[0]).toBeChecked();
     expect(entries[1]).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "全选" }));
-    expect(screen.getByRole("button", { name: "下载选中的 2 个视频" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "下载 2 个视频" }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清空" }));
-    expect(screen.getByRole("button", { name: "下载选中的 0 个视频" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "当前集" }));
-    expect(screen.getByRole("button", { name: "下载选中的 1 个视频" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "下载 0 个视频" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "当前视频" }));
+    expect(
+      screen.getByRole("button", { name: "下载 1 个视频" }),
+    ).toBeInTheDocument();
     expect(create_download).not.toHaveBeenCalled();
     const download_module = screen.getByRole("link", { name: "视频下载" });
     expect(download_module).toHaveAttribute("aria-current", "page");
 
     fireEvent.click(screen.getByRole("link", { name: "视频分析" }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: "演示视频" })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "演示视频" }),
+      ).toBeInTheDocument(),
+    );
     expect(screen.getByLabelText("媒体库")).toBeInTheDocument();
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
@@ -116,7 +157,10 @@ describe("App", () => {
 
     expect(window.location.pathname).toBe("/analysis");
     expect(download_module).not.toHaveAttribute("aria-current");
-    expect(screen.getByRole("link", { name: "视频分析" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "视频分析" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
     expect(screen.getByText("可回跳的转写。")).toBeInTheDocument();
   });
@@ -132,7 +176,8 @@ function create_asset({
   playback_url: string | null;
 }): MediaAsset {
   return {
-    asset_id: status === "ready" ? ASSET_ID : `asset-${status}000000000000000000000000`,
+    asset_id:
+      status === "ready" ? ASSET_ID : `asset-${status}000000000000000000000000`,
     source_url: "https://www.bilibili.com/video/BV1xx411c7mD",
     source_platform: "bilibili",
     source_video_id: "BV1xx411c7mD",

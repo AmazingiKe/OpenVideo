@@ -40,7 +40,10 @@ export function get_health(signal?: AbortSignal): Promise<HealthResponse> {
   return request_json("/api/health", { signal });
 }
 
-export function probe_source(source_url: string, signal?: AbortSignal): Promise<ProbeResponse> {
+export function probe_source(
+  source_url: string,
+  signal?: AbortSignal,
+): Promise<ProbeResponse> {
   return request_json("/api/downloads/probe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -49,7 +52,10 @@ export function probe_source(source_url: string, signal?: AbortSignal): Promise<
   });
 }
 
-export function create_download(source_urls: string[], signal?: AbortSignal): Promise<DownloadJob[]> {
+export function create_download(
+  source_urls: string[],
+  signal?: AbortSignal,
+): Promise<DownloadJob[]> {
   return request_json("/api/downloads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -58,8 +64,13 @@ export function create_download(source_urls: string[], signal?: AbortSignal): Pr
   });
 }
 
-export function get_download(job_id: string, signal?: AbortSignal): Promise<DownloadJob> {
-  return request_json(`/api/downloads/${encodeURIComponent(job_id)}`, { signal });
+export function get_download(
+  job_id: string,
+  signal?: AbortSignal,
+): Promise<DownloadJob> {
+  return request_json(`/api/downloads/${encodeURIComponent(job_id)}`, {
+    signal,
+  });
 }
 
 export function list_assets(signal?: AbortSignal): Promise<MediaAsset[]> {
@@ -72,29 +83,49 @@ export function analyze_asset(
   marker_ids: string[],
   signal?: AbortSignal,
 ): Promise<AnalysisJob> {
-  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, marker_ids, force: true }),
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/analyze`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, marker_ids, force: true }),
+      signal,
+    },
+  );
+}
+
+export function transcribe_asset(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<AnalysisJob> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/transcribe`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: false }),
+      signal,
+    },
+  );
+}
+
+export function get_analysis(
+  job_id: string,
+  signal?: AbortSignal,
+): Promise<AnalysisJob> {
+  return request_json(`/api/analysis/${encodeURIComponent(job_id)}`, {
     signal,
   });
 }
 
-export function transcribe_asset(asset_id: string, signal?: AbortSignal): Promise<AnalysisJob> {
-  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/transcribe`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ force: false }),
-    signal,
-  });
-}
-
-export function get_analysis(job_id: string, signal?: AbortSignal): Promise<AnalysisJob> {
-  return request_json(`/api/analysis/${encodeURIComponent(job_id)}`, { signal });
-}
-
-export function get_transcript(asset_id: string, signal?: AbortSignal): Promise<Transcript> {
-  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/transcript`, { signal });
+export function get_transcript(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<Transcript> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/transcript`,
+    { signal },
+  );
 }
 
 export function update_transcript_segment(
@@ -114,12 +145,24 @@ export function update_transcript_segment(
   );
 }
 
-export function get_segments(asset_id: string, signal?: AbortSignal): Promise<MediaSegment[]> {
-  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/segments`, { signal });
+export function get_segments(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<MediaSegment[]> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/segments`,
+    { signal },
+  );
 }
 
-export function get_markers(asset_id: string, signal?: AbortSignal): Promise<MediaMarker[]> {
-  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/markers`, { signal });
+export function get_markers(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<MediaMarker[]> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/markers`,
+    { signal },
+  );
 }
 
 export function create_marker(
@@ -128,12 +171,15 @@ export function create_marker(
   tags: string[],
   signal?: AbortSignal,
 ): Promise<MediaMarker> {
-  return request_json(`/api/media/assets/${encodeURIComponent(asset_id)}/markers`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ time_seconds, tags }),
-    signal,
-  });
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/markers`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ time_seconds, tags }),
+      signal,
+    },
+  );
 }
 
 export function update_marker(

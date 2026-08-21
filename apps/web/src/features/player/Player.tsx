@@ -7,13 +7,21 @@ import {
   useMediaStore,
 } from "@vidstack/react";
 import "@vidstack/react/player/styles/base.css";
-import { PlyrLayout, plyrLayoutIcons } from "@vidstack/react/player/layouts/plyr";
+import {
+  PlyrLayout,
+  plyrLayoutIcons,
+} from "@vidstack/react/player/layouts/plyr";
 import "@vidstack/react/player/styles/plyr/theme.css";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+} from "react";
 
 import type { TranscriptSegment } from "../../shared/types";
 import "./player.css";
-
 
 const SEEK_CONFIRMATION_TOLERANCE_SECONDS = 0.5;
 const SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS = 1_500;
@@ -46,39 +54,55 @@ type PlayerProps = {
 };
 
 export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
-  { src, markers = [], subtitles = [], thumbnails = null, on_time_change, on_pause_change },
+  {
+    src,
+    markers = [],
+    subtitles = [],
+    thumbnails = null,
+    on_time_change,
+    on_pause_change,
+  },
   ref,
 ) {
   // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
   const seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
   const toggle_playback_fn_ref = useRef<(() => void) | null>(null);
   const current_time_value_ref = useRef(0);
-  const pending_seek_ref = useRef<{ time_seconds: number; requested_at: number } | null>(null);
+  const pending_seek_ref = useRef<{
+    time_seconds: number;
+    requested_at: number;
+  } | null>(null);
   const on_time_change_ref = useRef(on_time_change);
 
   useEffect(() => {
     on_time_change_ref.current = on_time_change;
   }, [on_time_change]);
 
-  useImperativeHandle(ref, () => ({
-    seek_to: (seconds: number) => {
-      const bounded_time = Math.max(0, seconds);
-      current_time_value_ref.current = bounded_time;
-      pending_seek_ref.current = { time_seconds: bounded_time, requested_at: performance.now() };
-      on_time_change_ref.current?.(bounded_time);
-      seek_fn_ref.current?.(bounded_time);
-    },
-    current_time: () => current_time_value_ref.current,
-    toggle_playback: () => toggle_playback_fn_ref.current?.(),
-  }), []);
-
-  const on_player_ready = useCallback(
-    (instance: PlayerRef | null) => {
-      seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
-      toggle_playback_fn_ref.current = instance ? () => instance.toggle_playback() : null;
-    },
+  useImperativeHandle(
+    ref,
+    () => ({
+      seek_to: (seconds: number) => {
+        const bounded_time = Math.max(0, seconds);
+        current_time_value_ref.current = bounded_time;
+        pending_seek_ref.current = {
+          time_seconds: bounded_time,
+          requested_at: performance.now(),
+        };
+        on_time_change_ref.current?.(bounded_time);
+        seek_fn_ref.current?.(bounded_time);
+      },
+      current_time: () => current_time_value_ref.current,
+      toggle_playback: () => toggle_playback_fn_ref.current?.(),
+    }),
     [],
   );
+
+  const on_player_ready = useCallback((instance: PlayerRef | null) => {
+    seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
+    toggle_playback_fn_ref.current = instance
+      ? () => instance.toggle_playback()
+      : null;
+  }, []);
 
   const plyr_markers = markers.map((marker) => ({
     time: marker.time_seconds,
@@ -117,11 +141,14 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         on_player_ready={on_player_ready}
         on_time_change={(seconds) => {
           const pending_seek = pending_seek_ref.current;
-          const is_waiting_for_seek = pending_seek !== null
-            && performance.now() - pending_seek.requested_at < SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS;
+          const is_waiting_for_seek =
+            pending_seek !== null &&
+            performance.now() - pending_seek.requested_at <
+              SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS;
           if (
-            is_waiting_for_seek
-            && Math.abs(seconds - pending_seek.time_seconds) > SEEK_CONFIRMATION_TOLERANCE_SECONDS
+            is_waiting_for_seek &&
+            Math.abs(seconds - pending_seek.time_seconds) >
+              SEEK_CONFIRMATION_TOLERANCE_SECONDS
           ) {
             return;
           }
@@ -140,16 +167,24 @@ function SubtitleOverlay({ segments }: { segments: TranscriptSegment[] }) {
   const text = active_subtitle_text(segments, currentTime);
   if (!text) return null;
 
-  return <div className="openvideo_subtitle" aria-label="视频字幕">{text}</div>;
+  return (
+    <div className="openvideo_subtitle" aria-label="视频字幕">
+      {text}
+    </div>
+  );
 }
 
-export function active_subtitle_text(segments: TranscriptSegment[], current_time: number): string | null {
-  const active_segment = segments.find((segment) => (
-    segment.start_seconds <= current_time && current_time < segment.end_seconds
-  ));
+export function active_subtitle_text(
+  segments: TranscriptSegment[],
+  current_time: number,
+): string | null {
+  const active_segment = segments.find(
+    (segment) =>
+      segment.start_seconds <= current_time &&
+      current_time < segment.end_seconds,
+  );
   return active_segment?.text.trim() || null;
 }
-
 
 type PlayerRef = {
   seek: (seconds: number) => void;

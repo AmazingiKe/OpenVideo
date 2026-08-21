@@ -2,8 +2,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { use_asset_markers } from "./use_asset_markers";
-import { create_marker, delete_marker, get_markers, update_marker } from "../../shared/api";
-
+import {
+  create_marker,
+  delete_marker,
+  get_markers,
+  update_marker,
+} from "../../shared/api";
 
 const ASSET_ID = "asset-test";
 
@@ -21,7 +25,12 @@ beforeEach(() => {
 describe("use_asset_markers", () => {
   it("loads and creates markers through the media API", async () => {
     vi.mocked(get_markers).mockResolvedValueOnce([
-      { marker_id: "marker-existing", asset_id: ASSET_ID, time_seconds: 8, tags: [] },
+      {
+        marker_id: "marker-existing",
+        asset_id: ASSET_ID,
+        time_seconds: 8,
+        tags: [],
+      },
     ]);
     vi.mocked(create_marker).mockResolvedValueOnce({
       marker_id: "marker-new",
@@ -35,12 +44,19 @@ describe("use_asset_markers", () => {
     await act(async () => result.current.add_marker(12.9));
 
     expect(create_marker).toHaveBeenCalledWith(ASSET_ID, 12.9, []);
-    expect(result.current.markers.map((marker) => marker.time_seconds)).toEqual([8, 12.9]);
+    expect(result.current.markers.map((marker) => marker.time_seconds)).toEqual(
+      [8, 12.9],
+    );
   });
 
   it("updates tags and deletes markers through the media API", async () => {
     vi.mocked(get_markers).mockResolvedValueOnce([
-      { marker_id: "marker-a", asset_id: ASSET_ID, time_seconds: 12, tags: ["重点"] },
+      {
+        marker_id: "marker-a",
+        asset_id: ASSET_ID,
+        time_seconds: 12,
+        tags: ["重点"],
+      },
     ]);
     vi.mocked(update_marker).mockResolvedValueOnce({
       marker_id: "marker-a",
@@ -51,8 +67,12 @@ describe("use_asset_markers", () => {
     const { result } = renderHook(() => use_asset_markers(ASSET_ID));
     await waitFor(() => expect(result.current.markers).toHaveLength(1));
 
-    await act(async () => result.current.update_marker_tags("marker-a", ["关键帧"]));
-    expect(update_marker).toHaveBeenCalledWith(ASSET_ID, "marker-a", ["关键帧"]);
+    await act(async () =>
+      result.current.update_marker_tags("marker-a", ["关键帧"]),
+    );
+    expect(update_marker).toHaveBeenCalledWith(ASSET_ID, "marker-a", [
+      "关键帧",
+    ]);
     expect(result.current.markers[0].tags).toEqual(["关键帧"]);
 
     await act(async () => result.current.remove_marker("marker-a"));
@@ -64,7 +84,12 @@ describe("use_asset_markers", () => {
     vi.mocked(get_markers)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
-        { marker_id: "marker-b", asset_id: "asset-b", time_seconds: 8, tags: [] },
+        {
+          marker_id: "marker-b",
+          asset_id: "asset-b",
+          time_seconds: 8,
+          tags: [],
+        },
       ]);
     const { result, rerender } = renderHook(
       ({ asset_id }) => use_asset_markers(asset_id),
@@ -73,6 +98,10 @@ describe("use_asset_markers", () => {
 
     rerender({ asset_id: "asset-b" });
 
-    return waitFor(() => expect(result.current.markers.map((marker) => marker.time_seconds)).toEqual([8]));
+    return waitFor(() =>
+      expect(
+        result.current.markers.map((marker) => marker.time_seconds),
+      ).toEqual([8]),
+    );
   });
 });

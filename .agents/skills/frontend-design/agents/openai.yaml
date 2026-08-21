@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Design"
+  short_description: "为 OpenVideo 构建一致、可复用、响应式且可访问的专业工具界面"
+  default_prompt: "Use $frontend-design to review and implement this OpenVideo interface with reusable components and design-system constraints."
