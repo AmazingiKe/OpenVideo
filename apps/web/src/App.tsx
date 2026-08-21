@@ -45,9 +45,9 @@ import { SettingsPage } from "./features/settings/SettingsPage";
 const terminal_download_stages = new Set(["complete", "failed"]);
 const MAX_TASK_RECORDS = 100;
 const WORKSPACE_MODULES = [
-  { id: "download", label: "视频下载", path: "/downloads", icon: Download },
-  { id: "analysis", label: "视频分析", path: "/analysis", icon: ScanSearch },
-  { id: "summary", label: "分析总结", path: "/summary", icon: FileText },
+  { id: "download", label: "下载", path: "/downloads", icon: Download },
+  { id: "analysis", label: "分析", path: "/analysis", icon: ScanSearch },
+  { id: "summary", label: "总结", path: "/summary", icon: FileText },
 ] as const;
 
 type WorkspaceModule = (typeof WORKSPACE_MODULES)[number];
