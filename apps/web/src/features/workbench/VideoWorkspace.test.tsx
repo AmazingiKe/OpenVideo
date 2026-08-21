@@ -61,11 +61,21 @@ describe("VideoWorkspace", () => {
   it("keeps transport controls below the video", () => {
     const seek_to = vi.fn();
     const toggle_playback = vi.fn();
+    const set_volume = vi.fn();
+    const toggle_muted = vi.fn();
+    const set_playback_rate = vi.fn();
+    const toggle_picture_in_picture = vi.fn();
+    const toggle_fullscreen = vi.fn();
     const player_ref = createRef<PlayerHandle>();
     player_ref.current = {
       current_time: () => 20,
       seek_to,
       toggle_playback,
+      set_volume,
+      toggle_muted,
+      set_playback_rate,
+      toggle_picture_in_picture,
+      toggle_fullscreen,
     };
     const workspace = render(
       <VideoWorkspace
@@ -87,11 +97,24 @@ describe("VideoWorkspace", () => {
     fireEvent.click(controls.getByRole("button", { name: "后退 10 秒" }));
     fireEvent.click(controls.getByRole("button", { name: "播放" }));
     fireEvent.click(controls.getByRole("button", { name: "快进 10 秒" }));
+    fireEvent.click(controls.getByRole("button", { name: "静音" }));
+    fireEvent.click(controls.getByRole("button", { name: "进入全屏" }));
+    fireEvent.pointerDown(
+      controls.getByRole("button", { name: "播放设置，当前 1 倍速" }),
+      { button: 0, ctrlKey: false },
+    );
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "1.5×" }));
 
     expect(seek_to).toHaveBeenNthCalledWith(1, 10);
     expect(seek_to).toHaveBeenNthCalledWith(2, 0);
     expect(toggle_playback).toHaveBeenCalledOnce();
     expect(seek_to).toHaveBeenNthCalledWith(3, 10);
+    expect(toggle_muted).toHaveBeenCalledOnce();
+    expect(toggle_fullscreen).toHaveBeenCalledOnce();
+    expect(set_playback_rate).toHaveBeenCalledWith(1.5);
+    expect(controls.getByRole("button", { name: "进入画中画" })).toBeDisabled();
+    expect(controls.getByRole("slider", { name: "音量" })).toBeInTheDocument();
+    expect(controls.getByLabelText("当前音量")).toHaveTextContent("100%");
   });
 });
 
