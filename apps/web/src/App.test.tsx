@@ -211,7 +211,7 @@ describe("App", () => {
       "page",
     );
 
-    expect(screen.getByText("可回跳的转写。")).toBeInTheDocument();
+    expect(screen.getByText("Canvas Timeline")).toBeInTheDocument();
   });
 
   it("redirects unknown paths to downloads", async () => {

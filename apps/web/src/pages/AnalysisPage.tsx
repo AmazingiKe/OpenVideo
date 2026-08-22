@@ -5,8 +5,8 @@ import { use_task_manager } from "@/app/task_manager";
 import { use_asset_analysis } from "@/features/analysis/use_asset_analysis";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
-import { AnalysisTimeline } from "@/features/workbench/AnalysisTimeline";
 import { AssetLibrary } from "@/features/workbench/AssetLibrary";
+import { MediaTimeline } from "@/features/workbench/MediaTimeline";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import { error_message, is_abort_error } from "@/shared/errors";
 import type { AnalysisMode, TranscriptionOptions } from "@/shared/types";
@@ -113,7 +113,7 @@ export function AnalysisPage() {
           void run_analysis(mode, marker_ids)
         }
       />
-      <AnalysisTimeline
+      <MediaTimeline
         duration_seconds={selected_asset?.duration_seconds ?? null}
         current_time={current_time}
         transcript={transcript}
