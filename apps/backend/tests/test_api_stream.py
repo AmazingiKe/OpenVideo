@@ -8,7 +8,7 @@ from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
 
-ASSET_ID = "asset-0123456789abcdef0123456789abcdef"
+ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 CONTENT = bytes(range(100))
 
 

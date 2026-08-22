@@ -60,7 +60,7 @@ class DownloadManager:
                 if existing_asset.status == MediaAssetStatus.READY:
                     return self._completed_job(existing_asset.asset_id)
 
-        asset_id = f"asset-{uuid7().hex}"
+        asset_id = str(uuid7())
         job_id = f"job-{uuid7().hex}"
         asset = MediaAsset(
             asset_id=asset_id,
@@ -297,7 +297,7 @@ class AnalysisManager:
         if mode == AnalysisMode.FULL and has_full_timeline and not force:
             return self._completed_job(asset_id, mode, [])
 
-        job_id = f"analysis-{uuid7().hex}"
+        job_id = f"job-{uuid7().hex}"
         job = AnalysisJob(
             job_id=job_id,
             asset_id=asset_id,
@@ -324,7 +324,7 @@ class AnalysisManager:
             return active_job
         if self.library.load_transcript(asset_id) is not None and not force:
             return AnalysisJob(
-                job_id=f"transcription-{uuid7().hex}",
+                job_id=f"job-{uuid7().hex}",
                 asset_id=asset_id,
                 operation=AnalysisOperation.TRANSCRIPTION,
                 capabilities=[AnalysisCapability.TRANSCRIPT],
@@ -333,7 +333,7 @@ class AnalysisManager:
                 message="该视频已有转录结果",
             )
         job = AnalysisJob(
-            job_id=f"transcription-{uuid7().hex}",
+            job_id=f"job-{uuid7().hex}",
             asset_id=asset_id,
             operation=AnalysisOperation.TRANSCRIPTION,
         )
@@ -567,7 +567,7 @@ class AnalysisManager:
     def _transcriber(self, options: TranscriptionOptions) -> FasterWhisperTranscriber:
         return FasterWhisperTranscriber(
             model_size=options.model,
-            model_directory=self.settings.whisper_model_directory,
+            model_root_directory=self.settings.whisper_model_directory,
             language=options.language,
             compute_type=options.compute_type,
         )
@@ -677,7 +677,7 @@ class AnalysisManager:
         marker_ids: list[str],
     ) -> AnalysisJob:
         return AnalysisJob(
-            job_id=f"analysis-{uuid7().hex}",
+            job_id=f"job-{uuid7().hex}",
             asset_id=asset_id,
             mode=mode,
             marker_ids=marker_ids,

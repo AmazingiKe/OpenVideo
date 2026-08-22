@@ -6,6 +6,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
+from uuid import UUID
 
 import portalocker
 from pydantic import BaseModel
@@ -16,8 +17,10 @@ from openvideo.core.analysis_models import (
     TranscriptSegment,
     TranscriptionMetadata,
 )
-from openvideo.core.identifiers import uuid7
+from openvideo.core.identifiers import is_uuid7, uuid7
 from openvideo.core.models import (
+    AssetMetadata,
+    AssetSourceMetadata,
     DownloadJob,
     DownloadStage,
     MediaAsset,
@@ -25,18 +28,23 @@ from openvideo.core.models import (
     MediaAssetStatus,
     MediaMarker,
     MediaSegment,
+    MediaType,
     SourcePlatform,
     ThumbnailStoryboardResponse,
     ThumbnailStoryboardTile,
+    VideoMetadata,
 )
 from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 FORMAT_VERSION = 1
-DATABASE_VERSION = 1
+DATABASE_VERSION = 2
 MANIFEST_FILE_NAME = "library.json"
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 LOCK_FILE_NAME = ".openvideo.lock"
+ASSET_METADATA_FILE_NAME = "meta.json"
+TRANSCRIPTION_METADATA_FILE_NAME = "transcription.json"
+ARTIFACTS_DIRECTORY_NAME = "artifacts"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
 SPRITE_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail-sprite"
@@ -183,6 +191,87 @@ class MediaLibrary:
             connection.executescript(_INITIAL_SCHEMA)
             connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
             connection.commit()
+        elif version == 1:
+            self._migrate_asset_storage()
+
+    def _migrate_asset_storage(self) -> None:
+        connection = self._db()
+        legacy_asset_ids = [
+            row[0]
+            for row in connection.execute("SELECT asset_id FROM assets")
+            if _legacy_asset_uuid(row[0]) is not None
+        ]
+        moved_directories: list[tuple[Path, Path]] = []
+        for legacy_asset_id in legacy_asset_ids:
+            asset_id = _legacy_asset_uuid(legacy_asset_id)
+            if asset_id is None:
+                continue
+            legacy_directory = (self.assets_path / legacy_asset_id).resolve()
+            asset_directory = (self.assets_path / asset_id).resolve()
+            if asset_directory.exists():
+                raise InvalidLibraryError(f"资产目录迁移目标已存在：{asset_id}")
+            if legacy_directory.exists():
+                legacy_directory.rename(asset_directory)
+                moved_directories.append((legacy_directory, asset_directory))
+
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN")
+            connection.execute(
+                "ALTER TABLE assets ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'"
+            )
+            for legacy_asset_id in legacy_asset_ids:
+                asset_id = _legacy_asset_uuid(legacy_asset_id)
+                if asset_id is None:
+                    continue
+                for table_name, column_name in _ASSET_REFERENCE_COLUMNS:
+                    connection.execute(
+                        f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
+                        (asset_id, legacy_asset_id),
+                    )
+            connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            for legacy_directory, asset_directory in reversed(moved_directories):
+                asset_directory.rename(legacy_directory)
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+        if connection.execute("PRAGMA foreign_key_check").fetchone():
+            raise InvalidLibraryError("资产标识迁移后关联数据校验失败")
+        for legacy_directory, asset_directory in moved_directories:
+            self._rewrite_transcription_asset_id(
+                asset_directory, legacy_directory.name, asset_directory.name
+            )
+        for asset in self.list():
+            self._write_asset_metadata(asset)
+
+    @staticmethod
+    def _rewrite_transcription_asset_id(
+        asset_directory: Path, legacy_asset_id: str, asset_id: str
+    ) -> None:
+        metadata_path = (
+            asset_directory / ARTIFACTS_DIRECTORY_NAME / TRANSCRIPTION_METADATA_FILE_NAME
+        )
+        if not metadata_path.is_file():
+            return
+        try:
+            metadata = TranscriptionMetadata.model_validate_json(
+                metadata_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return
+        if metadata.asset_id != legacy_asset_id:
+            return
+        temporary_path = metadata_path.with_suffix(".tmp")
+        temporary_path.write_text(
+            metadata.model_copy(update={"asset_id": asset_id}).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, metadata_path)
 
     def _recover_interrupted_downloads(self) -> None:
         now = datetime.now(UTC).isoformat()
@@ -207,7 +296,7 @@ class MediaLibrary:
             )
 
     def save(self, asset: MediaAsset) -> None:
-        self._validate_identifier(asset.asset_id, "asset")
+        self._validate_asset_id(asset.asset_id)
         asset.updated_at = datetime.now(UTC)
         values = asset.model_dump(mode="json")
         columns = tuple(values)
@@ -219,9 +308,10 @@ class MediaLibrary:
                 f"ON CONFLICT(asset_id) DO UPDATE SET {updates}",
                 tuple(_sqlite_value(values[column]) for column in columns),
             )
+        self._write_asset_metadata(asset)
 
     def get(self, asset_id: str) -> MediaAsset | None:
-        self._validate_identifier(asset_id, "asset")
+        self._validate_asset_id(asset_id)
         row = self._db().execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
         return MediaAsset.model_validate(dict(row)) if row else None
 
@@ -256,11 +346,43 @@ class MediaLibrary:
         return [DownloadJob.model_validate(dict(row)) for row in rows]
 
     def asset_directory(self, asset_id: str) -> Path:
-        self._validate_identifier(asset_id, "asset")
+        self._validate_asset_id(asset_id)
         directory = (self.assets_path / asset_id).resolve()
         if not directory.is_relative_to(self.assets_path):
             raise ValueError("资源目录越出资料库")
         return directory
+
+    def _write_asset_metadata(self, asset: MediaAsset) -> None:
+        video_metadata = None
+        if asset.media_type == MediaType.VIDEO:
+            video_metadata = VideoMetadata(
+                duration_seconds=asset.duration_seconds,
+                width=asset.width,
+                height=asset.height,
+                video_codec=asset.video_codec,
+                audio_codec=asset.audio_codec,
+            )
+        metadata = AssetMetadata(
+            asset_id=asset.asset_id,
+            media_type=asset.media_type,
+            title=asset.title,
+            source=AssetSourceMetadata(
+                url=asset.source_url,
+                platform=asset.source_platform,
+                source_id=asset.source_video_id,
+                author_name=asset.author_name,
+                description=asset.description,
+            ),
+            video=video_metadata,
+            created_at=asset.created_at,
+            updated_at=asset.updated_at,
+        )
+        asset_directory = self.asset_directory(asset.asset_id)
+        asset_directory.mkdir(parents=True, exist_ok=True)
+        metadata_path = asset_directory / ASSET_METADATA_FILE_NAME
+        temporary_path = metadata_path.with_suffix(".tmp")
+        temporary_path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(temporary_path, metadata_path)
 
     def media_directory(self, asset_id: str) -> Path:
         directory = self.asset_directory(asset_id) / "media"
@@ -268,7 +390,7 @@ class MediaLibrary:
         return directory
 
     def artifacts_directory(self, asset_id: str) -> Path:
-        directory = self.asset_directory(asset_id) / "artifacts"
+        directory = self.asset_directory(asset_id) / ARTIFACTS_DIRECTORY_NAME
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
@@ -344,13 +466,16 @@ class MediaLibrary:
 
     def save_transcription_metadata(self, metadata: TranscriptionMetadata) -> None:
         """转写来源需要脱离任务进程保存，便于失败诊断与结果追溯。"""
-        output_path = self.artifacts_directory(metadata.asset_id) / "transcription.json"
+        output_path = (
+            self.artifacts_directory(metadata.asset_id)
+            / TRANSCRIPTION_METADATA_FILE_NAME
+        )
         temporary_path = output_path.with_suffix(".tmp")
         temporary_path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
         os.replace(temporary_path, output_path)
 
     def load_transcription_metadata(self, asset_id: str) -> TranscriptionMetadata | None:
-        input_path = self.artifacts_directory(asset_id) / "transcription.json"
+        input_path = self.artifacts_directory(asset_id) / TRANSCRIPTION_METADATA_FILE_NAME
         if not input_path.is_file():
             return None
         try:
@@ -475,6 +600,11 @@ class MediaLibrary:
         if not identifier.startswith(expected_prefix) or len(suffix) != HEX_IDENTIFIER_LENGTH or any(character not in "0123456789abcdef" for character in suffix):
             raise ValueError(f"{prefix} ID 无效")
 
+    @staticmethod
+    def _validate_asset_id(asset_id: str) -> None:
+        if not is_uuid7(asset_id):
+            raise ValueError("asset ID 无效")
+
 
 def _sqlite_value(value: object) -> object:
     if isinstance(value, (dict, list)):
@@ -482,9 +612,35 @@ def _sqlite_value(value: object) -> object:
     return value
 
 
+def _legacy_asset_uuid(asset_id: str) -> str | None:
+    prefix = "asset-"
+    hexadecimal = asset_id.removeprefix(prefix)
+    if not asset_id.startswith(prefix) or len(hexadecimal) != HEX_IDENTIFIER_LENGTH:
+        return None
+    try:
+        candidate = str(UUID(hex=hexadecimal))
+    except ValueError:
+        return None
+    return candidate if is_uuid7(candidate) else None
+
+
+_ASSET_REFERENCE_COLUMNS = (
+    ("download_jobs", "asset_id"),
+    ("analysis_jobs", "asset_id"),
+    ("transcript_segments", "asset_id"),
+    ("transcripts", "asset_id"),
+    ("timeline_segments", "asset_id"),
+    ("markers", "asset_id"),
+    ("asset_relationships", "source_asset_id"),
+    ("asset_relationships", "target_asset_id"),
+    ("artifacts", "asset_id"),
+    ("assets", "asset_id"),
+)
+
+
 _INITIAL_SCHEMA = """
 CREATE TABLE assets (
-    asset_id TEXT PRIMARY KEY, source_url TEXT NOT NULL, source_platform TEXT NOT NULL,
+    asset_id TEXT PRIMARY KEY, media_type TEXT NOT NULL DEFAULT 'video', source_url TEXT NOT NULL, source_platform TEXT NOT NULL,
     source_video_id TEXT, title TEXT NOT NULL, author_name TEXT, description TEXT,
     duration_seconds REAL, width INTEGER, height INTEGER, video_codec TEXT, audio_codec TEXT,
     playback_path TEXT, thumbnail_path TEXT, remote_thumbnail_url TEXT, thumbnail_sprite_path TEXT,

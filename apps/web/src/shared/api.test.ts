@@ -111,7 +111,7 @@ describe("api client", () => {
 
   it("submits a marker-scoped analysis request", async () => {
     const response = {
-      job_id: "analysis-1",
+      job_id: "job-1",
       asset_id: "asset-1",
       mode: "markers",
       marker_ids: ["marker-1"],
@@ -149,7 +149,7 @@ describe("api client", () => {
 
   it("starts transcription independently from analysis", async () => {
     const response = {
-      job_id: "transcription-1",
+      job_id: "job-1",
       operation: "transcription",
       stage: "pending",
     };
@@ -192,7 +192,7 @@ describe("api client", () => {
   it("creates and updates persisted media markers", async () => {
     const marker = {
       marker_id: "marker-0123456789abcdef0123456789abcdef",
-      asset_id: "asset-0123456789abcdef0123456789abcdef",
+      asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
       time_seconds: 12.5,
       tags: ["重点"],
     };

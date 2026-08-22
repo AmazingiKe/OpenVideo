@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisTimeline } from "./AnalysisTimeline";
 
-const ASSET_ID = "asset-0123456789abcdef0123456789abcdef";
+const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 describe("AnalysisTimeline", () => {
   it("shows events and seeks through the shared playback progress", () => {

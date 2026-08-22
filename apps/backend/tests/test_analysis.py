@@ -3,7 +3,7 @@ from openvideo.core.analysis_models import AnalysisMode, Transcript, TranscriptS
 from openvideo.core.models import MediaMarker
 
 
-ASSET_ID = "asset-0123456789abcdef0123456789abcdef"
+ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 
 
 def test_full_timeline_splits_on_long_speech_gap():

@@ -12,7 +12,7 @@ vi.mock("../player/Player", () => ({
   }),
 }));
 
-const ASSET_ID = "asset-0123456789abcdef0123456789abcdef";
+const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 describe("VideoWorkspace", () => {
   it("lets the user analyze only selected markers", () => {
@@ -93,6 +93,12 @@ describe("VideoWorkspace", () => {
     );
 
     const controls = within(workspace.container);
+    const workspace_stage = workspace.container.querySelector(".workspace_stage");
+    const processing_panel = controls.getByRole("complementary", {
+      name: "处理设置",
+    });
+    expect(workspace_stage).toContainElement(controls.getByTestId("player"));
+    expect(workspace_stage?.lastElementChild).toBe(processing_panel);
     fireEvent.click(controls.getByRole("button", { name: "后退 10 秒" }));
     fireEvent.click(controls.getByRole("button", { name: "后退 10 秒" }));
     fireEvent.click(controls.getByRole("button", { name: "播放" }));
@@ -121,6 +127,7 @@ describe("VideoWorkspace", () => {
 function create_asset(): MediaAsset {
   return {
     asset_id: ASSET_ID,
+    media_type: "video",
     source_url: "https://www.bilibili.com/video/BV1xx411c7mD",
     source_platform: "bilibili",
     source_video_id: "BV1xx411c7mD",

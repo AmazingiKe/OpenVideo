@@ -14,8 +14,15 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -134,212 +141,251 @@ export function VideoWorkspace({
           </div>
         </dl>
       </div>
-      <div className="workspace_player_frame">
-        <Player
-          key={asset.asset_id}
-          ref={player_ref}
-          src={media_url(asset.playback_url)}
-          subtitles={transcript?.segments ?? []}
-          markers={markers.map((marker) => ({
-            time_seconds: marker.time_seconds,
-            label: format_time(marker.time_seconds),
-          }))}
-          thumbnails={player_storyboard(asset)}
-          on_time_change={(seconds) => {
-            transport_time_ref.current = seconds;
-            on_time_change(seconds);
-          }}
-          on_pause_change={set_is_paused}
-          on_volume_change={(next_volume, muted) => {
-            set_volume(next_volume);
-            set_is_muted(muted);
-          }}
-          on_presentation_change={(state) => {
-            set_playback_rate(state.playback_rate);
-            set_is_picture_in_picture(state.picture_in_picture);
-            set_is_fullscreen(state.fullscreen);
-            set_can_picture_in_picture(state.can_picture_in_picture);
-          }}
-        />
-      </div>
-      <div className="video_transport" aria-label="播放控制">
-        <div className="video_transport_playback">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() =>
-              seek_relative(player_ref, transport_time_ref, -SEEK_STEP_SECONDS)
-            }
-            aria-label={`后退 ${SEEK_STEP_SECONDS} 秒`}
-          >
-            <RotateCcw data-icon="inline-start" aria-hidden="true" />
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            size="icon-sm"
-            onClick={() => player_ref.current?.toggle_playback()}
-            aria-label={is_paused ? "播放" : "暂停"}
-          >
-            {is_paused ? (
-              <Play data-icon="inline-start" aria-hidden="true" />
-            ) : (
-              <Pause data-icon="inline-start" aria-hidden="true" />
-            )}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() =>
-              seek_relative(player_ref, transport_time_ref, SEEK_STEP_SECONDS)
-            }
-            aria-label={`快进 ${SEEK_STEP_SECONDS} 秒`}
-          >
-            <RotateCw data-icon="inline-start" aria-hidden="true" />
-          </Button>
-        </div>
-        <PlayerUtilityControls
-          volume={volume}
-          muted={is_muted}
-          playback_rate={playback_rate}
-          picture_in_picture={is_picture_in_picture}
-          fullscreen={is_fullscreen}
-          can_picture_in_picture={can_picture_in_picture}
-          on_volume_change={(next_volume) =>
-            player_ref.current?.set_volume(next_volume)
-          }
-          on_mute_toggle={() => player_ref.current?.toggle_muted()}
-          on_playback_rate_change={(rate) =>
-            player_ref.current?.set_playback_rate(rate)
-          }
-          on_picture_in_picture_toggle={() =>
-            player_ref.current?.toggle_picture_in_picture()
-          }
-          on_fullscreen_toggle={() => player_ref.current?.toggle_fullscreen()}
-        />
-      </div>
-      <section className="analysis_controls" aria-label="分析控制">
-        <div className="processing_actions">
-          <FieldGroup className="grid gap-4 md:grid-cols-3">
-            <Field>
-              <FieldLabel htmlFor="transcription_model">转写模型</FieldLabel>
-              <Input
-                id="transcription_model"
-                value={transcription_options.model}
-                onChange={(event) =>
-                  set_transcription_options((current) => ({
-                    ...current,
-                    model: event.target.value,
-                  }))
-                }
-                disabled={is_transcribing || is_analyzing || has_transcript}
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="transcription_language">转写语言</FieldLabel>
-              <Input
-                id="transcription_language"
-                value={transcription_options.language ?? ""}
-                onChange={(event) =>
-                  set_transcription_options((current) => ({
-                    ...current,
-                    language: event.target.value || null,
-                  }))
-                }
-                disabled={is_transcribing || is_analyzing || has_transcript}
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="transcription_compute_type">计算精度</FieldLabel>
-              <Input
-                id="transcription_compute_type"
-                value={transcription_options.compute_type}
-                onChange={(event) =>
-                  set_transcription_options((current) => ({
-                    ...current,
-                    compute_type: event.target.value,
-                  }))
-                }
-                disabled={is_transcribing || is_analyzing || has_transcript}
-              />
-            </Field>
-          </FieldGroup>
-          <button
-            type="button"
-            onClick={() => on_start_transcription(transcription_options)}
-            disabled={is_transcribing || is_analyzing || has_transcript}
-          >
-            {is_transcribing
-              ? "转录中…"
-              : has_transcript
-                ? "转录已完成"
-                : "生成转录"}
-          </button>
-          <span>转录生成可编辑文字；内容分析在转录完成后单独执行。</span>
-        </div>
-        <div className="analysis_mode_options">
-          <label>
-            <input
-              type="radio"
-              name="analysis_mode"
-              checked={analysis_mode === "full"}
-              onChange={() => set_analysis_mode("full")}
-              disabled={!has_transcript}
+      <div className="workspace_stage">
+        <div className="workspace_player_column">
+          <div className="workspace_player_frame">
+            <Player
+              key={asset.asset_id}
+              ref={player_ref}
+              src={media_url(asset.playback_url)}
+              subtitles={transcript?.segments ?? []}
+              markers={markers.map((marker) => ({
+                time_seconds: marker.time_seconds,
+                label: format_time(marker.time_seconds),
+              }))}
+              thumbnails={player_storyboard(asset)}
+              on_time_change={(seconds) => {
+                transport_time_ref.current = seconds;
+                on_time_change(seconds);
+              }}
+              on_pause_change={set_is_paused}
+              on_volume_change={(next_volume, muted) => {
+                set_volume(next_volume);
+                set_is_muted(muted);
+              }}
+              on_presentation_change={(state) => {
+                set_playback_rate(state.playback_rate);
+                set_is_picture_in_picture(state.picture_in_picture);
+                set_is_fullscreen(state.fullscreen);
+                set_can_picture_in_picture(state.can_picture_in_picture);
+              }}
             />
-            全片时间轴
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="analysis_mode"
-              checked={analysis_mode === "markers"}
-              onChange={() => set_analysis_mode("markers")}
-              disabled={!has_transcript || markers.length === 0}
-            />
-            标记重点分析
-          </label>
-        </div>
-        {analysis_mode === "markers" ? (
-          <div className="analysis_marker_options">
-            {markers.map((marker) => (
-              <label key={marker.marker_id}>
-                <input
-                  type="checkbox"
-                  checked={selected_marker_ids.has(marker.marker_id)}
-                  onChange={() =>
-                    set_selected_marker_ids((current) =>
-                      toggle_marker(current, marker.marker_id),
-                    )
-                  }
-                />
-                <time>{format_time(marker.time_seconds)}</time>
-                <span>{marker.tags.join(" / ") || "未分类标记"}</span>
-              </label>
-            ))}
           </div>
-        ) : null}
-        <button
-          className="workspace_primary_action"
-          type="button"
-          onClick={() =>
-            on_start_analysis(analysis_mode, [...selected_marker_ids])
-          }
-          disabled={
-            !has_transcript ||
-            is_transcribing ||
-            is_analyzing ||
-            (analysis_mode === "markers" && selected_marker_ids.size === 0)
-          }
-        >
-          {is_analyzing
-            ? "分析中…"
-            : analysis_mode === "full"
-              ? "分析全片"
-              : `分析 ${selected_marker_ids.size} 个标记`}
-        </button>
-      </section>
+          <div className="video_transport" aria-label="播放控制">
+            <div className="video_transport_playback">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
+                  seek_relative(
+                    player_ref,
+                    transport_time_ref,
+                    -SEEK_STEP_SECONDS,
+                  )
+                }
+                aria-label={`后退 ${SEEK_STEP_SECONDS} 秒`}
+              >
+                <RotateCcw data-icon="inline-start" aria-hidden="true" />
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon-sm"
+                onClick={() => player_ref.current?.toggle_playback()}
+                aria-label={is_paused ? "播放" : "暂停"}
+              >
+                {is_paused ? (
+                  <Play data-icon="inline-start" aria-hidden="true" />
+                ) : (
+                  <Pause data-icon="inline-start" aria-hidden="true" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
+                  seek_relative(
+                    player_ref,
+                    transport_time_ref,
+                    SEEK_STEP_SECONDS,
+                  )
+                }
+                aria-label={`快进 ${SEEK_STEP_SECONDS} 秒`}
+              >
+                <RotateCw data-icon="inline-start" aria-hidden="true" />
+              </Button>
+            </div>
+            <PlayerUtilityControls
+              volume={volume}
+              muted={is_muted}
+              playback_rate={playback_rate}
+              picture_in_picture={is_picture_in_picture}
+              fullscreen={is_fullscreen}
+              can_picture_in_picture={can_picture_in_picture}
+              on_volume_change={(next_volume) =>
+                player_ref.current?.set_volume(next_volume)
+              }
+              on_mute_toggle={() => player_ref.current?.toggle_muted()}
+              on_playback_rate_change={(rate) =>
+                player_ref.current?.set_playback_rate(rate)
+              }
+              on_picture_in_picture_toggle={() =>
+                player_ref.current?.toggle_picture_in_picture()
+              }
+              on_fullscreen_toggle={() =>
+                player_ref.current?.toggle_fullscreen()
+              }
+            />
+          </div>
+        </div>
+        <aside className="analysis_controls" aria-label="处理设置">
+          <header className="analysis_controls_header">
+            <h2>处理设置</h2>
+            <p>配置转写模型并执行后续内容分析。</p>
+          </header>
+          <div className="processing_actions">
+            <FieldGroup>
+              <Field
+                data-disabled={
+                  is_transcribing || is_analyzing || has_transcript || undefined
+                }
+              >
+                <FieldLabel htmlFor="transcription_model">转写模型</FieldLabel>
+                <Input
+                  id="transcription_model"
+                  value={transcription_options.model}
+                  onChange={(event) =>
+                    set_transcription_options((current) => ({
+                      ...current,
+                      model: event.target.value,
+                    }))
+                  }
+                  disabled={is_transcribing || is_analyzing || has_transcript}
+                />
+              </Field>
+              <Field
+                data-disabled={
+                  is_transcribing || is_analyzing || has_transcript || undefined
+                }
+              >
+                <FieldLabel htmlFor="transcription_language">
+                  转写语言
+                </FieldLabel>
+                <Input
+                  id="transcription_language"
+                  value={transcription_options.language ?? ""}
+                  onChange={(event) =>
+                    set_transcription_options((current) => ({
+                      ...current,
+                      language: event.target.value || null,
+                    }))
+                  }
+                  disabled={is_transcribing || is_analyzing || has_transcript}
+                />
+              </Field>
+              <Field
+                data-disabled={
+                  is_transcribing || is_analyzing || has_transcript || undefined
+                }
+              >
+                <FieldLabel htmlFor="transcription_compute_type">
+                  计算精度
+                </FieldLabel>
+                <Input
+                  id="transcription_compute_type"
+                  value={transcription_options.compute_type}
+                  onChange={(event) =>
+                    set_transcription_options((current) => ({
+                      ...current,
+                      compute_type: event.target.value,
+                    }))
+                  }
+                  disabled={is_transcribing || is_analyzing || has_transcript}
+                />
+              </Field>
+            </FieldGroup>
+            <Button
+              className="w-full"
+              type="button"
+              onClick={() => on_start_transcription(transcription_options)}
+              disabled={is_transcribing || is_analyzing || has_transcript}
+            >
+              {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
+              {is_transcribing
+                ? "转录中…"
+                : has_transcript
+                  ? "转录已完成"
+                  : "生成转录"}
+            </Button>
+            <FieldDescription>
+              转录生成可编辑文字；内容分析在转录完成后单独执行。
+            </FieldDescription>
+          </div>
+          <div className="analysis_mode_options">
+            <label>
+              <input
+                type="radio"
+                name="analysis_mode"
+                checked={analysis_mode === "full"}
+                onChange={() => set_analysis_mode("full")}
+                disabled={!has_transcript}
+              />
+              全片时间轴
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="analysis_mode"
+                checked={analysis_mode === "markers"}
+                onChange={() => set_analysis_mode("markers")}
+                disabled={!has_transcript || markers.length === 0}
+              />
+              标记重点分析
+            </label>
+          </div>
+          {analysis_mode === "markers" ? (
+            <div className="analysis_marker_options">
+              {markers.map((marker) => (
+                <label key={marker.marker_id}>
+                  <Checkbox
+                    checked={selected_marker_ids.has(marker.marker_id)}
+                    onCheckedChange={() =>
+                      set_selected_marker_ids((current) =>
+                        toggle_marker(current, marker.marker_id),
+                      )
+                    }
+                    aria-label={`选择 ${format_time(marker.time_seconds)} 标记`}
+                  />
+                  <time>{format_time(marker.time_seconds)}</time>
+                  <span>{marker.tags.join(" / ") || "未分类标记"}</span>
+                </label>
+              ))}
+            </div>
+          ) : null}
+          <Button
+            className="w-full"
+            type="button"
+            onClick={() =>
+              on_start_analysis(analysis_mode, [...selected_marker_ids])
+            }
+            disabled={
+              !has_transcript ||
+              is_transcribing ||
+              is_analyzing ||
+              (analysis_mode === "markers" && selected_marker_ids.size === 0)
+            }
+          >
+            {is_analyzing ? <Spinner data-icon="inline-start" /> : null}
+            {is_analyzing
+              ? "分析中…"
+              : analysis_mode === "full"
+                ? "分析全片"
+                : `分析 ${selected_marker_ids.size} 个标记`}
+          </Button>
+        </aside>
+      </div>
       {asset.description ? (
         <p className="workspace_description">{asset.description}</p>
       ) : null}

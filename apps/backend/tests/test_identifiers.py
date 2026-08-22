@@ -1,7 +1,7 @@
 import re
 from uuid import RFC_4122
 
-from openvideo.core.identifiers import uuid7
+from openvideo.core.identifiers import is_uuid7, uuid7
 
 UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -13,6 +13,14 @@ def test_has_rfc9562_uuidv7_format():
     assert UUID_PATTERN.fullmatch(str(value))
     assert value.version == 7
     assert value.variant == RFC_4122
+    assert is_uuid7(str(value))
+
+
+def test_uuid7_validation_requires_canonical_text():
+    value = uuid7()
+
+    assert not is_uuid7(value.hex)
+    assert not is_uuid7(f"asset-{value.hex}")
 
 
 def test_is_unique_across_bulk_generation():

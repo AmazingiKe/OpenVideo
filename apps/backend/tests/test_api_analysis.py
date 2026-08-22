@@ -11,7 +11,7 @@ from openvideo.ui.api import create_app
 import openvideo.application as application_module
 
 
-ASSET_ID = "asset-0123456789abcdef0123456789abcdef"
+ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 CONTENT = bytes(range(100))
 
 
@@ -37,7 +37,7 @@ def create_client(tmp_path: Path) -> TestClient:
 
 def test_analyze_returns_404_for_missing_asset(tmp_path: Path):
     with create_client(tmp_path) as client:
-        response = client.post("/api/media/assets/asset-00000000000000000000000000000000/analyze")
+        response = client.post("/api/media/assets/01890f4c-7a2b-7cc2-98c4-dc0c0c073990/analyze")
     assert response.status_code == 404
 
 
@@ -91,7 +91,7 @@ def test_analyze_creates_job(tmp_path: Path):
     assert response.status_code == 202
     job = response.json()
     assert job["asset_id"] == ASSET_ID
-    assert job["job_id"].startswith("analysis-")
+    assert job["job_id"].startswith("job-")
     assert job["operation"] == "analysis"
 
 
@@ -131,7 +131,7 @@ def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
 
     assert response.status_code == 202
     assert response.json()["operation"] == "transcription"
-    assert response.json()["job_id"].startswith("transcription-")
+    assert response.json()["job_id"].startswith("job-")
 
 
 def test_segments_returns_empty_when_missing(tmp_path: Path):

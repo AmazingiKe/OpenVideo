@@ -24,6 +24,10 @@ COMMAND_TIMEOUT_SECONDS = 300
 DEFAULT_WHISPER_MODEL = "small"
 DEFAULT_WHISPER_LANGUAGE = "zh"
 DEFAULT_WHISPER_COMPUTE_TYPE = "int8"
+WHISPER_MODEL_FILE_NAME = "model.bin"
+SUPPORTED_WHISPER_MODELS = frozenset(
+    {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
+)
 
 
 class TranscriptionFailure(RuntimeError):
@@ -158,12 +162,12 @@ class FasterWhisperTranscriber:
     def __init__(
         self,
         model_size: str = DEFAULT_WHISPER_MODEL,
-        model_directory: Path | None = None,
+        model_root_directory: Path | None = None,
         language: str | None = DEFAULT_WHISPER_LANGUAGE,
         compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE,
     ) -> None:
         self.model_size = model_size
-        self.model_directory = model_directory
+        self.model_root_directory = model_root_directory
         self.language = language
         self.compute_type = compute_type
         self._model = None
@@ -195,15 +199,34 @@ class FasterWhisperTranscriber:
         # 延迟导入，避免未安装 ASR 依赖时阻塞其他功能。
         from faster_whisper import WhisperModel
 
-        model_directory = self.model_directory
-        if model_directory:
-            model_directory.mkdir(parents=True, exist_ok=True)
+        model_root_directory = self.model_root_directory
+        if model_root_directory:
+            model_root_directory.mkdir(parents=True, exist_ok=True)
+        model_source = resolve_whisper_model_source(
+            self.model_size, model_root_directory
+        )
         return WhisperModel(
-            self.model_size,
+            model_source,
             device="cpu",
             compute_type=self.compute_type,
-            download_root=str(model_directory) if model_directory else None,
+            download_root=str(model_root_directory) if model_root_directory else None,
         )
+
+
+def resolve_whisper_model_source(
+    model_size: str, model_root_directory: Path | None
+) -> str:
+    """手动下载的 CTranslate2 模型优先于同名在线模型，保证离线转换可用。"""
+    if model_size not in SUPPORTED_WHISPER_MODELS:
+        raise TranscriptionFailure(f"不支持的转录模型：{model_size}")
+    if model_root_directory is None:
+        return model_size
+    local_model_directory = (model_root_directory / model_size).resolve()
+    if not local_model_directory.is_relative_to(model_root_directory.resolve()):
+        raise TranscriptionFailure("转录模型目录无效")
+    if (local_model_directory / WHISPER_MODEL_FILE_NAME).is_file():
+        return str(local_model_directory)
+    return model_size
 
 
 def _parse_json3_subtitles(path: Path) -> Transcript:

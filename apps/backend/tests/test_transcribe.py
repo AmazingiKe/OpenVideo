@@ -15,10 +15,11 @@ from openvideo.tools.transcribe import (
     TranscriptionFailure,
     _parse_json3_subtitles,
     extract_audio,
+    resolve_whisper_model_source,
 )
 
 
-TRANSCRIPT_ASSET_ID = "asset-0123456789abcdef0123456789abcdef"
+TRANSCRIPT_ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 
 
 def test_parses_json3_subtitles_with_timestamps(tmp_path: Path):
@@ -94,7 +95,7 @@ def test_transcription_metadata_records_source_duration_and_failure(tmp_path: Pa
     library = MediaLibrary.initialize_directory(tmp_path)
     library.save_transcription_metadata(
         TranscriptionMetadata(
-            job_id="transcription-0123456789abcdef0123456789abcdef",
+            job_id="job-0123456789abcdef0123456789abcdef",
             asset_id=TRANSCRIPT_ASSET_ID,
             status="failed",
             output_source="faster-whisper",
@@ -115,3 +116,22 @@ def test_transcription_metadata_records_source_duration_and_failure(tmp_path: Pa
     assert metadata.duration_seconds == 12.5
     assert metadata.error_message == "模型加载失败"
     library.close()
+
+
+def test_prefers_downloaded_local_model(tmp_path: Path):
+    model_directory = tmp_path / "small"
+    model_directory.mkdir()
+    (model_directory / "model.bin").write_bytes(b"model")
+
+    source = resolve_whisper_model_source("small", tmp_path)
+
+    assert source == str(model_directory.resolve())
+
+
+def test_uses_model_name_when_local_model_is_missing(tmp_path: Path):
+    assert resolve_whisper_model_source("small", tmp_path) == "small"
+
+
+def test_rejects_unsupported_model_name(tmp_path: Path):
+    with pytest.raises(TranscriptionFailure, match="不支持的转录模型"):
+        resolve_whisper_model_source("../outside", tmp_path)

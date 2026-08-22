@@ -18,6 +18,11 @@ class MediaAssetStatus(StrEnum):
     FAILED = "failed"
 
 
+class MediaType(StrEnum):
+    VIDEO = "video"
+    IMAGE = "image"
+
+
 class DownloadStage(StrEnum):
     PENDING = "pending"
     READING_METADATA = "reading_metadata"
@@ -32,6 +37,7 @@ TERMINAL_DOWNLOAD_STAGES = {DownloadStage.COMPLETE, DownloadStage.FAILED}
 
 class MediaAsset(BaseModel):
     asset_id: str
+    media_type: MediaType = MediaType.VIDEO
     source_url: str
     source_platform: SourcePlatform
     source_video_id: str | None = None
@@ -73,6 +79,7 @@ class ThumbnailStoryboardResponse(BaseModel):
 
 class MediaAssetResponse(BaseModel):
     asset_id: str
+    media_type: MediaType
     source_url: str
     source_platform: SourcePlatform
     source_video_id: str | None
@@ -89,6 +96,32 @@ class MediaAssetResponse(BaseModel):
     playback_url: str | None
     thumbnail_url: str | None
     thumbnail_storyboard: ThumbnailStoryboardResponse | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssetSourceMetadata(BaseModel):
+    url: str
+    platform: SourcePlatform
+    source_id: str | None = None
+    author_name: str | None = None
+    description: str | None = None
+
+
+class VideoMetadata(BaseModel):
+    duration_seconds: float | None = None
+    width: int | None = None
+    height: int | None = None
+    video_codec: str | None = None
+    audio_codec: str | None = None
+
+
+class AssetMetadata(BaseModel):
+    asset_id: str
+    media_type: MediaType
+    title: str
+    source: AssetSourceMetadata
+    video: VideoMetadata | None = None
     created_at: datetime
     updated_at: datetime
 

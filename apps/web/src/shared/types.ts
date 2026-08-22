@@ -144,6 +144,7 @@ type ThumbnailStoryboard = {
 
 export type MediaAsset = {
   asset_id: string;
+  media_type: "video" | "image";
   source_url: string;
   source_platform: SourcePlatform;
   source_video_id: string | null;

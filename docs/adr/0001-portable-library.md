@@ -28,7 +28,8 @@ OpenVideo 采用文件夹级可携带资料库。一个文件夹代表一个完�
 ├─ library.json
 ├─ openvideo.sqlite3
 ├─ assets/
-│  └─ asset-{uuid7}/
+│  └─ {uuid7}/
+│     ├─ meta.json
 │     ├─ media/
 │     └─ artifacts/
 ├─ cache/
@@ -39,7 +40,8 @@ OpenVideo 采用文件夹级可携带资料库。一个文件夹代表一个完�
 - `library.json` 保存资料库标识、格式版本、显示名称和创建时间，用于识别资料库，不承载业务数据。
 - 资料库标识使用 `library-{uuid7.hex}` 格式。
 - `openvideo.sqlite3` 保存资料库业务数据。
-- `assets/` 保存媒体文件和处理产物，每个资源使用 `asset-{uuid7.hex}` 目录。
+- `assets/` 保存媒体文件和处理产物，每个资源使用无前缀、带连字符的标准 UUIDv7 目录名。
+- `meta.json` 使用 `media_type` 区分 `video`、`image` 等资产类型；来源信息归入 `source`，类型专属信息归入 `video` 等对应区块。
 - `cache/` 和 `temp/` 可以删除并重新生成。
 - `.openvideo.lock` 是运行期占用标记，应用正常关闭时移除。
 - 数据库和 JSON 中保存的文件位置必须是相对资料库根目录的路径。用户输入和标识符不得直接拼接成文件路径。

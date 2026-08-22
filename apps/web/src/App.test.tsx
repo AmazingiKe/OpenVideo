@@ -16,7 +16,7 @@ import {
 } from "./shared/api";
 import type { MediaAsset } from "./shared/types";
 
-const ASSET_ID = "asset-0123456789abcdef0123456789abcdef";
+const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 vi.mock("./shared/api", () => ({
   analyze_asset: vi.fn(),
@@ -254,7 +254,12 @@ function create_asset({
 }): MediaAsset {
   return {
     asset_id:
-      status === "ready" ? ASSET_ID : `asset-${status}000000000000000000000000`,
+      status === "ready"
+        ? ASSET_ID
+        : status === "downloading"
+          ? "01890f4c-7a2b-7cc2-98c4-dc0c0c073990"
+          : "01890f4c-7a2b-7cc2-98c4-dc0c0c073991",
+    media_type: "video",
     source_url: "https://www.bilibili.com/video/BV1xx411c7mD",
     source_platform: "bilibili",
     source_video_id: "BV1xx411c7mD",

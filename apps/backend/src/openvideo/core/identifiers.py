@@ -41,3 +41,12 @@ def uuid7() -> UUID:
             | random_b
         )
         return UUID(int=value)
+
+
+def is_uuid7(identifier: str) -> bool:
+    """持久化标识必须保留 RFC 9562 UUIDv7 的标准文本形式。"""
+    try:
+        parsed_identifier = UUID(identifier)
+    except (ValueError, AttributeError):
+        return False
+    return str(parsed_identifier) == identifier and parsed_identifier.version == 7

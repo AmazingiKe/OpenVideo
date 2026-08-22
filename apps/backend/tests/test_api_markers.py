@@ -8,7 +8,7 @@ from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
 
-ASSET_ID = "asset-0123456789abcdef0123456789abcdef"
+ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 
 
 def create_client(tmp_path: Path) -> TestClient:
@@ -71,7 +71,7 @@ def test_marker_lifecycle_persists_with_its_media_asset(tmp_path: Path):
 def test_markers_reject_missing_assets_and_invalid_times(tmp_path: Path):
     with create_client(tmp_path) as client:
         missing_response = client.post(
-            "/api/media/assets/asset-00000000000000000000000000000000/markers",
+            "/api/media/assets/01890f4c-7a2b-7cc2-98c4-dc0c0c073990/markers",
             json={"time_seconds": 1, "tags": []},
         )
         invalid_response = client.post(
