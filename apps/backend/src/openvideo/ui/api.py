@@ -122,9 +122,9 @@ class DirectorySelectionResponse(BaseModel):
 
 
 class PreferencesPatch(BaseModel):
-    ffmpeg_path: str | None = None
-    ffprobe_path: str | None = None
+    ffmpeg_directory: str | None = None
     whisper_model: str | None = None
+    whisper_model_path: str | None = None
     whisper_language: str | None = None
     whisper_compute_type: str | None = None
     openai_base_url: str | None = None
@@ -133,9 +133,9 @@ class PreferencesPatch(BaseModel):
 
 
 class PreferencesResponse(BaseModel):
-    ffmpeg_path: str | None
-    ffprobe_path: str | None
+    ffmpeg_directory: str | None
     whisper_model: str
+    whisper_model_path: str | None
     whisper_language: str | None
     whisper_compute_type: str
     openai_base_url: str

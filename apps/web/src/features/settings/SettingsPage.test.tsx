@@ -26,15 +26,15 @@ vi.mock("@/shared/api", () => ({
 }));
 
 const preferences = {
-  ffmpeg_path: null,
-  ffprobe_path: null,
+  ffmpeg_directory: null,
   whisper_model: "small",
+  whisper_model_path: null,
   whisper_language: "zh",
   whisper_compute_type: "int8",
   openai_base_url: "https://api.openai.com/v1",
   openai_api_key: null,
   vision_model: "gpt-5.6-terra",
-  managed_fields: ["ffmpeg_path"],
+  managed_fields: ["ffmpeg_directory"],
   library_path_managed: false,
 };
 
@@ -51,7 +51,7 @@ describe("SettingsPage", () => {
     expect(
       screen.getByRole("heading", { name: "配置 OpenVideo 工作环境" }),
     ).toBeInTheDocument();
-    expect(await screen.findByLabelText(/FFmpeg 路径/)).toBeDisabled();
+    expect(await screen.findByLabelText(/FFmpeg 工具目录/)).toBeDisabled();
     expect(screen.getByLabelText("转写语言")).toHaveValue("zh");
   });
 

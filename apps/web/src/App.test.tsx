@@ -59,9 +59,9 @@ describe("App", () => {
       created_at: "2026-01-01T00:00:00Z",
     });
     vi.mocked(get_preferences).mockResolvedValue({
-      ffmpeg_path: null,
-      ffprobe_path: null,
+      ffmpeg_directory: null,
       whisper_model: "small",
+      whisper_model_path: null,
       whisper_language: "zh",
       whisper_compute_type: "int8",
       openai_base_url: "https://api.openai.com/v1",

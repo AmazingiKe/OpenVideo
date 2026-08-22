@@ -13,6 +13,7 @@ __pycache__/
 
 # Runtime data
 /library/
+/models/
 
 # 本地媒体工具二进制
 tools/ffmpeg/

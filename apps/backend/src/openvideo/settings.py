@@ -12,7 +12,9 @@ DEFAULT_CORS_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
 SETTING_ENVIRONMENTS = {
     "ffmpeg_path": "OPENVIDEO_FFMPEG_PATH",
     "ffprobe_path": "OPENVIDEO_FFPROBE_PATH",
+    "ffmpeg_directory": "OPENVIDEO_FFMPEG_DIRECTORY",
     "whisper_model": "OPENVIDEO_WHISPER_MODEL",
+    "whisper_model_path": "OPENVIDEO_WHISPER_MODEL_PATH",
     "whisper_language": "OPENVIDEO_WHISPER_LANGUAGE",
     "whisper_compute_type": "OPENVIDEO_WHISPER_COMPUTE_TYPE",
     "openai_base_url": "OPENVIDEO_OPENAI_BASE_URL",
@@ -20,13 +22,19 @@ SETTING_ENVIRONMENTS = {
     "vision_model": "OPENVIDEO_VISION_MODEL",
 }
 
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_FFMPEG_BIN_DIRECTORY = PROJECT_ROOT / "tools" / "ffmpeg" / "bin"
+DEFAULT_WHISPER_MODEL_DIRECTORY = PROJECT_ROOT / "models" / "faster-whisper"
+
 
 class Settings(BaseModel):
     library_path: Path | None = None
     ffmpeg_path: str | None = None
     ffprobe_path: str | None = None
+    ffmpeg_directory: str | None = None
     cors_origins: list[str] = Field(default_factory=lambda: list(DEFAULT_CORS_ORIGINS))
     whisper_model: str = "small"
+    whisper_model_path: str | None = None
     whisper_language: str | None = "zh"
     whisper_compute_type: str = "int8"
     openai_base_url: str = "https://api.openai.com/v1"
@@ -36,8 +44,14 @@ class Settings(BaseModel):
 
     @property
     def ffmpeg_bin_dir(self) -> Path:
+        if self.ffmpeg_directory:
+            return Path(self.ffmpeg_directory).expanduser().resolve()
         configured = os.getenv("OPENVIDEO_TOOLS_PATH")
-        return Path(configured).resolve() if configured else Path.cwd() / "tools" / "ffmpeg" / "bin"
+        return Path(configured).resolve() if configured else DEFAULT_FFMPEG_BIN_DIRECTORY
+
+    @property
+    def whisper_model_directory(self) -> Path:
+        return DEFAULT_WHISPER_MODEL_DIRECTORY
 
 
 def load_settings(store: PreferenceStore | None = None) -> Settings:

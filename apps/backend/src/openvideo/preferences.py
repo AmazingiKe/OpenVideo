@@ -12,9 +12,9 @@ PREFERENCES_FILE_NAME = "preferences.json"
 
 class Preferences(BaseModel):
     current_library_path: str | None = None
-    ffmpeg_path: str | None = None
-    ffprobe_path: str | None = None
+    ffmpeg_directory: str | None = None
     whisper_model: str = "small"
+    whisper_model_path: str | None = None
     whisper_language: str | None = "zh"
     whisper_compute_type: str = "int8"
     openai_base_url: str = "https://api.openai.com/v1"

@@ -499,6 +499,8 @@ class AnalysisManager:
     def _transcriber(self) -> FasterWhisperTranscriber:
         return FasterWhisperTranscriber(
             model_size=self.settings.whisper_model,
+            model_path=self.settings.whisper_model_path,
+            model_directory=self.settings.whisper_model_directory,
             language=self.settings.whisper_language,
             compute_type=self.settings.whisper_compute_type,
         )

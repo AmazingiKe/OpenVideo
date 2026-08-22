@@ -37,9 +37,9 @@ export type LibraryDescription = {
 };
 
 export type Preferences = {
-  ffmpeg_path: string | null;
-  ffprobe_path: string | null;
+  ffmpeg_directory: string | null;
   whisper_model: string;
+  whisper_model_path: string | null;
   whisper_language: string | null;
   whisper_compute_type: string;
   openai_base_url: string;

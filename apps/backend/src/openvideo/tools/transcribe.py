@@ -146,10 +146,14 @@ class FasterWhisperTranscriber:
     def __init__(
         self,
         model_size: str = DEFAULT_WHISPER_MODEL,
+        model_path: str | None = None,
+        model_directory: Path | None = None,
         language: str | None = DEFAULT_WHISPER_LANGUAGE,
         compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE,
     ) -> None:
         self.model_size = model_size
+        self.model_path = Path(model_path).expanduser() if model_path else None
+        self.model_directory = model_directory
         self.language = language
         self.compute_type = compute_type
         self._model = None
@@ -181,10 +185,15 @@ class FasterWhisperTranscriber:
         # 延迟导入，避免未安装 ASR 依赖时阻塞其他功能。
         from faster_whisper import WhisperModel
 
+        model_source = str(self.model_path) if self.model_path else self.model_size
+        model_directory = self.model_directory
+        if model_directory:
+            model_directory.mkdir(parents=True, exist_ok=True)
         return WhisperModel(
-            self.model_size,
+            model_source,
             device="cpu",
             compute_type=self.compute_type,
+            download_root=str(model_directory) if model_directory and not self.model_path else None,
         )
 
 

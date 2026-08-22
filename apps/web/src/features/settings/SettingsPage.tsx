@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Bot,
   Database,
+  FolderOpen,
   Info,
   Save,
   Settings2,
@@ -30,7 +31,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { LibraryPathForm } from "@/features/library/LibraryPathForm";
-import { get_preferences, update_preferences } from "@/shared/api";
+import {
+  get_preferences,
+  select_library_directory,
+  update_preferences,
+} from "@/shared/api";
 import type { Preferences } from "@/shared/types";
 
 type EditableField = Exclude<
@@ -69,9 +74,9 @@ export function SettingsPage() {
     try {
       set_preferences(
         await update_preferences({
-          ffmpeg_path: preferences.ffmpeg_path,
-          ffprobe_path: preferences.ffprobe_path,
+          ffmpeg_directory: preferences.ffmpeg_directory,
           whisper_model: preferences.whisper_model,
+          whisper_model_path: preferences.whisper_model_path,
           whisper_language: preferences.whisper_language,
           whisper_compute_type: preferences.whisper_compute_type,
           openai_base_url: preferences.openai_base_url,
@@ -166,17 +171,8 @@ export function SettingsPage() {
           >
             <FieldGroup>
               <div className="grid gap-5 md:grid-cols-2">
-                <PreferenceInput
-                  field="ffmpeg_path"
-                  label="FFmpeg 路径"
-                  value={preferences.ffmpeg_path ?? ""}
-                  preferences={preferences}
-                  on_change={update_field}
-                />
-                <PreferenceInput
-                  field="ffprobe_path"
-                  label="FFprobe 路径"
-                  value={preferences.ffprobe_path ?? ""}
+                <FfmpegDirectoryInput
+                  value={preferences.ffmpeg_directory ?? ""}
                   preferences={preferences}
                   on_change={update_field}
                 />
@@ -184,6 +180,11 @@ export function SettingsPage() {
                   field="whisper_model"
                   label="Whisper 模型"
                   value={preferences.whisper_model}
+                  preferences={preferences}
+                  on_change={update_field}
+                />
+                <ModelDirectoryInput
+                  value={preferences.whisper_model_path ?? ""}
                   preferences={preferences}
                   on_change={update_field}
                 />
@@ -260,6 +261,115 @@ export function SettingsPage() {
         </>
       )}
     </section>
+  );
+}
+
+function DirectoryPreferenceInput({
+  field,
+  label,
+  default_path,
+  description,
+  value,
+  preferences,
+  on_change,
+}: {
+  field: "ffmpeg_directory" | "whisper_model_path";
+  label: string;
+  default_path: string;
+  description: string;
+  value: string;
+  preferences: Preferences;
+  on_change: (field: EditableField, value: string) => void;
+}) {
+  const managed = preferences.managed_fields.includes(field);
+  const [selecting, set_selecting] = useState(false);
+
+  async function choose_directory() {
+    set_selecting(true);
+    try {
+      const selected_path = await select_library_directory();
+      if (selected_path) on_change(field, selected_path);
+    } finally {
+      set_selecting(false);
+    }
+  }
+
+  return (
+    <Field data-disabled={managed}>
+      <FieldLabel htmlFor={field}>
+        {label}
+        {managed ? <Badge variant="secondary">环境变量</Badge> : null}
+      </FieldLabel>
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <Input
+          id={field}
+          value={value}
+          onChange={(event) => on_change(field, event.target.value)}
+          placeholder={`默认：${default_path}`}
+          disabled={managed || selecting}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={choose_directory}
+          disabled={managed || selecting}
+        >
+          {selecting ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <FolderOpen data-icon="inline-start" />
+          )}
+          {selecting ? "正在选择" : "选择文件夹"}
+        </Button>
+      </div>
+      <FieldDescription>
+        {description}
+      </FieldDescription>
+    </Field>
+  );
+}
+
+function FfmpegDirectoryInput({
+  value,
+  preferences,
+  on_change,
+}: {
+  value: string;
+  preferences: Preferences;
+  on_change: (field: EditableField, value: string) => void;
+}) {
+  return (
+    <DirectoryPreferenceInput
+      field="ffmpeg_directory"
+      label="FFmpeg 工具目录"
+      default_path="tools/ffmpeg/bin"
+      description="留空时自动从项目的 tools/ffmpeg/bin 查找 ffmpeg.exe 与 ffprobe.exe。"
+      value={value}
+      preferences={preferences}
+      on_change={on_change}
+    />
+  );
+}
+
+function ModelDirectoryInput({
+  value,
+  preferences,
+  on_change,
+}: {
+  value: string;
+  preferences: Preferences;
+  on_change: (field: EditableField, value: string) => void;
+}) {
+  return (
+    <DirectoryPreferenceInput
+      field="whisper_model_path"
+      label="本地模型目录"
+      default_path="models/faster-whisper"
+      description="留空时模型会下载到项目的 models/faster-whisper；填写后仅使用该本地模型目录。"
+      value={value}
+      preferences={preferences}
+      on_change={on_change}
+    />
   );
 }
 

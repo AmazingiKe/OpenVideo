@@ -2,7 +2,12 @@ import json
 from pathlib import Path
 
 from openvideo.preferences import PreferenceStore, Preferences
-from openvideo.settings import load_settings
+from openvideo.settings import (
+    DEFAULT_FFMPEG_BIN_DIRECTORY,
+    DEFAULT_WHISPER_MODEL_DIRECTORY,
+    Settings,
+    load_settings,
+)
 
 
 def test_preferences_are_written_atomically(tmp_path: Path):
@@ -26,3 +31,10 @@ def test_environment_values_override_saved_preferences(monkeypatch, tmp_path: Pa
     assert settings.whisper_model == "medium"
     assert settings.openai_api_key == "environment"
     assert settings.managed_fields == {"whisper_model", "openai_api_key"}
+
+
+def test_default_runtime_directories_are_anchored_to_project_root():
+    settings = Settings()
+
+    assert settings.ffmpeg_bin_dir == DEFAULT_FFMPEG_BIN_DIRECTORY
+    assert settings.whisper_model_directory == DEFAULT_WHISPER_MODEL_DIRECTORY
