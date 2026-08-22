@@ -21,20 +21,17 @@ vi.mock("@/shared/api", () => ({
   create_library: vi.fn(),
   get_preferences: vi.fn(),
   open_library: vi.fn(),
-  select_library_directory: vi.fn(),
+  select_directory: vi.fn(),
   update_preferences: vi.fn(),
 }));
 
 const preferences = {
-  ffmpeg_directory: null,
-  whisper_model: "small",
-  whisper_model_path: null,
-  whisper_language: "zh",
-  whisper_compute_type: "int8",
+  tools_directory: null,
+  models_directory: null,
   openai_base_url: "https://api.openai.com/v1",
   openai_api_key: null,
   vision_model: "gpt-5.6-terra",
-  managed_fields: ["ffmpeg_directory"],
+  managed_fields: ["tools_directory"],
   library_path_managed: false,
 };
 
@@ -51,17 +48,17 @@ describe("SettingsPage", () => {
     expect(
       screen.getByRole("heading", { name: "配置 OpenVideo 工作环境" }),
     ).toBeInTheDocument();
-    expect(await screen.findByLabelText(/FFmpeg 工具目录/)).toBeDisabled();
-    expect(screen.getByLabelText("转写语言")).toHaveValue("zh");
+    expect(await screen.findByLabelText(/工具目录/)).toBeDisabled();
+    expect(screen.getByLabelText("模型目录")).toHaveValue("");
   });
 
   it("saves editable settings through the preferences API", async () => {
     render(<SettingsPage />);
-    const language = await screen.findByLabelText("转写语言");
-    fireEvent.change(language, { target: { value: "en" } });
+    const models_directory = await screen.findByLabelText("模型目录");
+    fireEvent.change(models_directory, { target: { value: "D:\\Models" } });
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     expect(update_preferences).toHaveBeenCalledWith(
-      expect.objectContaining({ whisper_language: "en" }),
+      expect.objectContaining({ models_directory: "D:\\Models" }),
     );
   });
 });

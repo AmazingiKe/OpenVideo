@@ -51,11 +51,11 @@ OpenVideo/
 Python 依赖中已包含 yt-dlp，无需全局安装。ffmpeg/ffprobe 按以下顺序自动查找：
 
 1. `OPENVIDEO_FFMPEG_PATH` / `OPENVIDEO_FFPROBE_PATH` 指定的完整路径
-2. 项目内 `tools/ffmpeg/bin/`（媒体库同级目录，免安装直接使用）
+2. 项目内 `runtime/tools/ffmpeg/bin/`（免安装直接使用）
 3. 系统 `PATH`
 
 ```powershell
-# 推荐：把 ffmpeg 和 ffprobe 放到项目 tools/ffmpeg/bin 下
+# 推荐：把 ffmpeg 和 ffprobe 放到项目 runtime/tools/ffmpeg/bin 下
 # 或放入 PATH，或指定完整路径：
 $env:OPENVIDEO_FFMPEG_PATH = "C:\path\to\ffmpeg.exe"
 $env:OPENVIDEO_FFPROBE_PATH = "C:\path\to\ffprobe.exe"
@@ -110,10 +110,9 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 | `OPENVIDEO_LIBRARY_PATH` | 空 | 固定当前资料库；设置后 Web 不允许切换 |
 | `OPENVIDEO_FFMPEG_PATH` | 从 `PATH` 查找 | ffmpeg 完整路径 |
 | `OPENVIDEO_FFPROBE_PATH` | 从 `PATH` 查找 | ffprobe 完整路径 |
+| `OPENVIDEO_TOOLS_DIRECTORY` | `runtime/tools` | 第三方工具根目录 |
 | `OPENVIDEO_CORS_ORIGINS` | 本机 Vite 来源 | 允许访问 API 的本机 Web 来源，逗号分隔 |
-| `OPENVIDEO_WHISPER_MODEL` | `small` | 本地 ASR 模型大小，可选 `tiny`/`base`/`small`/`medium`/`large`，首次使用自动下载 |
-| `OPENVIDEO_WHISPER_LANGUAGE` | `zh` | 本地 ASR 转写语言，留空则自动检测 |
-| `OPENVIDEO_WHISPER_COMPUTE_TYPE` | `int8` | 本地 ASR 量化精度，CPU 上建议 `int8` |
+| `OPENVIDEO_MODELS_DIRECTORY` | `runtime/models` | 本地模型根目录 |
 | `OPENVIDEO_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI 兼容视觉接口根地址 |
 | `OPENVIDEO_OPENAI_API_KEY` | 空 | 可选视觉模型密钥；留空时只生成音频时间轴 |
 | `OPENVIDEO_VISION_MODEL` | `gpt-5.6-terra` | 用于多帧画面与转写联合分析的模型 |

@@ -35,6 +35,12 @@ class AudioExtractionResult:
     audio_path: Path
 
 
+@dataclass(frozen=True)
+class TranscriptionResult:
+    transcript: Transcript
+    output_source: str
+
+
 class Transcriber(Protocol):
     """可插拔的文字识别实现，统一返回领域层 Transcript。"""
 
@@ -127,17 +133,23 @@ def transcribe_media(
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None = None,
     transcriber: Transcriber | None = None,
-) -> Transcript:
+) -> TranscriptionResult:
     """先复用平台字幕，缺失时提取音频并交给 ASR 实现。"""
     subtitle_transcript = extract_platform_subtitles(source_url, work_directory / "subtitles")
     if subtitle_transcript:
-        return subtitle_transcript.model_copy(update={"asset_id": asset_id})
+        return TranscriptionResult(
+            transcript=subtitle_transcript.model_copy(update={"asset_id": asset_id}),
+            output_source="platform_subtitles",
+        )
     if transcriber is None:
         raise TranscriptionFailure(
             "视频没有可用字幕；请配置本地 ASR（faster-whisper）后重试"
         )
     audio = extract_audio(media_path, work_directory / "audio", configured_ffmpeg_path, project_bin_dir)
-    return transcriber.transcribe(audio.audio_path, asset_id)
+    return TranscriptionResult(
+        transcript=transcriber.transcribe(audio.audio_path, asset_id),
+        output_source="faster-whisper",
+    )
 
 
 class FasterWhisperTranscriber:
@@ -146,13 +158,11 @@ class FasterWhisperTranscriber:
     def __init__(
         self,
         model_size: str = DEFAULT_WHISPER_MODEL,
-        model_path: str | None = None,
         model_directory: Path | None = None,
         language: str | None = DEFAULT_WHISPER_LANGUAGE,
         compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE,
     ) -> None:
         self.model_size = model_size
-        self.model_path = Path(model_path).expanduser() if model_path else None
         self.model_directory = model_directory
         self.language = language
         self.compute_type = compute_type
@@ -185,15 +195,14 @@ class FasterWhisperTranscriber:
         # 延迟导入，避免未安装 ASR 依赖时阻塞其他功能。
         from faster_whisper import WhisperModel
 
-        model_source = str(self.model_path) if self.model_path else self.model_size
         model_directory = self.model_directory
         if model_directory:
             model_directory.mkdir(parents=True, exist_ok=True)
         return WhisperModel(
-            model_source,
+            self.model_size,
             device="cpu",
             compute_type=self.compute_type,
-            download_root=str(model_directory) if model_directory and not self.model_path else None,
+            download_root=str(model_directory) if model_directory else None,
         )
 
 

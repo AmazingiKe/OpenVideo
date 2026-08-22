@@ -18,6 +18,7 @@ import type {
   AnalysisMode,
   AnalysisOperation,
   DownloadJob,
+  TranscriptionOptions,
 } from "@/shared/types";
 import type { TaskRecord } from "@/features/workbench/tasks";
 
@@ -32,7 +33,10 @@ type TaskManager = {
     mode: AnalysisMode,
     marker_ids: string[],
   ) => Promise<AnalysisJob>;
-  start_transcription: (asset_id: string) => Promise<AnalysisJob>;
+  start_transcription: (
+    asset_id: string,
+    options: TranscriptionOptions,
+  ) => Promise<AnalysisJob>;
   is_operation_running: (
     asset_id: string,
     operation: AnalysisOperation,
@@ -176,9 +180,9 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   );
 
   const start_transcription = useCallback(
-    (asset_id: string) =>
+    (asset_id: string, options: TranscriptionOptions) =>
       run_analysis_operation(asset_id, "transcription", (signal) =>
-        transcribe_asset(asset_id, signal),
+        transcribe_asset(asset_id, options, signal),
       ),
     [run_analysis_operation],
   );

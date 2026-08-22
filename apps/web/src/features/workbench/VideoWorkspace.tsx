@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +33,7 @@ import type {
   MediaAsset,
   MediaMarker,
   Transcript,
+  TranscriptionOptions,
 } from "../../shared/types";
 
 const SEEK_STEP_SECONDS = 10;
@@ -46,7 +49,7 @@ type VideoWorkspaceProps = {
   on_time_change: (seconds: number) => void;
   has_transcript: boolean;
   is_transcribing: boolean;
-  on_start_transcription: () => void;
+  on_start_transcription: (options: TranscriptionOptions) => void;
   is_analyzing: boolean;
   on_start_analysis: (mode: AnalysisMode, marker_ids: string[]) => void;
 };
@@ -64,6 +67,12 @@ export function VideoWorkspace({
   on_start_analysis,
 }: VideoWorkspaceProps) {
   const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
+  const [transcription_options, set_transcription_options] =
+    useState<TranscriptionOptions>({
+      model: "small",
+      language: "zh",
+      compute_type: "int8",
+    });
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
     new Set(),
   );
@@ -213,9 +222,53 @@ export function VideoWorkspace({
       </div>
       <section className="analysis_controls" aria-label="分析控制">
         <div className="processing_actions">
+          <FieldGroup className="grid gap-4 md:grid-cols-3">
+            <Field>
+              <FieldLabel htmlFor="transcription_model">转写模型</FieldLabel>
+              <Input
+                id="transcription_model"
+                value={transcription_options.model}
+                onChange={(event) =>
+                  set_transcription_options((current) => ({
+                    ...current,
+                    model: event.target.value,
+                  }))
+                }
+                disabled={is_transcribing || is_analyzing || has_transcript}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="transcription_language">转写语言</FieldLabel>
+              <Input
+                id="transcription_language"
+                value={transcription_options.language ?? ""}
+                onChange={(event) =>
+                  set_transcription_options((current) => ({
+                    ...current,
+                    language: event.target.value || null,
+                  }))
+                }
+                disabled={is_transcribing || is_analyzing || has_transcript}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="transcription_compute_type">计算精度</FieldLabel>
+              <Input
+                id="transcription_compute_type"
+                value={transcription_options.compute_type}
+                onChange={(event) =>
+                  set_transcription_options((current) => ({
+                    ...current,
+                    compute_type: event.target.value,
+                  }))
+                }
+                disabled={is_transcribing || is_analyzing || has_transcript}
+              />
+            </Field>
+          </FieldGroup>
           <button
             type="button"
-            onClick={on_start_transcription}
+            onClick={() => on_start_transcription(transcription_options)}
             disabled={is_transcribing || is_analyzing || has_transcript}
           >
             {is_transcribing

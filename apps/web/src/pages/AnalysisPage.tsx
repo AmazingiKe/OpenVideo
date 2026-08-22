@@ -9,7 +9,7 @@ import { AnalysisTimeline } from "@/features/workbench/AnalysisTimeline";
 import { AssetLibrary } from "@/features/workbench/AssetLibrary";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import { error_message, is_abort_error } from "@/shared/errors";
-import type { AnalysisMode } from "@/shared/types";
+import type { AnalysisMode, TranscriptionOptions } from "@/shared/types";
 
 export function AnalysisPage() {
   const {
@@ -71,11 +71,11 @@ export function AnalysisPage() {
     }
   }
 
-  async function run_transcription() {
+  async function run_transcription(options: TranscriptionOptions) {
     if (!selected_asset_id) return;
     set_page_error(null);
     try {
-      await start_transcription(selected_asset_id);
+      await start_transcription(selected_asset_id, options);
       if (mounted_ref.current) await reload_analysis();
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
@@ -103,7 +103,7 @@ export function AnalysisPage() {
             ? is_operation_running(selected_asset_id, "transcription")
             : false
         }
-        on_start_transcription={() => void run_transcription()}
+        on_start_transcription={(options) => void run_transcription(options)}
         is_analyzing={
           selected_asset_id
             ? is_operation_running(selected_asset_id, "analysis")

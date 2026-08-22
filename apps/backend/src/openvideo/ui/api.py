@@ -15,7 +15,12 @@ from openvideo.application import (
     AnalysisPrerequisiteError,
     DownloadManager,
 )
-from openvideo.core.analysis_models import AnalysisJob, AnalysisMode, Transcript
+from openvideo.core.analysis_models import (
+    AnalysisJob,
+    AnalysisMode,
+    Transcript,
+    TranscriptionOptions,
+)
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.library import (
     InvalidLibraryError,
@@ -33,7 +38,7 @@ from openvideo.core.models import (
     SourcePlatform,
 )
 from openvideo.preferences import PreferenceStore
-from openvideo.settings import Settings, load_settings, preferences_from_settings
+from openvideo.settings import PROJECT_ROOT, Settings, load_settings, preferences_from_settings
 from openvideo.tools.downloader import (
     DownloadFailure,
     PlaylistProbe,
@@ -107,6 +112,9 @@ class AnalysisCreateRequest(BaseModel):
 
 class TranscriptionCreateRequest(BaseModel):
     force: bool = False
+    model: str = "small"
+    language: str | None = "zh"
+    compute_type: str = "int8"
 
 
 class LibraryCreateRequest(BaseModel):
@@ -122,22 +130,16 @@ class DirectorySelectionResponse(BaseModel):
 
 
 class PreferencesPatch(BaseModel):
-    ffmpeg_directory: str | None = None
-    whisper_model: str | None = None
-    whisper_model_path: str | None = None
-    whisper_language: str | None = None
-    whisper_compute_type: str | None = None
+    tools_directory: str | None = None
+    models_directory: str | None = None
     openai_base_url: str | None = None
     openai_api_key: str | None = None
     vision_model: str | None = None
 
 
 class PreferencesResponse(BaseModel):
-    ffmpeg_directory: str | None
-    whisper_model: str
-    whisper_model_path: str | None
-    whisper_language: str | None
-    whisper_compute_type: str
+    tools_directory: str | None
+    models_directory: str | None
     openai_base_url: str
     openai_api_key: str | None
     vision_model: str
@@ -327,11 +329,8 @@ def create_app(
     def get_library() -> LibraryDescription | None:
         return library.description if library else None
 
-    @app.post(
-        "/api/library/select-directory",
-        response_model=DirectorySelectionResponse,
-    )
-    async def choose_library_directory() -> DirectorySelectionResponse:
+    @app.post("/api/directories/select", response_model=DirectorySelectionResponse)
+    async def choose_directory() -> DirectorySelectionResponse:
         if directory_picker_lock.locked():
             _library_error(409, "directory_picker_busy", "文件夹选择器已打开")
         try:
@@ -414,7 +413,15 @@ def create_app(
         request: TranscriptionCreateRequest = TranscriptionCreateRequest(),
     ) -> AnalysisJob:
         try:
-            job = analysis_manager.create_transcription(asset_id, request.force)
+            job = analysis_manager.create_transcription(
+                asset_id,
+                TranscriptionOptions(
+                    model=request.model,
+                    language=request.language,
+                    compute_type=request.compute_type,
+                ),
+                request.force,
+            )
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         if job.stage.value != "complete":
@@ -626,7 +633,14 @@ def _absolute_library_path(raw_path: str) -> Path:
     path = Path(raw_path)
     if not path.is_absolute():
         _library_error(422, "library_path_not_absolute", "资料库路径必须是绝对路径")
-    return path.resolve()
+    resolved_path = path.resolve()
+    if resolved_path.is_relative_to(PROJECT_ROOT):
+        _library_error(
+            422,
+            "library_path_inside_application",
+            "资料库不能放在 OpenVideo 项目目录内部",
+        )
+    return resolved_path
 
 
 def _ensure_switch_allowed(

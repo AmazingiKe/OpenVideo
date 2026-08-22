@@ -10,6 +10,8 @@ from openvideo.core.analysis_models import (
     AnalysisStage,
     TERMINAL_ANALYSIS_STAGES,
     Transcript,
+    TranscriptionMetadata,
+    TranscriptionOptions,
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -270,6 +272,7 @@ class AnalysisManager:
         self.settings = settings
         self._jobs: dict[str, AnalysisJob] = {}
         self._active_job_id_by_asset_id: dict[str, str] = {}
+        self._transcription_options_by_job_id: dict[str, TranscriptionOptions] = {}
         self._lock = RLock()
         self._analysis_lock = asyncio.Lock()
 
@@ -307,7 +310,12 @@ class AnalysisManager:
         self.library.save_analysis_job(job)
         return job.model_copy(deep=True)
 
-    def create_transcription(self, asset_id: str, force: bool) -> AnalysisJob:
+    def create_transcription(
+        self,
+        asset_id: str,
+        options: TranscriptionOptions,
+        force: bool,
+    ) -> AnalysisJob:
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法转录")
@@ -332,7 +340,16 @@ class AnalysisManager:
         with self._lock:
             self._jobs[job.job_id] = job
             self._active_job_id_by_asset_id[asset_id] = job.job_id
+            self._transcription_options_by_job_id[job.job_id] = options
         self.library.save_analysis_job(job)
+        self.library.save_transcription_metadata(
+            TranscriptionMetadata(
+                job_id=job.job_id,
+                asset_id=asset_id,
+                status="pending",
+                options=options,
+            )
+        )
         return job.model_copy(deep=True)
 
     def start(self, job_id: str) -> None:
@@ -350,6 +367,10 @@ class AnalysisManager:
                     self._active_job_id_by_asset_id[job.asset_id] = job.job_id
             with self._lock:
                 self._jobs[job.job_id] = job
+            if job.operation == AnalysisOperation.TRANSCRIPTION:
+                metadata = self.library.load_transcription_metadata(job.asset_id)
+                if metadata and metadata.job_id == job.job_id:
+                    self._transcription_options_by_job_id[job.job_id] = metadata.options
             if job.stage == AnalysisStage.PENDING:
                 self.start(job.job_id)
 
@@ -397,6 +418,11 @@ class AnalysisManager:
             return
 
         async with self._analysis_lock:
+            transcription_started_at: datetime | None = None
+            transcription_options = self._transcription_options_by_job_id.get(
+                job_id,
+                TranscriptionOptions(),
+            )
             try:
                 playback = self.library.resolve_asset_file(asset, asset.playback_path)
                 if not playback:
@@ -407,9 +433,19 @@ class AnalysisManager:
                     or job.operation == AnalysisOperation.TRANSCRIPTION
                 )
                 if should_transcribe:
+                    transcription_started_at = datetime.now(UTC)
+                    self.library.save_transcription_metadata(
+                        TranscriptionMetadata(
+                            job_id=job_id,
+                            asset_id=asset.asset_id,
+                            status="running",
+                            options=transcription_options,
+                            started_at=transcription_started_at,
+                        )
+                    )
                     self._update_job(job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
                     work_directory = self.library.temporary_directory(job_id)
-                    transcript = await asyncio.to_thread(
+                    transcription_result = await asyncio.to_thread(
                         transcribe_media,
                         playback,
                         asset.asset_id,
@@ -417,8 +453,9 @@ class AnalysisManager:
                         work_directory,
                         self.settings.ffmpeg_path,
                         self.settings.ffmpeg_bin_dir,
-                        self._transcriber(),
+                        self._transcriber(transcription_options),
                     )
+                    transcript = transcription_result.transcript
                     self._update_job(
                         job_id,
                         AnalysisStage.TRANSCRIBING,
@@ -426,6 +463,19 @@ class AnalysisManager:
                         "正在将音频转写为文字",
                     )
                     self.library.save_transcript(transcript)
+                    completed_at = datetime.now(UTC)
+                    self.library.save_transcription_metadata(
+                        TranscriptionMetadata(
+                            job_id=job_id,
+                            asset_id=asset.asset_id,
+                            status="complete",
+                            output_source=transcription_result.output_source,
+                            options=transcription_options,
+                            started_at=transcription_started_at,
+                            completed_at=completed_at,
+                            duration_seconds=(completed_at - transcription_started_at).total_seconds(),
+                        )
+                    )
                 self._add_capability(job_id, AnalysisCapability.TRANSCRIPT)
 
                 if job.operation == AnalysisOperation.TRANSCRIPTION:
@@ -482,6 +532,24 @@ class AnalysisManager:
                 )
                 self._update_job(job_id, AnalysisStage.COMPLETE, 100, message)
             except Exception as error:
+                if job.operation == AnalysisOperation.TRANSCRIPTION:
+                    failed_at = datetime.now(UTC)
+                    self.library.save_transcription_metadata(
+                        TranscriptionMetadata(
+                            job_id=job_id,
+                            asset_id=asset.asset_id,
+                            status="failed",
+                            options=transcription_options,
+                            started_at=transcription_started_at,
+                            completed_at=failed_at,
+                            duration_seconds=(
+                                (failed_at - transcription_started_at).total_seconds()
+                                if transcription_started_at
+                                else 0
+                            ),
+                            error_message=str(error) or "转录失败",
+                        )
+                    )
                 self._fail(job_id, str(error) or "分析失败")
             finally:
                 with self._lock:
@@ -496,13 +564,12 @@ class AnalysisManager:
             model=self.settings.vision_model,
         )
 
-    def _transcriber(self) -> FasterWhisperTranscriber:
+    def _transcriber(self, options: TranscriptionOptions) -> FasterWhisperTranscriber:
         return FasterWhisperTranscriber(
-            model_size=self.settings.whisper_model,
-            model_path=self.settings.whisper_model_path,
+            model_size=options.model,
             model_directory=self.settings.whisper_model_directory,
-            language=self.settings.whisper_language,
-            compute_type=self.settings.whisper_compute_type,
+            language=options.language,
+            compute_type=options.compute_type,
         )
 
     def _validated_marker_ids(

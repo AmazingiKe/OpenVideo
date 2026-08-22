@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.analysis_models import (
+    Transcript,
+    TranscriptSegment,
+    TranscriptionMetadata,
+    TranscriptionOptions,
+)
 from openvideo.core.library import MediaLibrary
 from openvideo.core.models import MediaAsset, SourcePlatform
 from openvideo.tools.transcribe import (
@@ -82,4 +87,31 @@ def test_library_load_transcript_returns_none_when_missing(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
 
     assert library.load_transcript(TRANSCRIPT_ASSET_ID) is None
+    library.close()
+
+
+def test_transcription_metadata_records_source_duration_and_failure(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    library.save_transcription_metadata(
+        TranscriptionMetadata(
+            job_id="transcription-0123456789abcdef0123456789abcdef",
+            asset_id=TRANSCRIPT_ASSET_ID,
+            status="failed",
+            output_source="faster-whisper",
+            options=TranscriptionOptions(
+                model="small",
+                language="zh",
+                compute_type="int8",
+            ),
+            duration_seconds=12.5,
+            error_message="模型加载失败",
+        )
+    )
+
+    metadata = library.load_transcription_metadata(TRANSCRIPT_ASSET_ID)
+
+    assert metadata is not None
+    assert metadata.output_source == "faster-whisper"
+    assert metadata.duration_seconds == 12.5
+    assert metadata.error_message == "模型加载失败"
     library.close()

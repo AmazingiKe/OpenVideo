@@ -37,11 +37,8 @@ export type LibraryDescription = {
 };
 
 export type Preferences = {
-  ffmpeg_directory: string | null;
-  whisper_model: string;
-  whisper_model_path: string | null;
-  whisper_language: string | null;
-  whisper_compute_type: string;
+  tools_directory: string | null;
+  models_directory: string | null;
   openai_base_url: string;
   openai_api_key: string | null;
   vision_model: string;
@@ -80,6 +77,11 @@ type AnalysisStage =
 
 export type AnalysisMode = "full" | "markers";
 export type AnalysisOperation = "transcription" | "analysis";
+export type TranscriptionOptions = {
+  model: string;
+  language: string | null;
+  compute_type: string;
+};
 type AnalysisCapability = "transcript" | "timeline" | "visual";
 
 export type AnalysisJob = {

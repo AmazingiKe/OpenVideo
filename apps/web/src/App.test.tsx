@@ -32,7 +32,7 @@ vi.mock("./shared/api", () => ({
   list_assets: vi.fn(),
   media_url: (path: string) => path,
   probe_source: vi.fn(),
-  select_library_directory: vi.fn(),
+  select_directory: vi.fn(),
   transcribe_asset: vi.fn(),
   update_transcript_segment: vi.fn(),
   update_marker: vi.fn(),
@@ -59,11 +59,8 @@ describe("App", () => {
       created_at: "2026-01-01T00:00:00Z",
     });
     vi.mocked(get_preferences).mockResolvedValue({
-      ffmpeg_directory: null,
-      whisper_model: "small",
-      whisper_model_path: null,
-      whisper_language: "zh",
-      whisper_compute_type: "int8",
+      tools_directory: null,
+      models_directory: null,
       openai_base_url: "https://api.openai.com/v1",
       openai_api_key: null,
       vision_model: "gpt-5.6-terra",

@@ -33,7 +33,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { LibraryPathForm } from "@/features/library/LibraryPathForm";
 import {
   get_preferences,
-  select_library_directory,
+  select_directory,
   update_preferences,
 } from "@/shared/api";
 import type { Preferences } from "@/shared/types";
@@ -74,11 +74,8 @@ export function SettingsPage() {
     try {
       set_preferences(
         await update_preferences({
-          ffmpeg_directory: preferences.ffmpeg_directory,
-          whisper_model: preferences.whisper_model,
-          whisper_model_path: preferences.whisper_model_path,
-          whisper_language: preferences.whisper_language,
-          whisper_compute_type: preferences.whisper_compute_type,
+          tools_directory: preferences.tools_directory,
+          models_directory: preferences.models_directory,
           openai_base_url: preferences.openai_base_url,
           openai_api_key: preferences.openai_api_key,
           vision_model: preferences.vision_model,
@@ -110,7 +107,7 @@ export function SettingsPage() {
             配置 OpenVideo 工作环境
           </h1>
           <p className="text-muted-foreground">
-            管理当前资料库、本地媒体工具、转写和 AI 分析参数。
+            管理当前资料库、本地工具、模型目录和 AI 分析参数。
           </p>
         </div>
         <Badge variant="outline">仅保存在本机</Badge>
@@ -166,39 +163,18 @@ export function SettingsPage() {
           ) : null}
           <SettingsCard
             icon={Wrench}
-            title="媒体工具与转写"
-            description="留空时从应用工具目录和系统 PATH 查找。"
+            title="本地工具与模型"
+            description="配置应用统一管理的第三方工具和本地模型根目录。"
           >
             <FieldGroup>
               <div className="grid gap-5 md:grid-cols-2">
                 <FfmpegDirectoryInput
-                  value={preferences.ffmpeg_directory ?? ""}
-                  preferences={preferences}
-                  on_change={update_field}
-                />
-                <PreferenceInput
-                  field="whisper_model"
-                  label="Whisper 模型"
-                  value={preferences.whisper_model}
+                  value={preferences.tools_directory ?? ""}
                   preferences={preferences}
                   on_change={update_field}
                 />
                 <ModelDirectoryInput
-                  value={preferences.whisper_model_path ?? ""}
-                  preferences={preferences}
-                  on_change={update_field}
-                />
-                <PreferenceInput
-                  field="whisper_language"
-                  label="转写语言"
-                  value={preferences.whisper_language ?? ""}
-                  preferences={preferences}
-                  on_change={update_field}
-                />
-                <PreferenceInput
-                  field="whisper_compute_type"
-                  label="计算精度"
-                  value={preferences.whisper_compute_type}
+                  value={preferences.models_directory ?? ""}
                   preferences={preferences}
                   on_change={update_field}
                 />
@@ -273,7 +249,7 @@ function DirectoryPreferenceInput({
   preferences,
   on_change,
 }: {
-  field: "ffmpeg_directory" | "whisper_model_path";
+  field: "tools_directory" | "models_directory";
   label: string;
   default_path: string;
   description: string;
@@ -287,7 +263,7 @@ function DirectoryPreferenceInput({
   async function choose_directory() {
     set_selecting(true);
     try {
-      const selected_path = await select_library_directory();
+      const selected_path = await select_directory();
       if (selected_path) on_change(field, selected_path);
     } finally {
       set_selecting(false);
@@ -340,10 +316,10 @@ function FfmpegDirectoryInput({
 }) {
   return (
     <DirectoryPreferenceInput
-      field="ffmpeg_directory"
-      label="FFmpeg 工具目录"
-      default_path="tools/ffmpeg/bin"
-      description="留空时自动从项目的 tools/ffmpeg/bin 查找 ffmpeg.exe 与 ffprobe.exe。"
+      field="tools_directory"
+      label="工具目录"
+      default_path="runtime/tools"
+      description="留空时从 runtime/tools 查找第三方工具；FFmpeg 位于 ffmpeg/bin。"
       value={value}
       preferences={preferences}
       on_change={on_change}
@@ -362,10 +338,10 @@ function ModelDirectoryInput({
 }) {
   return (
     <DirectoryPreferenceInput
-      field="whisper_model_path"
-      label="本地模型目录"
-      default_path="models/faster-whisper"
-      description="留空时模型会下载到项目的 models/faster-whisper；填写后仅使用该本地模型目录。"
+      field="models_directory"
+      label="模型目录"
+      default_path="runtime/models"
+      description="留空时使用 runtime/models；Whisper 模型保存在 faster-whisper 子目录。"
       value={value}
       preferences={preferences}
       on_change={on_change}

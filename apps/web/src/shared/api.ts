@@ -9,6 +9,7 @@ import type {
   MediaSegment,
   ProbeResponse,
   Transcript,
+  TranscriptionOptions,
   Preferences,
 } from "./types";
 
@@ -72,11 +73,11 @@ export function open_library(
   });
 }
 
-export async function select_library_directory(
+export async function select_directory(
   signal?: AbortSignal,
 ): Promise<string | null> {
   const selection = await request_json<{ path: string | null }>(
-    "/api/library/select-directory",
+    "/api/directories/select",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -174,6 +175,7 @@ export function analyze_asset(
 
 export function transcribe_asset(
   asset_id: string,
+  options: TranscriptionOptions,
   signal?: AbortSignal,
 ): Promise<AnalysisJob> {
   return request_json(
@@ -181,7 +183,7 @@ export function transcribe_asset(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ force: false }),
+      body: JSON.stringify({ force: false, ...options }),
       signal,
     },
   );

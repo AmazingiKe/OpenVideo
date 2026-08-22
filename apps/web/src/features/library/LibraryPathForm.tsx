@@ -22,7 +22,7 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   create_library,
   open_library,
-  select_library_directory,
+  select_directory,
 } from "@/shared/api";
 import type { LibraryDescription } from "@/shared/types";
 
@@ -66,7 +66,7 @@ export function LibraryPathForm({
     set_selecting(true);
     set_error(null);
     try {
-      const selected_path = await select_library_directory();
+      const selected_path = await select_directory();
       if (selected_path) set_path(selected_path);
     } catch (cause) {
       set_error(cause instanceof Error ? cause.message : "无法选择文件夹");

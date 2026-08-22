@@ -4,30 +4,31 @@ OpenVideo 将可变的本地运行内容与源码分开管理。以下目录默�
 
 ```text
 OpenVideo/
-├─ tools/
-│  └─ ffmpeg/
-│     └─ bin/
-│        ├─ ffmpeg.exe
-│        └─ ffprobe.exe
-├─ models/
-│  └─ faster-whisper/
-│     └─ …模型缓存文件
-└─ library/
-   └─ …视频、缩略图、字幕和资料库数据库
+└─ runtime/
+   ├─ tools/
+   │  └─ ffmpeg/
+   │     └─ bin/
+   │        ├─ ffmpeg.exe
+   │        └─ ffprobe.exe
+   └─ models/
+      └─ faster-whisper/
+         └─ …模型缓存文件
 ```
 
 ## FFmpeg
 
-FFmpeg 与 FFprobe 是第三方本地可执行程序，负责下载后的合并、转码、抽帧、媒体信息读取和音频提取。默认将两个 `.exe` 放入 `tools/ffmpeg/bin/`。
+FFmpeg 与 FFprobe 是第三方本地可执行程序，负责下载后的合并、转码、抽帧、媒体信息读取和音频提取。默认将两个 `.exe` 放入 `runtime/tools/ffmpeg/bin/`。
 
-设置页只需选择包含两个程序的工具目录；环境变量 `OPENVIDEO_FFMPEG_DIRECTORY` 可用于固定该目录。部署场景仍可通过 `OPENVIDEO_FFMPEG_PATH`、`OPENVIDEO_FFPROBE_PATH` 分别覆盖单个程序路径。
+设置页选择工具根目录；应用会在其中的 `ffmpeg/bin/` 查找两个程序。环境变量 `OPENVIDEO_TOOLS_DIRECTORY` 可用于固定工具根目录。部署场景仍可通过 `OPENVIDEO_FFMPEG_PATH`、`OPENVIDEO_FFPROBE_PATH` 分别覆盖单个程序路径。
 
 ## faster-whisper
 
-faster-whisper 是本地语音转写引擎。没有平台字幕时，应用会使用它转写音频。默认情况下，按设置中的模型名下载并缓存到 `models/faster-whisper/`。
+faster-whisper 是本地语音转写引擎。没有平台字幕时，应用会使用它转写音频。模型、语言和计算精度在发起转写时选择，模型文件缓存到 `runtime/models/faster-whisper/`。
 
-如已下载离线模型，可在设置页选择该模型文件夹，或设置 `OPENVIDEO_WHISPER_MODEL_PATH`。指定本地模型目录后不会使用默认缓存目录。
+设置页选择模型根目录，应用会在其中管理 `faster-whisper/` 等不同模型的子目录。环境变量 `OPENVIDEO_MODELS_DIRECTORY` 可用于固定模型根目录。
+
+每次转写都会在资源的 `artifacts/transcription.json` 保存来源、引擎、参数、开始与完成时间、耗时、状态和失败信息。
 
 ## 资料库
 
-资料库保存用户数据，默认是 `library/`，但建议在设置页选择容量充足的独立磁盘目录。它与工具和模型目录相互独立，可单独迁移或备份。
+资料库不属于应用运行目录。首次启动时必须由用户创建或打开一个外部资料库；应用只在用户配置中保存上次使用的路径，不会在 OpenVideo 目录内隐式创建资料库。

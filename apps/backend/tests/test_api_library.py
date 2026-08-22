@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from openvideo.preferences import PreferenceStore
-from openvideo.settings import Settings
+from openvideo.settings import PROJECT_ROOT, Settings
 from openvideo.ui.api import create_app
 from openvideo.ui.directory_picker import DirectoryPickerError
 
@@ -49,6 +49,19 @@ def test_failed_switch_keeps_current_library(tmp_path: Path):
         assert client.get("/api/library").json()["library_id"] == created["library_id"]
 
 
+def test_rejects_library_inside_application_directory(tmp_path: Path):
+    app = create_app(Settings(), PreferenceStore(tmp_path / "preferences.json"))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/library/create",
+            json={"path": str(PROJECT_ROOT / "library")},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "library_path_inside_application"
+
+
 def test_select_directory_returns_absolute_path(tmp_path: Path):
     app = create_app(
         Settings(),
@@ -57,7 +70,7 @@ def test_select_directory_returns_absolute_path(tmp_path: Path):
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/library/select-directory", json={})
+        response = client.post("/api/directories/select", json={})
 
     assert response.status_code == 200
     assert response.json() == {"path": str(tmp_path)}
@@ -71,7 +84,7 @@ def test_cancel_directory_selection_returns_null(tmp_path: Path):
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/library/select-directory", json={})
+        response = client.post("/api/directories/select", json={})
 
     assert response.status_code == 200
     assert response.json() == {"path": None}
@@ -88,7 +101,7 @@ def test_unavailable_directory_picker_returns_stable_error(tmp_path: Path):
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/library/select-directory", json={})
+        response = client.post("/api/directories/select", json={})
 
     assert response.status_code == 503
     assert response.json() == {

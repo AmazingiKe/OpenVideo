@@ -10,14 +10,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   create_library,
   open_library,
-  select_library_directory,
+  select_directory,
 } from "@/shared/api";
 import { LibraryPathForm } from "./LibraryPathForm";
 
 vi.mock("@/shared/api", () => ({
   create_library: vi.fn(),
   open_library: vi.fn(),
-  select_library_directory: vi.fn(),
+  select_directory: vi.fn(),
 }));
 
 const library = {
@@ -31,7 +31,7 @@ const library = {
 beforeEach(() => {
   vi.mocked(create_library).mockResolvedValue(library);
   vi.mocked(open_library).mockResolvedValue(library);
-  vi.mocked(select_library_directory).mockResolvedValue(null);
+  vi.mocked(select_directory).mockResolvedValue(null);
 });
 
 afterEach(cleanup);
@@ -56,7 +56,7 @@ describe("LibraryPathForm", () => {
   });
 
   it("fills the input with the selected local directory", async () => {
-    vi.mocked(select_library_directory).mockResolvedValue("D:\\课程");
+    vi.mocked(select_directory).mockResolvedValue("D:\\课程");
     render(<LibraryPathForm action="initialize" on_success={vi.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "选择文件夹" }));

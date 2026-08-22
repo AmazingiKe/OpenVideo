@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,7 +10,12 @@ from threading import RLock
 import portalocker
 from pydantic import BaseModel
 
-from openvideo.core.analysis_models import AnalysisJob, Transcript, TranscriptSegment
+from openvideo.core.analysis_models import (
+    AnalysisJob,
+    Transcript,
+    TranscriptSegment,
+    TranscriptionMetadata,
+)
 from openvideo.core.identifiers import uuid7
 from openvideo.core.models import (
     DownloadJob,
@@ -335,6 +341,23 @@ class MediaLibrary:
                 "INSERT INTO transcript_segments(asset_id, position, start_seconds, end_seconds, text) VALUES (?, ?, ?, ?, ?)",
                 [(transcript.asset_id, index, segment.start_seconds, segment.end_seconds, segment.text) for index, segment in enumerate(transcript.segments)],
             )
+
+    def save_transcription_metadata(self, metadata: TranscriptionMetadata) -> None:
+        """转写来源需要脱离任务进程保存，便于失败诊断与结果追溯。"""
+        output_path = self.artifacts_directory(metadata.asset_id) / "transcription.json"
+        temporary_path = output_path.with_suffix(".tmp")
+        temporary_path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(temporary_path, output_path)
+
+    def load_transcription_metadata(self, asset_id: str) -> TranscriptionMetadata | None:
+        input_path = self.artifacts_directory(asset_id) / "transcription.json"
+        if not input_path.is_file():
+            return None
+        try:
+            raw_metadata = input_path.read_text(encoding="utf-8")
+            return TranscriptionMetadata.model_validate_json(raw_metadata)
+        except (OSError, ValueError):
+            return None
 
     def load_transcript(self, asset_id: str) -> Transcript | None:
         row = self._db().execute("SELECT * FROM transcripts WHERE asset_id = ?", (asset_id,)).fetchone()

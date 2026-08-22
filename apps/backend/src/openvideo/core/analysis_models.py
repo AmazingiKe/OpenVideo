@@ -40,6 +40,25 @@ class AnalysisCapability(StrEnum):
     VISUAL = "visual"
 
 
+class TranscriptionOptions(BaseModel):
+    model: str = "small"
+    language: str | None = "zh"
+    compute_type: str = "int8"
+
+
+class TranscriptionMetadata(BaseModel):
+    job_id: str
+    asset_id: str
+    status: str
+    engine: str = "faster-whisper"
+    output_source: str | None = None
+    options: TranscriptionOptions
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_seconds: float | None = None
+    error_message: str | None = None
+
+
 class TranscriptSegment(BaseModel):
     """一句带起止时间的转写文本，是后续内容重要性与画面分析的最小单元。"""
 

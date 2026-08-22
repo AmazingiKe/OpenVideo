@@ -7,7 +7,7 @@ import {
   create_download,
   media_url,
   probe_source,
-  select_library_directory,
+  select_directory,
   transcribe_asset,
   update_marker,
 } from "./api";
@@ -23,8 +23,8 @@ describe("api client", () => {
       }),
     );
 
-    await expect(select_library_directory()).resolves.toBe("D:\\课程");
-    expect(fetch_mock).toHaveBeenCalledWith("/api/library/select-directory", {
+    await expect(select_directory()).resolves.toBe("D:\\课程");
+    expect(fetch_mock).toHaveBeenCalledWith("/api/directories/select", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
@@ -159,13 +159,24 @@ describe("api client", () => {
         new Response(JSON.stringify(response), { status: 202 }),
       );
 
-    await expect(transcribe_asset("asset-1")).resolves.toEqual(response);
+    await expect(
+      transcribe_asset("asset-1", {
+        model: "small",
+        language: "zh",
+        compute_type: "int8",
+      }),
+    ).resolves.toEqual(response);
     expect(fetch_mock).toHaveBeenCalledWith(
       "/api/media/assets/asset-1/transcribe",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: false }),
+        body: JSON.stringify({
+          force: false,
+          model: "small",
+          language: "zh",
+          compute_type: "int8",
+        }),
         signal: undefined,
       },
     );
