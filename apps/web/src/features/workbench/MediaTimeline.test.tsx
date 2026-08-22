@@ -13,12 +13,19 @@ type MockClip = {
 
 type MockTrack = { id: string; clips: MockClip[] };
 
+const timeline_mock = vi.hoisted(() => ({
+  set_scroll_left: vi.fn(),
+  set_zoom_scale: vi.fn(),
+}));
+
 vi.mock("@techsquidtv/canvas-timeline", () => {
   const mock_state: { engine?: MockTimelineEngine } = {};
 
   class MockTimelineEngine {
     tracks: MockTrack[];
     playhead_time: number;
+    scrollLeft = 0;
+    zoomScale = 74;
     listeners = new Map<string, Set<(payload: unknown) => void>>();
 
     constructor(state: { tracks: MockTrack[]; playheadTime: number }) {
@@ -38,6 +45,16 @@ vi.mock("@techsquidtv/canvas-timeline", () => {
 
     pixelToTime(pixel: number) {
       return pixel;
+    }
+
+    setZoomScale(zoom_scale: number) {
+      this.zoomScale = zoom_scale;
+      timeline_mock.set_zoom_scale(zoom_scale);
+    }
+
+    setScrollLeft(scroll_left: number) {
+      this.scrollLeft = scroll_left;
+      timeline_mock.set_scroll_left(scroll_left);
     }
 
     on(event: string, listener: (payload: unknown) => void) {
@@ -219,5 +236,18 @@ describe("MediaTimeline", () => {
 
     expect(add_marker).toHaveBeenNthCalledWith(1, 60);
     expect(add_marker).toHaveBeenNthCalledWith(2, 30);
+  });
+
+  it("zooms around the pointer with Alt and the mouse wheel", () => {
+    render_timeline();
+
+    fireEvent.wheel(screen.getByLabelText(/时间线画布/), {
+      altKey: true,
+      clientX: 60,
+      deltaY: -100,
+    });
+
+    expect(timeline_mock.set_zoom_scale).toHaveBeenCalledWith(81.4);
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(4824);
   });
 });

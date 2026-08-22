@@ -16,6 +16,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type WheelEvent,
   useEffect,
   useMemo,
   useRef,
@@ -30,6 +31,7 @@ import type { MediaMarker, MediaSegment, Transcript } from "@/shared/types";
 const MINIMUM_DURATION_SECONDS = 1;
 const MINIMUM_CLIP_DURATION_SECONDS = 0.05;
 const DEFAULT_ZOOM_SCALE = 74;
+const ALT_WHEEL_ZOOM_SENSITIVITY = -0.001;
 const TRACK_HEIGHT = 48;
 const MARKER_TRACK_ID = "timeline-marker-track";
 const TRANSCRIPT_TRACK_ID = "timeline-transcript-track";
@@ -138,13 +140,31 @@ function TimelineSurface({
     void on_add_marker(toSeconds(time));
   }
 
+  function zoom_with_alt(event: WheelEvent<HTMLDivElement>) {
+    if (!event.altKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const viewport_x = event.clientX - bounds.left;
+    const anchor_time = engine.pixelToTime(viewport_x);
+    const zoom_delta = event.deltaY * ALT_WHEEL_ZOOM_SENSITIVITY;
+    const zoom_scale = Math.max(0.01, engine.zoomScale * (1 + zoom_delta));
+    engine.setZoomScale(zoom_scale);
+    const scroll_left = Math.max(
+      0,
+      toSeconds(anchor_time) * engine.zoomScale - viewport_x,
+    );
+    engine.setScrollLeft(scroll_left);
+  }
+
   return (
     <div className="timeline-shell">
       <div className="timeline-stage">
         <Timeline.Root
           className="timeline-fill"
-          aria-label="时间线画布；拖动平移，Ctrl 加滚轮缩放，方向键定位"
+          aria-label="时间线画布；拖动平移，Alt 加滚轮缩放，方向键定位"
           onContextMenu={add_marker_at_pointer}
+          onWheelCapture={zoom_with_alt}
         >
           <CanvasRenderer />
           <TimelineLayers
