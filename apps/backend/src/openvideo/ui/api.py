@@ -37,6 +37,7 @@ from openvideo.core.models import (
     MediaSegment,
     SourcePlatform,
 )
+from openvideo.core.page_settings import AnalysisPageSettings, PageSettingsStore
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import PROJECT_ROOT, Settings, load_settings, preferences_from_settings
 from openvideo.tools.downloader import (
@@ -157,18 +158,21 @@ def create_app(
     library: MediaLibrary | None = None
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
+    page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
     directory_picker_lock = asyncio.Lock()
 
     async def install_library(opened_library: MediaLibrary) -> None:
-        nonlocal library, manager, analysis_manager
+        nonlocal library, manager, analysis_manager, page_settings_store
         library = opened_library
         manager = DownloadManager(opened_library, resolved_settings)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
+        page_settings_store = PageSettingsStore(opened_library.library_path)
         analysis_manager.restore()
         app.state.library = opened_library
         app.state.download_manager = manager
         app.state.analysis_manager = analysis_manager
+        app.state.page_settings_store = page_settings_store
 
     def require_library() -> MediaLibrary:
         if library is None:
@@ -177,6 +181,16 @@ def create_app(
                 detail={"code": "library_not_open", "message": "尚未打开资料库"},
             )
         return library
+
+    def require_page_settings_store() -> PageSettingsStore:
+        """页面设置必须跟随当前资料库，未打开资料库时不能退回全局路径。"""
+
+        if page_settings_store is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "library_not_open", "message": "尚未打开资料库"},
+            )
+        return page_settings_store
 
     def save_current_path(path: str | None) -> None:
         if os.getenv("OPENVIDEO_LIBRARY_PATH") is None:
@@ -202,12 +216,13 @@ def create_app(
     app.state.library = library
     app.state.download_manager = manager
     app.state.analysis_manager = analysis_manager
+    app.state.page_settings_store = page_settings_store
     app.state.settings = resolved_settings
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "HEAD"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
         allow_headers=["Content-Type", "Range"],
     )
 
@@ -317,7 +332,12 @@ def create_app(
 
     @app.middleware("http")
     async def require_open_library(request: Request, call_next):
-        managed_prefixes = ("/api/media", "/api/downloads", "/api/analysis")
+        managed_prefixes = (
+            "/api/media",
+            "/api/downloads",
+            "/api/analysis",
+            "/api/page-settings",
+        )
         if request.url.path.startswith(managed_prefixes) and library is None:
             return JSONResponse(
                 status_code=status.HTTP_409_CONFLICT,
@@ -378,7 +398,7 @@ def create_app(
 
     @app.delete("/api/library", status_code=204)
     def close_library() -> Response:
-        nonlocal library, manager, analysis_manager
+        nonlocal library, manager, analysis_manager, page_settings_store
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
             _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法关闭")
         _ensure_switch_allowed(manager, analysis_manager)
@@ -387,7 +407,9 @@ def create_app(
         library = None
         manager = None
         analysis_manager = None
+        page_settings_store = None
         app.state.library = None
+        app.state.page_settings_store = None
         save_current_path(None)
         return Response(status_code=204)
 
@@ -402,6 +424,22 @@ def create_app(
                 setattr(resolved_settings, field, value)
         save_current_path(str(library.library_path) if library else None)
         return _preferences_response(resolved_settings)
+
+    @app.get(
+        "/api/page-settings/analysis",
+        response_model=AnalysisPageSettings,
+    )
+    def get_analysis_page_settings() -> AnalysisPageSettings:
+        return require_page_settings_store().load_analysis()
+
+    @app.put(
+        "/api/page-settings/analysis",
+        response_model=AnalysisPageSettings,
+    )
+    def update_analysis_page_settings(
+        request: AnalysisPageSettings,
+    ) -> AnalysisPageSettings:
+        return require_page_settings_store().save_analysis(request)
 
     @app.post(
         "/api/media/assets/{asset_id}/transcribe",

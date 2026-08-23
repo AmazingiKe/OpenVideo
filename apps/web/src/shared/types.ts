@@ -46,6 +46,17 @@ export type Preferences = {
   library_path_managed: boolean;
 };
 
+export type AnalysisToolSection =
+  "video_information" | "transcription" | "analysis";
+
+export type AnalysisPageSettings = {
+  asset_library_size_percent: number;
+  asset_library_collapsed: boolean;
+  tool_panel_size_percent: number;
+  tool_panel_collapsed: boolean;
+  open_tool_sections: AnalysisToolSection[];
+};
+
 type DownloadStage =
   | "pending"
   | "reading_metadata"

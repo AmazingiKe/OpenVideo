@@ -1,6 +1,7 @@
 import type {
   AnalysisJob,
   AnalysisMode,
+  AnalysisPageSettings,
   DownloadJob,
   HealthResponse,
   LibraryDescription,
@@ -111,6 +112,24 @@ export function update_preferences(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(preferences),
+    signal,
+  });
+}
+
+export function get_analysis_page_settings(
+  signal?: AbortSignal,
+): Promise<AnalysisPageSettings> {
+  return request_json("/api/page-settings/analysis", { signal });
+}
+
+export function update_analysis_page_settings(
+  settings: AnalysisPageSettings,
+  signal?: AbortSignal,
+): Promise<AnalysisPageSettings> {
+  return request_json("/api/page-settings/analysis", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
     signal,
   });
 }

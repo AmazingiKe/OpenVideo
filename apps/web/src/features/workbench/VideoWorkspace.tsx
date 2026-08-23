@@ -14,15 +14,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,15 +24,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Slider } from "@/components/ui/slider";
 import { Player, type PlayerHandle } from "../player/Player";
-import { format_duration, format_time } from "../../shared/format";
+import { format_time } from "../../shared/format";
 import { media_url } from "../../shared/api";
-import type {
-  AnalysisMode,
-  MediaAsset,
-  MediaMarker,
-  Transcript,
-  TranscriptionOptions,
-} from "../../shared/types";
+import type { MediaAsset, MediaMarker, Transcript } from "../../shared/types";
 
 const SEEK_STEP_SECONDS = 10;
 const LOW_VOLUME_THRESHOLD = 0.5;
@@ -54,11 +39,6 @@ type VideoWorkspaceProps = {
   transcript: Transcript | null;
   player_ref: RefObject<PlayerHandle | null>;
   on_time_change: (seconds: number) => void;
-  has_transcript: boolean;
-  is_transcribing: boolean;
-  on_start_transcription: (options: TranscriptionOptions) => void;
-  is_analyzing: boolean;
-  on_start_analysis: (mode: AnalysisMode, marker_ids: string[]) => void;
 };
 
 export function VideoWorkspace({
@@ -67,22 +47,7 @@ export function VideoWorkspace({
   transcript,
   player_ref,
   on_time_change,
-  has_transcript,
-  is_transcribing,
-  on_start_transcription,
-  is_analyzing,
-  on_start_analysis,
 }: VideoWorkspaceProps) {
-  const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
-  const [transcription_options, set_transcription_options] =
-    useState<TranscriptionOptions>({
-      model: "small",
-      language: "zh",
-      compute_type: "int8",
-    });
-  const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
-    new Set(),
-  );
   const [is_paused, set_is_paused] = useState(true);
   const [volume, set_volume] = useState(1);
   const [is_muted, set_is_muted] = useState(false);
@@ -91,10 +56,6 @@ export function VideoWorkspace({
   const [is_fullscreen, set_is_fullscreen] = useState(false);
   const [can_picture_in_picture, set_can_picture_in_picture] = useState(false);
   const transport_time_ref = useRef<number | null>(null);
-
-  useEffect(() => {
-    set_selected_marker_ids(new Set(markers.map((marker) => marker.marker_id)));
-  }, [asset?.asset_id, markers]);
 
   useEffect(() => {
     transport_time_ref.current = null;
@@ -123,23 +84,8 @@ export function VideoWorkspace({
   return (
     <section className="video_workspace" aria-label="视频工作区">
       <div className="workspace_video_header">
-        <div>
-          <h1>{asset.title}</h1>
-          <p>
-            {asset.author_name ?? "未知作者"} ·{" "}
-            {format_duration(asset.duration_seconds)}
-          </p>
-        </div>
-        <dl>
-          <div>
-            <dt>分辨率</dt>
-            <dd>{format_resolution(asset)}</dd>
-          </div>
-          <div>
-            <dt>编码</dt>
-            <dd>{format_codecs(asset)}</dd>
-          </div>
-        </dl>
+        <h1>{asset.title}</h1>
+        <p>{asset.author_name ?? "未知作者"}</p>
       </div>
       <div className="workspace_stage">
         <div className="workspace_player_column">
@@ -240,155 +186,7 @@ export function VideoWorkspace({
             />
           </div>
         </div>
-        <aside className="analysis_controls" aria-label="处理设置">
-          <header className="analysis_controls_header">
-            <h2>处理设置</h2>
-            <p>配置转写模型并执行后续内容分析。</p>
-          </header>
-          <div className="processing_actions">
-            <FieldGroup>
-              <Field
-                data-disabled={
-                  is_transcribing || is_analyzing || has_transcript || undefined
-                }
-              >
-                <FieldLabel htmlFor="transcription_model">转写模型</FieldLabel>
-                <Input
-                  id="transcription_model"
-                  value={transcription_options.model}
-                  onChange={(event) =>
-                    set_transcription_options((current) => ({
-                      ...current,
-                      model: event.target.value,
-                    }))
-                  }
-                  disabled={is_transcribing || is_analyzing || has_transcript}
-                />
-              </Field>
-              <Field
-                data-disabled={
-                  is_transcribing || is_analyzing || has_transcript || undefined
-                }
-              >
-                <FieldLabel htmlFor="transcription_language">
-                  转写语言
-                </FieldLabel>
-                <Input
-                  id="transcription_language"
-                  value={transcription_options.language ?? ""}
-                  onChange={(event) =>
-                    set_transcription_options((current) => ({
-                      ...current,
-                      language: event.target.value || null,
-                    }))
-                  }
-                  disabled={is_transcribing || is_analyzing || has_transcript}
-                />
-              </Field>
-              <Field
-                data-disabled={
-                  is_transcribing || is_analyzing || has_transcript || undefined
-                }
-              >
-                <FieldLabel htmlFor="transcription_compute_type">
-                  计算精度
-                </FieldLabel>
-                <Input
-                  id="transcription_compute_type"
-                  value={transcription_options.compute_type}
-                  onChange={(event) =>
-                    set_transcription_options((current) => ({
-                      ...current,
-                      compute_type: event.target.value,
-                    }))
-                  }
-                  disabled={is_transcribing || is_analyzing || has_transcript}
-                />
-              </Field>
-            </FieldGroup>
-            <Button
-              className="w-full"
-              type="button"
-              onClick={() => on_start_transcription(transcription_options)}
-              disabled={is_transcribing || is_analyzing || has_transcript}
-            >
-              {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
-              {is_transcribing
-                ? "转录中…"
-                : has_transcript
-                  ? "转录已完成"
-                  : "生成转录"}
-            </Button>
-            <FieldDescription>
-              转录生成可编辑文字；内容分析在转录完成后单独执行。
-            </FieldDescription>
-          </div>
-          <div className="analysis_mode_options">
-            <label>
-              <input
-                type="radio"
-                name="analysis_mode"
-                checked={analysis_mode === "full"}
-                onChange={() => set_analysis_mode("full")}
-                disabled={!has_transcript}
-              />
-              全片时间轴
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="analysis_mode"
-                checked={analysis_mode === "markers"}
-                onChange={() => set_analysis_mode("markers")}
-                disabled={!has_transcript || markers.length === 0}
-              />
-              标记重点分析
-            </label>
-          </div>
-          {analysis_mode === "markers" ? (
-            <div className="analysis_marker_options">
-              {markers.map((marker) => (
-                <label key={marker.marker_id}>
-                  <Checkbox
-                    checked={selected_marker_ids.has(marker.marker_id)}
-                    onCheckedChange={() =>
-                      set_selected_marker_ids((current) =>
-                        toggle_marker(current, marker.marker_id),
-                      )
-                    }
-                    aria-label={`选择 ${format_time(marker.time_seconds)} 标记`}
-                  />
-                  <time>{format_time(marker.time_seconds)}</time>
-                  <span>{marker.tags.join(" / ") || "未分类标记"}</span>
-                </label>
-              ))}
-            </div>
-          ) : null}
-          <Button
-            className="w-full"
-            type="button"
-            onClick={() =>
-              on_start_analysis(analysis_mode, [...selected_marker_ids])
-            }
-            disabled={
-              !has_transcript ||
-              is_transcribing ||
-              is_analyzing ||
-              (analysis_mode === "markers" && selected_marker_ids.size === 0)
-            }
-          >
-            {is_analyzing ? <Spinner data-icon="inline-start" /> : null}
-            {is_analyzing
-              ? "分析中…"
-              : analysis_mode === "full"
-                ? "分析全片"
-                : `分析 ${selected_marker_ids.size} 个标记`}
-          </Button>
-        </aside>
       </div>
-      {asset.description ? (
-        <p className="workspace_description">{asset.description}</p>
-      ) : null}
     </section>
   );
 }
@@ -513,26 +311,6 @@ function seek_relative(
   const next_time = Math.max(0, current_time + offset_seconds);
   transport_time_ref.current = next_time;
   player.seek_to(next_time);
-}
-
-function toggle_marker(current: Set<string>, marker_id: string): Set<string> {
-  const next = new Set(current);
-  if (next.has(marker_id)) next.delete(marker_id);
-  else next.add(marker_id);
-  return next;
-}
-
-function format_resolution(asset: MediaAsset): string {
-  return asset.width && asset.height
-    ? `${asset.width} × ${asset.height}`
-    : "未知";
-}
-
-function format_codecs(asset: MediaAsset): string {
-  return (
-    [asset.video_codec, asset.audio_codec].filter(Boolean).join(" / ") ||
-    "待探测"
-  );
 }
 
 function player_storyboard(asset: MediaAsset) {

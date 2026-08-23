@@ -5,16 +5,56 @@ import {
   ApiError,
   create_marker,
   create_download,
+  get_analysis_page_settings,
   media_url,
   probe_source,
   select_directory,
   transcribe_asset,
+  update_analysis_page_settings,
   update_marker,
 } from "./api";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("api client", () => {
+  it("loads and saves analysis page settings", async () => {
+    const settings = {
+      asset_library_size_percent: 14,
+      asset_library_collapsed: false,
+      tool_panel_size_percent: 16,
+      tool_panel_collapsed: false,
+      open_tool_sections: ["video_information" as const],
+    };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(settings), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(get_analysis_page_settings()).resolves.toEqual(settings);
+    await expect(update_analysis_page_settings(settings)).resolves.toEqual(
+      settings,
+    );
+    expect(fetch_mock).toHaveBeenNthCalledWith(
+      1,
+      "/api/page-settings/analysis",
+      { signal: undefined },
+    );
+    expect(fetch_mock).toHaveBeenNthCalledWith(
+      2,
+      "/api/page-settings/analysis",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+        signal: undefined,
+      },
+    );
+  });
+
   it("requests a local directory selection", async () => {
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ path: "D:\\课程" }), {

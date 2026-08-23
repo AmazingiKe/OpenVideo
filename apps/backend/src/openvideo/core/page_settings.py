@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from threading import RLock
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+
+PAGE_SETTINGS_FILE_NAME = "page_setting.json"
+PAGE_SETTINGS_VERSION = 1
+
+ToolSection = Literal["video_information", "transcription", "analysis"]
+
+
+class AnalysisPageSettings(BaseModel):
+    """保存资料库内分析工作台的用户布局，不把设备无关状态写入全局偏好。"""
+
+    asset_library_size_percent: float = Field(default=14, ge=10, le=28)
+    asset_library_collapsed: bool = False
+    tool_panel_size_percent: float = Field(default=16, ge=14, le=32)
+    tool_panel_collapsed: bool = False
+    open_tool_sections: list[ToolSection] = Field(
+        default_factory=lambda: ["video_information"]
+    )
+
+    @field_validator("open_tool_sections")
+    @classmethod
+    def validate_unique_sections(cls, sections: list[ToolSection]) -> list[ToolSection]:
+        if len(sections) != len(set(sections)):
+            raise ValueError("工具模块不能重复")
+        return sections
+
+
+class PageSettingsDocument(BaseModel):
+    """版本字段为后续页面设置迁移保留明确入口。"""
+
+    version: Literal[PAGE_SETTINGS_VERSION] = PAGE_SETTINGS_VERSION
+    analysis: AnalysisPageSettings = Field(default_factory=AnalysisPageSettings)
+
+
+class PageSettingsStore:
+    """将页面偏好与当前资料库绑定，并保证一次保存不会留下半写文件。"""
+
+    def __init__(self, library_path: Path) -> None:
+        self.path = library_path / PAGE_SETTINGS_FILE_NAME
+        self._lock = RLock()
+
+    def load_analysis(self) -> AnalysisPageSettings:
+        with self._lock:
+            try:
+                document = PageSettingsDocument.model_validate_json(
+                    self.path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                return AnalysisPageSettings()
+            return document.analysis
+
+    def save_analysis(self, settings: AnalysisPageSettings) -> AnalysisPageSettings:
+        document = PageSettingsDocument(analysis=settings)
+        temporary_path = self.path.with_name(f".{self.path.name}.tmp")
+        with self._lock:
+            try:
+                temporary_path.write_text(
+                    document.model_dump_json(indent=2),
+                    encoding="utf-8",
+                )
+                os.replace(temporary_path, self.path)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+        return settings

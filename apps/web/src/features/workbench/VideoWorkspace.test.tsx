@@ -15,49 +15,6 @@ vi.mock("../player/Player", () => ({
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 describe("VideoWorkspace", () => {
-  it("lets the user analyze only selected markers", () => {
-    const start_analysis = vi.fn();
-    render(
-      <VideoWorkspace
-        asset={create_asset()}
-        transcript={null}
-        markers={[
-          {
-            marker_id: "marker-0123456789abcdef0123456789abcdef",
-            asset_id: ASSET_ID,
-            time_seconds: 30,
-            tags: ["公式"],
-          },
-          {
-            marker_id: "marker-1123456789abcdef0123456789abcdef",
-            asset_id: ASSET_ID,
-            time_seconds: 90,
-            tags: ["疑问"],
-          },
-        ]}
-        player_ref={createRef<PlayerHandle>()}
-        on_time_change={vi.fn()}
-        has_transcript={true}
-        is_transcribing={false}
-        on_start_transcription={vi.fn()}
-        is_analyzing={false}
-        on_start_analysis={start_analysis}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("radio", { name: "标记重点分析" }));
-    const marker_options = screen.getAllByRole("checkbox");
-    expect(marker_options).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "分析 2 个标记" })).toBeEnabled();
-
-    fireEvent.click(marker_options[0]);
-    fireEvent.click(screen.getByRole("button", { name: "分析 1 个标记" }));
-
-    expect(start_analysis).toHaveBeenCalledWith("markers", [
-      "marker-1123456789abcdef0123456789abcdef",
-    ]);
-  });
-
   it("keeps transport controls below the video", () => {
     const seek_to = vi.fn();
     const toggle_playback = vi.fn();
@@ -84,21 +41,19 @@ describe("VideoWorkspace", () => {
         markers={[]}
         player_ref={player_ref}
         on_time_change={vi.fn()}
-        has_transcript={false}
-        is_transcribing={false}
-        on_start_transcription={vi.fn()}
-        is_analyzing={false}
-        on_start_analysis={vi.fn()}
       />,
     );
 
     const controls = within(workspace.container);
-    const workspace_stage = workspace.container.querySelector(".workspace_stage");
-    const processing_panel = controls.getByRole("complementary", {
-      name: "处理设置",
-    });
+    const workspace_stage =
+      workspace.container.querySelector(".workspace_stage");
     expect(workspace_stage).toContainElement(controls.getByTestId("player"));
-    expect(workspace_stage?.lastElementChild).toBe(processing_panel);
+    expect(
+      controls.getByRole("heading", { name: "课程视频" }),
+    ).toBeInTheDocument();
+    expect(controls.getByText("讲师")).toBeInTheDocument();
+    expect(controls.queryByText("课程简介")).not.toBeInTheDocument();
+    expect(controls.queryByText("1920 × 1080")).not.toBeInTheDocument();
     fireEvent.click(controls.getByRole("button", { name: "后退 10 秒" }));
     fireEvent.click(controls.getByRole("button", { name: "后退 10 秒" }));
     fireEvent.click(controls.getByRole("button", { name: "播放" }));
@@ -133,7 +88,7 @@ function create_asset(): MediaAsset {
     source_video_id: "BV1xx411c7mD",
     title: "课程视频",
     author_name: "讲师",
-    description: null,
+    description: "课程简介",
     duration_seconds: 180,
     width: 1920,
     height: 1080,

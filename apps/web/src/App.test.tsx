@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
   create_download,
+  get_analysis_page_settings,
   get_health,
   get_library,
   get_preferences,
@@ -24,6 +25,7 @@ vi.mock("./shared/api", () => ({
   create_marker: vi.fn(),
   delete_marker: vi.fn(),
   get_health: vi.fn(),
+  get_analysis_page_settings: vi.fn(),
   get_library: vi.fn(),
   get_preferences: vi.fn(),
   get_markers: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock("./shared/api", () => ({
   probe_source: vi.fn(),
   select_directory: vi.fn(),
   transcribe_asset: vi.fn(),
+  update_analysis_page_settings: vi.fn(),
   update_transcript_segment: vi.fn(),
   update_marker: vi.fn(),
 }));
@@ -66,6 +69,13 @@ describe("App", () => {
       vision_model: "gpt-5.6-terra",
       managed_fields: [],
       library_path_managed: false,
+    });
+    vi.mocked(get_analysis_page_settings).mockResolvedValue({
+      asset_library_size_percent: 14,
+      asset_library_collapsed: false,
+      tool_panel_size_percent: 16,
+      tool_panel_collapsed: false,
+      open_tool_sections: ["video_information"],
     });
   });
 
@@ -198,7 +208,7 @@ describe("App", () => {
         screen.getByRole("heading", { name: "演示视频" }),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByLabelText("媒体库")).toBeInTheDocument();
+    expect(screen.getByLabelText("视频库")).toBeInTheDocument();
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(screen.queryByText("下载中的视频")).not.toBeInTheDocument();
