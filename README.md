@@ -80,18 +80,13 @@ uv sync
 
 ## 开发启动
 
-先启动 API：
+从仓库根目录统一启动 API 和 Web：
 
 ```powershell
-Set-Location apps/backend
-uv run uvicorn openvideo.ui.api:app --host 127.0.0.1 --port 8000 --reload
+pnpm dev
 ```
 
-再从仓库根目录启动 Web：
-
-```powershell
-pnpm dev:web
-```
+开发日志统一写入 `runtime/logs/dev/`，每次启动覆盖上一次日志。按 `Ctrl+C` 会同时停止前后端服务。
 
 打开：
 

@@ -12,8 +12,8 @@
     "format:check": "prettier . --check",
     "test": "vitest run --project=unit",
     "test:storybook": "vitest run --project=storybook",
-    "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build",
+    "storybook": "node ../../scripts/storybook.mjs dev",
+    "build-storybook": "node ../../scripts/storybook.mjs build",
     "dead-code": "knip"
   },
   "dependencies": {
