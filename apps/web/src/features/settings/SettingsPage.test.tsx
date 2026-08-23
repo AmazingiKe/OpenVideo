@@ -154,11 +154,24 @@ describe("SettingsPage", () => {
     render(<SettingsPage />);
     await screen.findByText("尚未配置 AI 模型");
     fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
-    fireEvent.change(screen.getByLabelText("LiteLLM 模型"), {
+    const dialog = screen.getByRole("dialog", { name: "添加 AI 模型" });
+    fireEvent.change(within(dialog).getByLabelText("显示名称"), {
+      target: { value: "视觉分析模型" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("LiteLLM 模型"), {
       target: { value: "anthropic/claude-sonnet-4-5" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "图片" }));
-    fireEvent.click(screen.getByRole("button", { name: "音频" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "图片" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "音频" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认添加" }));
+
+    const model_list = screen.getByRole("list", { name: "AI 模型列表" });
+    expect(within(model_list).getByText("视觉分析模型")).toBeInTheDocument();
+    expect(
+      within(model_list).getByText("anthropic/claude-sonnet-4-5"),
+    ).toBeInTheDocument();
+    expect(within(model_list).getByText("图片")).toBeInTheDocument();
+    expect(within(model_list).getByText("音频")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     expect(update_preferences).toHaveBeenCalledWith(
@@ -178,10 +191,15 @@ describe("SettingsPage", () => {
     render(<SettingsPage />);
     await screen.findByText("尚未配置 AI 模型");
     fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
-    fireEvent.change(screen.getByLabelText("LiteLLM 模型"), {
+    const dialog = screen.getByRole("dialog", { name: "添加 AI 模型" });
+    fireEvent.change(within(dialog).getByLabelText("显示名称"), {
+      target: { value: "测试模型" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("LiteLLM 模型"), {
       target: { value: "openai/test-model" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认添加" }));
+    fireEvent.click(screen.getByRole("button", { name: "测试" }));
 
     expect(test_ai_model).toHaveBeenCalledWith(
       expect.objectContaining({ litellm_model: "openai/test-model" }),

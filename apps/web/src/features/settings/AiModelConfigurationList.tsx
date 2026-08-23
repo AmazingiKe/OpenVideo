@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Activity, Bot, CircleCheck, CircleX, Trash2 } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  CircleCheck,
+  CircleX,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +19,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Empty,
   EmptyDescription,
@@ -28,6 +45,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import { model_id } from "@/shared/identifiers";
 import {
   AI_INPUT_MODALITIES,
   type AiInputModality,
@@ -54,6 +72,15 @@ type ModelTestState =
   | { phase: "complete"; result: AiModelTestResult }
   | { phase: "request_error"; message: string };
 
+const NEW_AI_MODEL: Omit<AiModelConfiguration, "model_id"> = {
+  name: "",
+  litellm_model: "",
+  api_key: null,
+  api_base: null,
+  api_version: null,
+  input_modalities: ["text"],
+};
+
 export function AiModelConfigurationList({
   models,
   managed,
@@ -63,6 +90,11 @@ export function AiModelConfigurationList({
   const [test_states, set_test_states] = useState<
     Record<string, ModelTestState>
   >({});
+  const [dialog_open, set_dialog_open] = useState(false);
+  const [editing_model_id, set_editing_model_id] = useState<string | null>(
+    null,
+  );
+  const [draft, set_draft] = useState<AiModelConfiguration | null>(null);
 
   function clear_test_state(model_id: string) {
     set_test_states((current) => {
@@ -73,21 +105,35 @@ export function AiModelConfigurationList({
     });
   }
 
-  function update_model(
-    model_id: string,
-    patch: Partial<AiModelConfiguration>,
-  ) {
-    clear_test_state(model_id);
-    on_change(
-      models.map((model) =>
-        model.model_id === model_id ? { ...model, ...patch } : model,
-      ),
-    );
-  }
-
   function remove_model(model_id: string) {
     clear_test_state(model_id);
     on_change(models.filter((model) => model.model_id !== model_id));
+  }
+
+  function open_add_dialog() {
+    set_editing_model_id(null);
+    set_draft({ model_id: model_id(), ...NEW_AI_MODEL });
+    set_dialog_open(true);
+  }
+
+  function open_edit_dialog(model: AiModelConfiguration) {
+    set_editing_model_id(model.model_id);
+    set_draft({ ...model, input_modalities: [...model.input_modalities] });
+    set_dialog_open(true);
+  }
+
+  function save_draft(model: AiModelConfiguration) {
+    if (editing_model_id) {
+      clear_test_state(editing_model_id);
+      on_change(
+        models.map((current_model) =>
+          current_model.model_id === editing_model_id ? model : current_model,
+        ),
+      );
+    } else {
+      on_change([...models, model]);
+    }
+    set_dialog_open(false);
   }
 
   async function test_model(model: AiModelConfiguration) {
@@ -112,201 +158,265 @@ export function AiModelConfigurationList({
     }
   }
 
-  if (models.length === 0) {
-    return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Bot aria-hidden="true" />
-          </EmptyMedia>
-          <EmptyTitle>尚未配置 AI 模型</EmptyTitle>
-          <EmptyDescription>
-            添加 LiteLLM 模型后，分析工作台才能选择模型执行内容任务。
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
+  return (
+    <div className="flex flex-col gap-4">
+      {models.length === 0 ? (
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Bot aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>尚未配置 AI 模型</EmptyTitle>
+            <EmptyDescription>
+              添加 LiteLLM 模型后，分析工作台才能选择模型执行内容任务。
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <ul className="flex flex-col gap-3" aria-label="AI 模型列表">
+          {models.map((model) => {
+            const test_state = test_states[model.model_id];
+            const testing = test_state?.phase === "testing";
+            const test_status_id = `ai-model-${model.model_id}-test-status`;
+            return (
+              <li key={model.model_id}>
+                <Card size="sm">
+                  <CardHeader>
+                    <CardTitle>{model.name}</CardTitle>
+                    <CardDescription className="font-mono break-all">
+                      {model.litellm_model}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-1">
+                    {model.input_modalities.map((modality) => (
+                      <Badge key={modality} variant="secondary">
+                        {INPUT_MODALITY_LABELS[modality]}
+                      </Badge>
+                    ))}
+                  </CardContent>
+                  <CardFooter className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <ModelTestFeedback id={test_status_id} state={test_state} />
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void test_model(model)}
+                        disabled={testing}
+                        aria-describedby={test_status_id}
+                      >
+                        {testing ? (
+                          <Spinner data-icon="inline-start" />
+                        ) : (
+                          <Activity data-icon="inline-start" />
+                        )}
+                        {testing ? "正在测试" : "测试"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => open_edit_dialog(model)}
+                        disabled={managed || testing}
+                      >
+                        <Pencil data-icon="inline-start" />
+                        编辑
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => remove_model(model.model_id)}
+                        disabled={managed || testing}
+                      >
+                        <Trash2 data-icon="inline-start" />
+                        删除
+                      </Button>
+                    </div>
+                  </CardFooter>
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={open_add_dialog}
+          disabled={managed}
+        >
+          <Plus data-icon="inline-start" />
+          添加模型
+        </Button>
+      </div>
+      <Dialog open={dialog_open} onOpenChange={set_dialog_open}>
+        {draft ? (
+          <AiModelConfigurationDialog
+            mode={editing_model_id ? "edit" : "add"}
+            model={draft}
+            on_change={set_draft}
+            on_submit={save_draft}
+          />
+        ) : null}
+      </Dialog>
+    </div>
+  );
+}
+
+function AiModelConfigurationDialog({
+  mode,
+  model,
+  on_change,
+  on_submit,
+}: {
+  mode: "add" | "edit";
+  model: AiModelConfiguration;
+  on_change: (model: AiModelConfiguration) => void;
+  on_submit: (model: AiModelConfiguration) => void;
+}) {
+  const field_prefix = `ai-model-dialog-${model.model_id}`;
+  const submit_disabled = !model.name.trim() || !model.litellm_model.trim();
+
+  function update_model(patch: Partial<AiModelConfiguration>) {
+    on_change({ ...model, ...patch });
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      {models.map((model) => {
-        const field_prefix = `ai-model-${model.model_id}`;
-        const test_state = test_states[model.model_id];
-        const testing = test_state?.phase === "testing";
-        const fields_disabled = managed || testing;
-        const test_disabled =
-          testing || !model.name.trim() || !model.litellm_model.trim();
-        const test_status_id = `${field_prefix}-test-status`;
-        return (
-          <Card key={model.model_id}>
-            <CardHeader>
-              <CardTitle className="flex flex-wrap items-center justify-between gap-2">
-                <span>{model.name || "未命名模型"}</span>
-                <span className="flex flex-wrap justify-end gap-1">
-                  {model.input_modalities.map((modality) => (
-                    <Badge key={modality} variant="secondary">
-                      {INPUT_MODALITY_LABELS[modality]}
-                    </Badge>
-                  ))}
-                </span>
-              </CardTitle>
-              <CardDescription>{model.litellm_model}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <div className="grid gap-5 md:grid-cols-2">
-                  <Field data-disabled={fields_disabled || undefined}>
-                    <FieldLabel htmlFor={`${field_prefix}-name`}>
-                      显示名称
-                    </FieldLabel>
-                    <Input
-                      id={`${field_prefix}-name`}
-                      value={model.name}
-                      onChange={(event) =>
-                        update_model(model.model_id, {
-                          name: event.target.value,
-                        })
-                      }
-                      disabled={fields_disabled}
-                    />
-                  </Field>
-                  <Field data-disabled={fields_disabled || undefined}>
-                    <FieldLabel htmlFor={`${field_prefix}-model`}>
-                      LiteLLM 模型
-                    </FieldLabel>
-                    <Input
-                      id={`${field_prefix}-model`}
-                      value={model.litellm_model}
-                      onChange={(event) =>
-                        update_model(model.model_id, {
-                          litellm_model: event.target.value,
-                        })
-                      }
-                      placeholder="例如 anthropic/claude-sonnet-4-5"
-                      disabled={fields_disabled}
-                    />
-                  </Field>
-                </div>
-                <Field data-disabled={fields_disabled || undefined}>
-                  <FieldLabel htmlFor={`${field_prefix}-api-base`}>
-                    API 地址
-                  </FieldLabel>
-                  <Input
-                    id={`${field_prefix}-api-base`}
-                    value={model.api_base ?? ""}
-                    onChange={(event) =>
-                      update_model(model.model_id, {
-                        api_base: event.target.value || null,
-                      })
-                    }
-                    placeholder="可选；Ollama 或兼容网关填写自定义地址"
-                    disabled={fields_disabled}
-                  />
-                </Field>
-                <div className="grid gap-5 md:grid-cols-2">
-                  <Field data-disabled={fields_disabled || undefined}>
-                    <FieldLabel htmlFor={`${field_prefix}-api-key`}>
-                      API 密钥
-                    </FieldLabel>
-                    <Input
-                      id={`${field_prefix}-api-key`}
-                      type="password"
-                      value={model.api_key ?? ""}
-                      onChange={(event) =>
-                        update_model(model.model_id, {
-                          api_key: event.target.value || null,
-                        })
-                      }
-                      disabled={fields_disabled}
-                    />
-                  </Field>
-                  <Field data-disabled={fields_disabled || undefined}>
-                    <FieldLabel htmlFor={`${field_prefix}-api-version`}>
-                      API 版本
-                    </FieldLabel>
-                    <Input
-                      id={`${field_prefix}-api-version`}
-                      value={model.api_version ?? ""}
-                      onChange={(event) =>
-                        update_model(model.model_id, {
-                          api_version: event.target.value || null,
-                        })
-                      }
-                      placeholder="Azure 等供应商可选"
-                      disabled={fields_disabled}
-                    />
-                  </Field>
-                </div>
-                <Field data-disabled={fields_disabled || undefined}>
-                  <FieldLabel id={`${field_prefix}-input-modalities`}>
-                    输入模态
-                  </FieldLabel>
-                  <ToggleGroup
-                    type="multiple"
-                    variant="outline"
-                    value={model.input_modalities}
-                    onValueChange={(input_modalities) =>
-                      update_model(model.model_id, {
-                        input_modalities: AI_INPUT_MODALITIES.filter(
-                          (modality) =>
-                            modality === "text" ||
-                            input_modalities.includes(modality),
-                        ),
-                      })
-                    }
-                    disabled={fields_disabled}
-                    aria-labelledby={`${field_prefix}-input-modalities`}
-                    className="flex-wrap justify-start"
-                  >
-                    {AI_INPUT_MODALITIES.map((modality) => (
-                      <ToggleGroupItem
-                        key={modality}
-                        value={modality}
-                        disabled={modality === "text"}
-                      >
-                        {INPUT_MODALITY_LABELS[modality]}
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
-                  <FieldDescription>
-                    文本是当前任务的基础输入；图片用于关键帧分析，音频和视频用于登记原生多模态能力。
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-            </CardContent>
-            <CardFooter className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <ModelTestFeedback id={test_status_id} state={test_state} />
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void test_model(model)}
-                  disabled={test_disabled}
-                  aria-describedby={test_status_id}
+    <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+      <form
+        className="flex flex-col gap-6"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!submit_disabled) on_submit(model);
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>
+            {mode === "add" ? "添加 AI 模型" : "编辑 AI 模型"}
+          </DialogTitle>
+          <DialogDescription>
+            配置 LiteLLM 模型标识、连接凭据和模型支持的输入模态。
+          </DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor={`${field_prefix}-name`}>显示名称</FieldLabel>
+              <Input
+                id={`${field_prefix}-name`}
+                value={model.name}
+                onChange={(event) => update_model({ name: event.target.value })}
+                placeholder="例如：视觉分析模型"
+                autoFocus
+                required
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${field_prefix}-model`}>
+                LiteLLM 模型
+              </FieldLabel>
+              <Input
+                id={`${field_prefix}-model`}
+                value={model.litellm_model}
+                onChange={(event) =>
+                  update_model({ litellm_model: event.target.value })
+                }
+                placeholder="例如：anthropic/claude-sonnet-4-5"
+                required
+              />
+            </Field>
+          </div>
+          <Field>
+            <FieldLabel htmlFor={`${field_prefix}-api-base`}>
+              API 地址
+            </FieldLabel>
+            <Input
+              id={`${field_prefix}-api-base`}
+              value={model.api_base ?? ""}
+              onChange={(event) =>
+                update_model({ api_base: event.target.value || null })
+              }
+              placeholder="可选；Ollama 或兼容网关填写自定义地址"
+            />
+          </Field>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor={`${field_prefix}-api-key`}>
+                API 密钥
+              </FieldLabel>
+              <Input
+                id={`${field_prefix}-api-key`}
+                type="password"
+                value={model.api_key ?? ""}
+                onChange={(event) =>
+                  update_model({ api_key: event.target.value || null })
+                }
+                autoComplete="off"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${field_prefix}-api-version`}>
+                API 版本
+              </FieldLabel>
+              <Input
+                id={`${field_prefix}-api-version`}
+                value={model.api_version ?? ""}
+                onChange={(event) =>
+                  update_model({ api_version: event.target.value || null })
+                }
+                placeholder="Azure 等供应商可选"
+              />
+            </Field>
+          </div>
+          <Field>
+            <FieldLabel id={`${field_prefix}-input-modalities`}>
+              输入模态
+            </FieldLabel>
+            <ToggleGroup
+              type="multiple"
+              variant="outline"
+              value={model.input_modalities}
+              onValueChange={(input_modalities) =>
+                update_model({
+                  input_modalities: AI_INPUT_MODALITIES.filter(
+                    (modality) =>
+                      modality === "text" ||
+                      input_modalities.includes(modality),
+                  ),
+                })
+              }
+              aria-labelledby={`${field_prefix}-input-modalities`}
+              className="flex-wrap justify-start"
+            >
+              {AI_INPUT_MODALITIES.map((modality) => (
+                <ToggleGroupItem
+                  key={modality}
+                  value={modality}
+                  disabled={modality === "text"}
                 >
-                  {testing ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : (
-                    <Activity data-icon="inline-start" />
-                  )}
-                  {testing ? "正在测试" : "测试模型"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => remove_model(model.model_id)}
-                  disabled={fields_disabled}
-                >
-                  <Trash2 data-icon="inline-start" />
-                  删除模型
-                </Button>
-              </div>
-            </CardFooter>
-          </Card>
-        );
-      })}
-    </div>
+                  {INPUT_MODALITY_LABELS[modality]}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <FieldDescription>
+              文本为基础输入；按模型能力补充图片、音频或视频。
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="outline">
+              取消
+            </Button>
+          </DialogClose>
+          <Button type="submit" disabled={submit_disabled}>
+            {mode === "add" ? "确认添加" : "保存修改"}
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
   );
 }
 

@@ -5,7 +5,6 @@ import {
   Database,
   FolderOpen,
   Info,
-  Plus,
   Save,
   Settings2,
   TriangleAlert,
@@ -44,7 +43,6 @@ import {
   update_preferences,
 } from "@/shared/api";
 import type { Preferences, TranscriptionModelDescriptor } from "@/shared/types";
-import { model_id } from "@/shared/identifiers";
 
 type EditableField = "tools_directory" | "models_directory";
 
@@ -78,28 +76,6 @@ export function SettingsPage() {
   function update_field(field: EditableField, value: string) {
     set_preferences((current) =>
       current ? { ...current, [field]: value || null } : current,
-    );
-  }
-
-  function add_ai_model() {
-    set_preferences((current) =>
-      current
-        ? {
-            ...current,
-            ai_models: [
-              ...current.ai_models,
-              {
-                model_id: model_id(),
-                name: "新模型",
-                litellm_model: "openai/gpt-5",
-                api_key: null,
-                api_base: null,
-                api_version: null,
-                input_modalities: ["text"],
-              },
-            ],
-          }
-        : current,
     );
   }
 
@@ -253,17 +229,6 @@ export function SettingsPage() {
                 )
               }
             />
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={add_ai_model}
-                disabled={preferences.managed_fields.includes("ai_models")}
-              >
-                <Plus data-icon="inline-start" />
-                添加模型
-              </Button>
-            </div>
           </SettingsCard>
           {message ? (
             <Alert
