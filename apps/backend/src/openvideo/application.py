@@ -26,12 +26,22 @@ from openvideo.core.models import (
     TERMINAL_DOWNLOAD_STAGES,
 )
 from openvideo.settings import Settings
+from openvideo.transcription_model_manager import (
+    TranscriptionModelDownloadError,
+    require_transcription_model_installed,
+)
 from openvideo.tools.analysis_pipeline import build_segments
 from openvideo.tools.downloader import DownloadFailure, download_video
 from openvideo.tools.media import probe_media
 from openvideo.tools.sources import SourceMatch
 from openvideo.tools.thumbnails import generate_thumbnail_sprite
-from openvideo.tools.transcribe import FasterWhisperTranscriber, transcribe_media
+from openvideo.tools.transcribe import (
+    Transcriber,
+    TranscriptionFailure,
+    create_transcriber,
+    require_transcription_adapter,
+    transcribe_media,
+)
 from openvideo.tools.vision import LiteLlmVision
 
 
@@ -328,6 +338,14 @@ class AnalysisManager:
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法转录")
+        try:
+            descriptor = require_transcription_adapter(options)
+            require_transcription_model_installed(
+                descriptor,
+                self.settings.models_root_directory,
+            )
+        except (TranscriptionFailure, TranscriptionModelDownloadError) as error:
+            raise AnalysisPrerequisiteError(str(error)) from error
         active_job = self._active_job_for(asset_id)
         if active_job:
             return active_job
@@ -356,6 +374,7 @@ class AnalysisManager:
                 job_id=job.job_id,
                 asset_id=asset_id,
                 status="pending",
+                engine=options.engine,
                 options=options,
             )
         )
@@ -430,7 +449,7 @@ class AnalysisManager:
             transcription_started_at: datetime | None = None
             transcription_options = self._transcription_options_by_job_id.get(
                 job_id,
-                TranscriptionOptions(),
+                self.settings.default_transcription,
             )
             try:
                 playback = self.library.resolve_asset_file(asset, asset.playback_path)
@@ -448,6 +467,7 @@ class AnalysisManager:
                             job_id=job_id,
                             asset_id=asset.asset_id,
                             status="running",
+                            engine=transcription_options.engine,
                             options=transcription_options,
                             started_at=transcription_started_at,
                         )
@@ -478,6 +498,7 @@ class AnalysisManager:
                             job_id=job_id,
                             asset_id=asset.asset_id,
                             status="complete",
+                            engine=transcription_options.engine,
                             output_source=transcription_result.output_source,
                             options=transcription_options,
                             started_at=transcription_started_at,
@@ -548,6 +569,7 @@ class AnalysisManager:
                             job_id=job_id,
                             asset_id=asset.asset_id,
                             status="failed",
+                            engine=transcription_options.engine,
                             options=transcription_options,
                             started_at=transcription_started_at,
                             completed_at=failed_at,
@@ -572,13 +594,8 @@ class AnalysisManager:
             raise AnalysisPrerequisiteError("分析任务使用的 AI 模型已被删除")
         return LiteLlmVision(model)
 
-    def _transcriber(self, options: TranscriptionOptions) -> FasterWhisperTranscriber:
-        return FasterWhisperTranscriber(
-            model_size=options.model,
-            model_root_directory=self.settings.whisper_model_directory,
-            language=options.language,
-            compute_type=options.compute_type,
-        )
+    def _transcriber(self, options: TranscriptionOptions) -> Transcriber:
+        return create_transcriber(options, self.settings.models_root_directory)
 
     def _validated_marker_ids(
         self,

@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import Field
 
 from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration
+from openvideo.core.analysis_models import TranscriptionEngine, TranscriptionOptions
 from openvideo.preferences import PreferenceStore, Preferences
 
 
@@ -14,6 +15,7 @@ DEFAULT_CORS_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
 AI_MODELS_FIELD = "ai_models"
 MODELS_DIRECTORY_FIELD = "models_directory"
 TOOLS_DIRECTORY_FIELD = "tools_directory"
+DEFAULT_TRANSCRIPTION_FIELD = "default_transcription"
 SETTING_ENVIRONMENTS = {
     "ffmpeg_path": "OPENVIDEO_FFMPEG_PATH",
     "ffprobe_path": "OPENVIDEO_FFPROBE_PATH",
@@ -35,6 +37,9 @@ class Settings(AiModelCollection):
     tools_directory: str | None = None
     cors_origins: list[str] = Field(default_factory=lambda: list(DEFAULT_CORS_ORIGINS))
     models_directory: str | None = None
+    default_transcription: TranscriptionOptions = Field(
+        default_factory=TranscriptionOptions
+    )
     managed_fields: set[str] = Field(default_factory=set)
 
     @property
@@ -47,13 +52,15 @@ class Settings(AiModelCollection):
         return tools_directory / "ffmpeg" / "bin"
 
     @property
-    def whisper_model_directory(self) -> Path:
-        models_directory = (
+    def models_root_directory(self) -> Path:
+        return (
             Path(self.models_directory).expanduser().resolve()
             if self.models_directory
             else DEFAULT_MODELS_DIRECTORY
         )
-        return models_directory / "faster-whisper"
+
+    def transcription_model_directory(self, engine: TranscriptionEngine) -> Path:
+        return self.models_root_directory / engine.value
 
     def ai_model(self, model_id: str) -> AiModelConfiguration | None:
         return next(

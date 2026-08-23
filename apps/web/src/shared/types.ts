@@ -39,6 +39,7 @@ export type LibraryDescription = {
 export type Preferences = {
   tools_directory: string | null;
   models_directory: string | null;
+  default_transcription: TranscriptionOptions;
   ai_models: AiModelConfiguration[];
   managed_fields: string[];
   library_path_managed: boolean;
@@ -148,10 +149,47 @@ type AnalysisStage =
 
 export type AnalysisMode = "full" | "markers";
 export type AnalysisOperation = "transcription" | "analysis";
+export type TranscriptionEngine = "faster-whisper" | "qwen3-asr" | "sensevoice";
+export type TranscriptionDevice = "auto" | "cpu" | "cuda";
+export type TranscriptionComputeType = "auto" | "int8" | "float16";
+export type TranscriptionIntegrationStatus = "available" | "adapter_required";
+export type TranscriptionModelInstallationStatus =
+  "not_installed" | "downloading" | "installed" | "failed";
+export type TranscriptionModelDownloadStage =
+  "pending" | "resolving" | "downloading" | "complete" | "failed";
+export type TranscriptionModelDownloadJob = {
+  job_id: string;
+  engine: TranscriptionEngine;
+  model: string;
+  stage: TranscriptionModelDownloadStage;
+  progress_percent: number;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  message: string;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
 export type TranscriptionOptions = {
+  engine: TranscriptionEngine;
   model: string;
   language: string | null;
-  compute_type: string;
+  device: TranscriptionDevice;
+  compute_type: TranscriptionComputeType;
+};
+export type TranscriptionModelDescriptor = {
+  engine: TranscriptionEngine;
+  model: string;
+  name: string;
+  description: string;
+  accuracy: string;
+  speed: string;
+  languages: string[];
+  repository: string;
+  recommended: boolean;
+  integration_status: TranscriptionIntegrationStatus;
+  installation_status: TranscriptionModelInstallationStatus;
+  download_job: TranscriptionModelDownloadJob | null;
 };
 type AnalysisCapability = "transcript" | "timeline" | "visual";
 

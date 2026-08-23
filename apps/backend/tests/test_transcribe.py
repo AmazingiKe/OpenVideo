@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 
 from openvideo.core.analysis_models import (
+    TRANSCRIPTION_MODEL_CATALOG,
     Transcript,
     TranscriptSegment,
+    TranscriptionEngine,
     TranscriptionMetadata,
     TranscriptionOptions,
 )
@@ -14,6 +16,7 @@ from openvideo.core.models import MediaAsset, SourcePlatform
 from openvideo.tools.transcribe import (
     TranscriptionFailure,
     _parse_json3_subtitles,
+    create_transcriber,
     extract_audio,
     resolve_whisper_model_source,
 )
@@ -128,10 +131,32 @@ def test_prefers_downloaded_local_model(tmp_path: Path):
     assert source == str(model_directory.resolve())
 
 
-def test_uses_model_name_when_local_model_is_missing(tmp_path: Path):
-    assert resolve_whisper_model_source("small", tmp_path) == "small"
+def test_rejects_missing_local_model(tmp_path: Path):
+    with pytest.raises(TranscriptionFailure, match="转录模型尚未安装"):
+        resolve_whisper_model_source("small", tmp_path)
 
 
 def test_rejects_unsupported_model_name(tmp_path: Path):
     with pytest.raises(TranscriptionFailure, match="不支持的转录模型"):
         resolve_whisper_model_source("../outside", tmp_path)
+
+
+def test_catalog_exposes_whisper_and_future_engine_adapters():
+    status_by_model = {
+        descriptor.model: descriptor.integration_status
+        for descriptor in TRANSCRIPTION_MODEL_CATALOG
+    }
+
+    assert status_by_model["large-v3-turbo"] == "available"
+    assert status_by_model["qwen3-asr-1.7b"] == "adapter_required"
+    assert status_by_model["sensevoice-small"] == "adapter_required"
+
+
+def test_factory_rejects_engine_without_runtime_adapter(tmp_path: Path):
+    options = TranscriptionOptions(
+        engine=TranscriptionEngine.QWEN3_ASR,
+        model="qwen3-asr-1.7b",
+    )
+
+    with pytest.raises(TranscriptionFailure, match="运行适配器尚未安装"):
+        create_transcriber(options, tmp_path)

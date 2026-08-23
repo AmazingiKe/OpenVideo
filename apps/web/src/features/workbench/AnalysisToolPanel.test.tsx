@@ -8,6 +8,8 @@ import type {
   AiModelSummary,
   MediaAsset,
   MediaMarker,
+  TranscriptionModelDescriptor,
+  TranscriptionOptions,
 } from "@/shared/types";
 
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
@@ -34,6 +36,31 @@ const AI_MODELS: AiModelSummary[] = [
     input_modalities: ["text", "image"],
   },
 ];
+
+const TRANSCRIPTION_MODELS: TranscriptionModelDescriptor[] = [
+  {
+    engine: "faster-whisper",
+    model: "small",
+    name: "Whisper Small",
+    description: "兼顾资源占用与识别质量。",
+    accuracy: "标准",
+    speed: "快",
+    languages: ["多语言"],
+    repository: "Systran/faster-whisper-small",
+    recommended: false,
+    integration_status: "available",
+    installation_status: "installed",
+    download_job: null,
+  },
+];
+
+const DEFAULT_TRANSCRIPTION = {
+  engine: "faster-whisper" as const,
+  model: "small",
+  language: "zh",
+  device: "cpu" as const,
+  compute_type: "int8" as const,
+};
 
 describe("AnalysisToolPanel", () => {
   it("moves video metadata and the description into video information", () => {
@@ -118,6 +145,9 @@ describe("AnalysisToolPanel", () => {
         has_transcript={true}
         is_transcribing={false}
         on_start_transcription={vi.fn()}
+        transcription_models={TRANSCRIPTION_MODELS}
+        default_transcription={DEFAULT_TRANSCRIPTION}
+        on_transcription_model_change={vi.fn()}
         is_analyzing={false}
         ai_models={AI_MODELS}
         on_start_analysis={vi.fn()}
@@ -160,24 +190,62 @@ describe("AnalysisToolPanel", () => {
     );
     expect(screen.getByText("已选择 1 条")).toBeInTheDocument();
   });
+
+  it("starts transcription with the configured default model", () => {
+    const start_transcription = vi.fn();
+    render_panel(["transcription"], {
+      start_transcription,
+      has_transcript: false,
+    });
+
+    expect(screen.getByText("Whisper Small")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "生成转录" }));
+
+    expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
+  });
+
+  it("offers download and use when the selected model is not installed", () => {
+    render_panel(["transcription"], {
+      has_transcript: false,
+      transcription_models: [
+        {
+          ...TRANSCRIPTION_MODELS[0],
+          installation_status: "not_installed",
+        },
+      ],
+    });
+
+    expect(screen.getByRole("button", { name: "下载并使用" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "生成转录" }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 function render_panel(
   open_sections: AnalysisToolSection[],
   options: {
     start_analysis?: (mode: AnalysisMode, marker_ids: string[]) => void;
+    start_transcription?: (options: TranscriptionOptions) => void;
     change_sections?: (sections: AnalysisToolSection[]) => void;
     start_correction_agent?: (scope: "all" | "selection") => void;
     selected_transcript_count?: number;
+    has_transcript?: boolean;
+    transcription_models?: TranscriptionModelDescriptor[];
   } = {},
 ) {
   return render(
     <AnalysisToolPanel
       asset={create_asset()}
       markers={MARKERS}
-      has_transcript={true}
+      has_transcript={options.has_transcript ?? true}
       is_transcribing={false}
-      on_start_transcription={vi.fn()}
+      on_start_transcription={options.start_transcription ?? vi.fn()}
+      transcription_models={
+        options.transcription_models ?? TRANSCRIPTION_MODELS
+      }
+      default_transcription={DEFAULT_TRANSCRIPTION}
+      on_transcription_model_change={vi.fn()}
       is_analyzing={false}
       ai_models={AI_MODELS}
       on_start_analysis={options.start_analysis ?? vi.fn()}

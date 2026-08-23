@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   get_preferences,
+  get_transcription_model_download,
+  list_transcription_models,
   test_ai_model,
   update_preferences,
 } from "@/shared/api";
@@ -23,7 +25,10 @@ vi.mock("@/app/library", () => ({
 
 vi.mock("@/shared/api", () => ({
   create_library: vi.fn(),
+  download_transcription_model: vi.fn(),
   get_preferences: vi.fn(),
+  get_transcription_model_download: vi.fn(),
+  list_transcription_models: vi.fn(),
   open_library: vi.fn(),
   select_directory: vi.fn(),
   test_ai_model: vi.fn(),
@@ -33,6 +38,13 @@ vi.mock("@/shared/api", () => ({
 const preferences = {
   tools_directory: null,
   models_directory: null,
+  default_transcription: {
+    engine: "faster-whisper" as const,
+    model: "small",
+    language: "zh",
+    device: "cpu" as const,
+    compute_type: "int8" as const,
+  },
   ai_models: [],
   managed_fields: ["tools_directory"],
   library_path_managed: false,
@@ -40,11 +52,44 @@ const preferences = {
 
 beforeEach(() => {
   vi.mocked(get_preferences).mockResolvedValue(preferences);
+  vi.mocked(list_transcription_models).mockResolvedValue([
+    {
+      engine: "faster-whisper",
+      model: "small",
+      name: "Whisper Small",
+      description: "兼顾资源占用与识别质量。",
+      accuracy: "标准",
+      speed: "快",
+      languages: ["多语言"],
+      repository: "Systran/faster-whisper-small",
+      recommended: false,
+      integration_status: "available",
+      installation_status: "installed",
+      download_job: null,
+    },
+    {
+      engine: "qwen3-asr",
+      model: "qwen3-asr-1.7b",
+      name: "Qwen3-ASR 1.7B",
+      description: "中文高精度扩展方案。",
+      accuracy: "最高",
+      speed: "较慢",
+      languages: ["中文"],
+      repository: "Qwen/Qwen3-ASR-1.7B",
+      recommended: false,
+      integration_status: "adapter_required",
+      installation_status: "not_installed",
+      download_job: null,
+    },
+  ]);
   vi.mocked(test_ai_model).mockResolvedValue({
     available: true,
     latency_ms: 86,
     message: "模型响应正常",
   });
+  vi.mocked(get_transcription_model_download).mockRejectedValue(
+    new Error("不应轮询"),
+  );
   vi.mocked(update_preferences).mockResolvedValue(preferences);
 });
 
@@ -66,8 +111,19 @@ describe("SettingsPage", () => {
     fireEvent.change(models_directory, { target: { value: "D:\\Models" } });
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     expect(update_preferences).toHaveBeenCalledWith(
-      expect.objectContaining({ models_directory: "D:\\Models" }),
+      expect.objectContaining({
+        models_directory: "D:\\Models",
+        default_transcription: preferences.default_transcription,
+      }),
     );
+  });
+
+  it("shows future transcription engines without enabling unavailable models", async () => {
+    render(<SettingsPage />);
+
+    expect(await screen.findByText("Qwen3-ASR 1.7B")).toBeInTheDocument();
+    expect(screen.getByText("待接入")).toBeInTheDocument();
+    expect(screen.getAllByText("Whisper Small")).not.toHaveLength(0);
   });
 
   it("adds a LiteLLM model configuration before saving", async () => {

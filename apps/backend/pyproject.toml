@@ -10,6 +10,7 @@ dependencies = [
   "uvicorn[standard]>=0.35,<1",
   "yt-dlp>=2025.3.31",
   "faster-whisper>=1.1,<2",
+  "huggingface-hub>=0.34,<2",
   "platformdirs>=4.11,<5",
   "portalocker>=4.1,<5",
   "litellm>=1.98,<2",

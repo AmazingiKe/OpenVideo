@@ -14,6 +14,7 @@ import {
   get_transcript,
   list_assets,
   list_ai_models,
+  list_transcription_models,
   probe_source,
 } from "./shared/api";
 import type { MediaAsset } from "./shared/types";
@@ -34,13 +35,16 @@ vi.mock("./shared/api", () => ({
   get_transcript: vi.fn(),
   list_assets: vi.fn(),
   list_ai_models: vi.fn(),
+  list_transcription_models: vi.fn(),
   media_url: (path: string) => path,
   probe_source: vi.fn(),
   select_directory: vi.fn(),
+  test_ai_model: vi.fn(),
   transcribe_asset: vi.fn(),
   update_analysis_page_settings: vi.fn(),
   update_transcript_segment: vi.fn(),
   update_marker: vi.fn(),
+  update_preferences: vi.fn(),
 }));
 
 vi.mock("./features/player/Player", () => ({
@@ -66,6 +70,13 @@ describe("App", () => {
     vi.mocked(get_preferences).mockResolvedValue({
       tools_directory: null,
       models_directory: null,
+      default_transcription: {
+        engine: "faster-whisper",
+        model: "small",
+        language: "zh",
+        device: "cpu",
+        compute_type: "int8",
+      },
       ai_models: [],
       managed_fields: [],
       library_path_managed: false,
@@ -78,6 +89,7 @@ describe("App", () => {
       open_tool_sections: ["video_information"],
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
+    vi.mocked(list_transcription_models).mockResolvedValue([]);
   });
 
   it("shows the library setup before mounting workspace providers", async () => {

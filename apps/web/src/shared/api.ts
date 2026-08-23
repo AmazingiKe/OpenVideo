@@ -16,6 +16,8 @@ import type {
   ProbeResponse,
   Transcript,
   TranscriptionOptions,
+  TranscriptionModelDescriptor,
+  TranscriptionModelDownloadJob,
   Preferences,
 } from "./types";
 
@@ -105,6 +107,33 @@ export async function close_library(signal?: AbortSignal): Promise<void> {
 
 export function get_preferences(signal?: AbortSignal): Promise<Preferences> {
   return request_json("/api/preferences", { signal });
+}
+
+export function list_transcription_models(
+  signal?: AbortSignal,
+): Promise<TranscriptionModelDescriptor[]> {
+  return request_json("/api/transcription/models", { signal });
+}
+
+export function download_transcription_model(
+  engine: TranscriptionModelDescriptor["engine"],
+  model: string,
+  signal?: AbortSignal,
+): Promise<TranscriptionModelDownloadJob> {
+  return request_json(
+    `/api/transcription/models/${encodeURIComponent(engine)}/${encodeURIComponent(model)}/downloads`,
+    { method: "POST", signal },
+  );
+}
+
+export function get_transcription_model_download(
+  job_id: string,
+  signal?: AbortSignal,
+): Promise<TranscriptionModelDownloadJob> {
+  return request_json(
+    `/api/transcription/model-downloads/${encodeURIComponent(job_id)}`,
+    { signal },
+  );
 }
 
 export function list_ai_models(

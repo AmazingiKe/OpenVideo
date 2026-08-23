@@ -22,7 +22,12 @@ MODEL_REQUEST = {
 
 def create_client(tmp_path: Path) -> TestClient:
     preference_store = PreferenceStore(tmp_path / "config" / "preferences.json")
-    return TestClient(api.create_app(Settings(), preference_store))
+    return TestClient(
+        api.create_app(
+            Settings(models_directory=str(tmp_path / "models")),
+            preference_store,
+        )
+    )
 
 
 def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
@@ -103,3 +108,39 @@ def test_preferences_patch_preserves_typed_ai_models(tmp_path: Path):
             "input_modalities": ["text"],
         }
     ]
+
+
+def test_transcription_catalog_exposes_available_and_extension_models(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        response = client.get("/api/transcription/models")
+
+    assert response.status_code == 200
+    models = {model["model"]: model for model in response.json()}
+    assert models["large-v3-turbo"]["integration_status"] == "available"
+    assert models["large-v3-turbo"]["installation_status"] == "not_installed"
+    assert models["large-v3-turbo"]["repository"].endswith(
+        "faster-whisper-large-v3-turbo"
+    )
+    assert models["qwen3-asr-1.7b"]["engine"] == "qwen3-asr"
+    assert models["sensevoice-small"]["integration_status"] == "adapter_required"
+
+
+def test_preferences_patch_persists_default_transcription(tmp_path: Path):
+    store = PreferenceStore(tmp_path / "config" / "preferences.json")
+    with TestClient(api.create_app(Settings(), store)) as client:
+        response = client.patch(
+            "/api/preferences",
+            json={
+                "default_transcription": {
+                    "engine": "faster-whisper",
+                    "model": "large-v3-turbo",
+                    "language": "zh",
+                    "device": "auto",
+                    "compute_type": "auto",
+                }
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["default_transcription"]["model"] == "large-v3-turbo"
+    assert store.load().default_transcription.model == "large-v3-turbo"

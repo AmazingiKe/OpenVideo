@@ -1,7 +1,24 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { AnalysisToolPanel } from "./AnalysisToolPanel";
-import type { MediaAsset } from "@/shared/types";
+import type { MediaAsset, TranscriptionModelDescriptor } from "@/shared/types";
+
+const TRANSCRIPTION_MODELS: TranscriptionModelDescriptor[] = [
+  {
+    engine: "faster-whisper",
+    model: "large-v3-turbo",
+    name: "Whisper Large V3 Turbo",
+    description: "高精度与推理速度的推荐平衡方案。",
+    accuracy: "高",
+    speed: "较快",
+    languages: ["多语言"],
+    repository: "dropbox-dash/faster-whisper-large-v3-turbo",
+    recommended: true,
+    integration_status: "available",
+    installation_status: "not_installed",
+    download_job: null,
+  },
+];
 
 const ASSET: MediaAsset = {
   asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
@@ -35,6 +52,15 @@ const meta = {
     has_transcript: false,
     is_transcribing: false,
     on_start_transcription: () => undefined,
+    transcription_models: TRANSCRIPTION_MODELS,
+    default_transcription: {
+      engine: "faster-whisper",
+      model: "large-v3-turbo",
+      language: "zh",
+      device: "auto",
+      compute_type: "auto",
+    },
+    on_transcription_model_change: () => undefined,
     is_analyzing: false,
     ai_models: [],
     on_start_analysis: () => undefined,

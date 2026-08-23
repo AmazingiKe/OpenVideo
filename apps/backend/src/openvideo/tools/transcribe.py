@@ -14,7 +14,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.analysis_models import (
+    TRANSCRIPTION_MODEL_CATALOG,
+    Transcript,
+    TranscriptSegment,
+    TranscriptionComputeType,
+    TranscriptionEngine,
+    TranscriptionIntegrationStatus,
+    TranscriptionModelDescriptor,
+    TranscriptionOptions,
+    find_transcription_model,
+)
 from openvideo.tools.media import resolve_tool
 
 
@@ -26,8 +36,11 @@ DEFAULT_WHISPER_LANGUAGE = "zh"
 DEFAULT_WHISPER_COMPUTE_TYPE = "int8"
 WHISPER_MODEL_FILE_NAME = "model.bin"
 SUPPORTED_WHISPER_MODELS = frozenset(
-    {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
+    descriptor.model
+    for descriptor in TRANSCRIPTION_MODEL_CATALOG
+    if descriptor.engine == TranscriptionEngine.FASTER_WHISPER
 )
+AUTOMATIC_COMPUTE_TYPE = "default"
 
 
 class TranscriptionFailure(RuntimeError):
@@ -47,6 +60,8 @@ class TranscriptionResult:
 
 class Transcriber(Protocol):
     """可插拔的文字识别实现，统一返回领域层 Transcript。"""
+
+    engine: TranscriptionEngine
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
         ...
@@ -152,23 +167,27 @@ def transcribe_media(
     audio = extract_audio(media_path, work_directory / "audio", configured_ffmpeg_path, project_bin_dir)
     return TranscriptionResult(
         transcript=transcriber.transcribe(audio.audio_path, asset_id),
-        output_source="faster-whisper",
+        output_source=transcriber.engine.value,
     )
 
 
 class FasterWhisperTranscriber:
-    """基于 faster-whisper 的本地 ASR，CPU 上以 int8 量化保证可运行性。"""
+    """基于 faster-whisper 的本地 ASR，按任务配置运行设备与量化精度。"""
+
+    engine = TranscriptionEngine.FASTER_WHISPER
 
     def __init__(
         self,
         model_size: str = DEFAULT_WHISPER_MODEL,
         model_root_directory: Path | None = None,
         language: str | None = DEFAULT_WHISPER_LANGUAGE,
+        device: str = "cpu",
         compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE,
     ) -> None:
         self.model_size = model_size
         self.model_root_directory = model_root_directory
         self.language = language
+        self.device = device
         self.compute_type = compute_type
         self._model = None
 
@@ -207,10 +226,46 @@ class FasterWhisperTranscriber:
         )
         return WhisperModel(
             model_source,
-            device="cpu",
+            device=self.device,
             compute_type=self.compute_type,
             download_root=str(model_root_directory) if model_root_directory else None,
         )
+
+
+def create_transcriber(
+    options: TranscriptionOptions,
+    models_root_directory: Path,
+) -> Transcriber:
+    """根据持久化任务选项路由 ASR；未接入的引擎会返回明确状态。"""
+    require_transcription_adapter(options)
+    if options.engine == TranscriptionEngine.FASTER_WHISPER:
+        compute_type = (
+            AUTOMATIC_COMPUTE_TYPE
+            if options.compute_type == TranscriptionComputeType.AUTO
+            else options.compute_type.value
+        )
+        return FasterWhisperTranscriber(
+            model_size=options.model,
+            model_root_directory=models_root_directory / options.engine.value,
+            language=options.language,
+            device=options.device.value,
+            compute_type=compute_type,
+        )
+    raise TranscriptionFailure(f"不支持的转录引擎：{options.engine.value}")
+
+
+def require_transcription_adapter(
+    options: TranscriptionOptions,
+) -> TranscriptionModelDescriptor:
+    """在创建任务前确认所选模型已有可执行适配器。"""
+    descriptor = find_transcription_model(options.engine, options.model)
+    if descriptor is None:
+        raise TranscriptionFailure("转录模型与引擎不匹配")
+    if descriptor.integration_status != TranscriptionIntegrationStatus.AVAILABLE:
+        raise TranscriptionFailure(
+            f"{descriptor.name} 的运行适配器尚未安装，请先在转录模型设置中完成接入"
+        )
+    return descriptor
 
 
 def resolve_whisper_model_source(
@@ -226,7 +281,7 @@ def resolve_whisper_model_source(
         raise TranscriptionFailure("转录模型目录无效")
     if (local_model_directory / WHISPER_MODEL_FILE_NAME).is_file():
         return str(local_model_directory)
-    return model_size
+    raise TranscriptionFailure(f"转录模型尚未安装：{model_size}")
 
 
 def _parse_json3_subtitles(path: Path) -> Transcript:

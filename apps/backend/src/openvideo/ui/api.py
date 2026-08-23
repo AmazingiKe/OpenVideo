@@ -8,7 +8,7 @@ import os
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from openvideo.agent_manager import AgentError, AgentManager
 from openvideo.application import (
@@ -27,6 +27,11 @@ from openvideo.core.analysis_models import (
     AnalysisJob,
     AnalysisMode,
     Transcript,
+    TranscriptionComputeType,
+    TranscriptionDevice,
+    TranscriptionEngine,
+    TranscriptionModelDownloadJob,
+    TranscriptionModelState,
     TranscriptionOptions,
 )
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
@@ -52,6 +57,7 @@ from openvideo.core.page_settings import (
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import (
     AI_MODELS_FIELD,
+    DEFAULT_TRANSCRIPTION_FIELD,
     MODELS_DIRECTORY_FIELD,
     PROJECT_ROOT,
     TOOLS_DIRECTORY_FIELD,
@@ -68,6 +74,10 @@ from openvideo.tools.downloader import (
 from openvideo.tools.media import media_tool_status
 from openvideo.tools.llm import LlmCompletionError, complete_text
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
+from openvideo.transcription_model_manager import (
+    TranscriptionModelDownloadError,
+    TranscriptionModelManager,
+)
 from openvideo.ui.directory_picker import DirectoryPickerError, select_directory
 
 
@@ -145,9 +155,11 @@ class AnalysisCreateRequest(BaseModel):
 
 class TranscriptionCreateRequest(BaseModel):
     force: bool = False
-    model: str = "small"
-    language: str | None = "zh"
-    compute_type: str = "int8"
+    engine: TranscriptionEngine | None = None
+    model: str | None = None
+    language: str | None = None
+    device: TranscriptionDevice | None = None
+    compute_type: TranscriptionComputeType | None = None
 
 
 class LibraryCreateRequest(BaseModel):
@@ -165,11 +177,13 @@ class DirectorySelectionResponse(BaseModel):
 class PreferencesPatch(AiModelCollection):
     tools_directory: str | None = None
     models_directory: str | None = None
+    default_transcription: TranscriptionOptions | None = None
 
 
 class PreferencesResponse(AiModelCollection):
     tools_directory: str | None
     models_directory: str | None
+    default_transcription: TranscriptionOptions
     managed_fields: list[str]
     library_path_managed: bool
 
@@ -198,6 +212,7 @@ def create_app(
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
     agent_manager: AgentManager | None = None
+    transcription_model_manager = TranscriptionModelManager(resolved_settings)
     page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
     directory_picker_lock = asyncio.Lock()
@@ -266,6 +281,7 @@ def create_app(
     app.state.download_manager = manager
     app.state.analysis_manager = analysis_manager
     app.state.agent_manager = agent_manager
+    app.state.transcription_model_manager = transcription_model_manager
     app.state.page_settings_store = page_settings_store
     app.state.settings = resolved_settings
     app.add_middleware(
@@ -495,8 +511,48 @@ def create_app(
             resolved_settings.models_directory = request.models_directory
         if AI_MODELS_FIELD in provided_fields and AI_MODELS_FIELD not in managed_fields:
             resolved_settings.ai_models = request.ai_models
+        if (
+            DEFAULT_TRANSCRIPTION_FIELD in provided_fields
+            and request.default_transcription is not None
+        ):
+            resolved_settings.default_transcription = request.default_transcription
         save_current_path(str(library.library_path) if library else None)
         return _preferences_response(resolved_settings)
+
+    @app.get(
+        "/api/transcription/models",
+        response_model=list[TranscriptionModelState],
+    )
+    def list_transcription_models() -> list[TranscriptionModelState]:
+        return transcription_model_manager.list_models()
+
+    @app.post(
+        "/api/transcription/models/{engine}/{model}/downloads",
+        response_model=TranscriptionModelDownloadJob,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def download_transcription_model(
+        engine: TranscriptionEngine,
+        model: str,
+    ) -> TranscriptionModelDownloadJob:
+        try:
+            job = transcription_model_manager.create_download(engine, model)
+        except TranscriptionModelDownloadError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        transcription_model_manager.start(job.job_id)
+        return job
+
+    @app.get(
+        "/api/transcription/model-downloads/{job_id}",
+        response_model=TranscriptionModelDownloadJob,
+    )
+    def get_transcription_model_download(
+        job_id: str,
+    ) -> TranscriptionModelDownloadJob:
+        job = transcription_model_manager.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="模型下载任务不存在")
+        return job
 
     @app.get("/api/ai/models", response_model=list[AiModelSummary])
     def list_ai_models() -> list[AiModelSummary]:
@@ -567,15 +623,32 @@ def create_app(
         request: TranscriptionCreateRequest = TranscriptionCreateRequest(),
     ) -> AnalysisJob:
         try:
+            option_values = request.model_dump(
+                exclude={"force"},
+                exclude_unset=True,
+            )
+            option_values = {
+                field: value
+                for field, value in option_values.items()
+                if value is not None or field == "language"
+            }
+            default_values = resolved_settings.default_transcription.model_dump()
+            options = TranscriptionOptions.model_validate(
+                {**default_values, **option_values}
+            )
             job = analysis_manager.create_transcription(
                 asset_id,
-                TranscriptionOptions(
-                    model=request.model,
-                    language=request.language,
-                    compute_type=request.compute_type,
-                ),
+                options,
                 request.force,
             )
+        except ValidationError as error:
+            message = error.errors()[0].get("ctx", {}).get(
+                "error",
+                error.errors()[0]["msg"],
+            )
+            raise HTTPException(status_code=422, detail=str(message)) from error
+        except AnalysisPrerequisiteError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         if job.stage.value != "complete":

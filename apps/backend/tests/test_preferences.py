@@ -10,6 +10,7 @@ from openvideo.configuration import (
     migrate_configuration_file,
 )
 from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.analysis_models import TranscriptionEngine, TranscriptionOptions
 from openvideo.preferences import PreferenceStore, Preferences
 from openvideo.settings import (
     DEFAULT_MODELS_DIRECTORY,
@@ -75,7 +76,19 @@ def test_default_runtime_directories_are_anchored_to_project_root():
     settings = Settings()
 
     assert settings.ffmpeg_bin_dir == DEFAULT_TOOLS_DIRECTORY / "ffmpeg" / "bin"
-    assert settings.whisper_model_directory == DEFAULT_MODELS_DIRECTORY / "faster-whisper"
+    assert settings.models_root_directory == DEFAULT_MODELS_DIRECTORY
+    assert settings.transcription_model_directory(
+        TranscriptionEngine.FASTER_WHISPER
+    ) == DEFAULT_MODELS_DIRECTORY / "faster-whisper"
+
+
+def test_preferences_persist_default_transcription(tmp_path: Path):
+    store = PreferenceStore(tmp_path / "preferences.json")
+    expected = TranscriptionOptions(model="large-v3-turbo")
+
+    store.save(Preferences(default_transcription=expected))
+
+    assert store.load().default_transcription == expected
 
 
 def test_library_has_no_project_default(tmp_path: Path):

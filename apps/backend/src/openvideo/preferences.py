@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from pydantic import Field
+
 from openvideo.configuration import (
     LEGACY_CONFIG_DIRECTORY,
     OPENVIDEO_CONFIG_DIRECTORY,
     migrate_configuration_file,
 )
 from openvideo.core.ai_models import AiModelCollection
+from openvideo.core.analysis_models import TranscriptionOptions
 
 
 PREFERENCES_FILE_NAME = "preferences.json"
@@ -18,6 +21,9 @@ class Preferences(AiModelCollection):
     current_library_path: str | None = None
     tools_directory: str | None = None
     models_directory: str | None = None
+    default_transcription: TranscriptionOptions = Field(
+        default_factory=TranscriptionOptions
+    )
 
 
 class PreferenceStore:

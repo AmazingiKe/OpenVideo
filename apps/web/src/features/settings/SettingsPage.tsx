@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  AudioLines,
   Bot,
   Database,
   FolderOpen,
@@ -34,13 +35,15 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { LibraryPathForm } from "@/features/library/LibraryPathForm";
 import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
+import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
 import {
   get_preferences,
+  list_transcription_models,
   select_directory,
   test_ai_model,
   update_preferences,
 } from "@/shared/api";
-import type { Preferences } from "@/shared/types";
+import type { Preferences, TranscriptionModelDescriptor } from "@/shared/types";
 import { model_id } from "@/shared/identifiers";
 
 type EditableField = "tools_directory" | "models_directory";
@@ -48,13 +51,22 @@ type EditableField = "tools_directory" | "models_directory";
 export function SettingsPage() {
   const { library, set_library } = use_library();
   const [preferences, set_preferences] = useState<Preferences | null>(null);
+  const [transcription_models, set_transcription_models] = useState<
+    TranscriptionModelDescriptor[]
+  >([]);
   const [saving, set_saving] = useState(false);
   const [message, set_message] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    get_preferences(controller.signal)
-      .then(set_preferences)
+    Promise.all([
+      get_preferences(controller.signal),
+      list_transcription_models(controller.signal),
+    ])
+      .then(([loaded_preferences, models]) => {
+        set_preferences(loaded_preferences);
+        set_transcription_models(models);
+      })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
           set_message(error instanceof Error ? error.message : "读取设置失败");
@@ -100,6 +112,7 @@ export function SettingsPage() {
         await update_preferences({
           tools_directory: preferences.tools_directory,
           models_directory: preferences.models_directory,
+          default_transcription: preferences.default_transcription,
           ai_models: preferences.ai_models,
         }),
       );
@@ -175,23 +188,48 @@ export function SettingsPage() {
           ) : null}
           <SettingsCard
             icon={Wrench}
-            title="本地工具与模型"
-            description="配置应用统一管理的第三方工具和本地模型根目录。"
+            title="本地工具"
+            description="配置应用统一管理的第三方媒体处理工具。"
           >
             <FieldGroup>
-              <div className="grid gap-5 md:grid-cols-2">
-                <FfmpegDirectoryInput
-                  value={preferences.tools_directory ?? ""}
-                  preferences={preferences}
-                  on_change={update_field}
-                />
-                <ModelDirectoryInput
-                  value={preferences.models_directory ?? ""}
-                  preferences={preferences}
-                  on_change={update_field}
-                />
-              </div>
+              <FfmpegDirectoryInput
+                value={preferences.tools_directory ?? ""}
+                preferences={preferences}
+                on_change={update_field}
+              />
             </FieldGroup>
+          </SettingsCard>
+          <SettingsCard
+            icon={AudioLines}
+            title="转录模型"
+            description="管理语音识别模型、默认方案和本地推理参数。"
+          >
+            <FieldGroup>
+              <ModelDirectoryInput
+                value={preferences.models_directory ?? ""}
+                preferences={preferences}
+                on_change={update_field}
+              />
+            </FieldGroup>
+            <TranscriptionModelSettings
+              models={transcription_models}
+              value={preferences.default_transcription}
+              on_change={(default_transcription) =>
+                set_preferences((current) =>
+                  current ? { ...current, default_transcription } : current,
+                )
+              }
+              on_model_change={(updated_model) =>
+                set_transcription_models((current) =>
+                  current.map((model) =>
+                    model.engine === updated_model.engine &&
+                    model.model === updated_model.model
+                      ? updated_model
+                      : model,
+                  ),
+                )
+              }
+            />
           </SettingsCard>
           <SettingsCard
             icon={Bot}
@@ -352,7 +390,7 @@ function ModelDirectoryInput({
       field="models_directory"
       label="模型目录"
       default_path="runtime/models"
-      description="留空时使用 runtime/models；Whisper 模型保存在 faster-whisper 子目录。"
+      description="留空时使用 runtime/models；不同转录引擎分别使用独立子目录。"
       value={value}
       preferences={preferences}
       on_change={on_change}

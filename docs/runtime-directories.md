@@ -11,7 +11,9 @@ OpenVideo/
    │        ├─ ffmpeg.exe
    │        └─ ffprobe.exe
    └─ models/
-      └─ faster-whisper/
+      ├─ faster-whisper/
+      ├─ qwen3-asr/
+      └─ sensevoice/
          └─ …模型缓存文件
 ```
 
@@ -23,7 +25,9 @@ FFmpeg 与 FFprobe 是第三方本地可执行程序，负责下载后的合并�
 
 ## faster-whisper
 
-faster-whisper 是本地语音转写引擎。没有平台字幕时，应用会使用它转写音频。模型、语言和计算精度在发起转写时选择，模型文件缓存到 `runtime/models/faster-whisper/`。
+faster-whisper 是当前可执行的本地语音转写引擎。没有平台字幕时，应用会使用设置页保存的默认转录方案，也允许工作台按任务覆盖模型。模型文件缓存到 `runtime/models/faster-whisper/`。
+
+转录模型目录与任务选项共用统一引擎接口。Qwen3-ASR 和 SenseVoice 分别预留 `qwen3-asr/`、`sensevoice/` 子目录；运行适配器未安装前，模型目录 API 会返回 `adapter_required`，任务不会静默回退到其他引擎。
 
 设置页选择模型根目录，应用会在其中管理 `faster-whisper/` 等不同模型的子目录。环境变量 `OPENVIDEO_MODELS_DIRECTORY` 可用于固定模型根目录。
 

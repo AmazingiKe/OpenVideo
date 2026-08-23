@@ -6,7 +6,10 @@ import {
   create_transcript_correction,
   create_marker,
   create_download,
+  download_transcription_model,
+  get_transcription_model_download,
   get_analysis_page_settings,
+  list_transcription_models,
   media_url,
   probe_source,
   respond_to_agent_job,
@@ -20,6 +23,51 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("api client", () => {
+  it("loads the shared transcription model catalog", async () => {
+    const models = [
+      {
+        engine: "faster-whisper",
+        model: "large-v3-turbo",
+        integration_status: "available",
+      },
+    ];
+    const fetch_mock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(models), { status: 200 }));
+
+    await expect(list_transcription_models()).resolves.toEqual(models);
+    expect(fetch_mock).toHaveBeenCalledWith("/api/transcription/models", {
+      signal: undefined,
+    });
+  });
+
+  it("starts and reads a transcription model download", async () => {
+    const job = {
+      job_id: "model-download-0198d12345677890abcdef1234567890",
+      stage: "pending",
+    };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(job), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await download_transcription_model("faster-whisper", "large-v3-turbo");
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/transcription/models/faster-whisper/large-v3-turbo/downloads",
+      { method: "POST", signal: undefined },
+    );
+
+    await get_transcription_model_download(job.job_id);
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      `/api/transcription/model-downloads/${job.job_id}`,
+      { signal: undefined },
+    );
+  });
+
   it("tests an AI model with its current unsaved configuration", async () => {
     const model = {
       model_id: "model-0198d12345677890abcdef1234567890",
@@ -236,8 +284,10 @@ describe("api client", () => {
 
     await expect(
       transcribe_asset("asset-1", {
+        engine: "faster-whisper",
         model: "small",
         language: "zh",
+        device: "cpu",
         compute_type: "int8",
       }),
     ).resolves.toEqual(response);
@@ -248,8 +298,10 @@ describe("api client", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           force: false,
+          engine: "faster-whisper",
           model: "small",
           language: "zh",
+          device: "cpu",
           compute_type: "int8",
         }),
         signal: undefined,

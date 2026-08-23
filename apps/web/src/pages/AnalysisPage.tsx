@@ -20,11 +20,16 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { FloatingError } from "@/components/FloatingError";
 import { error_message, is_abort_error } from "@/shared/errors";
-import { list_ai_models } from "@/shared/api";
+import {
+  get_preferences,
+  list_ai_models,
+  list_transcription_models,
+} from "@/shared/api";
 import type {
   AnalysisMode,
   AiModelSummary,
   TranscriptCorrectionScope,
+  TranscriptionModelDescriptor,
   TranscriptionOptions,
 } from "@/shared/types";
 
@@ -59,6 +64,11 @@ export function AnalysisPage() {
     useState<number[]>([]);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [ai_models, set_ai_models] = useState<AiModelSummary[]>([]);
+  const [transcription_models, set_transcription_models] = useState<
+    TranscriptionModelDescriptor[]
+  >([]);
+  const [default_transcription, set_default_transcription] =
+    useState<TranscriptionOptions | null>(null);
   const [model_error, set_model_error] = useState<string | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
   const asset_library_panel_ref = useRef<PanelImperativeHandle>(null);
@@ -82,9 +92,15 @@ export function AnalysisPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    list_ai_models(controller.signal)
-      .then((models) => {
+    Promise.all([
+      list_ai_models(controller.signal),
+      list_transcription_models(controller.signal),
+      get_preferences(controller.signal),
+    ])
+      .then(([models, loaded_transcription_models, preferences]) => {
         set_ai_models(models);
+        set_transcription_models(loaded_transcription_models);
+        set_default_transcription(preferences.default_transcription);
         set_model_error(null);
       })
       .catch((error: unknown) => {
@@ -270,6 +286,18 @@ export function AnalysisPage() {
       has_transcript={transcript !== null}
       is_transcribing={is_transcribing}
       on_start_transcription={(options) => void run_transcription(options)}
+      transcription_models={transcription_models}
+      default_transcription={default_transcription}
+      on_transcription_model_change={(updated_model) =>
+        set_transcription_models((current) =>
+          current.map((model) =>
+            model.engine === updated_model.engine &&
+            model.model === updated_model.model
+              ? updated_model
+              : model,
+          ),
+        )
+      }
       is_analyzing={is_analyzing}
       ai_models={ai_models}
       on_start_analysis={(mode, marker_ids, ai_model_id) =>

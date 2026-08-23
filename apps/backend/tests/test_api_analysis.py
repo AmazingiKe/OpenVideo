@@ -51,7 +51,14 @@ def create_client(tmp_path: Path) -> TestClient:
         )
     )
     library.close()
-    return TestClient(create_app(Settings(library_path=tmp_path)))
+    return TestClient(
+        create_app(
+            Settings(
+                library_path=tmp_path,
+                models_directory=str(tmp_path / "models"),
+            )
+        )
+    )
 
 
 def test_analyze_returns_404_for_missing_asset(tmp_path: Path):
@@ -192,11 +199,39 @@ def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
         lambda *args, **kwargs: Transcript(asset_id=ASSET_ID),
     )
     with create_client(tmp_path) as client:
+        model_directory = tmp_path / "models" / "faster-whisper" / "small"
+        model_directory.mkdir(parents=True)
+        (model_directory / "model.bin").write_bytes(b"model")
         response = client.post(f"/api/media/assets/{ASSET_ID}/transcribe")
 
     assert response.status_code == 202
     assert response.json()["operation"] == "transcription"
     assert response.json()["job_id"].startswith("job-")
+
+
+def test_transcription_requires_downloaded_model(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        response = client.post(f"/api/media/assets/{ASSET_ID}/transcribe")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Whisper Small 尚未安装，请先下载模型"
+
+
+def test_transcription_rejects_model_without_runtime_adapter(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcribe",
+            json={
+                "engine": "qwen3-asr",
+                "model": "qwen3-asr-1.7b",
+                "language": "zh",
+                "device": "auto",
+                "compute_type": "auto",
+            },
+        )
+
+    assert response.status_code == 409
+    assert "运行适配器尚未安装" in response.json()["detail"]
 
 
 def test_segments_returns_empty_when_missing(tmp_path: Path):

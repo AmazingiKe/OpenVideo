@@ -8,6 +8,7 @@ import {
 import { Sparkles, Wrench } from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
+import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
 import {
   Accordion,
   AccordionContent,
@@ -23,7 +24,14 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_duration, format_time } from "@/shared/format";
@@ -37,6 +45,7 @@ import {
   type MediaAsset,
   type MediaMarker,
   type TranscriptCorrectionScope,
+  type TranscriptionModelDescriptor,
   type TranscriptionOptions,
 } from "@/shared/types";
 import { CollapsiblePanelRail } from "./CollapsiblePanelRail";
@@ -62,6 +71,9 @@ type AnalysisToolPanelProps = {
   has_transcript: boolean;
   is_transcribing: boolean;
   on_start_transcription: (options: TranscriptionOptions) => void;
+  transcription_models: TranscriptionModelDescriptor[];
+  default_transcription: TranscriptionOptions | null;
+  on_transcription_model_change: (model: TranscriptionModelDescriptor) => void;
   is_analyzing: boolean;
   ai_models: AiModelSummary[];
   on_start_analysis: (
@@ -92,6 +104,9 @@ export function AnalysisToolPanel({
   has_transcript,
   is_transcribing,
   on_start_transcription,
+  transcription_models,
+  default_transcription,
+  on_transcription_model_change,
   is_analyzing,
   ai_models,
   on_start_analysis,
@@ -107,11 +122,7 @@ export function AnalysisToolPanel({
 }: AnalysisToolPanelProps) {
   const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
   const [transcription_options, set_transcription_options] =
-    useState<TranscriptionOptions>({
-      model: "small",
-      language: "zh",
-      compute_type: "int8",
-    });
+    useState<TranscriptionOptions | null>(default_transcription);
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
     new Set(),
   );
@@ -126,10 +137,32 @@ export function AnalysisToolPanel({
       ),
     [ai_models],
   );
+  const available_transcription_models = useMemo(
+    () =>
+      transcription_models.filter(
+        (model) => model.integration_status === "available",
+      ),
+    [transcription_models],
+  );
+  const selected_transcription_model = useMemo(
+    () =>
+      transcription_options
+        ? transcription_models.find(
+            (model) =>
+              model.engine === transcription_options.engine &&
+              model.model === transcription_options.model,
+          )
+        : null,
+    [transcription_models, transcription_options],
+  );
 
   useEffect(() => {
     set_selected_marker_ids(new Set(markers.map((marker) => marker.marker_id)));
   }, [asset?.asset_id, markers]);
+
+  useEffect(() => {
+    set_transcription_options(default_transcription);
+  }, [asset?.asset_id, default_transcription]);
 
   useEffect(() => {
     set_correction_model_id((current) =>
@@ -244,78 +277,91 @@ export function AnalysisToolPanel({
                   }
                 >
                   <FieldLabel htmlFor="transcription_model">模型</FieldLabel>
-                  <Input
-                    id="transcription_model"
-                    value={transcription_options.model}
-                    onChange={(event) =>
-                      set_transcription_options((current) => ({
-                        ...current,
-                        model: event.target.value,
-                      }))
+                  <Select
+                    value={transcription_options?.model ?? ""}
+                    onValueChange={(model_name) => {
+                      const model = available_transcription_models.find(
+                        (item) => item.model === model_name,
+                      );
+                      if (!model || !transcription_options) return;
+                      set_transcription_options({
+                        ...transcription_options,
+                        engine: model.engine,
+                        model: model.model,
+                      });
+                    }}
+                    disabled={
+                      !transcription_options ||
+                      is_transcribing ||
+                      is_analyzing ||
+                      has_transcript
                     }
-                    disabled={is_transcribing || is_analyzing || has_transcript}
-                  />
-                </Field>
-                <Field
-                  data-disabled={
-                    is_transcribing ||
-                    is_analyzing ||
-                    has_transcript ||
-                    undefined
-                  }
-                >
-                  <FieldLabel htmlFor="transcription_language">语言</FieldLabel>
-                  <Input
-                    id="transcription_language"
-                    value={transcription_options.language ?? ""}
-                    onChange={(event) =>
-                      set_transcription_options((current) => ({
-                        ...current,
-                        language: event.target.value || null,
-                      }))
-                    }
-                    disabled={is_transcribing || is_analyzing || has_transcript}
-                  />
-                </Field>
-                <Field
-                  data-disabled={
-                    is_transcribing ||
-                    is_analyzing ||
-                    has_transcript ||
-                    undefined
-                  }
-                >
-                  <FieldLabel htmlFor="transcription_compute_type">
-                    计算精度
-                  </FieldLabel>
-                  <Input
-                    id="transcription_compute_type"
-                    value={transcription_options.compute_type}
-                    onChange={(event) =>
-                      set_transcription_options((current) => ({
-                        ...current,
-                        compute_type: event.target.value,
-                      }))
-                    }
-                    disabled={is_transcribing || is_analyzing || has_transcript}
-                  />
+                  >
+                    <SelectTrigger id="transcription_model" className="w-full">
+                      <SelectValue placeholder="正在读取默认模型" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {available_transcription_models.map((model) => (
+                          <SelectItem key={model.model} value={model.model}>
+                            {model.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  {selected_transcription_model && transcription_options ? (
+                    <FieldDescription>
+                      {selected_transcription_model.description} 当前使用
+                      {transcription_options.language ?? "自动检测"}、
+                      {transcription_options.device.toUpperCase()}、
+                      {transcription_options.compute_type}。
+                    </FieldDescription>
+                  ) : null}
                 </Field>
               </FieldGroup>
-              <Button
-                className="w-full"
-                type="button"
-                onClick={() => on_start_transcription(transcription_options)}
-                disabled={
-                  !asset || is_transcribing || is_analyzing || has_transcript
-                }
-              >
-                {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
-                {is_transcribing
-                  ? "转录中…"
-                  : has_transcript
-                    ? "转录已完成"
-                    : "生成转录"}
-              </Button>
+              {selected_transcription_model &&
+              selected_transcription_model.installation_status !==
+                "installed" ? (
+                <TranscriptionModelDownloadAction
+                  model={selected_transcription_model}
+                  action_label="下载并使用"
+                  on_change={on_transcription_model_change}
+                  on_complete={() => {
+                    if (transcription_options) {
+                      on_start_transcription(transcription_options);
+                    }
+                  }}
+                  disabled={
+                    !asset || is_transcribing || is_analyzing || has_transcript
+                  }
+                />
+              ) : (
+                <Button
+                  className="w-full"
+                  type="button"
+                  onClick={() => {
+                    if (transcription_options)
+                      on_start_transcription(transcription_options);
+                  }}
+                  disabled={
+                    !asset ||
+                    !transcription_options ||
+                    is_transcribing ||
+                    is_analyzing ||
+                    has_transcript
+                  }
+                >
+                  {is_transcribing ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : null}
+                  {is_transcribing
+                    ? "转录中…"
+                    : has_transcript
+                      ? "转录已完成"
+                      : "生成转录"}
+                </Button>
+              )}
               <FieldDescription>
                 转录生成可编辑文字，完成后可继续内容分析。
               </FieldDescription>
