@@ -61,13 +61,8 @@ export function AnalysisPage() {
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
   const is_compact_layout = use_compact_analysis_layout();
-  const {
-    markers,
-    marker_error,
-    add_marker,
-    update_marker_tags,
-    remove_marker,
-  } = use_asset_markers(selected_asset_id ?? "");
+  const { markers, marker_error, add_marker, update_marker_tags } =
+    use_asset_markers(selected_asset_id ?? "");
 
   useEffect(() => {
     mounted_ref.current = true;
@@ -323,7 +318,6 @@ export function AnalysisPage() {
         on_seek={seek_player}
         on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_add_marker={add_marker}
-        on_remove_marker={remove_marker}
         on_update_marker_tags={update_marker_tags}
         on_update_transcript={save_transcript_segment}
       />

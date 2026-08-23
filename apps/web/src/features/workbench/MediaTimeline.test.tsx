@@ -151,7 +151,6 @@ function render_timeline() {
   const callbacks = {
     seek_to: vi.fn(),
     add_marker: vi.fn().mockResolvedValue(undefined),
-    remove_marker: vi.fn().mockResolvedValue(undefined),
     update_marker_tags: vi.fn().mockResolvedValue(undefined),
     update_transcript: vi.fn().mockResolvedValue(undefined),
     change_selected_transcript_indices: vi.fn(),
@@ -199,7 +198,6 @@ function render_timeline() {
         callbacks.change_selected_transcript_indices
       }
       on_add_marker={callbacks.add_marker}
-      on_remove_marker={callbacks.remove_marker}
       on_update_marker_tags={callbacks.update_marker_tags}
       on_update_transcript={callbacks.update_transcript}
     />,
@@ -235,12 +233,9 @@ describe("MediaTimeline", () => {
     expect(seek_to).toHaveBeenNthCalledWith(2, 31);
   });
 
-  it("edits transcript and marker data", async () => {
-    const {
-      change_selected_transcript_indices,
-      remove_marker,
-      update_transcript,
-    } = render_timeline();
+  it("edits transcript data", async () => {
+    const { change_selected_transcript_indices, update_transcript } =
+      render_timeline();
 
     fireEvent.doubleClick(screen.getByLabelText("canvas-item-transcript"));
     expect(change_selected_transcript_indices).toHaveBeenCalledWith([0]);
@@ -252,15 +247,38 @@ describe("MediaTimeline", () => {
     await waitFor(() =>
       expect(update_transcript).toHaveBeenCalledWith(0, "修正后的转写"),
     );
+  });
 
-    fireEvent.click(screen.getByLabelText("canvas-item-marker"));
-    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+  it("edits marker labels beside the pointer without resetting transcript selection", async () => {
+    const { change_selected_transcript_indices, update_marker_tags } =
+      render_timeline();
+    const timeline = screen.getByRole("region", { name: "剪辑时间轴" });
+    const marker_clip = screen.getByLabelText("canvas-item-marker");
+
+    fireEvent.pointerDown(marker_clip, { clientX: 240, clientY: 360 });
+    fireEvent.click(marker_clip);
+
+    const marker_editor = screen.getByLabelText("编辑标记标签").closest("form");
+    const marker_anchor = document.querySelector(
+      ".timeline-marker-editor-anchor",
+    );
+    expect(marker_editor).not.toBeNull();
+    expect(timeline).not.toContainElement(marker_editor);
+    expect(marker_anchor).toHaveStyle({ left: "240px", top: "360px" });
+    expect(change_selected_transcript_indices).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("编辑标记标签"), {
+      target: { value: "重点, 公式" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
 
     await waitFor(() =>
-      expect(remove_marker).toHaveBeenCalledWith(
+      expect(update_marker_tags).toHaveBeenCalledWith(
         "marker-0198d12345677890abcdef1234567890",
+        ["重点", "公式"],
       ),
     );
+    expect(screen.queryByLabelText("编辑标记标签")).toBeNull();
   });
 
   it("adds markers from the canvas and shortcut", () => {

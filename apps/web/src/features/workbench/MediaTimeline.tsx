@@ -23,6 +23,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type WheelEvent,
   useEffect,
   useMemo,
@@ -31,7 +32,13 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+} from "@/components/ui/popover";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -49,6 +56,8 @@ const DEFAULT_TRACK_COLUMN_WIDTH = "152px";
 const MINIMUM_TRACK_COLUMN_WIDTH = "112px";
 const MAXIMUM_TRACK_COLUMN_WIDTH = "320px";
 const MINIMUM_TIMELINE_CANVAS_WIDTH = "240px";
+const MARKER_EDITOR_OFFSET = 8;
+const MARKER_EDITOR_COLLISION_PADDING = 8;
 const MARKER_TRACK_ID = "timeline-marker-track";
 const TRANSCRIPT_TRACK_ID = "timeline-transcript-track";
 const EVENT_TRACK_ID = "timeline-event-track";
@@ -76,7 +85,6 @@ type MediaTimelineProps = {
   on_seek: (seconds: number) => void;
   on_selected_transcript_indices_change: (segment_indices: number[]) => void;
   on_add_marker: (seconds: number) => Promise<void>;
-  on_remove_marker: (marker_id: string) => Promise<void>;
   on_update_marker_tags: (marker_id: string, tags: string[]) => Promise<void>;
   on_update_transcript: (segment_index: number, text: string) => Promise<void>;
 };
@@ -85,6 +93,11 @@ type TimelineClipMetadata = {
   kind: "marker" | "transcript" | "event";
   source_id?: string;
   source_index?: number;
+};
+
+type TimelinePointerPosition = {
+  x: number;
+  y: number;
 };
 
 function TimelineLayers({
@@ -119,8 +132,11 @@ type TimelineSurfaceProps = {
   engine: TimelineEngine;
   on_seek: (seconds: number) => void;
   on_add_marker: (seconds: number) => Promise<void>;
-  on_select_marker: (marker_id: string) => void;
-  on_select_transcript: (segment_index: number | null) => void;
+  on_select_marker: (
+    marker_id: string,
+    pointer_position: TimelinePointerPosition,
+  ) => void;
+  on_select_transcript: (segment_index: number) => void;
   on_edit_transcript: (segment_index: number) => void;
 };
 
@@ -136,6 +152,7 @@ function TimelineSurface({
 }: TimelineSurfaceProps) {
   const { state } = useTimeline();
   const syncing_playhead_ref = useRef(false);
+  const pointer_position_ref = useRef<TimelinePointerPosition>({ x: 0, y: 0 });
 
   useEffect(() => {
     const bounded_time = Math.min(Math.max(current_time, 0), duration);
@@ -160,13 +177,15 @@ function TimelineSurface({
         const metadata = clip.metadata as TimelineClipMetadata | undefined;
         on_seek(toSeconds(clip.timelineStart));
         if (metadata?.kind === "marker" && metadata.source_id) {
-          on_select_marker(metadata.source_id);
+          on_select_marker(metadata.source_id, pointer_position_ref.current);
+          return;
         }
-        on_select_transcript(
-          metadata?.kind === "transcript" && metadata.source_index !== undefined
-            ? metadata.source_index
-            : null,
-        );
+        if (
+          metadata?.kind === "transcript" &&
+          metadata.source_index !== undefined
+        ) {
+          on_select_transcript(metadata.source_index);
+        }
       }),
     [engine, on_seek, on_select_marker, on_select_transcript],
   );
@@ -193,6 +212,13 @@ function TimelineSurface({
       toSeconds(anchor_time) * engine.zoomScale - viewport_x,
     );
     engine.setScrollLeft(scroll_left);
+  }
+
+  function remember_pointer_position(event: PointerEvent<HTMLDivElement>) {
+    pointer_position_ref.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
   }
 
   return (
@@ -261,6 +287,7 @@ function TimelineSurface({
             className="timeline-fill"
             aria-label="时间线画布；拖动平移，Alt 加滚轮缩放，方向键定位"
             onContextMenu={add_marker_at_pointer}
+            onPointerDownCapture={remember_pointer_position}
             onWheelCapture={zoom_with_alt}
           >
             <CanvasRenderer />
@@ -302,7 +329,6 @@ export function MediaTimeline({
   on_seek,
   on_selected_transcript_indices_change,
   on_add_marker,
-  on_remove_marker,
   on_update_marker_tags,
   on_update_transcript,
 }: MediaTimelineProps) {
@@ -318,6 +344,8 @@ export function MediaTimeline({
     null,
   );
   const [marker_tags_draft, set_marker_tags_draft] = useState("");
+  const [marker_editor_position, set_marker_editor_position] =
+    useState<TimelinePointerPosition | null>(null);
   const transcript_segments = useMemo(
     () => transcript?.segments ?? [],
     [transcript],
@@ -425,41 +453,54 @@ export function MediaTimeline({
         </form>
       ) : null}
 
-      {editing_marker_id !== null ? (
-        <form
-          className="media_timeline_editor"
-          onSubmit={(event) => void save_marker_tags(event)}
+      <Popover
+        open={editing_marker_id !== null}
+        onOpenChange={(open) => {
+          if (!open) cancel_marker_edit();
+        }}
+      >
+        {marker_editor_position ? (
+          <PopoverAnchor asChild>
+            <span
+              className="timeline-marker-editor-anchor pointer-events-none fixed size-px"
+              style={{
+                left: marker_editor_position.x,
+                top: marker_editor_position.y,
+              }}
+              aria-hidden
+            />
+          </PopoverAnchor>
+        ) : null}
+        <PopoverContent
+          side="bottom"
+          align="start"
+          sideOffset={MARKER_EDITOR_OFFSET}
+          collisionPadding={MARKER_EDITOR_COLLISION_PADDING}
         >
-          <Input
-            autoFocus
-            aria-label="编辑标记标签"
-            value={marker_tags_draft}
-            placeholder="重点, 公式"
-            onChange={(event) =>
-              set_marker_tags_draft(event.currentTarget.value)
-            }
-          />
-          <Button type="submit" size="xs">
-            保存
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="destructive"
-            onClick={() => void delete_marker()}
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(event) => void save_marker_tags(event)}
           >
-            删除
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="secondary"
-            onClick={() => set_editing_marker_id(null)}
-          >
-            关闭
-          </Button>
-        </form>
-      ) : null}
+            <FieldGroup className="min-w-0 flex-1">
+              <Field>
+                <FieldLabel className="sr-only" htmlFor="marker-tags">
+                  编辑标记标签
+                </FieldLabel>
+                <Input
+                  id="marker-tags"
+                  autoFocus
+                  value={marker_tags_draft}
+                  placeholder="输入标签，用逗号分隔"
+                  onChange={(event) =>
+                    set_marker_tags_draft(event.currentTarget.value)
+                  }
+                />
+              </Field>
+            </FieldGroup>
+            <Button type="submit">确认</Button>
+          </form>
+        </PopoverContent>
+      </Popover>
 
       <div
         className="media_timeline_canvas"
@@ -475,9 +516,7 @@ export function MediaTimeline({
             on_add_marker={on_add_marker}
             on_select_marker={select_marker}
             on_select_transcript={(segment_index) =>
-              on_selected_transcript_indices_change(
-                segment_index === null ? [] : [segment_index],
-              )
+              on_selected_transcript_indices_change([segment_index])
             }
             on_edit_transcript={(segment_index) => {
               on_selected_transcript_indices_change([segment_index]);
@@ -500,20 +539,24 @@ export function MediaTimeline({
     </section>
   );
 
-  function select_marker(marker_id: string) {
+  function select_marker(
+    marker_id: string,
+    pointer_position: TimelinePointerPosition,
+  ) {
     const marker = markers.find(
       (candidate) => candidate.marker_id === marker_id,
     );
     if (!marker) return;
     set_editing_marker_id(marker.marker_id);
     set_marker_tags_draft(marker.tags.join(", "));
+    set_marker_editor_position(pointer_position);
     cancel_transcript_edit();
   }
 
   function edit_transcript(segment_index: number) {
     const segment = transcript_segments[segment_index];
     if (!segment) return;
-    set_editing_marker_id(null);
+    cancel_marker_edit();
     set_editing_transcript_index(segment_index);
     set_transcript_draft(segment.text);
     set_transcript_error(null);
@@ -550,13 +593,13 @@ export function MediaTimeline({
       .map((tag) => tag.trim())
       .filter(Boolean);
     await on_update_marker_tags(editing_marker_id, tags);
-    set_editing_marker_id(null);
+    cancel_marker_edit();
   }
 
-  async function delete_marker() {
-    if (editing_marker_id === null) return;
-    await on_remove_marker(editing_marker_id);
+  function cancel_marker_edit() {
     set_editing_marker_id(null);
+    set_marker_tags_draft("");
+    set_marker_editor_position(null);
   }
 
   function scrub_with_keyboard(event: KeyboardEvent<HTMLDivElement>) {
