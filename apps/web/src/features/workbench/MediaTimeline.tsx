@@ -13,6 +13,13 @@ import {
 } from "@techsquidtv/canvas-timeline";
 import "@techsquidtv/canvas-timeline/styles.css";
 import {
+  Captions,
+  Flag,
+  LockKeyhole,
+  ScanSearch,
+  type LucideIcon,
+} from "lucide-react";
+import {
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
@@ -36,6 +43,18 @@ const TRACK_HEIGHT = 48;
 const MARKER_TRACK_ID = "timeline-marker-track";
 const TRANSCRIPT_TRACK_ID = "timeline-transcript-track";
 const EVENT_TRACK_ID = "timeline-event-track";
+
+type TimelineTrackPresentation = {
+  code: string;
+  icon: LucideIcon;
+};
+
+const TIMELINE_TRACK_PRESENTATIONS: Record<string, TimelineTrackPresentation> =
+  {
+    [MARKER_TRACK_ID]: { code: "M1", icon: Flag },
+    [TRANSCRIPT_TRACK_ID]: { code: "T1", icon: Captions },
+    [EVENT_TRACK_ID]: { code: "E1", icon: ScanSearch },
+  };
 
 type MediaTimelineProps = {
   duration_seconds: number | null;
@@ -106,6 +125,7 @@ function TimelineSurface({
   on_select_transcript,
   on_edit_transcript,
 }: TimelineSurfaceProps) {
+  const { state } = useTimeline();
   const syncing_playhead_ref = useRef(false);
 
   useEffect(() => {
@@ -134,8 +154,7 @@ function TimelineSurface({
           on_select_marker(metadata.source_id);
         }
         on_select_transcript(
-          metadata?.kind === "transcript" &&
-            metadata.source_index !== undefined
+          metadata?.kind === "transcript" && metadata.source_index !== undefined
             ? metadata.source_index
             : null,
         );
@@ -170,34 +189,74 @@ function TimelineSurface({
   return (
     <div className="timeline-shell">
       <div className="timeline-stage">
-        <Timeline.Root
-          className="timeline-fill"
-          aria-label="时间线画布；拖动平移，Alt 加滚轮缩放，方向键定位"
-          onContextMenu={add_marker_at_pointer}
-          onWheelCapture={zoom_with_alt}
-        >
-          <CanvasRenderer />
-          <TimelineLayers
-            on_clip_double_click={(hit) => {
-              const metadata = hit.clip.metadata as
-                TimelineClipMetadata | undefined;
-              if (
-                metadata?.kind === "transcript" &&
-                metadata.source_index !== undefined
-              ) {
-                on_edit_transcript(metadata.source_index);
-              }
-            }}
-          />
-        </Timeline.Root>
+        <aside className="timeline-track-column" aria-label="时间线轨道">
+          <span className="timeline-track-column-label">轨道</span>
+          <Timeline.TrackHeaderList
+            className="timeline-track-headers"
+            aria-label="轨道列表"
+          >
+            {state.tracks.map((track) => {
+              const presentation = TIMELINE_TRACK_PRESENTATIONS[track.id];
+              if (!presentation) return null;
+              const TrackIcon = presentation.icon;
+
+              return (
+                <Timeline.TrackHeader
+                  key={track.id}
+                  trackId={track.id}
+                  className="timeline-track-header-row"
+                  aria-label={`${presentation.code} ${track.name ?? "未命名轨道"}${track.locked ? "，只读" : ""}`}
+                >
+                  <span className="timeline-track-code">
+                    {presentation.code}
+                  </span>
+                  <TrackIcon className="timeline-track-kind-icon" aria-hidden />
+                  <span className="timeline-track-name">
+                    {track.name ?? "未命名轨道"}
+                  </span>
+                  {track.locked ? (
+                    <span className="timeline-track-lock" aria-label="只读">
+                      <LockKeyhole aria-hidden />
+                    </span>
+                  ) : null}
+                </Timeline.TrackHeader>
+              );
+            })}
+          </Timeline.TrackHeaderList>
+        </aside>
+        <div className="timeline-canvas-stage">
+          <Timeline.Root
+            className="timeline-fill"
+            aria-label="时间线画布；拖动平移，Alt 加滚轮缩放，方向键定位"
+            onContextMenu={add_marker_at_pointer}
+            onWheelCapture={zoom_with_alt}
+          >
+            <CanvasRenderer />
+            <TimelineLayers
+              on_clip_double_click={(hit) => {
+                const metadata = hit.clip.metadata as
+                  TimelineClipMetadata | undefined;
+                if (
+                  metadata?.kind === "transcript" &&
+                  metadata.source_index !== undefined
+                ) {
+                  on_edit_transcript(metadata.source_index);
+                }
+              }}
+            />
+          </Timeline.Root>
+        </div>
       </div>
       <div className="timeline-scrollbar-row">
-        <Timeline.ViewportScrollbar aria-label="时间线可见范围">
-          <Timeline.ViewportScrollbarThumb>
-            <Timeline.ViewportScrollbarHandle side="start" />
-            <Timeline.ViewportScrollbarHandle side="end" />
-          </Timeline.ViewportScrollbarThumb>
-        </Timeline.ViewportScrollbar>
+        <div className="timeline-scrollbar-spacer" aria-hidden />
+        <div className="timeline-scrollbar-control">
+          <Timeline.ViewportScrollbar aria-label="时间线可见范围">
+            <Timeline.ViewportScrollbarThumb>
+              <Timeline.ViewportScrollbarHandle side="start" />
+              <Timeline.ViewportScrollbarHandle side="end" />
+            </Timeline.ViewportScrollbarThumb>
+          </Timeline.ViewportScrollbar>
+        </div>
       </div>
     </div>
   );

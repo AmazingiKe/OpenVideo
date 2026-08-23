@@ -22,11 +22,18 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Slider } from "@/components/ui/slider";
-import { Player, type PlayerHandle } from "../player/Player";
-import { format_time } from "../../shared/format";
-import { media_url } from "../../shared/api";
-import type { MediaAsset, MediaMarker, Transcript } from "../../shared/types";
+import { Player, type PlayerHandle } from "@/features/player/Player";
+import { media_url } from "@/shared/api";
+import { format_time } from "@/shared/format";
+import type { MediaAsset, MediaMarker, Transcript } from "@/shared/types";
 
 const SEEK_STEP_SECONDS = 10;
 const LOW_VOLUME_THRESHOLD = 0.5;
@@ -71,25 +78,42 @@ export function VideoWorkspace({
   if (!asset?.playback_url) {
     return (
       <section
-        className="video_workspace video_workspace_empty"
+        className="grid h-full min-h-0 place-items-center bg-background"
+        data-slot="video-workspace"
         aria-label="视频工作区"
       >
-        <span>OV</span>
-        <h1>选择一个已完成的视频</h1>
-        <p>视频、转写、重点片段和手工标记将在同一工作区联动。</p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Play aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>选择一个已完成的视频</EmptyTitle>
+            <EmptyDescription>
+              视频、转写、重点片段和手工标记将在同一工作区联动。
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </section>
     );
   }
 
   return (
-    <section className="video_workspace" aria-label="视频工作区">
-      <div className="workspace_video_header">
-        <h1>{asset.title}</h1>
-        <p>{asset.author_name ?? "未知作者"}</p>
-      </div>
-      <div className="workspace_stage">
-        <div className="workspace_player_column">
-          <div className="workspace_player_frame">
+    <section
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card"
+      data-slot="video-workspace"
+      aria-label="视频工作区"
+    >
+      <header className="flex min-h-12 items-center justify-between gap-4 border-b px-4">
+        <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
+          {asset.title}
+        </h1>
+        <p className="max-w-1/3 shrink truncate text-xs text-muted-foreground">
+          {asset.author_name ?? "未知作者"}
+        </p>
+      </header>
+      <div className="workspace_stage flex min-h-0 flex-1">
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-[var(--player-canvas)]">
+          <div className="min-h-56 flex-1 bg-[var(--player-canvas)] p-5 pb-2 max-[600px]:p-2 max-[600px]:pb-1">
             <Player
               key={asset.asset_id}
               ref={player_ref}
@@ -117,8 +141,11 @@ export function VideoWorkspace({
               }}
             />
           </div>
-          <div className="video_transport" aria-label="播放控制">
-            <div className="video_transport_playback">
+          <div
+            className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-t bg-background/95 px-4 max-[600px]:grid-cols-[auto_minmax(0,1fr)] max-[600px]:gap-2 max-[600px]:px-2"
+            aria-label="播放控制"
+          >
+            <div className="col-start-2 flex items-center gap-2 max-[600px]:col-start-1">
               <Button
                 type="button"
                 variant="ghost"
@@ -222,7 +249,10 @@ function PlayerUtilityControls({
   else if (volume < LOW_VOLUME_THRESHOLD) VolumeIcon = Volume1;
 
   return (
-    <div className="video_utility_controls" aria-label="播放器设置">
+    <div
+      className="col-start-3 flex min-w-0 items-center gap-1 justify-self-end max-[600px]:col-start-2"
+      aria-label="播放器设置"
+    >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -273,7 +303,7 @@ function PlayerUtilityControls({
           <Maximize data-icon="inline-start" aria-hidden="true" />
         )}
       </Button>
-      <div className="video_volume_controls" aria-label="音量控制">
+      <div className="flex min-w-0 items-center gap-2" aria-label="音量控制">
         <Button
           type="button"
           variant="ghost"
@@ -284,7 +314,7 @@ function PlayerUtilityControls({
           <VolumeIcon data-icon="inline-start" aria-hidden="true" />
         </Button>
         <Slider
-          className="video_volume_slider"
+          className="w-24 max-[600px]:w-14"
           min={0}
           max={VOLUME_PERCENT_MAX}
           step={1}
@@ -294,7 +324,12 @@ function PlayerUtilityControls({
           }
           aria-label="音量"
         />
-        <output aria-label="当前音量">{volume_percent}%</output>
+        <output
+          className="w-8 text-right font-mono text-xs text-muted-foreground max-[600px]:hidden"
+          aria-label="当前音量"
+        >
+          {volume_percent}%
+        </output>
       </div>
     </div>
   );

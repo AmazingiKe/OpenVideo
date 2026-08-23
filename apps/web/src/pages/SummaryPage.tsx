@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
+import { FloatingError } from "@/components/FloatingError";
 import { use_asset_analysis } from "@/features/analysis/use_asset_analysis";
 import { SummaryWorkspace } from "@/features/workbench/SummaryWorkspace";
 import { error_message, is_abort_error } from "@/shared/errors";
@@ -28,11 +29,7 @@ export function SummaryPage() {
         segments={segments}
         transcript={transcript}
       />
-      {error ? (
-        <p className="workbench_error" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <FloatingError message={error} /> : null}
     </>
   );
 }

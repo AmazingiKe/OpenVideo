@@ -19,11 +19,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  create_library,
-  open_library,
-  select_directory,
-} from "@/shared/api";
+import { create_library, open_library, select_directory } from "@/shared/api";
 import type { LibraryDescription } from "@/shared/types";
 
 export type LibraryAction = "initialize" | "open";

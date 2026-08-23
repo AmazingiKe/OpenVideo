@@ -8,6 +8,7 @@ import {
   Search,
 } from "lucide-react";
 
+import { PageHeader } from "@/components/PageHeader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,11 @@ export function DownloadWorkspace({
   const dependencies_ready = Boolean(
     health?.dependencies.yt_dlp && health.dependencies.ffmpeg,
   );
+  const status_label = !health
+    ? "检查环境中"
+    : dependencies_ready
+      ? "下载服务正常"
+      : "下载服务未就绪";
   const [entry_filter, set_entry_filter] = useState("");
 
   useEffect(() => set_entry_filter(""), [probe_result]);
@@ -95,8 +101,24 @@ export function DownloadWorkspace({
       className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-8 md:px-8 md:py-10"
       aria-labelledby="download_workspace_title"
     >
-      <DownloadHeader health={health} dependencies_ready={dependencies_ready} />
-      <Card className="border-primary/20 bg-card/90 shadow-xl shadow-black/10">
+      <PageHeader
+        title_id="download_workspace_title"
+        eyebrow="视频下载"
+        title="下载在线视频，稍后集中处理"
+        description="解析视频或播放列表，选择内容后加入后台任务队列。"
+        icon={Download}
+        action={
+          <Badge variant={dependencies_ready ? "secondary" : "outline"}>
+            {health ? (
+              <CheckCircle2 data-icon="inline-start" />
+            ) : (
+              <Spinner data-icon="inline-start" />
+            )}
+            {status_label}
+          </Badge>
+        }
+      />
+      <Card>
         <CardHeader className="border-b">
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -121,26 +143,19 @@ export function DownloadWorkspace({
               <Field data-disabled={is_submitting || !dependencies_ready}>
                 <FieldLabel htmlFor="source_url">视频或播放列表地址</FieldLabel>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <div className="relative min-w-0 flex-1">
-                    <Link2
-                      className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <Input
-                      id="source_url"
-                      className="h-10 pl-9"
-                      type="url"
-                      value={source_url}
-                      onChange={(event) =>
-                        on_source_url_change(event.target.value)
-                      }
-                      placeholder="https://www.bilibili.com/video/..."
-                      disabled={is_submitting}
-                      aria-invalid={Boolean(error)}
-                    />
-                  </div>
+                  <Input
+                    id="source_url"
+                    className="min-w-0 flex-1"
+                    type="url"
+                    value={source_url}
+                    onChange={(event) =>
+                      on_source_url_change(event.target.value)
+                    }
+                    placeholder="https://www.bilibili.com/video/..."
+                    disabled={is_submitting}
+                    aria-invalid={Boolean(error)}
+                  />
                   <Button
-                    className="h-10 px-5"
                     type="submit"
                     disabled={is_submitting || !dependencies_ready}
                   >
@@ -202,50 +217,6 @@ export function DownloadWorkspace({
       ) : null}
       <DownloadActivity tasks={download_tasks} />
     </section>
-  );
-}
-
-function DownloadHeader({
-  health,
-  dependencies_ready,
-}: {
-  health: HealthResponse | null;
-  dependencies_ready: boolean;
-}) {
-  const status_label = !health
-    ? "检查环境中"
-    : dependencies_ready
-      ? "下载服务正常"
-      : "下载服务未就绪";
-  return (
-    <header className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-      <div className="max-w-2xl">
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary">
-          <Download className="size-4" aria-hidden="true" />
-          视频下载
-        </div>
-        <h1
-          id="download_workspace_title"
-          className="text-2xl font-semibold tracking-tight sm:text-3xl"
-        >
-          下载在线视频，稍后集中处理
-        </h1>
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
-          解析视频或播放列表，选择内容后加入后台任务队列。
-        </p>
-      </div>
-      <Badge
-        className="w-fit"
-        variant={dependencies_ready ? "secondary" : "outline"}
-      >
-        {health ? (
-          <CheckCircle2 data-icon="inline-start" />
-        ) : (
-          <Spinner data-icon="inline-start" />
-        )}
-        {status_label}
-      </Badge>
-    </header>
   );
 }
 

@@ -7,11 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  create_library,
-  open_library,
-  select_directory,
-} from "@/shared/api";
+import { create_library, open_library, select_directory } from "@/shared/api";
 import { LibraryPathForm } from "./LibraryPathForm";
 
 vi.mock("@/shared/api", () => ({

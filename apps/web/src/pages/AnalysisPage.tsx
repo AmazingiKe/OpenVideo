@@ -18,6 +18,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Spinner } from "@/components/ui/spinner";
+import { FloatingError } from "@/components/FloatingError";
 import { error_message, is_abort_error } from "@/shared/errors";
 import type {
   AnalysisMode,
@@ -215,14 +216,17 @@ export function AnalysisPage() {
   const error = page_error ?? settings_error ?? analysis_error;
   return (
     <>
-      <div className="analysis_workspace">
+      <div className="min-h-0 min-w-0 overflow-hidden max-[979px]:overflow-auto">
         {!is_ready ? (
-          <div className="analysis_layout_loading" role="status">
+          <div
+            className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"
+            role="status"
+          >
             <Spinner />
             正在恢复工作台布局
           </div>
         ) : is_compact_layout ? (
-          <div className="analysis_workspace_compact">
+          <div className="flex min-h-full flex-col [&>[data-slot=analysis-tools]]:min-h-72 [&>[data-slot=analysis-tools]]:shrink-0 [&>[data-slot=analysis-tools]]:border-t [&>[data-slot=asset-library]]:max-h-60 [&>[data-slot=asset-library]]:min-h-44 [&>[data-slot=asset-library]]:shrink-0 [&>[data-slot=asset-library]]:border-r-0 [&>[data-slot=asset-library]]:border-b [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
             {asset_library}
             {video_workspace}
             {tool_panel}
@@ -250,11 +254,19 @@ export function AnalysisPage() {
             >
               {asset_library}
             </ResizablePanel>
-            <ResizableHandle withHandle aria-label="调整视频库宽度" />
+            <ResizableHandle
+              className="hover:bg-primary"
+              withHandle
+              aria-label="调整视频库宽度"
+            />
             <ResizablePanel id="video-player" minSize="400px">
               {video_workspace}
             </ResizablePanel>
-            <ResizableHandle withHandle aria-label="调整工具面板宽度" />
+            <ResizableHandle
+              className="hover:bg-primary"
+              withHandle
+              aria-label="调整工具面板宽度"
+            />
             <ResizablePanel
               id="tool-panel"
               panelRef={tool_panel_ref}
@@ -288,11 +300,7 @@ export function AnalysisPage() {
         on_update_marker_tags={update_marker_tags}
         on_update_transcript={save_transcript_segment}
       />
-      {error ? (
-        <p className="workbench_error" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <FloatingError message={error} /> : null}
     </>
   );
 }

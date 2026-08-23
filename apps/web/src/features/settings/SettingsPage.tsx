@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { use_library } from "@/app/library";
+import { PageHeader } from "@/components/PageHeader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,24 +95,14 @@ export function SettingsPage() {
       className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 md:px-8 md:py-10"
       aria-labelledby="settings_page_title"
     >
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div className="flex max-w-2xl flex-col gap-3">
-          <span className="flex items-center gap-2 text-sm font-medium text-primary">
-            <Settings2 aria-hidden="true" />
-            系统设置
-          </span>
-          <h1
-            id="settings_page_title"
-            className="text-2xl font-semibold tracking-tight sm:text-3xl"
-          >
-            配置 OpenVideo 工作环境
-          </h1>
-          <p className="text-muted-foreground">
-            管理当前资料库、本地工具、模型目录和 AI 分析参数。
-          </p>
-        </div>
-        <Badge variant="outline">仅保存在本机</Badge>
-      </header>
+      <PageHeader
+        title_id="settings_page_title"
+        eyebrow="系统设置"
+        title="配置 OpenVideo 工作环境"
+        description="管理当前资料库、本地工具、模型目录和 AI 分析参数。"
+        icon={Settings2}
+        action={<Badge variant="outline">仅保存在本机</Badge>}
+      />
 
       <SettingsCard
         icon={Database}
@@ -298,9 +289,7 @@ function DirectoryPreferenceInput({
           {selecting ? "正在选择" : "选择文件夹"}
         </Button>
       </div>
-      <FieldDescription>
-        {description}
-      </FieldDescription>
+      <FieldDescription>{description}</FieldDescription>
     </Field>
   );
 }

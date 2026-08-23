@@ -11,7 +11,13 @@ type MockClip = {
   metadata: { kind: string; source_index?: number };
 };
 
-type MockTrack = { id: string; clips: MockClip[] };
+type MockTrack = {
+  id: string;
+  name?: string;
+  kind?: string;
+  locked?: boolean;
+  clips: MockClip[];
+};
 
 const timeline_mock = vi.hoisted(() => ({
   set_scroll_left: vi.fn(),
@@ -95,6 +101,18 @@ vi.mock("@techsquidtv/canvas-timeline", () => {
       PlayheadGrabber: () => null,
       TrackList: passthrough,
       Track: () => null,
+      TrackHeaderList: passthrough,
+      TrackHeader: ({
+        children,
+        trackId,
+        ...props
+      }: {
+        children?: ReactNode;
+        trackId: string;
+      }) => {
+        void trackId;
+        return <div {...props}>{children}</div>;
+      },
       RangeSelector: () => null,
       ViewportScrollbar: passthrough,
       ViewportScrollbarThumb: passthrough,
@@ -198,6 +216,12 @@ describe("MediaTimeline", () => {
     expect(screen.getByLabelText("canvas-item-marker")).toBeInTheDocument();
     expect(screen.getByLabelText("canvas-item-transcript")).toBeInTheDocument();
     expect(screen.getByLabelText("canvas-item-event")).toBeInTheDocument();
+    expect(
+      screen.getByRole("complementary", { name: "时间线轨道" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("M1 标记，只读")).toBeInTheDocument();
+    expect(screen.getByLabelText("T1 转写，只读")).toBeInTheDocument();
+    expect(screen.getByLabelText("E1 分析事件，只读")).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("canvas-item-event"));
     fireEvent.keyDown(screen.getByLabelText(/时间线画布/).parentElement!, {

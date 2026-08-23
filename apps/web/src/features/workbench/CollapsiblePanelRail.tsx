@@ -18,10 +18,16 @@ export function CollapsiblePanelRail({
   const ExpandIcon = expand_direction === "left" ? ChevronLeft : ChevronRight;
 
   return (
-    <div className="collapsible_panel_rail" title={label}>
-      <Icon aria-hidden="true" />
-      <span>{label}</span>
+    <div
+      className="flex h-full min-h-0 flex-col items-center gap-2 border-x bg-card px-1 py-3 text-muted-foreground"
+      title={label}
+    >
+      <Icon className="size-4 shrink-0" aria-hidden="true" />
+      <span className="min-h-0 overflow-hidden text-xs font-medium tracking-wider [writing-mode:vertical-rl]">
+        {label}
+      </span>
       <Button
+        className="mt-auto"
         type="button"
         variant="ghost"
         size="icon-sm"

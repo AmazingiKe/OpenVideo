@@ -4,7 +4,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { ChevronRight, Sparkles, Wrench } from "lucide-react";
+import { Sparkles, Wrench } from "lucide-react";
 
 import {
   Accordion,
@@ -34,6 +34,7 @@ import type {
   TranscriptionOptions,
 } from "@/shared/types";
 import { CollapsiblePanelRail } from "./CollapsiblePanelRail";
+import { WorkbenchPanelHeader } from "./WorkbenchPanelHeader";
 
 export const ANALYSIS_TOOL_SECTIONS: AnalysisToolSection[] = [
   "video_information",
@@ -99,7 +100,8 @@ export function AnalysisToolPanel({
   if (collapsed) {
     return (
       <aside
-        className="analysis_tools analysis_tools_collapsed"
+        className="h-full overflow-hidden bg-card"
+        data-slot="analysis-tools"
         aria-label="工具面板"
       >
         <CollapsiblePanelRail
@@ -133,31 +135,27 @@ export function AnalysisToolPanel({
   }
 
   return (
-    <aside className="analysis_tools" aria-label="工具面板">
-      <header className="analysis_tools_header">
-        <div>
-          <Wrench aria-hidden="true" />
-          <h2>工具</h2>
-        </div>
-        {on_collapsed_change ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => on_collapsed_change(true)}
-            aria-label="收起工具面板"
-          >
-            <ChevronRight data-icon="inline-start" aria-hidden="true" />
-          </Button>
-        ) : null}
-      </header>
+    <aside
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-l bg-card"
+      data-slot="analysis-tools"
+      aria-label="工具面板"
+    >
+      <WorkbenchPanelHeader
+        icon={Wrench}
+        title="分析工具"
+        collapse_direction="right"
+        collapse_label="收起工具面板"
+        on_collapse={
+          on_collapsed_change ? () => on_collapsed_change(true) : undefined
+        }
+      />
       <Accordion
         type="multiple"
         value={open_sections}
         onValueChange={(sections) =>
           on_open_sections_change(sections as AnalysisToolSection[])
         }
-        className="analysis_tools_accordion"
+        className="min-h-0 overflow-y-auto px-3 pb-3"
       >
         <AccordionItem value="video_information">
           <AccordionTrigger
@@ -178,8 +176,8 @@ export function AnalysisToolPanel({
             转录
           </AccordionTrigger>
           <AccordionContent>
-            <div className="processing_actions">
-              <div className="tool_status_row">
+            <div className="flex flex-col items-stretch gap-4">
+              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>状态</span>
                 <Badge variant="secondary">
                   {is_transcribing
@@ -285,8 +283,8 @@ export function AnalysisToolPanel({
             修正转录
           </AccordionTrigger>
           <AccordionContent>
-            <div className="processing_actions">
-              <div className="tool_status_row">
+            <div className="flex flex-col items-stretch gap-4">
+              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>时间线选择</span>
                 <Badge variant="secondary">
                   {selected_transcript_count > 0
@@ -350,7 +348,7 @@ export function AnalysisToolPanel({
             分析
           </AccordionTrigger>
           <AccordionContent>
-            <div className="processing_actions">
+            <div className="flex flex-col items-stretch gap-4">
               <ToggleGroup
                 type="single"
                 variant="outline"
@@ -371,9 +369,12 @@ export function AnalysisToolPanel({
                 </ToggleGroupItem>
               </ToggleGroup>
               {analysis_mode === "markers" ? (
-                <div className="analysis_marker_options">
+                <div className="grid max-h-32 gap-1 overflow-y-auto">
                   {markers.map((marker) => (
-                    <label key={marker.marker_id}>
+                    <label
+                      className="flex min-h-8 items-center gap-2 rounded-lg border bg-background px-2 py-1 text-xs"
+                      key={marker.marker_id}
+                    >
                       <Checkbox
                         checked={selected_marker_ids.has(marker.marker_id)}
                         onCheckedChange={() =>
@@ -383,8 +384,12 @@ export function AnalysisToolPanel({
                         }
                         aria-label={`选择 ${format_time(marker.time_seconds)} 标记`}
                       />
-                      <time>{format_time(marker.time_seconds)}</time>
-                      <span>{marker.tags.join(" / ") || "未分类标记"}</span>
+                      <time className="font-mono text-primary">
+                        {format_time(marker.time_seconds)}
+                      </time>
+                      <span className="truncate text-muted-foreground">
+                        {marker.tags.join(" / ") || "未分类标记"}
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -419,37 +424,47 @@ export function AnalysisToolPanel({
 }
 
 function VideoInformation({ asset }: { asset: MediaAsset | null }) {
-  if (!asset) return <p className="tool_empty_state">尚未选择视频。</p>;
+  if (!asset)
+    return <p className="text-xs text-muted-foreground">尚未选择视频。</p>;
 
   return (
-    <dl className="video_information">
-      <div>
-        <dt>简介</dt>
-        <dd>{asset.description || "暂无简介"}</dd>
+    <dl className="flex flex-col gap-2 text-xs">
+      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
+        <dt className="text-muted-foreground">简介</dt>
+        <dd className="m-0 min-w-0 leading-relaxed break-words">
+          {asset.description || "暂无简介"}
+        </dd>
       </div>
-      <div>
-        <dt>时长</dt>
-        <dd>{format_duration(asset.duration_seconds)}</dd>
+      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
+        <dt className="text-muted-foreground">时长</dt>
+        <dd className="m-0 min-w-0">
+          {format_duration(asset.duration_seconds)}
+        </dd>
       </div>
-      <div>
-        <dt>来源</dt>
-        <dd>
-          <a href={asset.source_url} target="_blank" rel="noreferrer">
+      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
+        <dt className="text-muted-foreground">来源</dt>
+        <dd className="m-0 min-w-0">
+          <a
+            className="text-primary underline-offset-4 hover:underline"
+            href={asset.source_url}
+            target="_blank"
+            rel="noreferrer"
+          >
             {SOURCE_LABELS[asset.source_platform]}
           </a>
         </dd>
       </div>
-      <div>
-        <dt>分辨率</dt>
-        <dd>{format_resolution(asset)}</dd>
+      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
+        <dt className="text-muted-foreground">分辨率</dt>
+        <dd className="m-0 min-w-0">{format_resolution(asset)}</dd>
       </div>
-      <div>
-        <dt>视频编码</dt>
-        <dd>{asset.video_codec || "待探测"}</dd>
+      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
+        <dt className="text-muted-foreground">视频编码</dt>
+        <dd className="m-0 min-w-0">{asset.video_codec || "待探测"}</dd>
       </div>
-      <div>
-        <dt>音频编码</dt>
-        <dd>{asset.audio_codec || "待探测"}</dd>
+      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
+        <dt className="text-muted-foreground">音频编码</dt>
+        <dd className="m-0 min-w-0">{asset.audio_codec || "待探测"}</dd>
       </div>
     </dl>
   );
