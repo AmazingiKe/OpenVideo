@@ -244,6 +244,22 @@ export function update_transcript_segment(
   );
 }
 
+export function correct_transcript(
+  asset_id: string,
+  segment_indices: number[] | null,
+  signal?: AbortSignal,
+): Promise<Transcript> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/transcript/correct`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ segment_indices }),
+      signal,
+    },
+  );
+}
+
 export function get_segments(
   asset_id: string,
   signal?: AbortSignal,

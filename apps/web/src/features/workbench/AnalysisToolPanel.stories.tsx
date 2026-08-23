@@ -37,6 +37,9 @@ const meta = {
     on_start_transcription: () => undefined,
     is_analyzing: false,
     on_start_analysis: () => undefined,
+    selected_transcript_count: 0,
+    active_correction_scope: null,
+    on_correct_transcript: () => undefined,
     open_sections: ["video_information"],
     on_open_sections_change: () => undefined,
     on_collapsed_change: () => undefined,
@@ -58,7 +61,13 @@ export const VideoInformation: Story = {};
 export const AllSections: Story = {
   args: {
     has_transcript: true,
-    open_sections: ["video_information", "transcription", "analysis"],
+    selected_transcript_count: 1,
+    open_sections: [
+      "video_information",
+      "transcription",
+      "transcript_correction",
+      "analysis",
+    ],
   },
 };
 

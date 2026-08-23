@@ -11,7 +11,12 @@ from pydantic import BaseModel, Field, field_validator
 PAGE_SETTINGS_FILE_NAME = "page_setting.json"
 PAGE_SETTINGS_VERSION = 1
 
-ToolSection = Literal["video_information", "transcription", "analysis"]
+ToolSection = Literal[
+    "video_information",
+    "transcription",
+    "transcript_correction",
+    "analysis",
+]
 
 
 class AnalysisPageSettings(BaseModel):

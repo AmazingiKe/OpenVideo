@@ -19,7 +19,11 @@ import {
 } from "@/components/ui/resizable";
 import { Spinner } from "@/components/ui/spinner";
 import { error_message, is_abort_error } from "@/shared/errors";
-import type { AnalysisMode, TranscriptionOptions } from "@/shared/types";
+import type {
+  AnalysisMode,
+  TranscriptCorrectionScope,
+  TranscriptionOptions,
+} from "@/shared/types";
 
 export function AnalysisPage() {
   const {
@@ -37,10 +41,15 @@ export function AnalysisPage() {
     analysis_error,
     reload_analysis,
     save_transcript_segment,
+    correct_transcript_segments,
   } = use_asset_analysis(selected_asset_id);
   const { settings, settings_error, is_ready, update_settings } =
     use_analysis_page_settings();
   const [current_time, set_current_time] = useState(0);
+  const [selected_transcript_indices, set_selected_transcript_indices] =
+    useState<number[]>([]);
+  const [active_correction_scope, set_active_correction_scope] =
+    useState<TranscriptCorrectionScope | null>(null);
   const [page_error, set_page_error] = useState<string | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
   const asset_library_panel_ref = useRef<PanelImperativeHandle>(null);
@@ -67,7 +76,11 @@ export function AnalysisPage() {
     };
   }, [refresh_assets]);
 
-  useEffect(() => set_current_time(0), [selected_asset_id]);
+  useEffect(() => {
+    set_current_time(0);
+    set_selected_transcript_indices([]);
+    set_active_correction_scope(null);
+  }, [selected_asset_id]);
 
   function seek_player(seconds: number) {
     set_current_time(seconds);
@@ -95,6 +108,24 @@ export function AnalysisPage() {
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
         set_page_error(error_message(error));
+    }
+  }
+
+  async function run_transcript_correction(scope: TranscriptCorrectionScope) {
+    if (!selected_asset_id) return;
+    const segment_indices =
+      scope === "all" ? null : selected_transcript_indices;
+    if (segment_indices?.length === 0) return;
+    set_active_correction_scope(scope);
+    set_page_error(null);
+    try {
+      await correct_transcript_segments(segment_indices);
+    } catch (error) {
+      if (mounted_ref.current && !is_abort_error(error)) {
+        set_page_error(error_message(error));
+      }
+    } finally {
+      if (mounted_ref.current) set_active_correction_scope(null);
     }
   }
 
@@ -167,6 +198,9 @@ export function AnalysisPage() {
       on_start_analysis={(mode, marker_ids) =>
         void run_analysis(mode, marker_ids)
       }
+      selected_transcript_count={selected_transcript_indices.length}
+      active_correction_scope={active_correction_scope}
+      on_correct_transcript={(scope) => void run_transcript_correction(scope)}
       open_sections={settings.open_tool_sections}
       on_open_sections_change={(open_tool_sections) =>
         update_settings({ open_tool_sections })
@@ -246,7 +280,9 @@ export function AnalysisPage() {
         segments={segments}
         markers={markers}
         marker_error={marker_error}
+        selected_transcript_indices={selected_transcript_indices}
         on_seek={seek_player}
+        on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_add_marker={add_marker}
         on_remove_marker={remove_marker}
         on_update_marker_tags={update_marker_tags}

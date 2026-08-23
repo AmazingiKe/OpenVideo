@@ -105,6 +105,10 @@ class TranscriptSegmentUpdateRequest(BaseModel):
     text: str = Field(min_length=1, max_length=10_000)
 
 
+class TranscriptCorrectionRequest(BaseModel):
+    segment_indices: list[int] | None = None
+
+
 class AnalysisCreateRequest(BaseModel):
     mode: AnalysisMode = AnalysisMode.FULL
     marker_ids: list[str] = Field(default_factory=list)
@@ -504,6 +508,25 @@ def create_app(
             )
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
+        "/api/media/assets/{asset_id}/transcript/correct",
+        response_model=Transcript,
+    )
+    def correct_transcript(
+        asset_id: str,
+        request: TranscriptCorrectionRequest,
+    ) -> Transcript:
+        _ready_asset(library, asset_id)
+        try:
+            return analysis_manager.correct_transcript(
+                asset_id,
+                request.segment_indices,
+            )
+        except AnalysisPrerequisiteError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except AnalysisError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.get(
         "/api/media/assets/{asset_id}/segments",

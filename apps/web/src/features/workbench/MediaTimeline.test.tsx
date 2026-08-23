@@ -8,7 +8,7 @@ type MockClip = {
   id: string;
   label: string;
   timelineStart: number;
-  metadata: { kind: string };
+  metadata: { kind: string; source_index?: number };
 };
 
 type MockTrack = { id: string; clips: MockClip[] };
@@ -136,6 +136,7 @@ function render_timeline() {
     remove_marker: vi.fn().mockResolvedValue(undefined),
     update_marker_tags: vi.fn().mockResolvedValue(undefined),
     update_transcript: vi.fn().mockResolvedValue(undefined),
+    change_selected_transcript_indices: vi.fn(),
   };
 
   render(
@@ -174,7 +175,11 @@ function render_timeline() {
         },
       ]}
       marker_error={null}
+      selected_transcript_indices={[]}
       on_seek={callbacks.seek_to}
+      on_selected_transcript_indices_change={
+        callbacks.change_selected_transcript_indices
+      }
       on_add_marker={callbacks.add_marker}
       on_remove_marker={callbacks.remove_marker}
       on_update_marker_tags={callbacks.update_marker_tags}
@@ -204,9 +209,14 @@ describe("MediaTimeline", () => {
   });
 
   it("edits transcript and marker data", async () => {
-    const { remove_marker, update_transcript } = render_timeline();
+    const {
+      change_selected_transcript_indices,
+      remove_marker,
+      update_transcript,
+    } = render_timeline();
 
     fireEvent.doubleClick(screen.getByLabelText("canvas-item-transcript"));
+    expect(change_selected_transcript_indices).toHaveBeenCalledWith([0]);
     fireEvent.change(screen.getByLabelText("编辑转写文字"), {
       target: { value: "修正后的转写" },
     });

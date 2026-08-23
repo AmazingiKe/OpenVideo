@@ -44,7 +44,9 @@ type MediaTimelineProps = {
   segments: MediaSegment[];
   markers: MediaMarker[];
   marker_error: string | null;
+  selected_transcript_indices: number[];
   on_seek: (seconds: number) => void;
+  on_selected_transcript_indices_change: (segment_indices: number[]) => void;
   on_add_marker: (seconds: number) => Promise<void>;
   on_remove_marker: (marker_id: string) => Promise<void>;
   on_update_marker_tags: (marker_id: string, tags: string[]) => Promise<void>;
@@ -90,6 +92,7 @@ type TimelineSurfaceProps = {
   on_seek: (seconds: number) => void;
   on_add_marker: (seconds: number) => Promise<void>;
   on_select_marker: (marker_id: string) => void;
+  on_select_transcript: (segment_index: number | null) => void;
   on_edit_transcript: (segment_index: number) => void;
 };
 
@@ -100,6 +103,7 @@ function TimelineSurface({
   on_seek,
   on_add_marker,
   on_select_marker,
+  on_select_transcript,
   on_edit_transcript,
 }: TimelineSurfaceProps) {
   const syncing_playhead_ref = useRef(false);
@@ -129,8 +133,14 @@ function TimelineSurface({
         if (metadata?.kind === "marker" && metadata.source_id) {
           on_select_marker(metadata.source_id);
         }
+        on_select_transcript(
+          metadata?.kind === "transcript" &&
+            metadata.source_index !== undefined
+            ? metadata.source_index
+            : null,
+        );
       }),
-    [engine, on_seek, on_select_marker],
+    [engine, on_seek, on_select_marker, on_select_transcript],
   );
 
   function add_marker_at_pointer(event: MouseEvent<HTMLDivElement>) {
@@ -200,7 +210,9 @@ export function MediaTimeline({
   segments,
   markers,
   marker_error,
+  selected_transcript_indices,
   on_seek,
+  on_selected_transcript_indices_change,
   on_add_marker,
   on_remove_marker,
   on_update_marker_tags,
@@ -222,6 +234,10 @@ export function MediaTimeline({
     () => transcript?.segments ?? [],
     [transcript],
   );
+  const selected_transcript_index_set = useMemo(
+    () => new Set(selected_transcript_indices),
+    [selected_transcript_indices],
+  );
   const duration = timeline_duration(
     duration_seconds,
     current_time,
@@ -230,8 +246,14 @@ export function MediaTimeline({
     markers,
   );
   const tracks = useMemo(
-    () => build_tracks(transcript_segments, segments, markers),
-    [markers, segments, transcript_segments],
+    () =>
+      build_tracks(
+        transcript_segments,
+        segments,
+        markers,
+        selected_transcript_index_set,
+      ),
+    [markers, segments, selected_transcript_index_set, transcript_segments],
   );
   const timeline_markers = useMemo(() => build_markers(markers), [markers]);
   const engine = useMemo(
@@ -364,7 +386,15 @@ export function MediaTimeline({
             on_seek={on_seek}
             on_add_marker={on_add_marker}
             on_select_marker={select_marker}
-            on_edit_transcript={edit_transcript}
+            on_select_transcript={(segment_index) =>
+              on_selected_transcript_indices_change(
+                segment_index === null ? [] : [segment_index],
+              )
+            }
+            on_edit_transcript={(segment_index) => {
+              on_selected_transcript_indices_change([segment_index]);
+              edit_transcript(segment_index);
+            }}
           />
         </TimelineProvider>
       </div>
@@ -453,6 +483,7 @@ function build_tracks(
   transcript_segments: Transcript["segments"],
   segments: MediaSegment[],
   markers: MediaMarker[],
+  selected_transcript_indices: Set<number>,
 ): Track[] {
   return [
     create_track(
@@ -482,6 +513,7 @@ function build_tracks(
           segment.end_seconds,
           segment.text,
           { kind: "transcript", source_index: index },
+          selected_transcript_indices.has(index),
         ),
       ),
     ),
@@ -529,6 +561,7 @@ function create_clip(
   end_seconds: number,
   label: string,
   metadata: TimelineClipMetadata,
+  selected = false,
 ): Clip {
   const timeline_end = Math.max(
     end_seconds,
@@ -540,7 +573,7 @@ function create_clip(
     timelineStart: fromSeconds(start_seconds),
     timelineEnd: fromSeconds(timeline_end),
     sourceStart: fromSeconds(0),
-    selected: false,
+    selected,
     label,
     movable: false,
     resizable: false,

@@ -83,6 +83,92 @@ def test_transcript_segment_update_rejects_blank_text(tmp_path: Path):
     assert response.status_code == 422
 
 
+def test_selected_transcript_correction_is_persisted(tmp_path: Path, monkeypatch):
+    def correct_selected(self, transcript, segment_indices):
+        assert segment_indices == [1]
+        return {1: "上下文修正后的文字"}
+
+    monkeypatch.setattr(
+        application_module.OpenAiCompatibleTranscriptCorrector,
+        "correct",
+        correct_selected,
+    )
+    with create_client(tmp_path) as client:
+        client.app.state.analysis_manager.settings.openai_api_key = "test-key"
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(start_seconds=1, end_seconds=3, text="前文"),
+                    TranscriptSegment(start_seconds=3, end_seconds=5, text="错误文字"),
+                ],
+            )
+        )
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcript/correct",
+            json={"segment_indices": [1]},
+        )
+        reloaded = client.get(f"/api/media/assets/{ASSET_ID}/transcript")
+
+    assert response.status_code == 200
+    assert response.json()["segments"][0]["text"] == "前文"
+    assert response.json()["segments"][1]["text"] == "上下文修正后的文字"
+    assert reloaded.json() == response.json()
+
+
+def test_automatic_transcript_correction_updates_all_segments(
+    tmp_path: Path,
+    monkeypatch,
+):
+    def correct_all(self, transcript, segment_indices):
+        assert segment_indices == [0, 1]
+        return {0: "修正前文", 1: "修正后文"}
+
+    monkeypatch.setattr(
+        application_module.OpenAiCompatibleTranscriptCorrector,
+        "correct",
+        correct_all,
+    )
+    with create_client(tmp_path) as client:
+        client.app.state.analysis_manager.settings.openai_api_key = "test-key"
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(start_seconds=1, end_seconds=3, text="前文"),
+                    TranscriptSegment(start_seconds=3, end_seconds=5, text="后文"),
+                ],
+            )
+        )
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcript/correct",
+            json={"segment_indices": None},
+        )
+
+    assert response.status_code == 200
+    assert [segment["text"] for segment in response.json()["segments"]] == [
+        "修正前文",
+        "修正后文",
+    ]
+
+
+def test_transcript_correction_requires_ai_credentials(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[TranscriptSegment(start_seconds=1, end_seconds=3, text="原文")],
+            )
+        )
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcript/correct",
+            json={"segment_indices": None},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "请先在设置中配置 AI 接口密钥"
+
+
 def test_analyze_creates_job(tmp_path: Path):
     with create_client(tmp_path) as client:
         client.app.state.library.save_transcript(Transcript(asset_id=ASSET_ID))

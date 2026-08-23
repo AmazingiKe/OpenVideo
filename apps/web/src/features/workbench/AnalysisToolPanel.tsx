@@ -4,7 +4,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { ChevronRight, Wrench } from "lucide-react";
+import { ChevronRight, Sparkles, Wrench } from "lucide-react";
 
 import {
   Accordion,
@@ -30,6 +30,7 @@ import type {
   AnalysisToolSection,
   MediaAsset,
   MediaMarker,
+  TranscriptCorrectionScope,
   TranscriptionOptions,
 } from "@/shared/types";
 import { CollapsiblePanelRail } from "./CollapsiblePanelRail";
@@ -37,6 +38,7 @@ import { CollapsiblePanelRail } from "./CollapsiblePanelRail";
 export const ANALYSIS_TOOL_SECTIONS: AnalysisToolSection[] = [
   "video_information",
   "transcription",
+  "transcript_correction",
   "analysis",
 ];
 
@@ -54,6 +56,9 @@ type AnalysisToolPanelProps = {
   on_start_transcription: (options: TranscriptionOptions) => void;
   is_analyzing: boolean;
   on_start_analysis: (mode: AnalysisMode, marker_ids: string[]) => void;
+  selected_transcript_count: number;
+  active_correction_scope: TranscriptCorrectionScope | null;
+  on_correct_transcript: (scope: TranscriptCorrectionScope) => void;
   open_sections: AnalysisToolSection[];
   on_open_sections_change: (sections: AnalysisToolSection[]) => void;
   collapsed?: boolean;
@@ -68,6 +73,9 @@ export function AnalysisToolPanel({
   on_start_transcription,
   is_analyzing,
   on_start_analysis,
+  selected_transcript_count,
+  active_correction_scope,
+  on_correct_transcript,
   open_sections,
   on_open_sections_change,
   collapsed = false,
@@ -265,6 +273,71 @@ export function AnalysisToolPanel({
               </Button>
               <FieldDescription>
                 转录生成可编辑文字，完成后可继续内容分析。
+              </FieldDescription>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+        <AccordionItem value="transcript_correction">
+          <AccordionTrigger
+            onClick={handle_trigger_click}
+            onKeyDown={handle_trigger_key_down}
+          >
+            修正转录
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="processing_actions">
+              <div className="tool_status_row">
+                <span>时间线选择</span>
+                <Badge variant="secondary">
+                  {selected_transcript_count > 0
+                    ? `已选择 ${selected_transcript_count} 条`
+                    : "未选择"}
+                </Badge>
+              </div>
+              <Button
+                className="w-full"
+                type="button"
+                onClick={() => on_correct_transcript("all")}
+                disabled={
+                  !has_transcript ||
+                  is_transcribing ||
+                  is_analyzing ||
+                  active_correction_scope !== null
+                }
+              >
+                {active_correction_scope === "all" ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <Sparkles data-icon="inline-start" aria-hidden="true" />
+                )}
+                {active_correction_scope === "all"
+                  ? "正在修正全部…"
+                  : "自动全部修正"}
+              </Button>
+              <Button
+                className="w-full"
+                type="button"
+                variant="outline"
+                onClick={() => on_correct_transcript("selection")}
+                disabled={
+                  !has_transcript ||
+                  selected_transcript_count === 0 ||
+                  is_transcribing ||
+                  is_analyzing ||
+                  active_correction_scope !== null
+                }
+              >
+                {active_correction_scope === "selection" ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <Sparkles data-icon="inline-start" aria-hidden="true" />
+                )}
+                {active_correction_scope === "selection"
+                  ? "正在修正选择…"
+                  : "选择修正"}
+              </Button>
+              <FieldDescription>
+                AI 会参考相邻转录校准错字和专有名词，时间码保持不变。
               </FieldDescription>
             </div>
           </AccordionContent>

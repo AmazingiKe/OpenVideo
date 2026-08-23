@@ -22,7 +22,7 @@ def test_analysis_settings_round_trip_and_use_versioned_document(tmp_path: Path)
         asset_library_collapsed=True,
         tool_panel_size_percent=24,
         tool_panel_collapsed=False,
-        open_tool_sections=["transcription", "analysis"],
+        open_tool_sections=["transcription", "transcript_correction", "analysis"],
     )
 
     store.save_analysis(expected)

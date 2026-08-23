@@ -47,7 +47,9 @@ export type Preferences = {
 };
 
 export type AnalysisToolSection =
-  "video_information" | "transcription" | "analysis";
+  "video_information" | "transcription" | "transcript_correction" | "analysis";
+
+export type TranscriptCorrectionScope = "all" | "selection";
 
 export type AnalysisPageSettings = {
   asset_library_size_percent: number;

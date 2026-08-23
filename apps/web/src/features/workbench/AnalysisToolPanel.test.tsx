@@ -73,15 +73,22 @@ describe("AnalysisToolPanel", () => {
     expect(change_sections).toHaveBeenLastCalledWith([
       "video_information",
       "transcription",
+      "transcript_correction",
       "analysis",
     ]);
   });
 
   it("collapses all sections with Shift plus keyboard activation", () => {
     const change_sections = vi.fn();
-    render_panel(["video_information", "transcription", "analysis"], {
-      change_sections,
-    });
+    render_panel(
+      [
+        "video_information",
+        "transcription",
+        "transcript_correction",
+        "analysis",
+      ],
+      { change_sections },
+    );
 
     fireEvent.keyDown(screen.getByRole("button", { name: "视频信息" }), {
       key: "Enter",
@@ -101,6 +108,9 @@ describe("AnalysisToolPanel", () => {
         on_start_transcription={vi.fn()}
         is_analyzing={false}
         on_start_analysis={vi.fn()}
+        selected_transcript_count={0}
+        active_correction_scope={null}
+        on_correct_transcript={vi.fn()}
         open_sections={["video_information"]}
         on_open_sections_change={vi.fn()}
         collapsed
@@ -112,6 +122,21 @@ describe("AnalysisToolPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开工具" }));
     expect(change_collapsed).toHaveBeenCalledWith(false);
   });
+
+  it("corrects the full transcript or the selected timeline segment", () => {
+    const correct_transcript = vi.fn();
+    render_panel(["transcript_correction"], {
+      correct_transcript,
+      selected_transcript_count: 1,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "自动全部修正" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择修正" }));
+
+    expect(correct_transcript).toHaveBeenNthCalledWith(1, "all");
+    expect(correct_transcript).toHaveBeenNthCalledWith(2, "selection");
+    expect(screen.getByText("已选择 1 条")).toBeInTheDocument();
+  });
 });
 
 function render_panel(
@@ -119,6 +144,8 @@ function render_panel(
   options: {
     start_analysis?: (mode: AnalysisMode, marker_ids: string[]) => void;
     change_sections?: (sections: AnalysisToolSection[]) => void;
+    correct_transcript?: (scope: "all" | "selection") => void;
+    selected_transcript_count?: number;
   } = {},
 ) {
   return render(
@@ -130,6 +157,9 @@ function render_panel(
       on_start_transcription={vi.fn()}
       is_analyzing={false}
       on_start_analysis={options.start_analysis ?? vi.fn()}
+      selected_transcript_count={options.selected_transcript_count ?? 0}
+      active_correction_scope={null}
+      on_correct_transcript={options.correct_transcript ?? vi.fn()}
       open_sections={open_sections}
       on_open_sections_change={options.change_sections ?? vi.fn()}
     />,
