@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from platformdirs import user_config_path
 
+from openvideo.configuration import (
+    OPENVIDEO_CONFIG_DIRECTORY,
+    migrate_configuration_file,
+)
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.preferences import PreferenceStore, Preferences
 from openvideo.settings import (
@@ -31,6 +36,26 @@ def test_preferences_are_written_atomically(tmp_path: Path):
     assert payload["current_library_path"] == "D:\\资料库"
     assert payload["ai_models"][0]["api_key"] == "secret"
     assert not store.path.with_suffix(".tmp").exists()
+
+
+def test_configuration_directory_has_one_application_segment():
+    assert OPENVIDEO_CONFIG_DIRECTORY == user_config_path(
+        "OpenVideo", appauthor=False
+    )
+
+
+def test_legacy_configuration_is_moved_to_central_directory(tmp_path: Path):
+    source_path = tmp_path / "OpenVideo" / "OpenVideo" / "preferences.json"
+    target_path = tmp_path / "OpenVideo" / "preferences.json"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text('{"current_library_path": null}', encoding="utf-8")
+
+    migrate_configuration_file(source_path, target_path)
+
+    assert target_path.read_text(encoding="utf-8") == (
+        '{"current_library_path": null}'
+    )
+    assert not source_path.exists()
 
 
 def test_environment_values_override_saved_preferences(monkeypatch, tmp_path: Path):

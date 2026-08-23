@@ -182,3 +182,9 @@ for node in cmds.ls(type="file"):
 
 - 回复内容禁止使用冗长的句子去进行回复，需要使用简洁的语言去进行回复
 - 在回复结论或者建议时尽量使用列表等方式去进行表达
+
+### 14. OpenVideo 配置目录
+
+- OpenVideo 生成的所有应用配置文件必须统一保存在系统用户配置目录 `user_config_path("OpenVideo", appauthor=False)`；Windows 对应 `%LOCALAPPDATA%\OpenVideo`。
+- 禁止把应用配置写入项目目录、`runtime`、程序安装目录或资料库目录。资料库清单、数据库、素材元数据和缓存属于业务数据，不视为应用配置。
+- 配置目录必须通过 `openvideo.configuration.OPENVIDEO_CONFIG_DIRECTORY` 获取，禁止在业务代码中重复拼接或定义其他配置根目录。

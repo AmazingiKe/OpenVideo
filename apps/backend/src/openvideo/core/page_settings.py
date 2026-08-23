@@ -7,8 +7,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from openvideo.configuration import migrate_configuration_file
 
-PAGE_SETTINGS_FILE_NAME = "page_setting.json"
+
+LEGACY_PAGE_SETTINGS_FILE_NAME = "page_setting.json"
+PAGE_SETTINGS_FILE_NAME_TEMPLATE = "page-settings-{library_id}.json"
 PAGE_SETTINGS_VERSION = 1
 
 ToolSection = Literal[
@@ -48,9 +51,18 @@ class PageSettingsDocument(BaseModel):
 class PageSettingsStore:
     """将页面偏好与当前资料库绑定，并保证一次保存不会留下半写文件。"""
 
-    def __init__(self, library_path: Path) -> None:
-        self.path = library_path / PAGE_SETTINGS_FILE_NAME
+    def __init__(
+        self,
+        config_directory: Path,
+        library_id: str,
+        legacy_path: Path | None = None,
+    ) -> None:
+        file_name = PAGE_SETTINGS_FILE_NAME_TEMPLATE.format(library_id=library_id)
+        self.path = config_directory / file_name
         self._lock = RLock()
+        if legacy_path is not None:
+            # TODO(删除)：在 1.0 版本停止支持资料库内页面配置后删除迁移。
+            migrate_configuration_file(legacy_path, self.path)
 
     def load_analysis(self) -> AnalysisPageSettings:
         with self._lock:
@@ -67,6 +79,7 @@ class PageSettingsStore:
         temporary_path = self.path.with_name(f".{self.path.name}.tmp")
         with self._lock:
             try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
                 temporary_path.write_text(
                     document.model_dump_json(indent=2),
                     encoding="utf-8",

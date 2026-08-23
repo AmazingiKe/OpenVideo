@@ -112,7 +112,7 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 | `OPENVIDEO_AI_MODELS` | `[]` | LiteLLM 模型配置 JSON 数组；设置后 Web 中的模型配置只读 |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 
-未配置 `OPENVIDEO_LIBRARY_PATH` 时，应用从系统用户配置目录的 `OpenVideo/preferences.json` 恢复上次资料库；路径失效时进入初始化页。
+未配置 `OPENVIDEO_LIBRARY_PATH` 时，应用从系统用户配置目录的 `OpenVideo/preferences.json` 恢复上次资料库；路径失效时进入初始化页。Windows 的配置根目录为 `%LOCALAPPDATA%\OpenVideo`，应用生成的偏好与页面设置统一保存在该目录，不写入项目 `runtime` 或资料库。
 
 推荐在 Web 设置页添加模型。`LiteLLM 模型` 使用 `供应商/模型` 格式，例如 `openai/gpt-5`、`anthropic/claude-sonnet-4-5` 或 `ollama/qwen2.5-vl`。自定义兼容网关可同时填写 API 地址；需要处理关键帧时，应启用“支持图片输入”。
 

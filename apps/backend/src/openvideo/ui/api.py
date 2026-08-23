@@ -38,7 +38,11 @@ from openvideo.core.models import (
     MediaSegment,
     SourcePlatform,
 )
-from openvideo.core.page_settings import AnalysisPageSettings, PageSettingsStore
+from openvideo.core.page_settings import (
+    LEGACY_PAGE_SETTINGS_FILE_NAME,
+    AnalysisPageSettings,
+    PageSettingsStore,
+)
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import PROJECT_ROOT, Settings, load_settings, preferences_from_settings
 from openvideo.tools.downloader import (
@@ -175,7 +179,11 @@ def create_app(
         library = opened_library
         manager = DownloadManager(opened_library, resolved_settings)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
-        page_settings_store = PageSettingsStore(opened_library.library_path)
+        page_settings_store = PageSettingsStore(
+            preference_store.path.parent,
+            opened_library.manifest.library_id,
+            opened_library.library_path / LEGACY_PAGE_SETTINGS_FILE_NAME,
+        )
         analysis_manager.restore()
         app.state.library = opened_library
         app.state.download_manager = manager

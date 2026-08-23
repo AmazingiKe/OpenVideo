@@ -62,6 +62,11 @@ def test_analysis_page_settings_validate_and_persist(tmp_path: Path):
         assert invalid_size.status_code == 422
         assert invalid_section.status_code == 422
         assert duplicate_section.status_code == 422
+        config_path = tmp_path / (
+            f"page-settings-{app.state.library.manifest.library_id}.json"
+        )
+        assert config_path.is_file()
+        assert not (library_path / "page_setting.json").exists()
 
 
 def test_analysis_page_settings_are_isolated_when_switching_libraries(
