@@ -1,16 +1,7 @@
-import { AudioLines, Cpu, Gauge } from "lucide-react";
+import { Gauge } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Field,
   FieldDescription,
@@ -270,57 +261,58 @@ export function TranscriptionModelSettings({
             模型文件直接从标注的官方仓库下载到模型目录。扩展引擎仍需安装运行适配器才能执行转录。
           </p>
         </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ul
+          className="overflow-hidden rounded-lg border"
+          aria-label="本地转录模型列表"
+        >
           {models.map((model) => (
-            <Card key={`${model.engine}:${model.model}`} size="sm">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AudioLines aria-hidden="true" />
-                  {model.name}
-                </CardTitle>
-                <CardDescription>{ENGINE_LABELS[model.engine]}</CardDescription>
-                <CardAction>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    <Badge
-                      variant={
-                        model.installation_status === "installed"
-                          ? "secondary"
-                          : "outline"
-                      }
-                    >
-                      {INSTALLATION_LABELS[model.installation_status]}
-                    </Badge>
-                    {model.integration_status === "adapter_required" ? (
-                      <Badge variant="outline">待接入</Badge>
-                    ) : null}
-                  </div>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                <p className="text-sm text-muted-foreground">
+            <li
+              key={`${model.engine}:${model.model}`}
+              className="grid gap-3 border-b px-3 py-3 last:border-b-0 md:grid-cols-[minmax(0,1fr)_10rem] md:items-center"
+            >
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong className="text-sm font-medium">{model.name}</strong>
+                  <span className="text-xs text-muted-foreground">
+                    {ENGINE_LABELS[model.engine]}
+                  </span>
+                  {model.recommended ? (
+                    <Badge variant="secondary">推荐</Badge>
+                  ) : null}
+                  <Badge
+                    variant={
+                      model.installation_status === "installed"
+                        ? "secondary"
+                        : "outline"
+                    }
+                  >
+                    {INSTALLATION_LABELS[model.installation_status]}
+                  </Badge>
+                  {model.integration_status === "adapter_required" ? (
+                    <Badge variant="outline">待接入</Badge>
+                  ) : null}
+                </div>
+                <p className="truncate text-xs text-muted-foreground">
                   {model.description}
                 </p>
-                <p className="font-mono text-xs break-all text-muted-foreground">
-                  {model.repository}
-                </p>
-              </CardContent>
-              <CardFooter className="flex flex-col items-stretch gap-3">
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary">精度 {model.accuracy}</Badge>
-                  <Badge variant="secondary">速度 {model.speed}</Badge>
-                  <Badge variant="outline">
-                    <Cpu aria-hidden="true" />
-                    {model.languages.join(" / ")}
-                  </Badge>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span>精度 {model.accuracy}</span>
+                  <span>速度 {model.speed}</span>
+                  <span>{model.languages.join(" / ")}</span>
+                  <span className="min-w-0 truncate font-mono">
+                    {model.repository}
+                  </span>
                 </div>
+              </div>
+              <div className="min-w-0">
                 <TranscriptionModelDownloadAction
                   model={model}
                   on_change={on_model_change}
                 />
-              </CardFooter>
-            </Card>
+              </div>
+            </li>
           ))}
-        </div>
+        </ul>
       </section>
     </div>
   );

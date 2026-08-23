@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -122,6 +128,10 @@ describe("SettingsPage", () => {
     render(<SettingsPage />);
 
     expect(await screen.findByText("Qwen3-ASR 1.7B")).toBeInTheDocument();
+    const model_list = screen.getByRole("list", {
+      name: "本地转录模型列表",
+    });
+    expect(within(model_list).getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByText("待接入")).toBeInTheDocument();
     expect(screen.getAllByText("Whisper Small")).not.toHaveLength(0);
   });
