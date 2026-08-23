@@ -402,7 +402,6 @@ export function AnalysisPage() {
         segments={segments}
         markers={markers}
         marker_error={marker_error}
-        selected_transcript_indices={selected_transcript_indices}
         on_seek={seek_player}
         on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_add_marker={add_marker}

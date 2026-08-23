@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { type ReactNode, useState } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MediaTimeline } from "./MediaTimeline";
 
@@ -20,6 +20,7 @@ type MockTrack = {
 };
 
 const timeline_mock = vi.hoisted(() => ({
+  create_engine: vi.fn(),
   set_scroll_left: vi.fn(),
   set_zoom_scale: vi.fn(),
 }));
@@ -38,6 +39,7 @@ vi.mock("@techsquidtv/canvas-timeline", () => {
       this.tracks = state.tracks;
       this.playhead_time = state.playheadTime;
       mock_state.engine = this;
+      timeline_mock.create_engine();
     }
 
     getTime() {
@@ -155,58 +157,71 @@ function render_timeline() {
     update_transcript: vi.fn().mockResolvedValue(undefined),
     change_selected_transcript_indices: vi.fn(),
   };
+  const transcript = {
+    asset_id: ASSET_ID,
+    language: "zh",
+    created_at: "2026-01-01T00:00:00Z",
+    segments: [{ start_seconds: 5, end_seconds: 8, text: "原始转写" }],
+  };
+  const segments = [
+    {
+      segment_id: "segment-0198d12345677890abcdef1234567890",
+      asset_id: ASSET_ID,
+      start_seconds: 45,
+      end_seconds: 60,
+      title: "矩阵推导",
+      detailed_summary: null,
+      transcript_text: null,
+      speaker_name: null,
+      key_frame_paths: [],
+      visual_description: null,
+      ocr_text: null,
+      marker_ids: [],
+      tags: ["公式"],
+    },
+  ];
+  const markers = [
+    {
+      marker_id: "marker-0198d12345677890abcdef1234567890",
+      asset_id: ASSET_ID,
+      time_seconds: 20,
+      tags: ["重点"],
+    },
+  ];
 
-  render(
-    <MediaTimeline
-      duration_seconds={120}
-      current_time={30}
-      transcript={{
-        asset_id: ASSET_ID,
-        language: "zh",
-        created_at: "2026-01-01T00:00:00Z",
-        segments: [{ start_seconds: 5, end_seconds: 8, text: "原始转写" }],
-      }}
-      segments={[
-        {
-          segment_id: "segment-0198d12345677890abcdef1234567890",
-          asset_id: ASSET_ID,
-          start_seconds: 45,
-          end_seconds: 60,
-          title: "矩阵推导",
-          detailed_summary: null,
-          transcript_text: null,
-          speaker_name: null,
-          key_frame_paths: [],
-          visual_description: null,
-          ocr_text: null,
-          marker_ids: [],
-          tags: ["公式"],
-        },
-      ]}
-      markers={[
-        {
-          marker_id: "marker-0198d12345677890abcdef1234567890",
-          asset_id: ASSET_ID,
-          time_seconds: 20,
-          tags: ["重点"],
-        },
-      ]}
-      marker_error={null}
-      selected_transcript_indices={[]}
-      on_seek={callbacks.seek_to}
-      on_selected_transcript_indices_change={
-        callbacks.change_selected_transcript_indices
-      }
-      on_add_marker={callbacks.add_marker}
-      on_update_marker_tags={callbacks.update_marker_tags}
-      on_update_transcript={callbacks.update_transcript}
-    />,
-  );
+  function TimelineHarness() {
+    const [, set_selected_transcript_indices] = useState<number[]>([]);
+
+    return (
+      <MediaTimeline
+        duration_seconds={120}
+        current_time={30}
+        transcript={transcript}
+        segments={segments}
+        markers={markers}
+        marker_error={null}
+        on_seek={callbacks.seek_to}
+        on_selected_transcript_indices_change={(segment_indices) => {
+          callbacks.change_selected_transcript_indices(segment_indices);
+          set_selected_transcript_indices(segment_indices);
+        }}
+        on_add_marker={callbacks.add_marker}
+        on_update_marker_tags={callbacks.update_marker_tags}
+        on_update_transcript={callbacks.update_transcript}
+      />
+    );
+  }
+
+  render(<TimelineHarness />);
 
   return callbacks;
 }
 
 describe("MediaTimeline", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("maps media data to official canvas timeline tracks", () => {
     const { seek_to } = render_timeline();
 
@@ -304,5 +319,27 @@ describe("MediaTimeline", () => {
 
     expect(timeline_mock.set_zoom_scale).toHaveBeenCalledWith(81.4);
     expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(4824);
+  });
+
+  it("keeps the engine and viewport stable when selecting a transcript clip", () => {
+    const { change_selected_transcript_indices } = render_timeline();
+    const timeline_canvas = screen.getByLabelText(/时间线画布/);
+
+    fireEvent.wheel(timeline_canvas, {
+      altKey: true,
+      clientX: 60,
+      deltaY: -100,
+    });
+    fireEvent.click(screen.getByLabelText("canvas-item-transcript"));
+    fireEvent.wheel(timeline_canvas, {
+      altKey: true,
+      clientX: 60,
+      deltaY: -100,
+    });
+
+    expect(change_selected_transcript_indices).toHaveBeenCalledWith([0]);
+    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(1);
+    expect(timeline_mock.set_zoom_scale).toHaveBeenNthCalledWith(1, 81.4);
+    expect(timeline_mock.set_zoom_scale.mock.calls[1]?.[0]).toBeCloseTo(89.54);
   });
 });

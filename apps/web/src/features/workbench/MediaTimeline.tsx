@@ -81,7 +81,6 @@ type MediaTimelineProps = {
   segments: MediaSegment[];
   markers: MediaMarker[];
   marker_error: string | null;
-  selected_transcript_indices: number[];
   on_seek: (seconds: number) => void;
   on_selected_transcript_indices_change: (segment_indices: number[]) => void;
   on_add_marker: (seconds: number) => Promise<void>;
@@ -325,7 +324,6 @@ export function MediaTimeline({
   segments,
   markers,
   marker_error,
-  selected_transcript_indices,
   on_seek,
   on_selected_transcript_indices_change,
   on_add_marker,
@@ -350,10 +348,6 @@ export function MediaTimeline({
     () => transcript?.segments ?? [],
     [transcript],
   );
-  const selected_transcript_index_set = useMemo(
-    () => new Set(selected_transcript_indices),
-    [selected_transcript_indices],
-  );
   const duration = timeline_duration(
     duration_seconds,
     current_time,
@@ -362,14 +356,8 @@ export function MediaTimeline({
     markers,
   );
   const tracks = useMemo(
-    () =>
-      build_tracks(
-        transcript_segments,
-        segments,
-        markers,
-        selected_transcript_index_set,
-      ),
-    [markers, segments, selected_transcript_index_set, transcript_segments],
+    () => build_tracks(transcript_segments, segments, markers),
+    [markers, segments, transcript_segments],
   );
   const timeline_markers = useMemo(() => build_markers(markers), [markers]);
   const engine = useMemo(
@@ -614,7 +602,6 @@ function build_tracks(
   transcript_segments: Transcript["segments"],
   segments: MediaSegment[],
   markers: MediaMarker[],
-  selected_transcript_indices: Set<number>,
 ): Track[] {
   return [
     create_track(
@@ -644,7 +631,6 @@ function build_tracks(
           segment.end_seconds,
           segment.text,
           { kind: "transcript", source_index: index },
-          selected_transcript_indices.has(index),
         ),
       ),
     ),
@@ -692,7 +678,6 @@ function create_clip(
   end_seconds: number,
   label: string,
   metadata: TimelineClipMetadata,
-  selected = false,
 ): Clip {
   const timeline_end = Math.max(
     end_seconds,
@@ -704,7 +689,7 @@ function create_clip(
     timelineStart: fromSeconds(start_seconds),
     timelineEnd: fromSeconds(timeline_end),
     sourceStart: fromSeconds(0),
-    selected,
+    selected: false,
     label,
     movable: false,
     resizable: false,
