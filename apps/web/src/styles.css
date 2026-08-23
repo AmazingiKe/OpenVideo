@@ -167,9 +167,9 @@
 .media_timeline_editor input { height: 28px; color: var(--text); background: var(--surface-secondary); }
 .media_timeline_canvas { min-width: 0; min-height: 0; flex: 1; overflow: hidden; outline: none; user-select: none; }
 .media_timeline_canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--app-accent); }
-.media_timeline .timeline-shell { --timeline-track-column-width: 152px; display: grid; height: 100%; min-height: 0; grid-template-rows: minmax(0, 1fr) 20px; background: var(--surface-secondary); }
-.media_timeline .timeline-stage { display: grid; min-width: 0; min-height: 0; grid-template-columns: var(--timeline-track-column-width) minmax(0, 1fr); overflow: hidden; }
-.media_timeline .timeline-track-column { position: relative; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--line); background: var(--surface-secondary); }
+.media_timeline .timeline-shell { display: flex; height: 100%; min-height: 0; background: var(--surface-secondary); }
+.media_timeline .timeline-track-panel, .media_timeline .timeline-canvas-panel { display: grid; min-width: 0; min-height: 0; grid-template-rows: minmax(0, 1fr) 20px; }
+.media_timeline .timeline-track-column { position: relative; width: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface-secondary); }
 .media_timeline .timeline-track-column-label { position: absolute; top: 0; right: 0; left: 0; z-index: 16; display: flex; height: 32px; align-items: center; padding: 0 10px; color: var(--app-muted); font-size: 9px; font-weight: 600; letter-spacing: .08em; }
 .media_timeline .timeline-track-headers::before { border-bottom: 1px solid var(--line-subtle); background: var(--surface); }
 .media_timeline .timeline-track-header-row { gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line-subtle); color: var(--text); background: var(--surface-secondary); }
@@ -178,13 +178,12 @@
 .media_timeline .timeline-track-name { min-width: 0; overflow: hidden; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .media_timeline .timeline-track-lock { display: grid; width: 16px; height: 16px; margin-left: auto; flex: 0 0 auto; place-items: center; color: var(--app-muted); }
 .media_timeline .timeline-track-lock svg { width: 12px; height: 12px; }
-.media_timeline .timeline-canvas-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.media_timeline .timeline-canvas-stage { position: relative; width: 100%; min-width: 0; min-height: 0; overflow: hidden; }
 .media_timeline .timeline-fill { width: 100%; height: 100%; cursor: grab; color: var(--text); background: var(--surface-secondary); }
 .media_timeline .timeline-fill:active { cursor: grabbing; }
 .media_timeline .timeline-track-list-overlay { position: absolute; inset: 0; }
-.media_timeline .timeline-scrollbar-row { display: grid; grid-template-columns: var(--timeline-track-column-width) minmax(0, 1fr); border-top: 1px solid var(--line-subtle); background: var(--surface); }
-.media_timeline .timeline-scrollbar-spacer { border-right: 1px solid var(--line); }
-.media_timeline .timeline-scrollbar-control { display: flex; min-width: 0; align-items: center; padding: 4px 8px; }
+.media_timeline .timeline-scrollbar-spacer { border-top: 1px solid var(--line-subtle); background: var(--surface); }
+.media_timeline .timeline-scrollbar-control { display: flex; min-width: 0; align-items: center; padding: 4px 8px; border-top: 1px solid var(--line-subtle); background: var(--surface); }
 .media_timeline .timeline-scrollbar-control > * { width: 100%; }
 .media_timeline_error { position: absolute; right: 8px; bottom: 6px; z-index: 2; margin: 0; padding: 4px 7px; border-radius: 4px; color: var(--danger); background: var(--surface); font-size: 9px; }
 .sr_only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
@@ -192,6 +191,5 @@
 @media (max-width: 600px) {
   .media_timeline { min-height: 238px; }
   .media_timeline_header span { display: none; }
-  .media_timeline .timeline-shell { --timeline-track-column-width: 112px; }
   .media_timeline .timeline-track-kind-icon, .media_timeline .timeline-track-lock { display: none; }
 }

@@ -213,6 +213,9 @@ describe("MediaTimeline", () => {
     const { seek_to } = render_timeline();
 
     expect(screen.getByText("Canvas Timeline")).toBeInTheDocument();
+    expect(
+      screen.getByRole("separator", { name: "调整轨道标题栏宽度" }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("canvas-item-marker")).toBeInTheDocument();
     expect(screen.getByLabelText("canvas-item-transcript")).toBeInTheDocument();
     expect(screen.getByLabelText("canvas-item-event")).toBeInTheDocument();

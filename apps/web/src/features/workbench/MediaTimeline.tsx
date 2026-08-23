@@ -32,6 +32,11 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { format_time } from "@/shared/format";
 import type { MediaMarker, MediaSegment, Transcript } from "@/shared/types";
 
@@ -40,6 +45,10 @@ const MINIMUM_CLIP_DURATION_SECONDS = 0.05;
 const DEFAULT_ZOOM_SCALE = 74;
 const ALT_WHEEL_ZOOM_SENSITIVITY = -0.001;
 const TRACK_HEIGHT = 48;
+const DEFAULT_TRACK_COLUMN_WIDTH = "152px";
+const MINIMUM_TRACK_COLUMN_WIDTH = "112px";
+const MAXIMUM_TRACK_COLUMN_WIDTH = "320px";
+const MINIMUM_TIMELINE_CANVAS_WIDTH = "240px";
 const MARKER_TRACK_ID = "timeline-marker-track";
 const TRANSCRIPT_TRACK_ID = "timeline-transcript-track";
 const EVENT_TRACK_ID = "timeline-event-track";
@@ -187,8 +196,19 @@ function TimelineSurface({
   }
 
   return (
-    <div className="timeline-shell">
-      <div className="timeline-stage">
+    <ResizablePanelGroup
+      id="timeline-track-layout"
+      className="timeline-shell"
+      orientation="horizontal"
+    >
+      <ResizablePanel
+        id="timeline-track-column"
+        className="timeline-track-panel"
+        defaultSize={DEFAULT_TRACK_COLUMN_WIDTH}
+        minSize={MINIMUM_TRACK_COLUMN_WIDTH}
+        maxSize={MAXIMUM_TRACK_COLUMN_WIDTH}
+        groupResizeBehavior="preserve-pixel-size"
+      >
         <aside className="timeline-track-column" aria-label="时间线轨道">
           <span className="timeline-track-column-label">轨道</span>
           <Timeline.TrackHeaderList
@@ -224,6 +244,18 @@ function TimelineSurface({
             })}
           </Timeline.TrackHeaderList>
         </aside>
+        <div className="timeline-scrollbar-spacer" aria-hidden />
+      </ResizablePanel>
+      <ResizableHandle
+        className="hover:bg-primary"
+        withHandle
+        aria-label="调整轨道标题栏宽度"
+      />
+      <ResizablePanel
+        id="timeline-canvas"
+        className="timeline-canvas-panel"
+        minSize={MINIMUM_TIMELINE_CANVAS_WIDTH}
+      >
         <div className="timeline-canvas-stage">
           <Timeline.Root
             className="timeline-fill"
@@ -246,9 +278,6 @@ function TimelineSurface({
             />
           </Timeline.Root>
         </div>
-      </div>
-      <div className="timeline-scrollbar-row">
-        <div className="timeline-scrollbar-spacer" aria-hidden />
         <div className="timeline-scrollbar-control">
           <Timeline.ViewportScrollbar aria-label="时间线可见范围">
             <Timeline.ViewportScrollbarThumb>
@@ -257,8 +286,8 @@ function TimelineSurface({
             </Timeline.ViewportScrollbarThumb>
           </Timeline.ViewportScrollbar>
         </div>
-      </div>
-    </div>
+      </ResizablePanel>
+    </ResizablePanelGroup>
   );
 }
 
