@@ -91,6 +91,21 @@ def test_source_video_id_deduplication_is_scoped_to_platform(tmp_path: Path):
     library.close()
 
 
+def test_migrates_agent_job_schema_from_database_version_three(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    library.close()
+    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
+    connection.execute("DROP TABLE agent_jobs")
+    connection.execute("PRAGMA user_version = 3")
+    connection.commit()
+    connection.close()
+
+    migrated = MediaLibrary.open(tmp_path)
+
+    assert migrated.load_agent_jobs() == []
+    migrated.close()
+
+
 def test_marks_interrupted_asset_as_failed(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     library.save(

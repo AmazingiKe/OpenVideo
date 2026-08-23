@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { correct_transcript, update_transcript_segment } from "@/shared/api";
+import { update_transcript_segment } from "@/shared/api";
 import { error_message, is_abort_error } from "@/shared/errors";
 import {
   load_asset_analysis,
@@ -63,30 +63,10 @@ export function use_asset_analysis(asset_id: string | null) {
     [asset_id],
   );
 
-  const correct_transcript_segments = useCallback(
-    async (segment_indices: number[] | null, ai_model_id: string) => {
-      if (!asset_id) return;
-      try {
-        const transcript = await correct_transcript(
-          asset_id,
-          segment_indices,
-          ai_model_id,
-        );
-        set_analysis((current) => ({ ...current, transcript }));
-        set_analysis_error(null);
-      } catch (error) {
-        if (!is_abort_error(error)) set_analysis_error(error_message(error));
-        throw error;
-      }
-    },
-    [asset_id],
-  );
-
   return {
     ...analysis,
     analysis_error,
     reload_analysis,
     save_transcript_segment,
-    correct_transcript_segments,
   };
 }

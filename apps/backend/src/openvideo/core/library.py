@@ -11,6 +11,7 @@ from uuid import UUID
 import portalocker
 from pydantic import BaseModel
 
+from openvideo.core.agent_models import AgentJob
 from openvideo.core.analysis_models import (
     AnalysisJob,
     Transcript,
@@ -38,9 +39,10 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 FORMAT_VERSION = 1
-DATABASE_VERSION = 3
+DATABASE_VERSION = 4
 MANIFEST_FILE_NAME = "library.json"
 DATABASE_FILE_NAME = "openvideo.sqlite3"
+AGENT_CHECKPOINT_DATABASE_FILE_NAME = "agent_checkpoints.sqlite3"
 LOCK_FILE_NAME = ".openvideo.lock"
 ASSET_METADATA_FILE_NAME = "meta.json"
 TRANSCRIPTION_METADATA_FILE_NAME = "transcription.json"
@@ -196,6 +198,9 @@ class MediaLibrary:
             version = 2
         if version == 2:
             self._migrate_analysis_model()
+            version = 3
+        if version == 3:
+            self._migrate_agent_jobs()
 
     def _migrate_analysis_model(self) -> None:
         connection = self._db()
@@ -205,6 +210,12 @@ class MediaLibrary:
             }
             if "ai_model_id" not in columns:
                 connection.execute("ALTER TABLE analysis_jobs ADD COLUMN ai_model_id TEXT")
+            connection.execute("PRAGMA user_version = 3")
+
+    def _migrate_agent_jobs(self) -> None:
+        connection = self._db()
+        with connection:
+            connection.executescript(_AGENT_JOB_SCHEMA)
             connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
 
     def _migrate_asset_storage(self) -> None:
@@ -558,6 +569,46 @@ class MediaLibrary:
             self._db().executemany("INSERT INTO analysis_job_markers(job_id, marker_id) VALUES (?, ?)", [(job.job_id, item) for item in dict.fromkeys(job.marker_ids)])
             self._db().executemany("INSERT INTO analysis_job_capabilities(job_id, capability) VALUES (?, ?)", [(job.job_id, item.value) for item in dict.fromkeys(job.capabilities)])
 
+    @property
+    def agent_checkpoint_database_path(self) -> Path:
+        return self.library_path / AGENT_CHECKPOINT_DATABASE_FILE_NAME
+
+    def save_agent_job(self, job: AgentJob) -> None:
+        self._validate_identifier(job.job_id, "agent")
+        values = job.model_dump(mode="json")
+        columns = tuple(values)
+        updates = ", ".join(
+            f"{column}=excluded.{column}" for column in columns[1:]
+        )
+        with self._lock, self._db():
+            self._db().execute(
+                f"INSERT INTO agent_jobs ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)}) "
+                f"ON CONFLICT(job_id) DO UPDATE SET {updates}",
+                tuple(_sqlite_value(values[column]) for column in columns),
+            )
+
+    def load_agent_job(self, job_id: str) -> AgentJob | None:
+        self._validate_identifier(job_id, "agent")
+        row = self._db().execute(
+            "SELECT * FROM agent_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        return _agent_job_from_row(row) if row else None
+
+    def load_agent_jobs(self, asset_id: str | None = None) -> list[AgentJob]:
+        if asset_id is None:
+            rows = self._db().execute(
+                "SELECT * FROM agent_jobs ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            self._validate_asset_id(asset_id)
+            rows = self._db().execute(
+                "SELECT * FROM agent_jobs WHERE asset_id = ? ORDER BY created_at DESC",
+                (asset_id,),
+            ).fetchall()
+        return [_agent_job_from_row(row) for row in rows]
+
     def load_analysis_jobs(self) -> list[AnalysisJob]:
         rows = self._db().execute("SELECT * FROM analysis_jobs ORDER BY created_at").fetchall()
         jobs = []
@@ -625,6 +676,14 @@ def _sqlite_value(value: object) -> object:
     return value
 
 
+def _agent_job_from_row(row: sqlite3.Row) -> AgentJob:
+    values = dict(row)
+    for field_name in ("segment_indices", "question"):
+        if values[field_name] is not None:
+            values[field_name] = json.loads(values[field_name])
+    return AgentJob.model_validate(values)
+
+
 def _legacy_asset_uuid(asset_id: str) -> str | None:
     prefix = "asset-"
     hexadecimal = asset_id.removeprefix(prefix)
@@ -672,6 +731,13 @@ CREATE TABLE analysis_jobs (
     operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, stage TEXT NOT NULL, progress_percent REAL NOT NULL,
     message TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE agent_jobs (
+    job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    agent_type TEXT NOT NULL, execution_mode TEXT NOT NULL, stage TEXT NOT NULL,
+    progress_percent REAL NOT NULL, message TEXT NOT NULL, ai_model_id TEXT NOT NULL,
+    segment_indices TEXT, transcript_checksum TEXT NOT NULL, question TEXT,
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
 CREATE TABLE transcripts (asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE, language TEXT, created_at TEXT NOT NULL);
 CREATE TABLE transcript_segments (
     asset_id TEXT NOT NULL REFERENCES transcripts(asset_id) ON DELETE CASCADE, position INTEGER NOT NULL,
@@ -698,4 +764,18 @@ CREATE TABLE asset_relationships (source_asset_id TEXT NOT NULL REFERENCES asset
 CREATE TABLE artifacts (artifact_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE, artifact_type TEXT NOT NULL, relative_path TEXT NOT NULL, checksum TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX assets_created_at_index ON assets(created_at DESC);
 CREATE INDEX markers_asset_time_index ON markers(asset_id, time_seconds);
+CREATE INDEX agent_jobs_asset_created_index ON agent_jobs(asset_id, created_at DESC);
+"""
+
+
+_AGENT_JOB_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_jobs (
+    job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    agent_type TEXT NOT NULL, execution_mode TEXT NOT NULL, stage TEXT NOT NULL,
+    progress_percent REAL NOT NULL, message TEXT NOT NULL, ai_model_id TEXT NOT NULL,
+    segment_indices TEXT, transcript_checksum TEXT NOT NULL, question TEXT,
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agent_jobs_asset_created_index
+ON agent_jobs(asset_id, created_at DESC);
 """

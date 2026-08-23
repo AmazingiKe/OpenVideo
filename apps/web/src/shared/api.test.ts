@@ -3,11 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   analyze_asset,
   ApiError,
+  create_transcript_correction,
   create_marker,
   create_download,
   get_analysis_page_settings,
   media_url,
   probe_source,
+  respond_to_agent_job,
   select_directory,
   test_ai_model,
   transcribe_asset,
@@ -249,6 +251,57 @@ describe("api client", () => {
           model: "small",
           language: "zh",
           compute_type: "int8",
+        }),
+        signal: undefined,
+      },
+    );
+  });
+
+  it("creates and resumes a transcript correction Agent", async () => {
+    const job = {
+      job_id: "agent-019c0000000070008000000000000000",
+      stage: "pending",
+    };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(job), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await create_transcript_correction("asset-1", [2], "model-1");
+    await respond_to_agent_job(
+      job.job_id,
+      "question-1",
+      "change_model",
+      "model-2",
+    );
+
+    expect(fetch_mock).toHaveBeenNthCalledWith(
+      1,
+      "/api/media/assets/asset-1/transcript/corrections",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          segment_indices: [2],
+          ai_model_id: "model-1",
+        }),
+        signal: undefined,
+      },
+    );
+    expect(fetch_mock).toHaveBeenNthCalledWith(
+      2,
+      `/api/agent-jobs/${job.job_id}/responses`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_id: "question-1",
+          action: "change_model",
+          ai_model_id: "model-2",
         }),
         signal: undefined,
       },

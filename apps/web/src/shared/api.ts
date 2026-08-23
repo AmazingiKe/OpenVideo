@@ -1,4 +1,6 @@
 import type {
+  AgentJob,
+  AgentQuestionAction,
   AnalysisJob,
   AiModelConfiguration,
   AiModelSummary,
@@ -266,18 +268,56 @@ export function update_transcript_segment(
   );
 }
 
-export function correct_transcript(
+export function create_transcript_correction(
   asset_id: string,
   segment_indices: number[] | null,
   ai_model_id: string,
   signal?: AbortSignal,
-): Promise<Transcript> {
+): Promise<AgentJob> {
   return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/transcript/correct`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/transcript/corrections`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ segment_indices, ai_model_id }),
+      signal,
+    },
+  );
+}
+
+export function get_agent_job(
+  job_id: string,
+  signal?: AbortSignal,
+): Promise<AgentJob> {
+  return request_json(`/api/agent-jobs/${encodeURIComponent(job_id)}`, {
+    signal,
+  });
+}
+
+export function list_asset_agent_jobs(
+  asset_id: string,
+  active: boolean,
+  signal?: AbortSignal,
+): Promise<AgentJob[]> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/agent-jobs?active=${active}`,
+    { signal },
+  );
+}
+
+export function respond_to_agent_job(
+  job_id: string,
+  question_id: string,
+  action: AgentQuestionAction,
+  ai_model_id: string | null,
+  signal?: AbortSignal,
+): Promise<AgentJob> {
+  return request_json(
+    `/api/agent-jobs/${encodeURIComponent(job_id)}/responses`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question_id, action, ai_model_id }),
       signal,
     },
   );

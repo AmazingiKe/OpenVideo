@@ -123,7 +123,9 @@ describe("AnalysisToolPanel", () => {
         on_start_analysis={vi.fn()}
         selected_transcript_count={0}
         active_correction_scope={null}
-        on_correct_transcript={vi.fn()}
+        correction_agent_job={null}
+        on_start_correction_agent={vi.fn()}
+        on_agent_response={vi.fn()}
         open_sections={["video_information"]}
         on_open_sections_change={vi.fn()}
         collapsed
@@ -137,21 +139,21 @@ describe("AnalysisToolPanel", () => {
   });
 
   it("corrects the full transcript or the selected timeline segment", () => {
-    const correct_transcript = vi.fn();
+    const start_correction_agent = vi.fn();
     render_panel(["transcript_correction"], {
-      correct_transcript,
+      start_correction_agent,
       selected_transcript_count: 1,
     });
 
     fireEvent.click(screen.getByRole("button", { name: "自动全部修正" }));
     fireEvent.click(screen.getByRole("button", { name: "选择修正" }));
 
-    expect(correct_transcript).toHaveBeenNthCalledWith(
+    expect(start_correction_agent).toHaveBeenNthCalledWith(
       1,
       "all",
       AI_MODELS[0].model_id,
     );
-    expect(correct_transcript).toHaveBeenNthCalledWith(
+    expect(start_correction_agent).toHaveBeenNthCalledWith(
       2,
       "selection",
       AI_MODELS[0].model_id,
@@ -165,7 +167,7 @@ function render_panel(
   options: {
     start_analysis?: (mode: AnalysisMode, marker_ids: string[]) => void;
     change_sections?: (sections: AnalysisToolSection[]) => void;
-    correct_transcript?: (scope: "all" | "selection") => void;
+    start_correction_agent?: (scope: "all" | "selection") => void;
     selected_transcript_count?: number;
   } = {},
 ) {
@@ -181,7 +183,9 @@ function render_panel(
       on_start_analysis={options.start_analysis ?? vi.fn()}
       selected_transcript_count={options.selected_transcript_count ?? 0}
       active_correction_scope={null}
-      on_correct_transcript={options.correct_transcript ?? vi.fn()}
+      correction_agent_job={null}
+      on_start_correction_agent={options.start_correction_agent ?? vi.fn()}
+      on_agent_response={vi.fn()}
       open_sections={open_sections}
       on_open_sections_change={options.change_sections ?? vi.fn()}
     />,

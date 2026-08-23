@@ -36,23 +36,27 @@ export function AnalysisPage() {
     refresh_assets,
     select_asset,
   } = use_asset_catalog();
-  const { start_analysis, start_transcription, is_operation_running } =
-    use_task_manager();
+  const {
+    start_analysis,
+    start_transcription,
+    start_transcript_correction,
+    restore_transcript_correction,
+    respond_to_transcript_correction,
+    agent_job_for_asset,
+    is_operation_running,
+  } = use_task_manager();
   const {
     segments,
     transcript,
     analysis_error,
     reload_analysis,
     save_transcript_segment,
-    correct_transcript_segments,
   } = use_asset_analysis(selected_asset_id);
   const { settings, settings_error, is_ready, update_settings } =
     use_analysis_page_settings();
   const [current_time, set_current_time] = useState(0);
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
-  const [active_correction_scope, set_active_correction_scope] =
-    useState<TranscriptCorrectionScope | null>(null);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [ai_models, set_ai_models] = useState<AiModelSummary[]>([]);
   const [model_error, set_model_error] = useState<string | null>(null);
@@ -92,8 +96,22 @@ export function AnalysisPage() {
   useEffect(() => {
     set_current_time(0);
     set_selected_transcript_indices([]);
-    set_active_correction_scope(null);
   }, [selected_asset_id]);
+
+  useEffect(() => {
+    if (!selected_asset_id) return;
+    void restore_transcript_correction(selected_asset_id)
+      .then((job) => {
+        if (job?.stage === "complete" && mounted_ref.current) {
+          return reload_analysis();
+        }
+      })
+      .catch((error: unknown) => {
+        if (mounted_ref.current && !is_abort_error(error)) {
+          set_page_error(error_message(error));
+        }
+      });
+  }, [reload_analysis, restore_transcript_correction, selected_asset_id]);
 
   function seek_player(seconds: number) {
     set_current_time(seconds);
@@ -136,16 +154,42 @@ export function AnalysisPage() {
     const segment_indices =
       scope === "all" ? null : selected_transcript_indices;
     if (segment_indices?.length === 0) return;
-    set_active_correction_scope(scope);
     set_page_error(null);
     try {
-      await correct_transcript_segments(segment_indices, ai_model_id);
+      const job = await start_transcript_correction(
+        selected_asset_id,
+        segment_indices,
+        ai_model_id,
+      );
+      if (job.stage === "complete" && mounted_ref.current) {
+        await reload_analysis();
+      }
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error)) {
         set_page_error(error_message(error));
       }
-    } finally {
-      if (mounted_ref.current) set_active_correction_scope(null);
+    }
+  }
+
+  async function respond_to_correction_agent(
+    action: Parameters<typeof respond_to_transcript_correction>[1],
+    ai_model_id?: string | null,
+  ) {
+    if (!correction_agent_job) return;
+    set_page_error(null);
+    try {
+      const job = await respond_to_transcript_correction(
+        correction_agent_job,
+        action,
+        ai_model_id,
+      );
+      if (job.stage === "complete" && mounted_ref.current) {
+        await reload_analysis();
+      }
+    } catch (error) {
+      if (mounted_ref.current && !is_abort_error(error)) {
+        set_page_error(error_message(error));
+      }
     }
   }
 
@@ -187,6 +231,18 @@ export function AnalysisPage() {
   const is_analyzing = selected_asset_id
     ? is_operation_running(selected_asset_id, "analysis")
     : false;
+  const correction_agent_job = selected_asset_id
+    ? agent_job_for_asset(selected_asset_id)
+    : null;
+  const correction_is_active =
+    correction_agent_job !== null &&
+    !["complete", "failed", "cancelled"].includes(correction_agent_job.stage);
+  const active_correction_scope: TranscriptCorrectionScope | null =
+    correction_is_active
+      ? correction_agent_job.segment_indices === null
+        ? "all"
+        : "selection"
+      : null;
   const asset_library = (
     <AssetLibrary
       assets={assets}
@@ -221,8 +277,12 @@ export function AnalysisPage() {
       }
       selected_transcript_count={selected_transcript_indices.length}
       active_correction_scope={active_correction_scope}
-      on_correct_transcript={(scope, ai_model_id) =>
+      correction_agent_job={correction_agent_job}
+      on_start_correction_agent={(scope, ai_model_id) =>
         void run_transcript_correction(scope, ai_model_id)
+      }
+      on_agent_response={(action, ai_model_id) =>
+        void respond_to_correction_agent(action, ai_model_id)
       }
       open_sections={settings.open_tool_sections}
       on_open_sections_change={(open_tool_sections) =>

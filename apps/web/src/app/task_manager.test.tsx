@@ -14,6 +14,10 @@ vi.mock("@/shared/api", () => ({
   analyze_asset: vi.fn(),
   get_analysis: vi.fn(),
   transcribe_asset: vi.fn(),
+  create_transcript_correction: vi.fn(),
+  get_agent_job: vi.fn(),
+  list_asset_agent_jobs: vi.fn(),
+  respond_to_agent_job: vi.fn(),
 }));
 
 describe("TaskManagerProvider", () => {

@@ -73,6 +73,42 @@ export type AnalysisToolSection =
 
 export type TranscriptCorrectionScope = "all" | "selection";
 
+export type AgentExecutionMode = "automatic" | "chunked" | "compressed";
+export type AgentStage =
+  | "pending"
+  | "preparing"
+  | "invoking_model"
+  | "validating"
+  | "waiting_for_input"
+  | "applying"
+  | "complete"
+  | "failed"
+  | "cancelled";
+export type AgentQuestionAction =
+  "change_model" | "chunk" | "compress" | "rerun_latest" | "cancel";
+export type AgentQuestion = {
+  question_id: string;
+  question_type: "context_limit" | "transcript_changed";
+  message: string;
+  actions: AgentQuestionAction[];
+};
+export type AgentJob = {
+  job_id: string;
+  asset_id: string;
+  agent_type: "transcript_correction";
+  execution_mode: AgentExecutionMode;
+  stage: AgentStage;
+  progress_percent: number;
+  message: string;
+  ai_model_id: string;
+  segment_indices: number[] | null;
+  transcript_checksum: string;
+  question: AgentQuestion | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AnalysisPageSettings = {
   asset_library_size_percent: number;
   asset_library_collapsed: boolean;

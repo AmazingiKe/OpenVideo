@@ -32,10 +32,6 @@ from openvideo.tools.media import probe_media
 from openvideo.tools.sources import SourceMatch
 from openvideo.tools.thumbnails import generate_thumbnail_sprite
 from openvideo.tools.transcribe import FasterWhisperTranscriber, transcribe_media
-from openvideo.tools.transcript_correction import (
-    LiteLlmTranscriptCorrector,
-    TranscriptCorrectionError,
-)
 from openvideo.tools.vision import LiteLlmVision
 
 
@@ -269,20 +265,6 @@ class AnalysisPrerequisiteError(AnalysisError):
     """分析缺少用户可补充的前置产物时抛出，以区别资源不存在。"""
 
 
-def _validated_transcript_indices(
-    segment_count: int,
-    segment_indices: list[int] | None,
-) -> list[int]:
-    if segment_indices is None:
-        return list(range(segment_count))
-    resolved_indices = list(dict.fromkeys(segment_indices))
-    if not resolved_indices:
-        raise AnalysisError("请先在时间线上选择转录片段")
-    if any(index < 0 or index >= segment_count for index in resolved_indices):
-        raise AnalysisError("修正请求包含不存在的转录片段")
-    return resolved_indices
-
-
 class AnalysisManager:
     """分析任务把转写等长耗时计算与短生命周期 HTTP 请求隔离开。"""
 
@@ -428,38 +410,6 @@ class AnalysisManager:
         updated_segments[segment_index] = updated_segments[segment_index].model_copy(
             update={"text": text}
         )
-        updated_transcript = transcript.model_copy(update={"segments": updated_segments})
-        self.library.save_transcript(updated_transcript)
-        return updated_transcript
-
-    def correct_transcript(
-        self,
-        asset_id: str,
-        segment_indices: list[int] | None,
-        ai_model_id: str,
-    ) -> Transcript:
-        transcript = self.library.load_transcript(asset_id)
-        if transcript is None:
-            raise AnalysisError("该视频还没有转写结果")
-        if not transcript.segments:
-            raise AnalysisError("该视频没有可修正的转录片段")
-        model = self.settings.ai_model(ai_model_id)
-        if model is None:
-            raise AnalysisPrerequisiteError("所选 AI 模型不存在，请在设置中重新选择")
-        resolved_indices = _validated_transcript_indices(
-            len(transcript.segments),
-            segment_indices,
-        )
-        corrector = LiteLlmTranscriptCorrector(model)
-        try:
-            corrections = corrector.correct(transcript, resolved_indices)
-        except TranscriptCorrectionError as error:
-            raise AnalysisError(str(error)) from error
-        updated_segments = list(transcript.segments)
-        for segment_index, text in corrections.items():
-            updated_segments[segment_index] = updated_segments[
-                segment_index
-            ].model_copy(update={"text": text})
         updated_transcript = transcript.model_copy(update={"segments": updated_segments})
         self.library.save_transcript(updated_transcript)
         return updated_transcript

@@ -9,6 +9,10 @@ class LlmCompletionError(RuntimeError):
     """统一供应商异常与空响应，避免领域工具依赖 LiteLLM 的响应细节。"""
 
 
+class LlmContextLengthError(LlmCompletionError):
+    """输入超过模型上下文时保留可恢复语义，供 Agent 请求用户决策。"""
+
+
 def complete_text(
     model: AiModelConfiguration,
     messages: list[dict[str, object]],
@@ -35,6 +39,8 @@ def complete_text(
     try:
         response = litellm.completion(**request)
         content = response.choices[0].message.content
+    except litellm.exceptions.ContextWindowExceededError as error:
+        raise LlmContextLengthError(f"模型上下文不足：{error}") from error
     except Exception as error:
         raise LlmCompletionError(f"模型请求失败：{error}") from error
     if not isinstance(content, str) or not content.strip():

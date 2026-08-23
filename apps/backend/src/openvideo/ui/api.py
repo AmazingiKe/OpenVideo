@@ -10,12 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from openvideo.agent_manager import AgentError, AgentManager
 from openvideo.application import (
     AnalysisError,
     AnalysisManager,
     AnalysisPrerequisiteError,
     DownloadManager,
 )
+from openvideo.core.agent_models import AgentJob, AgentResponse
 from openvideo.core.ai_models import (
     AiModelCollection,
     AiModelConfiguration,
@@ -195,24 +197,28 @@ def create_app(
     library: MediaLibrary | None = None
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
+    agent_manager: AgentManager | None = None
     page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
     directory_picker_lock = asyncio.Lock()
 
     async def install_library(opened_library: MediaLibrary) -> None:
-        nonlocal library, manager, analysis_manager, page_settings_store
+        nonlocal library, manager, analysis_manager, agent_manager, page_settings_store
         library = opened_library
         manager = DownloadManager(opened_library, resolved_settings)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
+        agent_manager = AgentManager(opened_library, resolved_settings)
         page_settings_store = PageSettingsStore(
             preference_store.path.parent,
             opened_library.manifest.library_id,
             opened_library.library_path / LEGACY_PAGE_SETTINGS_FILE_NAME,
         )
         analysis_manager.restore()
+        agent_manager.restore()
         app.state.library = opened_library
         app.state.download_manager = manager
         app.state.analysis_manager = analysis_manager
+        app.state.agent_manager = agent_manager
         app.state.page_settings_store = page_settings_store
 
     def require_library() -> MediaLibrary:
@@ -250,6 +256,8 @@ def create_app(
         try:
             yield
         finally:
+            if agent_manager:
+                await agent_manager.close()
             if library:
                 library.close()
 
@@ -257,6 +265,7 @@ def create_app(
     app.state.library = library
     app.state.download_manager = manager
     app.state.analysis_manager = analysis_manager
+    app.state.agent_manager = agent_manager
     app.state.page_settings_store = page_settings_store
     app.state.settings = resolved_settings
     app.add_middleware(
@@ -378,6 +387,7 @@ def create_app(
             "/api/media",
             "/api/downloads",
             "/api/analysis",
+            "/api/agent-jobs",
             "/api/page-settings",
         )
         if request.url.path.startswith(managed_prefixes) and library is None:
@@ -406,13 +416,15 @@ def create_app(
     async def create_library(request: LibraryCreateRequest) -> LibraryDescription:
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
             _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法切换")
-        _ensure_switch_allowed(manager, analysis_manager)
+        _ensure_switch_allowed(manager, analysis_manager, agent_manager)
         requested_path = _absolute_library_path(request.path)
         try:
             opened = MediaLibrary.initialize_directory(requested_path)
         except (LibraryError, OSError) as error:
             error_code = error.code if isinstance(error, LibraryError) else "library_create_failed"
             _library_error(422, error_code, str(error))
+        if agent_manager:
+            await agent_manager.close()
         if library:
             library.close()
         await install_library(opened)
@@ -426,12 +438,14 @@ def create_app(
         target = _absolute_library_path(request.path)
         if library and target == library.library_path:
             return library.description
-        _ensure_switch_allowed(manager, analysis_manager)
+        _ensure_switch_allowed(manager, analysis_manager, agent_manager)
         try:
             opened = MediaLibrary.open(target)
         except (LibraryError, OSError) as error:
             error_code = error.code if isinstance(error, LibraryError) else "library_open_failed"
             _library_error(422, error_code, str(error))
+        if agent_manager:
+            await agent_manager.close()
         if library:
             library.close()
         await install_library(opened)
@@ -439,18 +453,24 @@ def create_app(
         return opened.description
 
     @app.delete("/api/library", status_code=204)
-    def close_library() -> Response:
-        nonlocal library, manager, analysis_manager, page_settings_store
+    async def close_library() -> Response:
+        nonlocal library, manager, analysis_manager, agent_manager, page_settings_store
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
             _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法关闭")
-        _ensure_switch_allowed(manager, analysis_manager)
+        _ensure_switch_allowed(manager, analysis_manager, agent_manager)
+        if agent_manager:
+            await agent_manager.close()
         if library:
             library.close()
         library = None
         manager = None
         analysis_manager = None
+        agent_manager = None
         page_settings_store = None
         app.state.library = None
+        app.state.download_manager = None
+        app.state.analysis_manager = None
+        app.state.agent_manager = None
         app.state.page_settings_store = None
         save_current_path(None)
         return Response(status_code=204)
@@ -602,24 +622,58 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post(
-        "/api/media/assets/{asset_id}/transcript/correct",
-        response_model=Transcript,
+        "/api/media/assets/{asset_id}/transcript/corrections",
+        response_model=AgentJob,
+        status_code=status.HTTP_202_ACCEPTED,
     )
-    def correct_transcript(
+    async def create_transcript_correction(
         asset_id: str,
         request: TranscriptCorrectionRequest,
-    ) -> Transcript:
+    ) -> AgentJob:
         _ready_asset(library, asset_id)
         try:
-            return analysis_manager.correct_transcript(
+            job = agent_manager.create_transcript_correction(
                 asset_id,
                 request.segment_indices,
                 request.ai_model_id,
             )
-        except AnalysisPrerequisiteError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except AnalysisError as error:
+        except AgentError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        if job.stage.value == "pending":
+            agent_manager.start(job.job_id)
+        return job
+
+    @app.get("/api/agent-jobs/{job_id}", response_model=AgentJob)
+    def get_agent_job(job_id: str) -> AgentJob:
+        job = agent_manager.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Agent 任务不存在")
+        return job
+
+    @app.post(
+        "/api/agent-jobs/{job_id}/responses",
+        response_model=AgentJob,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def respond_to_agent_job(
+        job_id: str,
+        request: AgentResponse,
+    ) -> AgentJob:
+        try:
+            return agent_manager.respond(job_id, request)
+        except AgentError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get(
+        "/api/media/assets/{asset_id}/agent-jobs",
+        response_model=list[AgentJob],
+    )
+    def list_asset_agent_jobs(
+        asset_id: str,
+        active: bool = False,
+    ) -> list[AgentJob]:
+        _ready_asset(library, asset_id)
+        return agent_manager.list_jobs(asset_id, active)
 
     @app.get(
         "/api/media/assets/{asset_id}/segments",
@@ -800,9 +854,12 @@ def _absolute_library_path(raw_path: str) -> Path:
 def _ensure_switch_allowed(
     manager: DownloadManager | None,
     analysis_manager: AnalysisManager | None,
+    agent_manager: AgentManager | None,
 ) -> None:
     if (manager and manager.has_active_jobs()) or (
         analysis_manager and analysis_manager.has_active_jobs()
+    ) or (
+        agent_manager and agent_manager.has_active_jobs()
     ):
         _library_error(409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库")
 

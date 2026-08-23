@@ -29,6 +29,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_duration, format_time } from "@/shared/format";
 import {
   IMAGE_INPUT_MODALITY,
+  type AgentJob,
+  type AgentQuestionAction,
   type AnalysisMode,
   type AnalysisToolSection,
   type AiModelSummary,
@@ -39,6 +41,7 @@ import {
 } from "@/shared/types";
 import { CollapsiblePanelRail } from "./CollapsiblePanelRail";
 import { WorkbenchPanelHeader } from "./WorkbenchPanelHeader";
+import { TranscriptCorrectionAgentStatus } from "./TranscriptCorrectionAgentStatus";
 
 export const ANALYSIS_TOOL_SECTIONS: AnalysisToolSection[] = [
   "video_information",
@@ -68,9 +71,14 @@ type AnalysisToolPanelProps = {
   ) => void;
   selected_transcript_count: number;
   active_correction_scope: TranscriptCorrectionScope | null;
-  on_correct_transcript: (
+  correction_agent_job: AgentJob | null;
+  on_start_correction_agent: (
     scope: TranscriptCorrectionScope,
     ai_model_id: string,
+  ) => void;
+  on_agent_response: (
+    action: AgentQuestionAction,
+    ai_model_id?: string | null,
   ) => void;
   open_sections: AnalysisToolSection[];
   on_open_sections_change: (sections: AnalysisToolSection[]) => void;
@@ -89,7 +97,9 @@ export function AnalysisToolPanel({
   on_start_analysis,
   selected_transcript_count,
   active_correction_scope,
-  on_correct_transcript,
+  correction_agent_job,
+  on_start_correction_agent,
+  on_agent_response,
   open_sections,
   on_open_sections_change,
   collapsed = false,
@@ -343,7 +353,7 @@ export function AnalysisToolPanel({
                 type="button"
                 onClick={() => {
                   if (correction_model_id)
-                    on_correct_transcript("all", correction_model_id);
+                    on_start_correction_agent("all", correction_model_id);
                 }}
                 disabled={
                   !has_transcript ||
@@ -368,7 +378,7 @@ export function AnalysisToolPanel({
                 variant="outline"
                 onClick={() => {
                   if (correction_model_id)
-                    on_correct_transcript("selection", correction_model_id);
+                    on_start_correction_agent("selection", correction_model_id);
                 }}
                 disabled={
                   !has_transcript ||
@@ -389,8 +399,17 @@ export function AnalysisToolPanel({
                   : "选择修正"}
               </Button>
               <FieldDescription>
-                AI 会参考相邻转录校准错字和专有名词，时间码保持不变。
+                正常模式一次提交完整转录，仅写回变化项，时间码保持不变。
               </FieldDescription>
+              {correction_agent_job ? (
+                <TranscriptCorrectionAgentStatus
+                  job={correction_agent_job}
+                  models={ai_models}
+                  replacement_model_id={correction_model_id}
+                  on_replacement_model_change={set_correction_model_id}
+                  on_response={on_agent_response}
+                />
+              ) : null}
             </div>
           </AccordionContent>
         </AccordionItem>
