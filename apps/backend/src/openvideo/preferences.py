@@ -4,19 +4,16 @@ import os
 from pathlib import Path
 
 from platformdirs import user_config_path
-from pydantic import BaseModel
+from openvideo.core.ai_models import AiModelCollection
 
 
 PREFERENCES_FILE_NAME = "preferences.json"
 
 
-class Preferences(BaseModel):
+class Preferences(AiModelCollection):
     current_library_path: str | None = None
     tools_directory: str | None = None
     models_directory: str | None = None
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_api_key: str | None = None
-    vision_model: str = "gpt-5.6-terra"
 
 
 class PreferenceStore:

@@ -64,10 +64,14 @@ export function use_asset_analysis(asset_id: string | null) {
   );
 
   const correct_transcript_segments = useCallback(
-    async (segment_indices: number[] | null) => {
+    async (segment_indices: number[] | null, ai_model_id: string) => {
       if (!asset_id) return;
       try {
-        const transcript = await correct_transcript(asset_id, segment_indices);
+        const transcript = await correct_transcript(
+          asset_id,
+          segment_indices,
+          ai_model_id,
+        );
         set_analysis((current) => ({ ...current, transcript }));
         set_analysis_error(null);
       } catch (error) {

@@ -15,6 +15,7 @@ from openvideo.application import (
     AnalysisPrerequisiteError,
     DownloadManager,
 )
+from openvideo.core.ai_models import AiModelCollection
 from openvideo.core.analysis_models import (
     AnalysisJob,
     AnalysisMode,
@@ -107,12 +108,14 @@ class TranscriptSegmentUpdateRequest(BaseModel):
 
 class TranscriptCorrectionRequest(BaseModel):
     segment_indices: list[int] | None = None
+    ai_model_id: str
 
 
 class AnalysisCreateRequest(BaseModel):
     mode: AnalysisMode = AnalysisMode.FULL
     marker_ids: list[str] = Field(default_factory=list)
     force: bool = False
+    ai_model_id: str | None = None
 
 
 class TranscriptionCreateRequest(BaseModel):
@@ -134,22 +137,23 @@ class DirectorySelectionResponse(BaseModel):
     path: str | None
 
 
-class PreferencesPatch(BaseModel):
+class PreferencesPatch(AiModelCollection):
     tools_directory: str | None = None
     models_directory: str | None = None
-    openai_base_url: str | None = None
-    openai_api_key: str | None = None
-    vision_model: str | None = None
 
 
-class PreferencesResponse(BaseModel):
+class PreferencesResponse(AiModelCollection):
     tools_directory: str | None
     models_directory: str | None
-    openai_base_url: str
-    openai_api_key: str | None
-    vision_model: str
     managed_fields: list[str]
     library_path_managed: bool
+
+
+class AiModelSummary(BaseModel):
+    model_id: str
+    name: str
+    litellm_model: str
+    supports_vision: bool
 
 
 def create_app(
@@ -318,6 +322,7 @@ def create_app(
                 asset_id,
                 request.mode,
                 request.marker_ids,
+                request.ai_model_id,
                 request.force,
             )
         except AnalysisPrerequisiteError as error:
@@ -429,6 +434,18 @@ def create_app(
         save_current_path(str(library.library_path) if library else None)
         return _preferences_response(resolved_settings)
 
+    @app.get("/api/ai/models", response_model=list[AiModelSummary])
+    def list_ai_models() -> list[AiModelSummary]:
+        return [
+            AiModelSummary(
+                model_id=model.model_id,
+                name=model.name,
+                litellm_model=model.litellm_model,
+                supports_vision=model.supports_vision,
+            )
+            for model in resolved_settings.ai_models
+        ]
+
     @app.get(
         "/api/page-settings/analysis",
         response_model=AnalysisPageSettings,
@@ -522,6 +539,7 @@ def create_app(
             return analysis_manager.correct_transcript(
                 asset_id,
                 request.segment_indices,
+                request.ai_model_id,
             )
         except AnalysisPrerequisiteError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

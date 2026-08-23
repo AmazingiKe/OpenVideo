@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
 from openvideo.core.library import MediaLibrary
@@ -13,6 +14,17 @@ import openvideo.application as application_module
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 CONTENT = bytes(range(100))
+MODEL_ID = "model-01890f4c7a2b7cc298c4dc0c0c07398f"
+
+
+def ai_model(supports_vision: bool = False) -> AiModelConfiguration:
+    return AiModelConfiguration(
+        model_id=MODEL_ID,
+        name="测试模型",
+        litellm_model="openai/test-model",
+        api_key="test-key",
+        supports_vision=supports_vision,
+    )
 
 
 def create_client(tmp_path: Path) -> TestClient:
@@ -89,12 +101,12 @@ def test_selected_transcript_correction_is_persisted(tmp_path: Path, monkeypatch
         return {1: "上下文修正后的文字"}
 
     monkeypatch.setattr(
-        application_module.OpenAiCompatibleTranscriptCorrector,
+        application_module.LiteLlmTranscriptCorrector,
         "correct",
         correct_selected,
     )
     with create_client(tmp_path) as client:
-        client.app.state.analysis_manager.settings.openai_api_key = "test-key"
+        client.app.state.analysis_manager.settings.ai_models = [ai_model()]
         client.app.state.library.save_transcript(
             Transcript(
                 asset_id=ASSET_ID,
@@ -106,7 +118,7 @@ def test_selected_transcript_correction_is_persisted(tmp_path: Path, monkeypatch
         )
         response = client.post(
             f"/api/media/assets/{ASSET_ID}/transcript/correct",
-            json={"segment_indices": [1]},
+            json={"segment_indices": [1], "ai_model_id": MODEL_ID},
         )
         reloaded = client.get(f"/api/media/assets/{ASSET_ID}/transcript")
 
@@ -125,12 +137,12 @@ def test_automatic_transcript_correction_updates_all_segments(
         return {0: "修正前文", 1: "修正后文"}
 
     monkeypatch.setattr(
-        application_module.OpenAiCompatibleTranscriptCorrector,
+        application_module.LiteLlmTranscriptCorrector,
         "correct",
         correct_all,
     )
     with create_client(tmp_path) as client:
-        client.app.state.analysis_manager.settings.openai_api_key = "test-key"
+        client.app.state.analysis_manager.settings.ai_models = [ai_model()]
         client.app.state.library.save_transcript(
             Transcript(
                 asset_id=ASSET_ID,
@@ -142,7 +154,7 @@ def test_automatic_transcript_correction_updates_all_segments(
         )
         response = client.post(
             f"/api/media/assets/{ASSET_ID}/transcript/correct",
-            json={"segment_indices": None},
+            json={"segment_indices": None, "ai_model_id": MODEL_ID},
         )
 
     assert response.status_code == 200
@@ -162,11 +174,27 @@ def test_transcript_correction_requires_ai_credentials(tmp_path: Path):
         )
         response = client.post(
             f"/api/media/assets/{ASSET_ID}/transcript/correct",
-            json={"segment_indices": None},
+            json={"segment_indices": None, "ai_model_id": MODEL_ID},
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "请先在设置中配置 AI 接口密钥"
+    assert response.json()["detail"] == "所选 AI 模型不存在，请在设置中重新选择"
+
+
+def test_ai_model_list_does_not_expose_credentials(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        client.app.state.settings.ai_models = [ai_model(supports_vision=True)]
+        response = client.get("/api/ai/models")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "model_id": MODEL_ID,
+            "name": "测试模型",
+            "litellm_model": "openai/test-model",
+            "supports_vision": True,
+        }
+    ]
 
 
 def test_analyze_creates_job(tmp_path: Path):
@@ -179,6 +207,32 @@ def test_analyze_creates_job(tmp_path: Path):
     assert job["asset_id"] == ASSET_ID
     assert job["job_id"].startswith("job-")
     assert job["operation"] == "analysis"
+
+
+def test_analyze_records_selected_vision_model(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        client.app.state.settings.ai_models = [ai_model(supports_vision=True)]
+        client.app.state.library.save_transcript(Transcript(asset_id=ASSET_ID))
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/analyze",
+            json={"ai_model_id": MODEL_ID},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["ai_model_id"] == MODEL_ID
+
+
+def test_analyze_rejects_text_only_model_for_visual_task(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        client.app.state.settings.ai_models = [ai_model()]
+        client.app.state.library.save_transcript(Transcript(asset_id=ASSET_ID))
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/analyze",
+            json={"ai_model_id": MODEL_ID},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "所选 AI 模型不支持视觉分析"
 
 
 def test_marker_analysis_records_selected_marker_scope(tmp_path: Path):

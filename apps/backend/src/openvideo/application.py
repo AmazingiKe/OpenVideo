@@ -32,10 +32,10 @@ from openvideo.tools.sources import SourceMatch
 from openvideo.tools.thumbnails import generate_thumbnail_sprite
 from openvideo.tools.transcribe import FasterWhisperTranscriber, transcribe_media
 from openvideo.tools.transcript_correction import (
-    OpenAiCompatibleTranscriptCorrector,
+    LiteLlmTranscriptCorrector,
     TranscriptCorrectionError,
 )
-from openvideo.tools.vision import OpenAiCompatibleVision
+from openvideo.tools.vision import LiteLlmVision
 
 
 class DownloadManager:
@@ -299,6 +299,7 @@ class AnalysisManager:
         asset_id: str,
         mode: AnalysisMode,
         marker_ids: list[str],
+        ai_model_id: str | None,
         force: bool,
     ) -> AnalysisJob:
         asset = self.library.get(asset_id)
@@ -306,6 +307,12 @@ class AnalysisManager:
             raise AnalysisError("视频尚未就绪，无法分析")
         if self.library.load_transcript(asset_id) is None:
             raise AnalysisPrerequisiteError("请先完成视频转录，再开始内容分析")
+        if ai_model_id:
+            model = self.settings.ai_model(ai_model_id)
+            if model is None:
+                raise AnalysisPrerequisiteError("所选 AI 模型不存在，请在设置中重新选择")
+            if not model.supports_vision:
+                raise AnalysisPrerequisiteError("所选 AI 模型不支持视觉分析")
         active_job = self._active_job_for(asset_id)
         if active_job:
             return active_job
@@ -321,6 +328,7 @@ class AnalysisManager:
             asset_id=asset_id,
             mode=mode,
             marker_ids=resolved_marker_ids,
+            ai_model_id=ai_model_id,
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -427,23 +435,21 @@ class AnalysisManager:
         self,
         asset_id: str,
         segment_indices: list[int] | None,
+        ai_model_id: str,
     ) -> Transcript:
         transcript = self.library.load_transcript(asset_id)
         if transcript is None:
             raise AnalysisError("该视频还没有转写结果")
         if not transcript.segments:
             raise AnalysisError("该视频没有可修正的转录片段")
-        if not self.settings.openai_api_key:
-            raise AnalysisPrerequisiteError("请先在设置中配置 AI 接口密钥")
+        model = self.settings.ai_model(ai_model_id)
+        if model is None:
+            raise AnalysisPrerequisiteError("所选 AI 模型不存在，请在设置中重新选择")
         resolved_indices = _validated_transcript_indices(
             len(transcript.segments),
             segment_indices,
         )
-        corrector = OpenAiCompatibleTranscriptCorrector(
-            base_url=self.settings.openai_base_url,
-            api_key=self.settings.openai_api_key,
-            model=self.settings.vision_model,
-        )
+        corrector = LiteLlmTranscriptCorrector(model)
         try:
             corrections = corrector.correct(transcript, resolved_indices)
         except TranscriptCorrectionError as error:
@@ -534,7 +540,7 @@ class AnalysisManager:
                     self._update_job(job_id, AnalysisStage.COMPLETE, 100, "转录完成")
                     return
 
-                describer = self._describer()
+                describer = self._describer(job.ai_model_id)
                 self._update_job(job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件")
                 markers = self._job_markers(job)
                 asset_directory = self.library.artifacts_directory(asset.asset_id)
@@ -607,14 +613,13 @@ class AnalysisManager:
                 with self._lock:
                     self._active_job_id_by_asset_id.pop(job.asset_id, None)
 
-    def _describer(self) -> OpenAiCompatibleVision | None:
-        if not self.settings.openai_api_key:
+    def _describer(self, ai_model_id: str | None) -> LiteLlmVision | None:
+        if ai_model_id is None:
             return None
-        return OpenAiCompatibleVision(
-            base_url=self.settings.openai_base_url,
-            api_key=self.settings.openai_api_key,
-            model=self.settings.vision_model,
-        )
+        model = self.settings.ai_model(ai_model_id)
+        if model is None:
+            raise AnalysisPrerequisiteError("分析任务使用的 AI 模型已被删除")
+        return LiteLlmVision(model)
 
     def _transcriber(self, options: TranscriptionOptions) -> FasterWhisperTranscriber:
         return FasterWhisperTranscriber(

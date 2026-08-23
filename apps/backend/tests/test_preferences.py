@@ -1,6 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
+from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.preferences import PreferenceStore, Preferences
 from openvideo.settings import (
     DEFAULT_MODELS_DIRECTORY,
@@ -11,27 +15,35 @@ from openvideo.settings import (
 )
 
 
+MODEL = AiModelConfiguration(
+    model_id="model-01890f4c7a2b7cc298c4dc0c0c07398f",
+    name="主模型",
+    litellm_model="openai/gpt-5.6-terra",
+    api_key="secret",
+)
+
+
 def test_preferences_are_written_atomically(tmp_path: Path):
     store = PreferenceStore(tmp_path / "OpenVideo" / "preferences.json")
-    store.save(Preferences(current_library_path="D:\\资料库", openai_api_key="secret"))
+    store.save(Preferences(current_library_path="D:\\资料库", ai_models=[MODEL]))
 
     payload = json.loads(store.path.read_text(encoding="utf-8"))
     assert payload["current_library_path"] == "D:\\资料库"
-    assert payload["openai_api_key"] == "secret"
+    assert payload["ai_models"][0]["api_key"] == "secret"
     assert not store.path.with_suffix(".tmp").exists()
 
 
 def test_environment_values_override_saved_preferences(monkeypatch, tmp_path: Path):
     store = PreferenceStore(tmp_path / "preferences.json")
-    store.save(Preferences(models_directory="saved-models", openai_api_key="saved"))
+    store.save(Preferences(models_directory="saved-models"))
     monkeypatch.setenv("OPENVIDEO_MODELS_DIRECTORY", str(tmp_path / "models"))
-    monkeypatch.setenv("OPENVIDEO_OPENAI_API_KEY", "environment")
+    monkeypatch.setenv("OPENVIDEO_AI_MODELS", f"[{MODEL.model_dump_json()}]")
 
     settings = load_settings(store)
 
     assert settings.models_directory == str(tmp_path / "models")
-    assert settings.openai_api_key == "environment"
-    assert settings.managed_fields == {"models_directory", "openai_api_key"}
+    assert settings.ai_models == [MODEL]
+    assert settings.managed_fields == {"models_directory", "ai_models"}
 
 
 def test_default_runtime_directories_are_anchored_to_project_root():
@@ -52,3 +64,8 @@ def test_saved_project_library_path_returns_to_initial_setup(tmp_path: Path):
     store.save(Preferences(current_library_path=str(PROJECT_ROOT / "library")))
 
     assert load_settings(store).library_path is None
+
+
+def test_model_configuration_rejects_duplicate_persisted_identifiers():
+    with pytest.raises(ValidationError, match="AI 模型标识不能重复"):
+        Preferences(ai_models=[MODEL, MODEL])

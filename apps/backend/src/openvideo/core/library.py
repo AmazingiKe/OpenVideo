@@ -38,7 +38,7 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 FORMAT_VERSION = 1
-DATABASE_VERSION = 2
+DATABASE_VERSION = 3
 MANIFEST_FILE_NAME = "library.json"
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 LOCK_FILE_NAME = ".openvideo.lock"
@@ -193,6 +193,19 @@ class MediaLibrary:
             connection.commit()
         elif version == 1:
             self._migrate_asset_storage()
+            version = 2
+        if version == 2:
+            self._migrate_analysis_model()
+
+    def _migrate_analysis_model(self) -> None:
+        connection = self._db()
+        with connection:
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(analysis_jobs)")
+            }
+            if "ai_model_id" not in columns:
+                connection.execute("ALTER TABLE analysis_jobs ADD COLUMN ai_model_id TEXT")
+            connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
 
     def _migrate_asset_storage(self) -> None:
         connection = self._db()
@@ -230,7 +243,7 @@ class MediaLibrary:
                         f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
                         (asset_id, legacy_asset_id),
                     )
-            connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
+            connection.execute("PRAGMA user_version = 2")
             connection.commit()
         except Exception:
             connection.rollback()
@@ -656,7 +669,7 @@ CREATE TABLE download_jobs (
 );
 CREATE TABLE analysis_jobs (
     job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    operation TEXT NOT NULL, mode TEXT NOT NULL, stage TEXT NOT NULL, progress_percent REAL NOT NULL,
+    operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, stage TEXT NOT NULL, progress_percent REAL NOT NULL,
     message TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE transcripts (asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE, language TEXT, created_at TEXT NOT NULL);

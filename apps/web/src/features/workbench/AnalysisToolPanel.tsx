@@ -1,11 +1,13 @@
 import {
   useEffect,
+  useMemo,
   useState,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
 import { Sparkles, Wrench } from "lucide-react";
 
+import { AiModelSelect } from "@/components/AiModelSelect";
 import {
   Accordion,
   AccordionContent,
@@ -28,6 +30,7 @@ import { format_duration, format_time } from "@/shared/format";
 import type {
   AnalysisMode,
   AnalysisToolSection,
+  AiModelSummary,
   MediaAsset,
   MediaMarker,
   TranscriptCorrectionScope,
@@ -56,10 +59,18 @@ type AnalysisToolPanelProps = {
   is_transcribing: boolean;
   on_start_transcription: (options: TranscriptionOptions) => void;
   is_analyzing: boolean;
-  on_start_analysis: (mode: AnalysisMode, marker_ids: string[]) => void;
+  ai_models: AiModelSummary[];
+  on_start_analysis: (
+    mode: AnalysisMode,
+    marker_ids: string[],
+    ai_model_id: string | null,
+  ) => void;
   selected_transcript_count: number;
   active_correction_scope: TranscriptCorrectionScope | null;
-  on_correct_transcript: (scope: TranscriptCorrectionScope) => void;
+  on_correct_transcript: (
+    scope: TranscriptCorrectionScope,
+    ai_model_id: string,
+  ) => void;
   open_sections: AnalysisToolSection[];
   on_open_sections_change: (sections: AnalysisToolSection[]) => void;
   collapsed?: boolean;
@@ -73,6 +84,7 @@ export function AnalysisToolPanel({
   is_transcribing,
   on_start_transcription,
   is_analyzing,
+  ai_models,
   on_start_analysis,
   selected_transcript_count,
   active_correction_scope,
@@ -92,10 +104,31 @@ export function AnalysisToolPanel({
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
     new Set(),
   );
+  const [correction_model_id, set_correction_model_id] = useState<
+    string | null
+  >(null);
+  const [vision_model_id, set_vision_model_id] = useState<string | null>(null);
+  const vision_models = useMemo(
+    () => ai_models.filter((model) => model.supports_vision),
+    [ai_models],
+  );
 
   useEffect(() => {
     set_selected_marker_ids(new Set(markers.map((marker) => marker.marker_id)));
   }, [asset?.asset_id, markers]);
+
+  useEffect(() => {
+    set_correction_model_id((current) =>
+      ai_models.some((model) => model.model_id === current)
+        ? current
+        : (ai_models[0]?.model_id ?? null),
+    );
+    set_vision_model_id((current) =>
+      vision_models.some((model) => model.model_id === current)
+        ? current
+        : null,
+    );
+  }, [ai_models, vision_models]);
 
   if (collapsed) {
     return (
@@ -292,12 +325,25 @@ export function AnalysisToolPanel({
                     : "未选择"}
                 </Badge>
               </div>
+              <AiModelSelect
+                id="transcript-correction-model"
+                label="执行模型"
+                models={ai_models}
+                value={correction_model_id}
+                on_change={set_correction_model_id}
+                disabled={active_correction_scope !== null}
+                description="可在设置中添加 OpenAI、Anthropic、Gemini、Ollama 等模型。"
+              />
               <Button
                 className="w-full"
                 type="button"
-                onClick={() => on_correct_transcript("all")}
+                onClick={() => {
+                  if (correction_model_id)
+                    on_correct_transcript("all", correction_model_id);
+                }}
                 disabled={
                   !has_transcript ||
+                  !correction_model_id ||
                   is_transcribing ||
                   is_analyzing ||
                   active_correction_scope !== null
@@ -316,9 +362,13 @@ export function AnalysisToolPanel({
                 className="w-full"
                 type="button"
                 variant="outline"
-                onClick={() => on_correct_transcript("selection")}
+                onClick={() => {
+                  if (correction_model_id)
+                    on_correct_transcript("selection", correction_model_id);
+                }}
                 disabled={
                   !has_transcript ||
+                  !correction_model_id ||
                   selected_transcript_count === 0 ||
                   is_transcribing ||
                   is_analyzing ||
@@ -368,6 +418,16 @@ export function AnalysisToolPanel({
                   标记
                 </ToggleGroupItem>
               </ToggleGroup>
+              <AiModelSelect
+                id="visual-analysis-model"
+                label="视觉模型"
+                models={vision_models}
+                value={vision_model_id}
+                on_change={set_vision_model_id}
+                allow_without_model
+                disabled={is_analyzing}
+                description="不使用模型时仍会生成音频时间轴与关键帧。"
+              />
               {analysis_mode === "markers" ? (
                 <div className="grid max-h-32 gap-1 overflow-y-auto">
                   {markers.map((marker) => (
@@ -398,7 +458,11 @@ export function AnalysisToolPanel({
                 className="w-full"
                 type="button"
                 onClick={() =>
-                  on_start_analysis(analysis_mode, [...selected_marker_ids])
+                  on_start_analysis(
+                    analysis_mode,
+                    [...selected_marker_ids],
+                    vision_model_id,
+                  )
                 }
                 disabled={
                   !has_transcript ||

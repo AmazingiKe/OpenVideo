@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration
 from openvideo.preferences import PreferenceStore, Preferences
 
 
@@ -14,10 +16,8 @@ SETTING_ENVIRONMENTS = {
     "ffprobe_path": "OPENVIDEO_FFPROBE_PATH",
     "tools_directory": "OPENVIDEO_TOOLS_DIRECTORY",
     "models_directory": "OPENVIDEO_MODELS_DIRECTORY",
-    "openai_base_url": "OPENVIDEO_OPENAI_BASE_URL",
-    "openai_api_key": "OPENVIDEO_OPENAI_API_KEY",
-    "vision_model": "OPENVIDEO_VISION_MODEL",
 }
+AI_MODELS_ENVIRONMENT = "OPENVIDEO_AI_MODELS"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_RUNTIME_DIRECTORY = PROJECT_ROOT / "runtime"
@@ -25,16 +25,13 @@ DEFAULT_TOOLS_DIRECTORY = DEFAULT_RUNTIME_DIRECTORY / "tools"
 DEFAULT_MODELS_DIRECTORY = DEFAULT_RUNTIME_DIRECTORY / "models"
 
 
-class Settings(BaseModel):
+class Settings(AiModelCollection):
     library_path: Path | None = None
     ffmpeg_path: str | None = None
     ffprobe_path: str | None = None
     tools_directory: str | None = None
     cors_origins: list[str] = Field(default_factory=lambda: list(DEFAULT_CORS_ORIGINS))
     models_directory: str | None = None
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_api_key: str | None = None
-    vision_model: str = "gpt-5.6-terra"
     managed_fields: set[str] = Field(default_factory=set)
 
     @property
@@ -55,6 +52,12 @@ class Settings(BaseModel):
         )
         return models_directory / "faster-whisper"
 
+    def ai_model(self, model_id: str) -> AiModelConfiguration | None:
+        return next(
+            (model for model in self.ai_models if model.model_id == model_id),
+            None,
+        )
+
 
 def load_settings(store: PreferenceStore | None = None) -> Settings:
     preferences = (store or PreferenceStore()).load()
@@ -64,6 +67,13 @@ def load_settings(store: PreferenceStore | None = None) -> Settings:
         if environment_name in os.environ:
             values[field] = os.environ[environment_name] or None
             managed_fields.add(field)
+    raw_ai_models = os.getenv(AI_MODELS_ENVIRONMENT)
+    if raw_ai_models is not None:
+        try:
+            values["ai_models"] = json.loads(raw_ai_models)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{AI_MODELS_ENVIRONMENT} 必须是有效的 JSON 数组") from error
+        managed_fields.add("ai_models")
     raw_origins = os.getenv("OPENVIDEO_CORS_ORIGINS")
     origins = (
         [origin.strip() for origin in raw_origins.split(",") if origin.strip()]

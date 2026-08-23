@@ -21,6 +21,7 @@ OpenVideo 源于一个真实的学习需求：面对一小时以上的数学、�
 - 对已就绪视频发起音频转写：优先复用平台字幕，缺失时用本地 faster-whisper 提取带时间戳文字，结果持久化到 SQLite
 - 支持全片时间轴与标记重点两种分析模式，按语音停顿和画面变化组织课程事件
 - 为每个事件提取多张时序画面；视觉模型不可用时仍保留可回跳的音频分析结果
+- 通过 LiteLLM 配置多个云端或本地模型，并按任务选择文本修正或视觉分析模型
 - `重点`、`公式`、`疑问`、`案例` 标签会控制标记附近的分析目标与详细笔记
 
 ## 工程结构
@@ -108,12 +109,18 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 | `OPENVIDEO_TOOLS_DIRECTORY` | `runtime/tools` | 第三方工具根目录 |
 | `OPENVIDEO_CORS_ORIGINS` | 本机 Vite 来源 | 允许访问 API 的本机 Web 来源，逗号分隔 |
 | `OPENVIDEO_MODELS_DIRECTORY` | `runtime/models` | 本地模型根目录 |
-| `OPENVIDEO_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI 兼容视觉接口根地址 |
-| `OPENVIDEO_OPENAI_API_KEY` | 空 | 可选视觉模型密钥；留空时只生成音频时间轴 |
-| `OPENVIDEO_VISION_MODEL` | `gpt-5.6-terra` | 用于多帧画面与转写联合分析的模型 |
+| `OPENVIDEO_AI_MODELS` | `[]` | LiteLLM 模型配置 JSON 数组；设置后 Web 中的模型配置只读 |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 
 未配置 `OPENVIDEO_LIBRARY_PATH` 时，应用从系统用户配置目录的 `OpenVideo/preferences.json` 恢复上次资料库；路径失效时进入初始化页。
+
+推荐在 Web 设置页添加模型。`LiteLLM 模型` 使用 `供应商/模型` 格式，例如 `openai/gpt-5`、`anthropic/claude-sonnet-4-5` 或 `ollama/qwen2.5-vl`。自定义兼容网关可同时填写 API 地址；需要处理关键帧时，应启用“支持图片输入”。
+
+环境变量配置示例：
+
+```powershell
+$env:OPENVIDEO_AI_MODELS = '[{"model_id":"model-0198d12345677890abcdef1234567890","name":"主视觉模型","litellm_model":"openai/gpt-5","api_key":"your-key","api_base":null,"api_version":null,"supports_vision":true}]'
+```
 
 ## 测试与构建
 

@@ -39,11 +39,22 @@ export type LibraryDescription = {
 export type Preferences = {
   tools_directory: string | null;
   models_directory: string | null;
-  openai_base_url: string;
-  openai_api_key: string | null;
-  vision_model: string;
+  ai_models: AiModelConfiguration[];
   managed_fields: string[];
   library_path_managed: boolean;
+};
+
+export type AiModelSummary = {
+  model_id: string;
+  name: string;
+  litellm_model: string;
+  supports_vision: boolean;
+};
+
+export type AiModelConfiguration = AiModelSummary & {
+  api_key: string | null;
+  api_base: string | null;
+  api_version: string | null;
 };
 
 export type AnalysisToolSection =
@@ -103,6 +114,7 @@ export type AnalysisJob = {
   operation: AnalysisOperation;
   mode: AnalysisMode;
   marker_ids: string[];
+  ai_model_id: string | null;
   capabilities: AnalysisCapability[];
   stage: AnalysisStage;
   progress_percent: number;

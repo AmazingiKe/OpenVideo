@@ -170,7 +170,7 @@ describe("api client", () => {
       );
 
     await expect(
-      analyze_asset("asset-1", "markers", ["marker-1"]),
+      analyze_asset("asset-1", "markers", ["marker-1"], "model-1"),
     ).resolves.toEqual(response);
     expect(fetch_mock).toHaveBeenCalledWith(
       "/api/media/assets/asset-1/analyze",
@@ -180,6 +180,7 @@ describe("api client", () => {
         body: JSON.stringify({
           mode: "markers",
           marker_ids: ["marker-1"],
+          ai_model_id: "model-1",
           force: true,
         }),
         signal: undefined,

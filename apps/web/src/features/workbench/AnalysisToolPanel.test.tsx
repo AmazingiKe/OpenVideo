@@ -25,6 +25,15 @@ const MARKERS: MediaMarker[] = [
   },
 ];
 
+const AI_MODELS = [
+  {
+    model_id: "model-0198d12345677890abcdef1234567890",
+    name: "测试模型",
+    litellm_model: "openai/test-model",
+    supports_vision: true,
+  },
+];
+
 describe("AnalysisToolPanel", () => {
   it("moves video metadata and the description into video information", () => {
     render_panel(["video_information"]);
@@ -52,9 +61,11 @@ describe("AnalysisToolPanel", () => {
     fireEvent.click(marker_options[0]);
     fireEvent.click(screen.getByRole("button", { name: "分析 1 个标记" }));
 
-    expect(start_analysis).toHaveBeenCalledWith("markers", [
-      "marker-1123456789abcdef0123456789abcdef",
-    ]);
+    expect(start_analysis).toHaveBeenCalledWith(
+      "markers",
+      ["marker-1123456789abcdef0123456789abcdef"],
+      null,
+    );
   });
 
   it("toggles one section normally and all sections with Shift", () => {
@@ -107,6 +118,7 @@ describe("AnalysisToolPanel", () => {
         is_transcribing={false}
         on_start_transcription={vi.fn()}
         is_analyzing={false}
+        ai_models={AI_MODELS}
         on_start_analysis={vi.fn()}
         selected_transcript_count={0}
         active_correction_scope={null}
@@ -133,8 +145,16 @@ describe("AnalysisToolPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "自动全部修正" }));
     fireEvent.click(screen.getByRole("button", { name: "选择修正" }));
 
-    expect(correct_transcript).toHaveBeenNthCalledWith(1, "all");
-    expect(correct_transcript).toHaveBeenNthCalledWith(2, "selection");
+    expect(correct_transcript).toHaveBeenNthCalledWith(
+      1,
+      "all",
+      AI_MODELS[0].model_id,
+    );
+    expect(correct_transcript).toHaveBeenNthCalledWith(
+      2,
+      "selection",
+      AI_MODELS[0].model_id,
+    );
     expect(screen.getByText("已选择 1 条")).toBeInTheDocument();
   });
 });
@@ -156,6 +176,7 @@ function render_panel(
       is_transcribing={false}
       on_start_transcription={vi.fn()}
       is_analyzing={false}
+      ai_models={AI_MODELS}
       on_start_analysis={options.start_analysis ?? vi.fn()}
       selected_transcript_count={options.selected_transcript_count ?? 0}
       active_correction_scope={null}

@@ -20,8 +20,10 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { FloatingError } from "@/components/FloatingError";
 import { error_message, is_abort_error } from "@/shared/errors";
+import { list_ai_models } from "@/shared/api";
 import type {
   AnalysisMode,
+  AiModelSummary,
   TranscriptCorrectionScope,
   TranscriptionOptions,
 } from "@/shared/types";
@@ -52,6 +54,8 @@ export function AnalysisPage() {
   const [active_correction_scope, set_active_correction_scope] =
     useState<TranscriptCorrectionScope | null>(null);
   const [page_error, set_page_error] = useState<string | null>(null);
+  const [ai_models, set_ai_models] = useState<AiModelSummary[]>([]);
+  const [model_error, set_model_error] = useState<string | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
   const asset_library_panel_ref = useRef<PanelImperativeHandle>(null);
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
@@ -78,6 +82,19 @@ export function AnalysisPage() {
   }, [refresh_assets]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    list_ai_models(controller.signal)
+      .then((models) => {
+        set_ai_models(models);
+        set_model_error(null);
+      })
+      .catch((error: unknown) => {
+        if (!is_abort_error(error)) set_model_error(error_message(error));
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     set_current_time(0);
     set_selected_transcript_indices([]);
     set_active_correction_scope(null);
@@ -88,11 +105,15 @@ export function AnalysisPage() {
     player_ref.current?.seek_to(seconds);
   }
 
-  async function run_analysis(mode: AnalysisMode, marker_ids: string[]) {
+  async function run_analysis(
+    mode: AnalysisMode,
+    marker_ids: string[],
+    ai_model_id: string | null,
+  ) {
     if (!selected_asset_id) return;
     set_page_error(null);
     try {
-      await start_analysis(selected_asset_id, mode, marker_ids);
+      await start_analysis(selected_asset_id, mode, marker_ids, ai_model_id);
       if (mounted_ref.current) await reload_analysis();
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
@@ -112,7 +133,10 @@ export function AnalysisPage() {
     }
   }
 
-  async function run_transcript_correction(scope: TranscriptCorrectionScope) {
+  async function run_transcript_correction(
+    scope: TranscriptCorrectionScope,
+    ai_model_id: string,
+  ) {
     if (!selected_asset_id) return;
     const segment_indices =
       scope === "all" ? null : selected_transcript_indices;
@@ -120,7 +144,7 @@ export function AnalysisPage() {
     set_active_correction_scope(scope);
     set_page_error(null);
     try {
-      await correct_transcript_segments(segment_indices);
+      await correct_transcript_segments(segment_indices, ai_model_id);
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error)) {
         set_page_error(error_message(error));
@@ -196,12 +220,15 @@ export function AnalysisPage() {
       is_transcribing={is_transcribing}
       on_start_transcription={(options) => void run_transcription(options)}
       is_analyzing={is_analyzing}
-      on_start_analysis={(mode, marker_ids) =>
-        void run_analysis(mode, marker_ids)
+      ai_models={ai_models}
+      on_start_analysis={(mode, marker_ids, ai_model_id) =>
+        void run_analysis(mode, marker_ids, ai_model_id)
       }
       selected_transcript_count={selected_transcript_indices.length}
       active_correction_scope={active_correction_scope}
-      on_correct_transcript={(scope) => void run_transcript_correction(scope)}
+      on_correct_transcript={(scope, ai_model_id) =>
+        void run_transcript_correction(scope, ai_model_id)
+      }
       open_sections={settings.open_tool_sections}
       on_open_sections_change={(open_tool_sections) =>
         update_settings({ open_tool_sections })
@@ -213,7 +240,7 @@ export function AnalysisPage() {
     />
   );
 
-  const error = page_error ?? settings_error ?? analysis_error;
+  const error = page_error ?? model_error ?? settings_error ?? analysis_error;
   return (
     <>
       <div className="min-h-0 min-w-0 overflow-hidden max-[979px]:overflow-auto">

@@ -36,6 +36,7 @@ const meta = {
     is_transcribing: false,
     on_start_transcription: () => undefined,
     is_analyzing: false,
+    ai_models: [],
     on_start_analysis: () => undefined,
     selected_transcript_count: 0,
     active_correction_scope: null,

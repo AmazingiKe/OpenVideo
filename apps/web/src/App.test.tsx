@@ -13,6 +13,7 @@ import {
   get_segments,
   get_transcript,
   list_assets,
+  list_ai_models,
   probe_source,
 } from "./shared/api";
 import type { MediaAsset } from "./shared/types";
@@ -32,6 +33,7 @@ vi.mock("./shared/api", () => ({
   get_segments: vi.fn(),
   get_transcript: vi.fn(),
   list_assets: vi.fn(),
+  list_ai_models: vi.fn(),
   media_url: (path: string) => path,
   probe_source: vi.fn(),
   select_directory: vi.fn(),
@@ -64,9 +66,7 @@ describe("App", () => {
     vi.mocked(get_preferences).mockResolvedValue({
       tools_directory: null,
       models_directory: null,
-      openai_base_url: "https://api.openai.com/v1",
-      openai_api_key: null,
-      vision_model: "gpt-5.6-terra",
+      ai_models: [],
       managed_fields: [],
       library_path_managed: false,
     });
@@ -77,6 +77,7 @@ describe("App", () => {
       tool_panel_collapsed: false,
       open_tool_sections: ["video_information"],
     });
+    vi.mocked(list_ai_models).mockResolvedValue([]);
   });
 
   it("shows the library setup before mounting workspace providers", async () => {

@@ -4,6 +4,7 @@ import {
   Database,
   FolderOpen,
   Info,
+  Plus,
   Save,
   Settings2,
   TriangleAlert,
@@ -32,17 +33,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { LibraryPathForm } from "@/features/library/LibraryPathForm";
+import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
 import {
   get_preferences,
   select_directory,
   update_preferences,
 } from "@/shared/api";
 import type { Preferences } from "@/shared/types";
+import { model_id } from "@/shared/identifiers";
 
-type EditableField = Exclude<
-  keyof Preferences,
-  "managed_fields" | "library_path_managed"
->;
+type EditableField = "tools_directory" | "models_directory";
 
 export function SettingsPage() {
   const { library, set_library } = use_library();
@@ -68,6 +68,28 @@ export function SettingsPage() {
     );
   }
 
+  function add_ai_model() {
+    set_preferences((current) =>
+      current
+        ? {
+            ...current,
+            ai_models: [
+              ...current.ai_models,
+              {
+                model_id: model_id(),
+                name: "新模型",
+                litellm_model: "openai/gpt-5",
+                api_key: null,
+                api_base: null,
+                api_version: null,
+                supports_vision: false,
+              },
+            ],
+          }
+        : current,
+    );
+  }
+
   async function save() {
     if (!preferences) return;
     set_saving(true);
@@ -77,9 +99,7 @@ export function SettingsPage() {
         await update_preferences({
           tools_directory: preferences.tools_directory,
           models_directory: preferences.models_directory,
-          openai_base_url: preferences.openai_base_url,
-          openai_api_key: preferences.openai_api_key,
-          vision_model: preferences.vision_model,
+          ai_models: preferences.ai_models,
         }),
       );
       set_message("设置已保存");
@@ -174,36 +194,36 @@ export function SettingsPage() {
           </SettingsCard>
           <SettingsCard
             icon={Bot}
-            title="AI 分析"
-            description="连接 OpenAI 兼容接口，为关键帧补充视觉理解。"
+            title="AI 模型"
+            description="集中配置 LiteLLM 模型，任务执行时只引用模型标识。"
           >
-            <FieldGroup>
-              <PreferenceInput
-                field="openai_base_url"
-                label="接口地址"
-                value={preferences.openai_base_url}
-                preferences={preferences}
-                on_change={update_field}
-              />
-              <div className="grid gap-5 md:grid-cols-2">
-                <PreferenceInput
-                  field="openai_api_key"
-                  label="API 密钥"
-                  value={preferences.openai_api_key ?? ""}
-                  type="password"
-                  description="密钥将以明文保存在本机 preferences.json。"
-                  preferences={preferences}
-                  on_change={update_field}
-                />
-                <PreferenceInput
-                  field="vision_model"
-                  label="视觉模型"
-                  value={preferences.vision_model}
-                  preferences={preferences}
-                  on_change={update_field}
-                />
-              </div>
-            </FieldGroup>
+            <Alert>
+              <Info aria-hidden="true" />
+              <AlertTitle>密钥仅保存在本机</AlertTitle>
+              <AlertDescription>
+                前端执行任务时只发送 model_id，API 密钥保存在 preferences.json。
+              </AlertDescription>
+            </Alert>
+            <AiModelConfigurationList
+              models={preferences.ai_models}
+              managed={preferences.managed_fields.includes("ai_models")}
+              on_change={(ai_models) =>
+                set_preferences((current) =>
+                  current ? { ...current, ai_models } : current,
+                )
+              }
+            />
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={add_ai_model}
+                disabled={preferences.managed_fields.includes("ai_models")}
+              >
+                <Plus data-icon="inline-start" />
+                添加模型
+              </Button>
+            </div>
           </SettingsCard>
           {message ? (
             <Alert
@@ -360,41 +380,5 @@ function SettingsCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-6">{children}</CardContent>
     </Card>
-  );
-}
-
-function PreferenceInput({
-  field,
-  label,
-  value,
-  preferences,
-  on_change,
-  type = "text",
-  description,
-}: {
-  field: EditableField;
-  label: string;
-  value: string;
-  preferences: Preferences;
-  on_change: (field: EditableField, value: string) => void;
-  type?: "text" | "password";
-  description?: string;
-}) {
-  const managed = preferences.managed_fields.includes(field);
-  return (
-    <Field data-disabled={managed}>
-      <FieldLabel htmlFor={field}>
-        {label}
-        {managed ? <Badge variant="secondary">环境变量</Badge> : null}
-      </FieldLabel>
-      <Input
-        id={field}
-        type={type}
-        value={value}
-        onChange={(event) => on_change(field, event.target.value)}
-        disabled={managed}
-      />
-      {description ? <FieldDescription>{description}</FieldDescription> : null}
-    </Field>
   );
 }

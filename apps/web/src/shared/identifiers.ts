@@ -15,6 +15,10 @@ export function uuid7(): string {
   return format_hex(bytes);
 }
 
+export function model_id(): string {
+  return `model-${uuid7().replaceAll("-", "")}`;
+}
+
 function format_hex(bytes: Uint8Array): string {
   const hex = Array.from(bytes, (byte) =>
     byte.toString(16).padStart(2, "0"),

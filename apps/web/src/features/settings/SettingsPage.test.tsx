@@ -28,9 +28,7 @@ vi.mock("@/shared/api", () => ({
 const preferences = {
   tools_directory: null,
   models_directory: null,
-  openai_base_url: "https://api.openai.com/v1",
-  openai_api_key: null,
-  vision_model: "gpt-5.6-terra",
+  ai_models: [],
   managed_fields: ["tools_directory"],
   library_path_managed: false,
 };
@@ -59,6 +57,27 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     expect(update_preferences).toHaveBeenCalledWith(
       expect.objectContaining({ models_directory: "D:\\Models" }),
+    );
+  });
+
+  it("adds a LiteLLM model configuration before saving", async () => {
+    render(<SettingsPage />);
+    await screen.findByText("尚未配置 AI 模型");
+    fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
+    fireEvent.change(screen.getByLabelText("LiteLLM 模型"), {
+      target: { value: "anthropic/claude-sonnet-4-5" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+
+    expect(update_preferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ai_models: [
+          expect.objectContaining({
+            model_id: expect.stringMatching(/^model-[0-9a-f]{32}$/),
+            litellm_model: "anthropic/claude-sonnet-4-5",
+          }),
+        ],
+      }),
     );
   });
 });

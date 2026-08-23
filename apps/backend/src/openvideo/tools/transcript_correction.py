@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 
-import httpx
-
+from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.analysis_models import Transcript
+from openvideo.tools.llm import LlmCompletionError, complete_text
 
 
 CORRECTION_BATCH_SIZE = 24
@@ -19,12 +19,10 @@ class TranscriptCorrectionError(RuntimeError):
     """模型响应无法安全映射回原转录片段时抛出。"""
 
 
-class OpenAiCompatibleTranscriptCorrector:
-    """调用 OpenAI 兼容接口，并把模型输出限制为目标片段的文字修正。"""
+class LiteLlmTranscriptCorrector:
+    """通过可选模型修正文本，同时严格约束可写回的片段集合。"""
 
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+    def __init__(self, model: AiModelConfiguration) -> None:
         self.model = model
 
     def correct(
@@ -63,35 +61,14 @@ class OpenAiCompatibleTranscriptCorrector:
             "每个目标索引必须且只能出现一次。\n\n"
             + "\n".join(transcript_lines)
         )
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-        }
         try:
-            response = httpx.post(
-                f"{self.base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=DEFAULT_CORRECTION_TIMEOUT_SECONDS,
+            content = complete_text(
+                self.model,
+                [{"role": "user", "content": prompt}],
+                DEFAULT_CORRECTION_TIMEOUT_SECONDS,
             )
-            response.raise_for_status()
-        except httpx.HTTPError as error:
-            raise TranscriptCorrectionError(f"转录修正请求失败：{error}") from error
-
-        try:
-            content = (
-                response.json()
-                .get("choices", [{}])[0]
-                .get("message", {})
-                .get("content")
-            )
-        except (AttributeError, IndexError, ValueError) as error:
-            raise TranscriptCorrectionError("模型返回的转录修正格式无效") from error
-        if not isinstance(content, str) or not content.strip():
-            raise TranscriptCorrectionError("模型未返回有效的转录修正结果")
+        except LlmCompletionError as error:
+            raise TranscriptCorrectionError(str(error)) from error
         return _parse_corrections(content, target_indices)
 
 

@@ -1,5 +1,6 @@
 import type {
   AnalysisJob,
+  AiModelSummary,
   AnalysisMode,
   AnalysisPageSettings,
   DownloadJob,
@@ -102,6 +103,12 @@ export function get_preferences(signal?: AbortSignal): Promise<Preferences> {
   return request_json("/api/preferences", { signal });
 }
 
+export function list_ai_models(
+  signal?: AbortSignal,
+): Promise<AiModelSummary[]> {
+  return request_json("/api/ai/models", { signal });
+}
+
 export function update_preferences(
   preferences: Partial<
     Omit<Preferences, "managed_fields" | "library_path_managed">
@@ -179,6 +186,7 @@ export function analyze_asset(
   asset_id: string,
   mode: AnalysisMode,
   marker_ids: string[],
+  ai_model_id: string | null,
   signal?: AbortSignal,
 ): Promise<AnalysisJob> {
   return request_json(
@@ -186,7 +194,7 @@ export function analyze_asset(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode, marker_ids, force: true }),
+      body: JSON.stringify({ mode, marker_ids, ai_model_id, force: true }),
       signal,
     },
   );
@@ -247,6 +255,7 @@ export function update_transcript_segment(
 export function correct_transcript(
   asset_id: string,
   segment_indices: number[] | null,
+  ai_model_id: string,
   signal?: AbortSignal,
 ): Promise<Transcript> {
   return request_json(
@@ -254,7 +263,7 @@ export function correct_transcript(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ segment_indices }),
+      body: JSON.stringify({ segment_indices, ai_model_id }),
       signal,
     },
   );

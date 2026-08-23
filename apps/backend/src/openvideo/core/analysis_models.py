@@ -80,6 +80,7 @@ class AnalysisJob(BaseModel):
     operation: AnalysisOperation = AnalysisOperation.ANALYSIS
     mode: AnalysisMode = AnalysisMode.FULL
     marker_ids: list[str] = Field(default_factory=list)
+    ai_model_id: str | None = None
     capabilities: list[AnalysisCapability] = Field(default_factory=list)
     stage: AnalysisStage = AnalysisStage.PENDING
     progress_percent: float = 0

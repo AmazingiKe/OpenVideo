@@ -32,6 +32,7 @@ type TaskManager = {
     asset_id: string,
     mode: AnalysisMode,
     marker_ids: string[],
+    ai_model_id: string | null,
   ) => Promise<AnalysisJob>;
   start_transcription: (
     asset_id: string,
@@ -172,9 +173,14 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   );
 
   const start_analysis = useCallback(
-    (asset_id: string, mode: AnalysisMode, marker_ids: string[]) =>
+    (
+      asset_id: string,
+      mode: AnalysisMode,
+      marker_ids: string[],
+      ai_model_id: string | null,
+    ) =>
       run_analysis_operation(asset_id, "analysis", (signal) =>
-        analyze_asset(asset_id, mode, marker_ids, signal),
+        analyze_asset(asset_id, mode, marker_ids, ai_model_id, signal),
       ),
     [run_analysis_operation],
   );

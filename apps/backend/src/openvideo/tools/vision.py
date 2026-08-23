@@ -1,8 +1,4 @@
-"""可插拔的视觉描述能力。
-
-画面分析统一走 OpenAI 兼容的 chat/completions 接口，base_url、模型与密钥
-均可配置，因此能无缝切换官方 OpenAI 或任意兼容网关（如 Qwen、DeepSeek-VL）。
-"""
+"""通过 LiteLLM 为时间轴关键帧补充视觉描述。"""
 
 from __future__ import annotations
 
@@ -10,7 +6,8 @@ import base64
 from pathlib import Path
 from typing import Protocol
 
-import httpx
+from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.tools.llm import LlmCompletionError, complete_text
 
 
 DEFAULT_DESCRIBE_TIMEOUT_SECONDS = 120
@@ -27,12 +24,10 @@ class VisionDescriber(Protocol):
         ...
 
 
-class OpenAiCompatibleVision:
-    """通过 OpenAI 兼容的 /chat/completions 接口描述单张图片。"""
+class LiteLlmVision:
+    """把项目的多帧提示转换为 LiteLLM 支持的多模态消息。"""
 
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+    def __init__(self, model: AiModelConfiguration) -> None:
         self.model = model
 
     def describe(self, image_paths: list[Path], prompt: str) -> str:
@@ -42,36 +37,23 @@ class OpenAiCompatibleVision:
             {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}}
             for image_path in image_paths
         ]
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        *image_messages,
-                    ],
-                }
-            ],
-        }
+        messages: list[dict[str, object]] = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    *image_messages,
+                ],
+            }
+        ]
         try:
-            response = httpx.post(
-                f"{self.base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=DEFAULT_DESCRIBE_TIMEOUT_SECONDS,
+            return complete_text(
+                self.model,
+                messages,
+                DEFAULT_DESCRIBE_TIMEOUT_SECONDS,
             )
-            response.raise_for_status()
-        except httpx.HTTPError as error:
-            raise VisionDescriptionError(f"视觉模型请求失败：{error}") from error
-
-        content = response.json().get("choices", [{}])[0].get("message", {}).get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise VisionDescriptionError("视觉模型未返回有效描述")
-        return content.strip()
+        except LlmCompletionError as error:
+            raise VisionDescriptionError(str(error)) from error
 
 
 def _image_data_url(image_path: Path) -> str:
