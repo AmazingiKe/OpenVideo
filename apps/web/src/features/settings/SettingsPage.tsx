@@ -37,6 +37,7 @@ import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurati
 import {
   get_preferences,
   select_directory,
+  test_ai_model,
   update_preferences,
 } from "@/shared/api";
 import type { Preferences } from "@/shared/types";
@@ -207,6 +208,7 @@ export function SettingsPage() {
             <AiModelConfigurationList
               models={preferences.ai_models}
               managed={preferences.managed_fields.includes("ai_models")}
+              on_test_model={test_ai_model}
               on_change={(ai_models) =>
                 set_preferences((current) =>
                   current ? { ...current, ai_models } : current,

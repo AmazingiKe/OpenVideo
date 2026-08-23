@@ -62,6 +62,12 @@ export type AiModelConfiguration = AiModelSummary & {
   api_version: string | null;
 };
 
+export type AiModelTestResult = {
+  available: boolean;
+  latency_ms: number;
+  message: string;
+};
+
 export type AnalysisToolSection =
   "video_information" | "transcription" | "transcript_correction" | "analysis";
 

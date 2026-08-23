@@ -9,6 +9,7 @@ import {
   media_url,
   probe_source,
   select_directory,
+  test_ai_model,
   transcribe_asset,
   update_analysis_page_settings,
   update_marker,
@@ -17,6 +18,37 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("api client", () => {
+  it("tests an AI model with its current unsaved configuration", async () => {
+    const model = {
+      model_id: "model-0198d12345677890abcdef1234567890",
+      name: "测试模型",
+      litellm_model: "openai/test-model",
+      api_key: "secret",
+      api_base: "https://example.com/v1",
+      api_version: null,
+      input_modalities: ["text" as const],
+    };
+    const result = {
+      available: true,
+      latency_ms: 86,
+      message: "模型响应正常",
+    };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(test_ai_model(model)).resolves.toEqual(result);
+    expect(fetch_mock).toHaveBeenCalledWith("/api/ai/models/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(model),
+      signal: undefined,
+    });
+  });
+
   it("loads and saves analysis page settings", async () => {
     const settings = {
       asset_library_size_percent: 14,

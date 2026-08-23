@@ -1,6 +1,7 @@
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 import asyncio
 import os
 
@@ -15,7 +16,11 @@ from openvideo.application import (
     AnalysisPrerequisiteError,
     DownloadManager,
 )
-from openvideo.core.ai_models import AiModelCollection, InputModality
+from openvideo.core.ai_models import (
+    AiModelCollection,
+    AiModelConfiguration,
+    InputModality,
+)
 from openvideo.core.analysis_models import (
     AnalysisJob,
     AnalysisMode,
@@ -24,7 +29,6 @@ from openvideo.core.analysis_models import (
 )
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.library import (
-    InvalidLibraryError,
     LibraryDescription,
     LibraryError,
     MediaLibrary,
@@ -44,7 +48,15 @@ from openvideo.core.page_settings import (
     PageSettingsStore,
 )
 from openvideo.preferences import PreferenceStore
-from openvideo.settings import PROJECT_ROOT, Settings, load_settings, preferences_from_settings
+from openvideo.settings import (
+    AI_MODELS_FIELD,
+    MODELS_DIRECTORY_FIELD,
+    PROJECT_ROOT,
+    TOOLS_DIRECTORY_FIELD,
+    Settings,
+    load_settings,
+    preferences_from_settings,
+)
 from openvideo.tools.downloader import (
     DownloadFailure,
     PlaylistProbe,
@@ -52,6 +64,7 @@ from openvideo.tools.downloader import (
     yt_dlp_available,
 )
 from openvideo.tools.media import media_tool_status
+from openvideo.tools.llm import LlmCompletionError, complete_text
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
 from openvideo.ui.directory_picker import DirectoryPickerError, select_directory
 
@@ -59,6 +72,12 @@ from openvideo.ui.directory_picker import DirectoryPickerError, select_directory
 STREAM_CHUNK_SIZE = 1024 * 1024
 VIDEO_MEDIA_TYPE = "video/mp4"
 MAX_BATCH_DOWNLOADS = 100
+MILLISECONDS_PER_SECOND = 1_000
+MODEL_TEST_MAX_TOKENS = 8
+MODEL_TEST_PROMPT = "Reply only with OK."
+MODEL_TEST_REDACTED_SECRET = "[已隐藏]"
+MODEL_TEST_SUCCESS_MESSAGE = "模型响应正常"
+MODEL_TEST_TIMEOUT_SECONDS = 30
 
 
 class DependencyStatus(BaseModel):
@@ -158,6 +177,12 @@ class AiModelSummary(BaseModel):
     name: str
     litellm_model: str
     input_modalities: list[InputModality]
+
+
+class AiModelTestResponse(BaseModel):
+    available: bool
+    latency_ms: int
+    message: str
 
 
 def create_app(
@@ -436,9 +461,20 @@ def create_app(
 
     @app.patch("/api/preferences", response_model=PreferencesResponse)
     def update_preferences(request: PreferencesPatch) -> PreferencesResponse:
-        for field, value in request.model_dump(exclude_unset=True).items():
-            if field not in resolved_settings.managed_fields:
-                setattr(resolved_settings, field, value)
+        provided_fields = request.model_fields_set
+        managed_fields = resolved_settings.managed_fields
+        if (
+            TOOLS_DIRECTORY_FIELD in provided_fields
+            and TOOLS_DIRECTORY_FIELD not in managed_fields
+        ):
+            resolved_settings.tools_directory = request.tools_directory
+        if (
+            MODELS_DIRECTORY_FIELD in provided_fields
+            and MODELS_DIRECTORY_FIELD not in managed_fields
+        ):
+            resolved_settings.models_directory = request.models_directory
+        if AI_MODELS_FIELD in provided_fields and AI_MODELS_FIELD not in managed_fields:
+            resolved_settings.ai_models = request.ai_models
         save_current_path(str(library.library_path) if library else None)
         return _preferences_response(resolved_settings)
 
@@ -453,6 +489,37 @@ def create_app(
             )
             for model in resolved_settings.ai_models
         ]
+
+    @app.post("/api/ai/models/test", response_model=AiModelTestResponse)
+    def test_ai_model(request: AiModelConfiguration) -> AiModelTestResponse:
+        started_at = perf_counter()
+        try:
+            complete_text(
+                request,
+                [{"role": "user", "content": MODEL_TEST_PROMPT}],
+                timeout_seconds=MODEL_TEST_TIMEOUT_SECONDS,
+                max_tokens=MODEL_TEST_MAX_TOKENS,
+                disable_thinking=True,
+            )
+        except LlmCompletionError as error:
+            error_message = str(error)
+            if request.api_key:
+                error_message = error_message.replace(
+                    request.api_key,
+                    MODEL_TEST_REDACTED_SECRET,
+                )
+            return AiModelTestResponse(
+                available=False,
+                latency_ms=round(
+                    (perf_counter() - started_at) * MILLISECONDS_PER_SECOND
+                ),
+                message=error_message,
+            )
+        return AiModelTestResponse(
+            available=True,
+            latency_ms=round((perf_counter() - started_at) * MILLISECONDS_PER_SECOND),
+            message=MODEL_TEST_SUCCESS_MESSAGE,
+        )
 
     @app.get(
         "/api/page-settings/analysis",
@@ -645,7 +712,7 @@ def create_app(
         if range_header:
             try:
                 byte_range = parse_byte_range(range_header, total_size)
-            except InvalidByteRange as error:
+            except InvalidByteRange:
                 return Response(
                     status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
                     headers={**common_headers, "Content-Range": f"bytes */{total_size}"},

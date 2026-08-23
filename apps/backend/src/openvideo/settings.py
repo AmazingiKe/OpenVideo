@@ -11,11 +11,14 @@ from openvideo.preferences import PreferenceStore, Preferences
 
 
 DEFAULT_CORS_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
+AI_MODELS_FIELD = "ai_models"
+MODELS_DIRECTORY_FIELD = "models_directory"
+TOOLS_DIRECTORY_FIELD = "tools_directory"
 SETTING_ENVIRONMENTS = {
     "ffmpeg_path": "OPENVIDEO_FFMPEG_PATH",
     "ffprobe_path": "OPENVIDEO_FFPROBE_PATH",
-    "tools_directory": "OPENVIDEO_TOOLS_DIRECTORY",
-    "models_directory": "OPENVIDEO_MODELS_DIRECTORY",
+    TOOLS_DIRECTORY_FIELD: "OPENVIDEO_TOOLS_DIRECTORY",
+    MODELS_DIRECTORY_FIELD: "OPENVIDEO_MODELS_DIRECTORY",
 }
 AI_MODELS_ENVIRONMENT = "OPENVIDEO_AI_MODELS"
 
@@ -70,10 +73,10 @@ def load_settings(store: PreferenceStore | None = None) -> Settings:
     raw_ai_models = os.getenv(AI_MODELS_ENVIRONMENT)
     if raw_ai_models is not None:
         try:
-            values["ai_models"] = json.loads(raw_ai_models)
+            values[AI_MODELS_FIELD] = json.loads(raw_ai_models)
         except json.JSONDecodeError as error:
             raise ValueError(f"{AI_MODELS_ENVIRONMENT} 必须是有效的 JSON 数组") from error
-        managed_fields.add("ai_models")
+        managed_fields.add(AI_MODELS_FIELD)
     raw_origins = os.getenv("OPENVIDEO_CORS_ORIGINS")
     origins = (
         [origin.strip() for origin in raw_origins.split(",") if origin.strip()]

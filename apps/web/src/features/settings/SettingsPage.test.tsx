@@ -1,7 +1,11 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { get_preferences, update_preferences } from "@/shared/api";
+import {
+  get_preferences,
+  test_ai_model,
+  update_preferences,
+} from "@/shared/api";
 import { SettingsPage } from "./SettingsPage";
 
 vi.mock("@/app/library", () => ({
@@ -22,6 +26,7 @@ vi.mock("@/shared/api", () => ({
   get_preferences: vi.fn(),
   open_library: vi.fn(),
   select_directory: vi.fn(),
+  test_ai_model: vi.fn(),
   update_preferences: vi.fn(),
 }));
 
@@ -35,6 +40,11 @@ const preferences = {
 
 beforeEach(() => {
   vi.mocked(get_preferences).mockResolvedValue(preferences);
+  vi.mocked(test_ai_model).mockResolvedValue({
+    available: true,
+    latency_ms: 86,
+    message: "模型响应正常",
+  });
   vi.mocked(update_preferences).mockResolvedValue(preferences);
 });
 
@@ -82,5 +92,21 @@ describe("SettingsPage", () => {
         ],
       }),
     );
+  });
+
+  it("tests an unsaved AI model and displays its latency", async () => {
+    render(<SettingsPage />);
+    await screen.findByText("尚未配置 AI 模型");
+    fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
+    fireEvent.change(screen.getByLabelText("LiteLLM 模型"), {
+      target: { value: "openai/test-model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
+
+    expect(test_ai_model).toHaveBeenCalledWith(
+      expect.objectContaining({ litellm_model: "openai/test-model" }),
+    );
+    expect(await screen.findByText("可用")).toBeInTheDocument();
+    expect(screen.getByText("延迟 86 ms")).toBeInTheDocument();
   });
 });

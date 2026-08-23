@@ -1,6 +1,8 @@
 import type {
   AnalysisJob,
+  AiModelConfiguration,
   AiModelSummary,
+  AiModelTestResult,
   AnalysisMode,
   AnalysisPageSettings,
   DownloadJob,
@@ -107,6 +109,18 @@ export function list_ai_models(
   signal?: AbortSignal,
 ): Promise<AiModelSummary[]> {
   return request_json("/api/ai/models", { signal });
+}
+
+export function test_ai_model(
+  model: AiModelConfiguration,
+  signal?: AbortSignal,
+): Promise<AiModelTestResult> {
+  return request_json("/api/ai/models/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(model),
+    signal,
+  });
 }
 
 export function update_preferences(

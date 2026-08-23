@@ -13,6 +13,8 @@ def complete_text(
     model: AiModelConfiguration,
     messages: list[dict[str, object]],
     timeout_seconds: int,
+    max_tokens: int | None = None,
+    disable_thinking: bool = False,
 ) -> str:
     request: dict[str, object] = {
         "model": model.litellm_model,
@@ -25,6 +27,10 @@ def complete_text(
         request["api_base"] = model.api_base
     if model.api_version:
         request["api_version"] = model.api_version
+    if max_tokens is not None:
+        request["max_tokens"] = max_tokens
+    if disable_thinking:
+        request["thinking"] = {"type": "disabled"}
 
     try:
         response = litellm.completion(**request)
