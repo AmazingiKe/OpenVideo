@@ -156,7 +156,7 @@
   }
 }
 
-/* 时间线保持原实现，仅由这些兼容样式控制其布局和画布。 */
+/* 时间线沿用 Canvas Timeline，仅在工作区范围内统一布局与视觉样式。 */
 .media_timeline { position: relative; display: flex; min-width: 0; grid-column: 1 / -1; grid-row: 2; flex-direction: column; overflow: hidden; border-top: 1px solid var(--line); background: var(--surface-secondary); }
 .media_timeline_header { display: flex; min-width: 0; min-height: 38px; align-items: center; justify-content: space-between; gap: 16px; padding: 0 14px; border-bottom: 1px solid var(--line-subtle); }
 .media_timeline_header > div { display: flex; min-width: 0; align-items: baseline; gap: 8px; margin-left: auto; }
@@ -179,7 +179,7 @@
 .media_timeline .timeline-track-lock { display: grid; width: 16px; height: 16px; margin-left: auto; flex: 0 0 auto; place-items: center; color: var(--app-muted); }
 .media_timeline .timeline-track-lock svg { width: 12px; height: 12px; }
 .media_timeline .timeline-canvas-stage { position: relative; width: 100%; min-width: 0; min-height: 0; overflow: hidden; }
-.media_timeline .timeline-fill { width: 100%; height: 100%; cursor: grab; color: var(--text); background: var(--surface-secondary); }
+.media_timeline .timeline-fill { width: 100%; height: 100%; cursor: grab; color: var(--text); background: var(--surface-secondary); --timeline-clip-inset-y: 4px; --timeline-clip-radius: calc(var(--radius) - 0.125rem); --timeline-clip-border: color-mix(in srgb, var(--text) 10%, transparent); --timeline-clip-border-selected: color-mix(in srgb, var(--app-accent) 72%, transparent); --timeline-marker: var(--timeline-marker-selected); --timeline-marker-text: var(--app-muted); }
 .media_timeline .timeline-fill:active { cursor: grabbing; }
 .media_timeline .timeline-track-list-overlay { position: absolute; inset: 0; }
 .media_timeline .timeline-scrollbar-spacer { border-top: 1px solid var(--line-subtle); background: var(--surface); }
