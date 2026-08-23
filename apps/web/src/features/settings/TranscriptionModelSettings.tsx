@@ -17,6 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  transcription_compute_type_is_compatible,
+  transcription_model_is_selectable,
+  transcription_runtime_profile,
+} from "@/shared/transcription";
 import type {
   TranscriptionComputeType,
   TranscriptionDevice,
@@ -74,24 +79,47 @@ export function TranscriptionModelSettings({
   on_change,
   on_model_change,
 }: TranscriptionModelSettingsProps) {
-  const available_models = models.filter(
-    (model) => model.integration_status === "available",
-  );
+  const selectable_models = models.filter(transcription_model_is_selectable);
   const selected_model = models.find(
     (model) => model.engine === value.engine && model.model === value.model,
   );
+  const selected_model_is_selectable = selectable_models.some(
+    (model) => model.engine === value.engine && model.model === value.model,
+  );
+  const runtime_profile = selected_model
+    ? transcription_runtime_profile(selected_model)
+    : null;
+  const supported_compute_types =
+    runtime_profile?.compute_types.filter((compute_type) =>
+      transcription_compute_type_is_compatible(value.device, compute_type),
+    ) ?? [];
 
   function change_model(model_name: string) {
-    const model = available_models.find((item) => item.model === model_name);
+    const model = selectable_models.find((item) => item.model === model_name);
     if (!model) return;
-    on_change({ ...value, engine: model.engine, model: model.model });
+    const profile = transcription_runtime_profile(model);
+    on_change({
+      ...value,
+      engine: model.engine,
+      model: model.model,
+      device: profile.recommended_device,
+      compute_type: profile.recommended_compute_type,
+    });
   }
 
   function change_device(device: TranscriptionDevice) {
-    const compute_type =
-      device !== "cuda" && value.compute_type === "float16"
-        ? "int8"
-        : value.compute_type;
+    if (!runtime_profile) return;
+    const compatible_compute_types = runtime_profile.compute_types.filter(
+      (compute_type) =>
+        transcription_compute_type_is_compatible(device, compute_type),
+    );
+    const compute_type = compatible_compute_types.includes(value.compute_type)
+      ? value.compute_type
+      : compatible_compute_types.includes(
+            runtime_profile.recommended_compute_type,
+          )
+        ? runtime_profile.recommended_compute_type
+        : (compatible_compute_types[0] ?? "auto");
     on_change({ ...value, device, compute_type });
   }
 
@@ -99,19 +127,27 @@ export function TranscriptionModelSettings({
     <div className="flex flex-col gap-6">
       <FieldGroup>
         <div className="grid gap-6 md:grid-cols-2">
-          <Field>
+          <Field data-disabled={!selectable_models.length || undefined}>
             <FieldLabel htmlFor="default_transcription_model">
               默认模型
             </FieldLabel>
-            <Select value={value.model} onValueChange={change_model}>
+            <Select
+              value={selected_model_is_selectable ? value.model : ""}
+              onValueChange={change_model}
+              disabled={!selectable_models.length}
+            >
               <SelectTrigger
                 id="default_transcription_model"
                 className="w-full"
               >
-                <SelectValue placeholder="选择转录模型" />
+                <SelectValue
+                  placeholder={
+                    selectable_models.length ? "选择已安装模型" : "请先下载模型"
+                  }
+                />
               </SelectTrigger>
               <SelectContent>
-                {group_models_by_engine(available_models).map(
+                {group_models_by_engine(selectable_models).map(
                   ([engine, engine_models]) => (
                     <SelectGroup key={engine}>
                       <SelectLabel>{ENGINE_LABELS[engine]}</SelectLabel>
@@ -130,12 +166,13 @@ export function TranscriptionModelSettings({
             </FieldDescription>
           </Field>
 
-          <Field>
+          <Field data-disabled={!selected_model_is_selectable || undefined}>
             <FieldLabel htmlFor="default_transcription_language">
               默认语言
             </FieldLabel>
             <Select
               value={value.language ?? "auto"}
+              disabled={!selected_model_is_selectable}
               onValueChange={(language) =>
                 on_change({
                   ...value,
@@ -165,12 +202,13 @@ export function TranscriptionModelSettings({
             </FieldDescription>
           </Field>
 
-          <Field>
+          <Field data-disabled={!selected_model_is_selectable || undefined}>
             <FieldLabel htmlFor="default_transcription_device">
               运行设备
             </FieldLabel>
             <Select
               value={value.device}
+              disabled={!selected_model_is_selectable}
               onValueChange={(device) =>
                 change_device(device as TranscriptionDevice)
               }
@@ -184,9 +222,9 @@ export function TranscriptionModelSettings({
               <SelectContent>
                 <SelectGroup>
                   <SelectLabel>推理设备</SelectLabel>
-                  {Object.entries(DEVICE_LABELS).map(([device, label]) => (
+                  {(runtime_profile?.devices ?? []).map((device) => (
                     <SelectItem key={device} value={device}>
-                      {label}
+                      {DEVICE_LABELS[device]}
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -194,12 +232,13 @@ export function TranscriptionModelSettings({
             </Select>
           </Field>
 
-          <Field>
+          <Field data-disabled={!selected_model_is_selectable || undefined}>
             <FieldLabel htmlFor="default_transcription_compute_type">
-              计算精度
+              推理精度
             </FieldLabel>
             <Select
               value={value.compute_type}
+              disabled={!selected_model_is_selectable}
               onValueChange={(compute_type) =>
                 on_change({
                   ...value,
@@ -216,27 +255,22 @@ export function TranscriptionModelSettings({
               <SelectContent>
                 <SelectGroup>
                   <SelectLabel>推理精度</SelectLabel>
-                  {Object.entries(COMPUTE_TYPE_LABELS).map(
-                    ([compute_type, label]) => (
-                      <SelectItem
-                        key={compute_type}
-                        value={compute_type}
-                        disabled={
-                          value.device !== "cuda" && compute_type === "float16"
-                        }
-                      >
-                        {label}
-                      </SelectItem>
-                    ),
-                  )}
+                  {supported_compute_types.map((compute_type) => (
+                    <SelectItem key={compute_type} value={compute_type}>
+                      {COMPUTE_TYPE_LABELS[compute_type]}
+                    </SelectItem>
+                  ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
+            <FieldDescription>
+              不同模型会显示各自支持的设备和精度，切换模型时采用推荐值。
+            </FieldDescription>
           </Field>
         </div>
       </FieldGroup>
 
-      {selected_model ? (
+      {selected_model_is_selectable && selected_model ? (
         <Alert>
           <Gauge aria-hidden="true" />
           <AlertTitle className="flex flex-wrap items-center gap-2">
@@ -250,7 +284,15 @@ export function TranscriptionModelSettings({
             {selected_model.speed}。
           </AlertDescription>
         </Alert>
-      ) : null}
+      ) : (
+        <Alert>
+          <Gauge aria-hidden="true" />
+          <AlertTitle>默认模型尚不可用</AlertTitle>
+          <AlertDescription>
+            请先在下方下载并安装模型，再将它设为默认模型。
+          </AlertDescription>
+        </Alert>
+      )}
 
       <section className="flex flex-col gap-4" aria-labelledby="asr_models">
         <div className="flex flex-col gap-1">
@@ -262,8 +304,9 @@ export function TranscriptionModelSettings({
           </p>
         </div>
         <ul
-          className="overflow-hidden rounded-lg border"
+          className="max-h-136 overflow-y-auto overscroll-contain rounded-lg border"
           aria-label="本地转录模型列表"
+          tabIndex={models.length > 6 ? 0 : undefined}
         >
           {models.map((model) => (
             <li

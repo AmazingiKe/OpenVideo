@@ -35,6 +35,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_duration, format_time } from "@/shared/format";
+import { transcription_runtime_profile } from "@/shared/transcription";
 import {
   IMAGE_INPUT_MODALITY,
   type AgentJob,
@@ -284,10 +285,14 @@ export function AnalysisToolPanel({
                         (item) => item.model === model_name,
                       );
                       if (!model || !transcription_options) return;
+                      const runtime_profile =
+                        transcription_runtime_profile(model);
                       set_transcription_options({
                         ...transcription_options,
                         engine: model.engine,
                         model: model.model,
+                        device: runtime_profile.recommended_device,
+                        compute_type: runtime_profile.recommended_compute_type,
                       });
                     }}
                     disabled={

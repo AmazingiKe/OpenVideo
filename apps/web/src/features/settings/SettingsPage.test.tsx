@@ -87,6 +87,20 @@ beforeEach(() => {
       installation_status: "not_installed",
       download_job: null,
     },
+    {
+      engine: "faster-whisper",
+      model: "base",
+      name: "Whisper Base",
+      description: "轻量多语言转录模型。",
+      accuracy: "基础",
+      speed: "很快",
+      languages: ["多语言"],
+      repository: "Systran/faster-whisper-base",
+      recommended: false,
+      integration_status: "available",
+      installation_status: "not_installed",
+      download_job: null,
+    },
   ]);
   vi.mocked(test_ai_model).mockResolvedValue({
     available: true,
@@ -131,7 +145,7 @@ describe("SettingsPage", () => {
     const model_list = screen.getByRole("list", {
       name: "本地转录模型列表",
     });
-    expect(within(model_list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(model_list).getAllByRole("listitem")).toHaveLength(3);
     expect(screen.getByText("待接入")).toBeInTheDocument();
     expect(screen.getAllByText("Whisper Small")).not.toHaveLength(0);
   });

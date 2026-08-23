@@ -81,10 +81,10 @@ const meta = {
     models: MODELS,
     value: {
       engine: "faster-whisper",
-      model: "large-v3-turbo",
+      model: "small",
       language: "zh",
-      device: "auto",
-      compute_type: "auto",
+      device: "cpu",
+      compute_type: "int8",
     },
     on_change: () => undefined,
     on_model_change: () => undefined,
@@ -102,6 +102,18 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
+
+export const UnavailableDefault: Story = {
+  args: {
+    value: {
+      engine: "faster-whisper",
+      model: "large-v3-turbo",
+      language: "zh",
+      device: "auto",
+      compute_type: "auto",
+    },
+  },
+};
 
 export const Dark: Story = {
   decorators: [
