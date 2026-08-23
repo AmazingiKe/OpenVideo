@@ -10,7 +10,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Empty,
   EmptyDescription,
@@ -25,7 +24,19 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import type { AiModelConfiguration } from "@/shared/types";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  AI_INPUT_MODALITIES,
+  type AiInputModality,
+  type AiModelConfiguration,
+} from "@/shared/types";
+
+const INPUT_MODALITY_LABELS: Record<AiInputModality, string> = {
+  text: "文本",
+  image: "图片",
+  audio: "音频",
+  video: "视频",
+};
 
 type AiModelConfigurationListProps = {
   models: AiModelConfiguration[];
@@ -76,11 +87,15 @@ export function AiModelConfigurationList({
         return (
           <Card key={model.model_id}>
             <CardHeader>
-              <CardTitle className="flex items-center justify-between gap-2">
+              <CardTitle className="flex flex-wrap items-center justify-between gap-2">
                 <span>{model.name || "未命名模型"}</span>
-                {model.supports_vision ? (
-                  <Badge variant="secondary">视觉</Badge>
-                ) : null}
+                <span className="flex flex-wrap justify-end gap-1">
+                  {model.input_modalities.map((modality) => (
+                    <Badge key={modality} variant="secondary">
+                      {INPUT_MODALITY_LABELS[modality]}
+                    </Badge>
+                  ))}
+                </span>
               </CardTitle>
               <CardDescription>{model.litellm_model}</CardDescription>
             </CardHeader>
@@ -170,21 +185,38 @@ export function AiModelConfigurationList({
                   </Field>
                 </div>
                 <Field data-disabled={managed || undefined}>
-                  <FieldLabel htmlFor={`${field_prefix}-vision`}>
-                    <Checkbox
-                      id={`${field_prefix}-vision`}
-                      checked={model.supports_vision}
-                      onCheckedChange={(checked) =>
-                        update_model(model.model_id, {
-                          supports_vision: checked === true,
-                        })
-                      }
-                      disabled={managed}
-                    />
-                    支持图片输入
+                  <FieldLabel id={`${field_prefix}-input-modalities`}>
+                    输入模态
                   </FieldLabel>
+                  <ToggleGroup
+                    type="multiple"
+                    variant="outline"
+                    value={model.input_modalities}
+                    onValueChange={(input_modalities) =>
+                      update_model(model.model_id, {
+                        input_modalities: AI_INPUT_MODALITIES.filter(
+                          (modality) =>
+                            modality === "text" ||
+                            input_modalities.includes(modality),
+                        ),
+                      })
+                    }
+                    disabled={managed}
+                    aria-labelledby={`${field_prefix}-input-modalities`}
+                    className="flex-wrap justify-start"
+                  >
+                    {AI_INPUT_MODALITIES.map((modality) => (
+                      <ToggleGroupItem
+                        key={modality}
+                        value={modality}
+                        disabled={modality === "text"}
+                      >
+                        {INPUT_MODALITY_LABELS[modality]}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
                   <FieldDescription>
-                    只有启用此项的模型才会出现在关键帧分析选择器中。
+                    文本是当前任务的基础输入；图片用于关键帧分析，音频和视频用于登记原生多模态能力。
                   </FieldDescription>
                 </Field>
               </FieldGroup>

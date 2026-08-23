@@ -5,6 +5,7 @@ import { AnalysisToolPanel } from "./AnalysisToolPanel";
 import type {
   AnalysisMode,
   AnalysisToolSection,
+  AiModelSummary,
   MediaAsset,
   MediaMarker,
 } from "@/shared/types";
@@ -25,12 +26,12 @@ const MARKERS: MediaMarker[] = [
   },
 ];
 
-const AI_MODELS = [
+const AI_MODELS: AiModelSummary[] = [
   {
     model_id: "model-0198d12345677890abcdef1234567890",
     name: "测试模型",
     litellm_model: "openai/test-model",
-    supports_vision: true,
+    input_modalities: ["text", "image"],
   },
 ];
 

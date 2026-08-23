@@ -114,12 +114,12 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 
 未配置 `OPENVIDEO_LIBRARY_PATH` 时，应用从系统用户配置目录的 `OpenVideo/preferences.json` 恢复上次资料库；路径失效时进入初始化页。Windows 的配置根目录为 `%LOCALAPPDATA%\OpenVideo`，应用生成的偏好与页面设置统一保存在该目录，不写入项目 `runtime` 或资料库。
 
-推荐在 Web 设置页添加模型。`LiteLLM 模型` 使用 `供应商/模型` 格式，例如 `openai/gpt-5`、`anthropic/claude-sonnet-4-5` 或 `ollama/qwen2.5-vl`。自定义兼容网关可同时填写 API 地址；需要处理关键帧时，应启用“支持图片输入”。
+推荐在 Web 设置页添加模型。`LiteLLM 模型` 使用 `供应商/模型` 格式，例如 `openai/gpt-5`、`anthropic/claude-sonnet-4-5` 或 `ollama/qwen2.5-vl`。自定义兼容网关可同时填写 API 地址。`input_modalities` 支持 `text`、`image`、`audio`、`video`；当前任务必须包含 `text`，关键帧分析还要求包含 `image`。
 
 环境变量配置示例：
 
 ```powershell
-$env:OPENVIDEO_AI_MODELS = '[{"model_id":"model-0198d12345677890abcdef1234567890","name":"主视觉模型","litellm_model":"openai/gpt-5","api_key":"your-key","api_base":null,"api_version":null,"supports_vision":true}]'
+$env:OPENVIDEO_AI_MODELS = '[{"model_id":"model-0198d12345677890abcdef1234567890","name":"主多模态模型","litellm_model":"openai/gpt-5","api_key":"your-key","api_base":null,"api_version":null,"input_modalities":["text","image"]}]'
 ```
 
 ## 测试与构建

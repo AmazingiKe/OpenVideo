@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openvideo.core.identifiers import uuid7
 
 
 MODEL_ID_PREFIX = "model-"
 MODEL_ID_HEX_LENGTH = 32
+TEXT_INPUT_MODALITY = "text"
+IMAGE_INPUT_MODALITY = "image"
+AUDIO_INPUT_MODALITY = "audio"
+VIDEO_INPUT_MODALITY = "video"
+INPUT_MODALITIES = (
+    TEXT_INPUT_MODALITY,
+    IMAGE_INPUT_MODALITY,
+    AUDIO_INPUT_MODALITY,
+    VIDEO_INPUT_MODALITY,
+)
+LEGACY_VISION_FIELD = "supports_vision"
+INPUT_MODALITIES_FIELD = "input_modalities"
+
+InputModality = Literal["text", "image", "audio", "video"]
 
 
 class AiModelConfiguration(BaseModel):
@@ -20,7 +35,24 @@ class AiModelConfiguration(BaseModel):
     api_key: str | None = None
     api_base: str | None = None
     api_version: str | None = None
-    supports_vision: bool = False
+    input_modalities: list[InputModality] = Field(
+        default_factory=lambda: [TEXT_INPUT_MODALITY]
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_vision_capability(cls, values: object) -> object:
+        # TODO(删除)：在 1.0 版本停止支持旧模型配置后删除视觉字段迁移。
+        if not isinstance(values, dict):
+            return values
+        if LEGACY_VISION_FIELD not in values or INPUT_MODALITIES_FIELD in values:
+            return values
+        migrated_values = dict(values)
+        input_modalities = [TEXT_INPUT_MODALITY]
+        if migrated_values.pop(LEGACY_VISION_FIELD) is True:
+            input_modalities.append(IMAGE_INPUT_MODALITY)
+        migrated_values[INPUT_MODALITIES_FIELD] = input_modalities
+        return migrated_values
 
     @field_validator("model_id")
     @classmethod
@@ -51,6 +83,22 @@ class AiModelConfiguration(BaseModel):
             return None
         normalized_value = value.strip()
         return normalized_value or None
+
+    @field_validator("input_modalities")
+    @classmethod
+    def validate_input_modalities(
+        cls,
+        input_modalities: list[InputModality],
+    ) -> list[InputModality]:
+        if TEXT_INPUT_MODALITY not in input_modalities:
+            raise ValueError("当前模型任务要求支持文本输入")
+        if len(input_modalities) != len(set(input_modalities)):
+            raise ValueError("模型输入模态不能重复")
+        return [
+            modality
+            for modality in INPUT_MODALITIES
+            if modality in input_modalities
+        ]
 
 
 class AiModelCollection(BaseModel):

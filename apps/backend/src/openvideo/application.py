@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 from threading import RLock
 
+from openvideo.core.ai_models import IMAGE_INPUT_MODALITY
 from openvideo.core.analysis_models import (
     AnalysisCapability,
     AnalysisJob,
@@ -311,7 +312,7 @@ class AnalysisManager:
             model = self.settings.ai_model(ai_model_id)
             if model is None:
                 raise AnalysisPrerequisiteError("所选 AI 模型不存在，请在设置中重新选择")
-            if not model.supports_vision:
+            if IMAGE_INPUT_MODALITY not in model.input_modalities:
                 raise AnalysisPrerequisiteError("所选 AI 模型不支持视觉分析")
         active_job = self._active_job_for(asset_id)
         if active_job:

@@ -67,6 +67,8 @@ describe("SettingsPage", () => {
     fireEvent.change(screen.getByLabelText("LiteLLM 模型"), {
       target: { value: "anthropic/claude-sonnet-4-5" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "图片" }));
+    fireEvent.click(screen.getByRole("button", { name: "音频" }));
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     expect(update_preferences).toHaveBeenCalledWith(
@@ -75,6 +77,7 @@ describe("SettingsPage", () => {
           expect.objectContaining({
             model_id: expect.stringMatching(/^model-[0-9a-f]{32}$/),
             litellm_model: "anthropic/claude-sonnet-4-5",
+            input_modalities: ["text", "image", "audio"],
           }),
         ],
       }),

@@ -15,7 +15,7 @@ from openvideo.application import (
     AnalysisPrerequisiteError,
     DownloadManager,
 )
-from openvideo.core.ai_models import AiModelCollection
+from openvideo.core.ai_models import AiModelCollection, InputModality
 from openvideo.core.analysis_models import (
     AnalysisJob,
     AnalysisMode,
@@ -157,7 +157,7 @@ class AiModelSummary(BaseModel):
     model_id: str
     name: str
     litellm_model: str
-    supports_vision: bool
+    input_modalities: list[InputModality]
 
 
 def create_app(
@@ -449,7 +449,7 @@ def create_app(
                 model_id=model.model_id,
                 name=model.name,
                 litellm_model=model.litellm_model,
-                supports_vision=model.supports_vision,
+                input_modalities=model.input_modalities,
             )
             for model in resolved_settings.ai_models
         ]

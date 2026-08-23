@@ -82,7 +82,7 @@ export function SettingsPage() {
                 api_key: null,
                 api_base: null,
                 api_version: null,
-                supports_vision: false,
+                input_modalities: ["text"],
               },
             ],
           }

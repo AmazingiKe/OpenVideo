@@ -1,19 +1,20 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
+import type { AiModelSummary } from "@/shared/types";
 
-const MODELS = [
+const MODELS: AiModelSummary[] = [
   {
     model_id: "model-0198d12345677890abcdef1234567890",
     name: "内容模型",
     litellm_model: "anthropic/claude-sonnet-4-5",
-    supports_vision: false,
+    input_modalities: ["text"],
   },
   {
     model_id: "model-0198d12345677890abcdef1234567891",
     name: "视觉模型",
     litellm_model: "openai/gpt-5.6-terra",
-    supports_vision: true,
+    input_modalities: ["text", "image"],
   },
 ];
 

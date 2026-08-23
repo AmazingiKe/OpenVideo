@@ -27,14 +27,15 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_duration, format_time } from "@/shared/format";
-import type {
-  AnalysisMode,
-  AnalysisToolSection,
-  AiModelSummary,
-  MediaAsset,
-  MediaMarker,
-  TranscriptCorrectionScope,
-  TranscriptionOptions,
+import {
+  IMAGE_INPUT_MODALITY,
+  type AnalysisMode,
+  type AnalysisToolSection,
+  type AiModelSummary,
+  type MediaAsset,
+  type MediaMarker,
+  type TranscriptCorrectionScope,
+  type TranscriptionOptions,
 } from "@/shared/types";
 import { CollapsiblePanelRail } from "./CollapsiblePanelRail";
 import { WorkbenchPanelHeader } from "./WorkbenchPanelHeader";
@@ -107,9 +108,12 @@ export function AnalysisToolPanel({
   const [correction_model_id, set_correction_model_id] = useState<
     string | null
   >(null);
-  const [vision_model_id, set_vision_model_id] = useState<string | null>(null);
-  const vision_models = useMemo(
-    () => ai_models.filter((model) => model.supports_vision),
+  const [image_model_id, set_image_model_id] = useState<string | null>(null);
+  const image_input_models = useMemo(
+    () =>
+      ai_models.filter((model) =>
+        model.input_modalities.includes(IMAGE_INPUT_MODALITY),
+      ),
     [ai_models],
   );
 
@@ -123,12 +127,12 @@ export function AnalysisToolPanel({
         ? current
         : (ai_models[0]?.model_id ?? null),
     );
-    set_vision_model_id((current) =>
-      vision_models.some((model) => model.model_id === current)
+    set_image_model_id((current) =>
+      image_input_models.some((model) => model.model_id === current)
         ? current
         : null,
     );
-  }, [ai_models, vision_models]);
+  }, [ai_models, image_input_models]);
 
   if (collapsed) {
     return (
@@ -419,11 +423,11 @@ export function AnalysisToolPanel({
                 </ToggleGroupItem>
               </ToggleGroup>
               <AiModelSelect
-                id="visual-analysis-model"
-                label="视觉模型"
-                models={vision_models}
-                value={vision_model_id}
-                on_change={set_vision_model_id}
+                id="image-analysis-model"
+                label="图片分析模型"
+                models={image_input_models}
+                value={image_model_id}
+                on_change={set_image_model_id}
                 allow_without_model
                 disabled={is_analyzing}
                 description="不使用模型时仍会生成音频时间轴与关键帧。"
@@ -461,7 +465,7 @@ export function AnalysisToolPanel({
                   on_start_analysis(
                     analysis_mode,
                     [...selected_marker_ids],
-                    vision_model_id,
+                    image_model_id,
                   )
                 }
                 disabled={

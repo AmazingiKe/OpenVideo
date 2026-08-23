@@ -2,7 +2,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.ai_models import (
+    IMAGE_INPUT_MODALITY,
+    TEXT_INPUT_MODALITY,
+    AiModelConfiguration,
+    InputModality,
+)
 from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
 from openvideo.core.library import MediaLibrary
@@ -17,13 +22,15 @@ CONTENT = bytes(range(100))
 MODEL_ID = "model-01890f4c7a2b7cc298c4dc0c0c07398f"
 
 
-def ai_model(supports_vision: bool = False) -> AiModelConfiguration:
+def ai_model(
+    input_modalities: list[InputModality] | None = None,
+) -> AiModelConfiguration:
     return AiModelConfiguration(
         model_id=MODEL_ID,
         name="测试模型",
         litellm_model="openai/test-model",
         api_key="test-key",
-        supports_vision=supports_vision,
+        input_modalities=input_modalities or [TEXT_INPUT_MODALITY],
     )
 
 
@@ -183,7 +190,9 @@ def test_transcript_correction_requires_ai_credentials(tmp_path: Path):
 
 def test_ai_model_list_does_not_expose_credentials(tmp_path: Path):
     with create_client(tmp_path) as client:
-        client.app.state.settings.ai_models = [ai_model(supports_vision=True)]
+        client.app.state.settings.ai_models = [
+            ai_model([TEXT_INPUT_MODALITY, IMAGE_INPUT_MODALITY])
+        ]
         response = client.get("/api/ai/models")
 
     assert response.status_code == 200
@@ -192,7 +201,7 @@ def test_ai_model_list_does_not_expose_credentials(tmp_path: Path):
             "model_id": MODEL_ID,
             "name": "测试模型",
             "litellm_model": "openai/test-model",
-            "supports_vision": True,
+            "input_modalities": ["text", "image"],
         }
     ]
 
@@ -209,9 +218,11 @@ def test_analyze_creates_job(tmp_path: Path):
     assert job["operation"] == "analysis"
 
 
-def test_analyze_records_selected_vision_model(tmp_path: Path):
+def test_analyze_records_selected_image_input_model(tmp_path: Path):
     with create_client(tmp_path) as client:
-        client.app.state.settings.ai_models = [ai_model(supports_vision=True)]
+        client.app.state.settings.ai_models = [
+            ai_model([TEXT_INPUT_MODALITY, IMAGE_INPUT_MODALITY])
+        ]
         client.app.state.library.save_transcript(Transcript(asset_id=ASSET_ID))
         response = client.post(
             f"/api/media/assets/{ASSET_ID}/analyze",

@@ -29,7 +29,7 @@ def test_describe_returns_content(tmp_path: Path, monkeypatch):
             litellm_model="openai/gpt-5.6-terra",
             api_base="https://api.example.com/v1",
             api_key="secret",
-            supports_vision=True,
+            input_modalities=["text", "image"],
         )
     )
 

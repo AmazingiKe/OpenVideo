@@ -94,3 +94,35 @@ def test_saved_project_library_path_returns_to_initial_setup(tmp_path: Path):
 def test_model_configuration_rejects_duplicate_persisted_identifiers():
     with pytest.raises(ValidationError, match="AI 模型标识不能重复"):
         Preferences(ai_models=[MODEL, MODEL])
+
+
+def test_model_configuration_migrates_legacy_vision_capability():
+    migrated_model = AiModelConfiguration.model_validate(
+        {
+            "model_id": "model-01890f4c7a2b7cc298c4dc0c0c07398f",
+            "name": "旧视觉模型",
+            "litellm_model": "openai/vision-model",
+            "supports_vision": True,
+        }
+    )
+
+    assert migrated_model.input_modalities == ["text", "image"]
+    assert "supports_vision" not in migrated_model.model_dump()
+
+
+def test_model_configuration_requires_text_and_unique_modalities():
+    with pytest.raises(ValidationError, match="要求支持文本输入"):
+        AiModelConfiguration.model_validate(
+            {
+                **MODEL.model_dump(),
+                "input_modalities": ["image"],
+            }
+        )
+
+    with pytest.raises(ValidationError, match="输入模态不能重复"):
+        AiModelConfiguration.model_validate(
+            {
+                **MODEL.model_dump(),
+                "input_modalities": ["text", "text"],
+            }
+        )

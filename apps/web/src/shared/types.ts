@@ -44,11 +44,16 @@ export type Preferences = {
   library_path_managed: boolean;
 };
 
+export const AI_INPUT_MODALITIES = ["text", "image", "audio", "video"] as const;
+
+export type AiInputModality = (typeof AI_INPUT_MODALITIES)[number];
+export const IMAGE_INPUT_MODALITY: AiInputModality = "image";
+
 export type AiModelSummary = {
   model_id: string;
   name: string;
   litellm_model: string;
-  supports_vision: boolean;
+  input_modalities: AiInputModality[];
 };
 
 export type AiModelConfiguration = AiModelSummary & {

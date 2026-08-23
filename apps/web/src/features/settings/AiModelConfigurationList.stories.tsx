@@ -14,7 +14,7 @@ const meta = {
         api_key: null,
         api_base: "http://127.0.0.1:11434",
         api_version: null,
-        supports_vision: true,
+        input_modalities: ["text", "image", "audio", "video"],
       },
     ],
     managed: false,
