@@ -8,6 +8,7 @@ type WorkspaceRoute = {
   path: WorkspacePath;
   component: LazyExoticComponent<ComponentType>;
   load_component: () => PageModule;
+  preserve_state_when_hidden: boolean;
 };
 
 const load_downloads_page = () =>
@@ -33,18 +34,22 @@ export const WORKSPACE_ROUTES: WorkspaceRoute[] = [
     path: "/downloads",
     component: lazy(load_downloads_page),
     load_component: load_downloads_page,
+    preserve_state_when_hidden: true,
   },
   {
-    label: "分析",
+    label: "标记",
     path: "/analysis",
     component: lazy(load_analysis_page),
     load_component: load_analysis_page,
+    // Vidstack 无法在 Activity 清理 Effect 后恢复已销毁的内部播放器实例。
+    preserve_state_when_hidden: false,
   },
   {
-    label: "总结",
+    label: "解析",
     path: "/summary",
     component: lazy(load_summary_page),
     load_component: load_summary_page,
+    preserve_state_when_hidden: true,
   },
 ];
 
