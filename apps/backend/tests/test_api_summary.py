@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from openvideo.core.agent_runtime_models import AgentModelResponse, AgentToolCall
 from openvideo.core.ai_models import TEXT_INPUT_MODALITY, AiModelConfiguration
 from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.library import MediaLibrary
@@ -176,42 +177,57 @@ def test_summary_agent_stream_persists_proposal_and_requires_acceptance(
     tmp_path: Path,
     monkeypatch,
 ):
-    response_payload = {
-        "proposed_markdown": "# Agent 修改\n",
-        "explanation": "精简章节",
-        "suggested_subdocuments": [],
-        "media_suggestions": [
-            {
-                "media_type": "image",
-                "start_seconds": 2,
-                "end_seconds": None,
-                "insert_after": "# Agent 修改",
-                "caption": "关键画面",
-            }
-        ],
-    }
+    responses = [
+        AgentModelResponse(
+            tool_calls=[
+                AgentToolCall(
+                    call_id="call-proposal",
+                    name="propose_summary_change",
+                    arguments={
+                        "proposed_markdown": "# Agent 修改\n",
+                        "explanation": "精简章节",
+                        "media_suggestions": [
+                            {
+                                "media_type": "image",
+                                "start_seconds": 2,
+                                "insert_after": "# Agent 修改",
+                                "caption": "关键画面",
+                            }
+                        ],
+                    },
+                )
+            ]
+        ),
+        AgentModelResponse(content="已创建待审批的修改建议。"),
+    ]
+
+    async def complete(_adapter, _model, _messages, _tools, on_chunk):
+        response = responses.pop(0)
+        if response.content:
+            on_chunk(response.content)
+        return response
+
     monkeypatch.setattr(
-        "openvideo.summary_manager.complete_text",
-        lambda *args, **kwargs: json.dumps(response_payload, ensure_ascii=False),
+        "openvideo.summary_manager.LiteLlmAgentAdapter.complete", complete
     )
     with create_client(tmp_path, with_model=True) as client:
         document = generate_documents(client)[0]
-        conversation = client.get(
-            f"/api/media/assets/{ASSET_ID}/summary-conversations"
+        session = client.get(
+            f"/api/media/assets/{ASSET_ID}/summary-agent-sessions"
         ).json()[0]
         run = client.post(
-            f"/api/summary-conversations/{conversation['conversation_id']}/messages",
+            f"/api/summary-agent-sessions/{session['session']['session_id']}/messages",
             json={
                 "document_id": document["document_id"],
                 "expected_revision": document["revision"],
-                "instruction": "精简章节",
+                "content": "请精简章节",
                 "ai_model_id": MODEL_ID,
                 "selection": None,
             },
         )
-        events = client.get(f"/api/summary-agent-runs/{run.json()['run_id']}/events")
+        events = client.get(f"/api/agent-runs/{run.json()['run_id']}/events")
         state = client.get(
-            f"/api/summary-conversations/{conversation['conversation_id']}"
+            f"/api/summary-agent-sessions/{session['session']['session_id']}"
         ).json()
         proposal = state["proposals"][0]
         before_accept = client.get(
@@ -226,7 +242,8 @@ def test_summary_agent_stream_persists_proposal_and_requires_acceptance(
 
     assert run.status_code == 202
     assert "event: proposal" in events.text
-    assert state["conversation"]["title"] == "精简章节"
+    assert "event: assistant_message" in events.text
+    assert state["session"]["title"] == "请精简章节"
     assert proposal["media_suggestions"][0]["suggestion_id"].startswith("suggestion-")
     assert before_accept["markdown"] != "# Agent 修改\n"
     assert accepted.status_code == 200
@@ -237,24 +254,24 @@ def test_summary_agent_supports_multiple_histories(tmp_path: Path):
     with create_client(tmp_path) as client:
         document = generate_documents(client)[0]
         initial = client.get(
-            f"/api/media/assets/{ASSET_ID}/summary-conversations"
+            f"/api/media/assets/{ASSET_ID}/summary-agent-sessions"
         ).json()
         created = client.post(
-            f"/api/media/assets/{ASSET_ID}/summary-conversations",
+            f"/api/media/assets/{ASSET_ID}/summary-agent-sessions",
             json={"document_id": document["document_id"]},
         )
         histories = client.get(
-            f"/api/media/assets/{ASSET_ID}/summary-conversations"
+            f"/api/media/assets/{ASSET_ID}/summary-agent-sessions"
         ).json()
         deleted = client.delete(
-            f"/api/summary-conversations/{initial[0]['conversation_id']}"
+            f"/api/summary-agent-sessions/{initial[0]['session']['session_id']}"
         )
         last_delete = client.delete(
-            f"/api/summary-conversations/{created.json()['conversation']['conversation_id']}"
+            f"/api/summary-agent-sessions/{created.json()['session']['session_id']}"
         )
 
     assert created.status_code == 201
-    assert created.json()["conversation"]["title"] == document["title"]
+    assert created.json()["session"]["title"] == document["title"]
     assert len(histories) == 2
     assert deleted.status_code == 204
     assert last_delete.status_code == 409
@@ -264,58 +281,62 @@ def test_summary_agent_uses_only_the_selected_history_context(
     tmp_path: Path,
     monkeypatch,
 ):
-    completion_messages: list[list[dict[str, str]]] = []
+    completion_messages: list[list[dict[str, object]]] = []
 
-    def complete(_model, messages, *_args, **_kwargs):
+    async def complete(_adapter, _model, messages, _tools, on_chunk):
         completion_messages.append(messages)
-        return json.dumps(
-            {
-                "proposed_markdown": "# 保持正文\n",
-                "explanation": "完成",
-                "suggested_subdocuments": [],
-                "media_suggestions": [],
-            },
-            ensure_ascii=False,
-        )
+        on_chunk("自然语言回复")
+        return AgentModelResponse(content="自然语言回复")
 
-    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete)
+    monkeypatch.setattr(
+        "openvideo.summary_manager.LiteLlmAgentAdapter.complete", complete
+    )
     with create_client(tmp_path, with_model=True) as client:
         document = generate_documents(client)[0]
-        first_conversation = client.get(
-            f"/api/media/assets/{ASSET_ID}/summary-conversations"
+        first_session = client.get(
+            f"/api/media/assets/{ASSET_ID}/summary-agent-sessions"
         ).json()[0]
-        for instruction in ("第一轮", "第二轮"):
+        for content in ("第一轮", "第二轮"):
             run = client.post(
-                f"/api/summary-conversations/"
-                f"{first_conversation['conversation_id']}/messages",
+                f"/api/summary-agent-sessions/"
+                f"{first_session['session']['session_id']}/messages",
                 json={
                     "document_id": document["document_id"],
                     "expected_revision": document["revision"],
-                    "instruction": instruction,
+                    "content": content,
                     "ai_model_id": MODEL_ID,
                     "selection": None,
                 },
             ).json()
-            client.get(f"/api/summary-agent-runs/{run['run_id']}/events")
-        second_conversation = client.post(
-            f"/api/media/assets/{ASSET_ID}/summary-conversations",
+            client.get(f"/api/agent-runs/{run['run_id']}/events")
+        second_session = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-agent-sessions",
             json={"document_id": document["document_id"]},
-        ).json()["conversation"]
+        ).json()["session"]
         isolated_run = client.post(
-            f"/api/summary-conversations/{second_conversation['conversation_id']}/messages",
+            f"/api/summary-agent-sessions/{second_session['session_id']}/messages",
             json={
                 "document_id": document["document_id"],
                 "expected_revision": document["revision"],
-                "instruction": "独立历史",
+                "content": "独立历史",
                 "ai_model_id": MODEL_ID,
                 "selection": None,
             },
         ).json()
-        client.get(f"/api/summary-agent-runs/{isolated_run['run_id']}/events")
+        client.get(f"/api/agent-runs/{isolated_run['run_id']}/events")
+        isolated_state = client.get(
+            f"/api/summary-agent-sessions/{second_session['session_id']}"
+        ).json()
 
     assert completion_messages[1][1]["content"] == "第一轮"
     assert completion_messages[1][2]["role"] == "assistant"
     assert len(completion_messages[2]) == 2
+    assert isolated_state["proposals"] == []
+    assert any(
+        event["event_type"] == "assistant/message"
+        and event["payload"]["content"] == "自然语言回复"
+        for event in isolated_state["events"]
+    )
 
 
 def test_summary_project_exports_stable_relative_paths(tmp_path: Path):

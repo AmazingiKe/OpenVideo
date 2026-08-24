@@ -9,6 +9,23 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import BaseModel, Field, model_validator
+
+from openvideo.agent_runtime import (
+    AgentPreset,
+    AgentRuntime,
+    AgentSessionStore,
+    AgentTool,
+    AgentToolRegistry,
+    new_agent_run,
+)
+from openvideo.core.agent_runtime_models import (
+    AgentEvent,
+    AgentEventType,
+    AgentRun,
+    AgentRunStage,
+    AgentSession,
+)
 from openvideo.core.analysis_models import TranscriptSegment
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -17,8 +34,10 @@ from openvideo.core.summary_models import (
     SummaryAgentMessageRequest,
     SummaryAgentRun,
     SummaryAgentRunStage,
+    SummaryAgentSession,
+    SummaryAgentSessionState,
     SummaryConversation,
-    SummaryConversationCreate,
+    SummaryAgentSessionCreate,
     SummaryConversationState,
     SummaryDocument,
     SummaryDocumentCreate,
@@ -48,7 +67,7 @@ from openvideo.core.summary_files import (
     write_manifest,
 )
 from openvideo.settings import Settings
-from openvideo.tools.llm import LlmCompletionError, complete_text
+from openvideo.tools.llm import LiteLlmAgentAdapter, LlmCompletionError, complete_text
 from openvideo.tools.summary_media import (
     GIF_DEFAULT_DURATION_SECONDS,
     SummaryMediaError,
@@ -62,6 +81,48 @@ SUMMARY_CONVERSATION_TITLE_LENGTH = 60
 SUMMARY_CONVERSATION_CONTEXT_LIMIT = 12_000
 SUMMARY_GENERATION_CONTEXT_LIMIT = 30_000
 EXPORT_FILE_NAME_TIME_FORMAT = "%Y%m%d-%H%M%S-%f"
+SUMMARY_AGENT_TYPE = "summary"
+SUMMARY_AGENT_PERSONA = """你是 OpenVideo 的总结协作 Agent。
+默认以自然语言正常回答用户的问题，必要时先搜索视频证据或读取总结文档。
+提问、讨论、解释、评价或意图不明确时，不得调用 propose_summary_change。
+只有用户明确要求修改文档，或明确确认此前修改方案时，才可调用 propose_summary_change。
+修改工具只创建待审批建议，绝不声称已经修改文档。工具冲突或失败时应向用户解释。"""
+
+
+class SearchVideoEvidenceInput(BaseModel):
+    query: str | None = Field(default=None, max_length=500)
+    start_seconds: float | None = Field(default=None, ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+    limit: int = Field(default=12, ge=1, le=30)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "SearchVideoEvidenceInput":
+        if (
+            self.start_seconds is not None
+            and self.end_seconds is not None
+            and self.end_seconds <= self.start_seconds
+        ):
+            raise ValueError("结束时间必须晚于开始时间")
+        return self
+
+
+class ReadSummaryDocumentInput(BaseModel):
+    document_id: str
+
+
+class ProposedMediaSuggestion(BaseModel):
+    media_type: SummaryMediaType
+    start_seconds: float = Field(ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+    insert_after: str | None = None
+    caption: str = Field(min_length=1, max_length=500)
+
+
+class ProposeSummaryChangeInput(BaseModel):
+    proposed_markdown: str | None = None
+    explanation: str = Field(min_length=1, max_length=4_000)
+    suggested_subdocuments: list[SummaryDocumentCreate] = Field(default_factory=list)
+    media_suggestions: list[ProposedMediaSuggestion] = Field(default_factory=list)
 
 
 class SummaryError(RuntimeError):
@@ -83,12 +144,8 @@ class SummaryManager:
         self.library = library
         self.settings = settings
         self._tasks: set[asyncio.Task[None]] = set()
-        for run in self.library.load_summary_agent_runs():
-            if run.stage in {
-                SummaryAgentRunStage.PENDING,
-                SummaryAgentRunStage.RUNNING,
-            }:
-                self._fail_run(run, "应用重启中断了 Agent 运行，请重新发送指令")
+        self._agent_runtimes: dict[str, AgentRuntime] = {}
+        self.library.interrupt_agent_runs()
         for asset in self.library.list():
             if self.library.load_summary_documents(asset.asset_id):
                 self._documents(asset.asset_id)
@@ -100,6 +157,363 @@ class SummaryManager:
 
     def has_active_jobs(self) -> bool:
         return any(not task.done() for task in self._tasks)
+
+    def agent_sessions(self, asset_id: str) -> list[SummaryAgentSession]:
+        self._require_asset(asset_id)
+        sessions = self.library.load_summary_agent_sessions(asset_id)
+        return [
+            SummaryAgentSession(
+                session=session,
+                asset_id=asset_id,
+                root_document_id=self.library.load_summary_agent_session_binding(
+                    session.session_id
+                )[1],
+            )
+            for session in sessions
+        ]
+
+    def create_agent_session(
+        self, asset_id: str, request: SummaryAgentSessionCreate
+    ) -> SummaryAgentSessionState:
+        documents = self._documents(asset_id)
+        document = next(
+            (item for item in documents if item.document_id == request.document_id),
+            None,
+        )
+        root = next(
+            (item for item in documents if item.parent_document_id is None), None
+        )
+        if document is None or root is None:
+            raise SummaryNotFoundError("总结文档不存在")
+        session = AgentSession(
+            session_id=f"session-{uuid7().hex}",
+            agent_type=SUMMARY_AGENT_TYPE,
+            title=document.title,
+        )
+        self.library.save_summary_agent_session(
+            session, asset_id, root.document_id
+        )
+        return SummaryAgentSessionState(
+            session=session,
+            asset_id=asset_id,
+            root_document_id=root.document_id,
+        )
+
+    def agent_session_state(self, session_id: str) -> SummaryAgentSessionState:
+        try:
+            session = self.library.load_agent_session(session_id)
+            binding = self.library.load_summary_agent_session_binding(session_id)
+        except ValueError as error:
+            raise SummaryNotFoundError("总结 Agent 会话不存在") from error
+        if session is None or binding is None or session.agent_type != SUMMARY_AGENT_TYPE:
+            raise SummaryNotFoundError("总结 Agent 会话不存在")
+        return SummaryAgentSessionState(
+            session=session,
+            asset_id=binding[0],
+            root_document_id=binding[1],
+            events=self.library.load_agent_events(session_id),
+            proposals=self.library.load_agent_summary_proposals(session_id),
+        )
+
+    def delete_agent_session(self, session_id: str) -> None:
+        state = self.agent_session_state(session_id)
+        if len(self.library.load_summary_agent_sessions(state.asset_id)) <= 1:
+            raise SummaryError("至少保留一个 Agent 会话")
+        active_stages = {AgentRunStage.PENDING, AgentRunStage.RUNNING}
+        if any(
+            run.session_id == session_id and run.stage in active_stages
+            for run in self.library.load_agent_runs()
+        ):
+            raise SummaryError("Agent 正在运行，暂时不能删除该会话")
+        if not self.library.delete_agent_session(session_id):
+            raise SummaryNotFoundError("总结 Agent 会话不存在")
+
+    def create_agent_message(
+        self, session_id: str, request: SummaryAgentMessageRequest
+    ) -> AgentRun:
+        state = self.agent_session_state(session_id)
+        document = self._require_document(request.document_id)
+        if document.asset_id != state.asset_id:
+            raise SummaryNotFoundError("文档不属于该总结 Agent 会话")
+        if document.revision != request.expected_revision:
+            raise SummaryRevisionConflictError("文档版本已变化，请重新发送消息")
+        model = self.settings.ai_model(request.ai_model_id)
+        if model is None:
+            raise SummaryError("所选 AI 模型不存在")
+        content = request.content.strip()
+        if not content:
+            raise SummaryError("消息内容不能为空")
+        if not state.events:
+            session = state.session.model_copy(
+                update={
+                    "title": content.splitlines()[0][
+                        :SUMMARY_CONVERSATION_TITLE_LENGTH
+                    ],
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            self.library.save_agent_session(session)
+        run = new_agent_run(session_id)
+        self.library.save_agent_run(run)
+        registry = self._summary_tool_registry(session_id, request, document)
+        runtime = AgentRuntime(
+            AgentSessionStore(self.library), registry, LiteLlmAgentAdapter()
+        )
+        self._agent_runtimes[run.run_id] = runtime
+        preset = AgentPreset(
+            persona=SUMMARY_AGENT_PERSONA,
+            dynamic_context=lambda: self._summary_agent_context(request, document),
+            allowed_tools=(
+                "search_video_evidence",
+                "read_summary_document",
+                "propose_summary_change",
+            ),
+        )
+        task = asyncio.create_task(
+            self._execute_generic_agent_run(runtime, run, model, preset, content)
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return run
+
+    async def _execute_generic_agent_run(
+        self,
+        runtime: AgentRuntime,
+        run: AgentRun,
+        model,
+        preset: AgentPreset,
+        content: str,
+    ) -> None:
+        try:
+            await runtime.run(run, model, preset, content)
+        finally:
+            self._agent_runtimes.pop(run.run_id, None)
+
+    def generic_agent_run(self, run_id: str) -> AgentRun:
+        try:
+            run = self.library.load_agent_run(run_id)
+        except ValueError as error:
+            raise SummaryNotFoundError("Agent 运行不存在") from error
+        if run is None:
+            raise SummaryNotFoundError("Agent 运行不存在")
+        return run
+
+    def agent_run_events(
+        self, run_id: str, after_sequence: int = 0
+    ) -> list[AgentEvent]:
+        run = self.generic_agent_run(run_id)
+        return [
+            event
+            for event in self.library.load_agent_events(
+                run.session_id, after_sequence=after_sequence
+            )
+            if event.run_id == run_id
+        ]
+
+    def cancel_agent_run(self, run_id: str) -> AgentRun:
+        run = self.generic_agent_run(run_id)
+        if run.stage not in {AgentRunStage.PENDING, AgentRunStage.RUNNING}:
+            return run
+        runtime = self._agent_runtimes.get(run_id)
+        if runtime is not None:
+            runtime.cancel(run_id)
+        return run
+
+    def _summary_tool_registry(
+        self,
+        session_id: str,
+        request: SummaryAgentMessageRequest,
+        document: SummaryDocument,
+    ) -> AgentToolRegistry:
+        registry = AgentToolRegistry()
+        registry.register(
+            AgentTool(
+                name="search_video_evidence",
+                description="按关键词或时间范围搜索当前视频的转录与分析证据。",
+                parameters_model=SearchVideoEvidenceInput,
+                handler=lambda parameters: self._search_video_evidence(
+                    document.asset_id, parameters
+                ),
+            )
+        )
+        registry.register(
+            AgentTool(
+                name="read_summary_document",
+                description="读取当前视频目录中的一篇总结文档。",
+                parameters_model=ReadSummaryDocumentInput,
+                handler=lambda parameters: self._read_summary_document(
+                    document.asset_id, parameters
+                ),
+            )
+        )
+        registry.register(
+            AgentTool(
+                name="propose_summary_change",
+                description="仅在用户明确要求修改时创建待用户审批的总结修改建议。",
+                parameters_model=ProposeSummaryChangeInput,
+                handler=lambda parameters: self._propose_summary_change(
+                    session_id, request, document, parameters
+                ),
+            )
+        )
+        return registry
+
+    def _search_video_evidence(
+        self, asset_id: str, parameters: SearchVideoEvidenceInput
+    ) -> dict[str, object]:
+        query = (parameters.query or "").casefold().strip()
+        evidence: list[dict[str, object]] = []
+        transcript = self.library.load_transcript(asset_id)
+        transcript_segments = transcript.segments if transcript else []
+        for segment in transcript_segments:
+            if not self._evidence_in_range(
+                segment.start_seconds,
+                segment.end_seconds,
+                parameters.start_seconds,
+                parameters.end_seconds,
+            ):
+                continue
+            if query and query not in segment.text.casefold():
+                continue
+            evidence.append(
+                {
+                    "source": "transcript",
+                    "start_seconds": segment.start_seconds,
+                    "end_seconds": segment.end_seconds,
+                    "text": segment.text,
+                }
+            )
+            if len(evidence) >= parameters.limit:
+                break
+        if len(evidence) < parameters.limit:
+            for segment in self.library.load_segments(asset_id):
+                text = "\n".join(
+                    value
+                    for value in (
+                        segment.title,
+                        segment.detailed_summary,
+                        segment.transcript_text,
+                        segment.visual_description,
+                        segment.ocr_text,
+                    )
+                    if value
+                )
+                if not self._evidence_in_range(
+                    segment.start_seconds,
+                    segment.end_seconds,
+                    parameters.start_seconds,
+                    parameters.end_seconds,
+                ):
+                    continue
+                if query and query not in text.casefold():
+                    continue
+                evidence.append(
+                    {
+                        "source": "analysis",
+                        "start_seconds": segment.start_seconds,
+                        "end_seconds": segment.end_seconds,
+                        "title": segment.title,
+                        "text": text,
+                    }
+                )
+                if len(evidence) >= parameters.limit:
+                    break
+        return {"ok": True, "evidence": evidence, "truncated": len(evidence) >= parameters.limit}
+
+    @staticmethod
+    def _evidence_in_range(
+        start: float,
+        end: float,
+        range_start: float | None,
+        range_end: float | None,
+    ) -> bool:
+        return not (
+            (range_start is not None and end < range_start)
+            or (range_end is not None and start > range_end)
+        )
+
+    def _read_summary_document(
+        self, asset_id: str, parameters: ReadSummaryDocumentInput
+    ) -> dict[str, object]:
+        document = self._require_document(parameters.document_id)
+        if document.asset_id != asset_id:
+            return {"ok": False, "error": "文档不属于当前视频"}
+        return {
+            "ok": True,
+            "document": {
+                "document_id": document.document_id,
+                "title": document.title,
+                "revision": document.revision,
+                "markdown": document.markdown,
+            },
+        }
+
+    def _propose_summary_change(
+        self,
+        session_id: str,
+        request: SummaryAgentMessageRequest,
+        document: SummaryDocument,
+        parameters: ProposeSummaryChangeInput,
+    ) -> dict[str, object]:
+        current = self._require_document(document.document_id)
+        if current.revision != request.expected_revision:
+            return {
+                "ok": False,
+                "error": "文档版本冲突",
+                "expected_revision": request.expected_revision,
+                "current_revision": current.revision,
+            }
+        proposed_markdown = (
+            parameters.proposed_markdown
+            if parameters.proposed_markdown is not None
+            else current.markdown
+        )
+        media_suggestions = [
+            SummaryMediaSuggestion(
+                suggestion_id=f"suggestion-{uuid7().hex}",
+                **suggestion.model_dump(),
+            )
+            for suggestion in parameters.media_suggestions
+        ]
+        markdown_changed = proposed_markdown != current.markdown
+        if (
+            not markdown_changed
+            and not parameters.suggested_subdocuments
+            and not media_suggestions
+        ):
+            return {"ok": False, "error": "建议没有包含任何实际变化"}
+        proposal = SummaryEditProposal(
+            proposal_id=f"proposal-{uuid7().hex}",
+            session_id=session_id,
+            document_id=current.document_id,
+            base_revision=current.revision,
+            proposed_markdown=proposed_markdown,
+            explanation=parameters.explanation,
+            diff=_markdown_diff(current.markdown, proposed_markdown),
+            suggested_subdocuments=parameters.suggested_subdocuments,
+            media_suggestions=media_suggestions,
+        )
+        self.library.save_agent_summary_proposal(proposal)
+        return {"ok": True, "proposal": proposal.model_dump(mode="json")}
+
+    def _summary_agent_context(
+        self, request: SummaryAgentMessageRequest, document: SummaryDocument
+    ) -> str:
+        documents = self._documents(document.asset_id)
+        directory = "\n".join(
+            f"- {item.document_id}: {item.title}（版本 {item.revision}）"
+            for item in documents
+        )
+        selection = (
+            f"当前选区 {request.selection.start}:{request.selection.end}："
+            f"{request.selection.text}"
+            if request.selection
+            else "当前没有选区。"
+        )
+        return (
+            f"当前文档：{document.document_id}（请求版本 {request.expected_revision}）\n"
+            f"{selection}\n文档目录：\n{directory}"
+        )
 
     def documents(self, asset_id: str) -> list[SummaryDocument]:
         self._require_asset(asset_id)
@@ -188,7 +602,9 @@ class SummaryManager:
         self._write_new_project(asset_id, documents)
         self.library.create_summary_documents(documents)
         root = documents[0]
-        self._create_conversation(root, root.title)
+        self.create_agent_session(
+            asset_id, SummaryAgentSessionCreate(document_id=root.document_id)
+        )
         return documents
 
     def create_child(
@@ -547,7 +963,7 @@ class SummaryManager:
         document = self._require_document(proposal.document_id)
         if document.revision != proposal.base_revision:
             stale = proposal.model_copy(update={"status": SummaryProposalStatus.STALE})
-            self.library.save_summary_proposal(stale)
+            self._save_proposal(stale)
             raise SummaryRevisionConflictError("建议基于旧版本，已标记为过期")
         try:
             self.update_document(
@@ -559,7 +975,7 @@ class SummaryManager:
             )
         except SummaryRevisionConflictError:
             stale = proposal.model_copy(update={"status": SummaryProposalStatus.STALE})
-            self.library.save_summary_proposal(stale)
+            self._save_proposal(stale)
             raise SummaryRevisionConflictError("建议基于旧版本，已标记为过期")
         for suggestion in proposal.suggested_subdocuments:
             root = next(
@@ -575,7 +991,7 @@ class SummaryManager:
         accepted = proposal.model_copy(
             update={"status": SummaryProposalStatus.ACCEPTED}
         )
-        self.library.save_summary_proposal(accepted)
+        self._save_proposal(accepted)
         return accepted
 
     def reject_proposal(self, proposal_id: str) -> SummaryEditProposal:
@@ -585,7 +1001,7 @@ class SummaryManager:
         rejected = proposal.model_copy(
             update={"status": SummaryProposalStatus.REJECTED}
         )
-        self.library.save_summary_proposal(rejected)
+        self._save_proposal(rejected)
         return rejected
 
     async def create_media(
@@ -870,12 +1286,15 @@ class SummaryManager:
 
     def _require_proposal(self, proposal_id: str) -> SummaryEditProposal:
         try:
-            proposal = self.library.load_summary_proposal(proposal_id)
+            proposal = self.library.load_agent_summary_proposal(proposal_id)
         except ValueError as error:
             raise SummaryNotFoundError("修改建议不存在") from error
         if proposal is None:
             raise SummaryNotFoundError("修改建议不存在")
         return proposal
+
+    def _save_proposal(self, proposal: SummaryEditProposal) -> None:
+        self.library.save_agent_summary_proposal(proposal)
 
     @staticmethod
     def _root_markdown(

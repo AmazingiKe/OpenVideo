@@ -431,7 +431,8 @@ def _load_conversations(
         if any(message.conversation_id != conversation.conversation_id for message in record.messages):
             _raise_issue(asset_id, path, library_root, "cross_asset_reference", "总结消息属于其他对话")
         if any(
-            proposal.conversation_id != conversation.conversation_id
+            proposal.session_id
+            != f"session-{conversation.conversation_id.removeprefix('conversation-')}"
             or proposal.document_id not in document_ids
             for proposal in record.proposals
         ):

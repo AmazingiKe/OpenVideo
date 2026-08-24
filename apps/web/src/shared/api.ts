@@ -23,9 +23,9 @@ import type {
   TranscriptionModelDescriptor,
   TranscriptionModelDownloadJob,
   Preferences,
-  SummaryAgentRun,
-  SummaryConversation,
-  SummaryConversationState,
+  AgentRun,
+  SummaryAgentSession,
+  SummaryAgentSessionState,
   SummaryDetail,
   SummaryDocument,
   SummaryExportResult,
@@ -639,23 +639,23 @@ export async function delete_summary_document(
     throw new ApiError(`请求失败（${response.status}）`, response.status);
 }
 
-export function list_summary_conversations(
+export function list_summary_agent_sessions(
   asset_id: string,
   signal?: AbortSignal,
-): Promise<SummaryConversation[]> {
+): Promise<SummaryAgentSession[]> {
   return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-conversations`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-agent-sessions`,
     { signal },
   );
 }
 
-export function create_summary_conversation(
+export function create_summary_agent_session(
   asset_id: string,
   document_id: string,
   signal?: AbortSignal,
-): Promise<SummaryConversationState> {
+): Promise<SummaryAgentSessionState> {
   return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-conversations`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-agent-sessions`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -665,41 +665,41 @@ export function create_summary_conversation(
   );
 }
 
-export function get_summary_conversation(
-  conversation_id: string,
+export function get_summary_agent_session(
+  session_id: string,
   signal?: AbortSignal,
-): Promise<SummaryConversationState> {
+): Promise<SummaryAgentSessionState> {
   return request_json(
-    `/api/summary-conversations/${encodeURIComponent(conversation_id)}`,
+    `/api/summary-agent-sessions/${encodeURIComponent(session_id)}`,
     { signal },
   );
 }
 
-export async function delete_summary_conversation(
-  conversation_id: string,
+export async function delete_summary_agent_session(
+  session_id: string,
   signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(
-    `${api_base_url}/api/summary-conversations/${encodeURIComponent(conversation_id)}`,
+    `${api_base_url}/api/summary-agent-sessions/${encodeURIComponent(session_id)}`,
     { method: "DELETE", signal },
   );
   if (!response.ok)
     throw new ApiError(`请求失败（${response.status}）`, response.status);
 }
 
-export function create_summary_agent_run(
-  conversation_id: string,
+export function create_summary_agent_message(
+  session_id: string,
   request: {
     document_id: string;
     expected_revision: number;
-    instruction: string;
+    content: string;
     ai_model_id: string;
     selection: { start: number; end: number; text: string } | null;
   },
   signal?: AbortSignal,
-): Promise<SummaryAgentRun> {
+): Promise<AgentRun> {
   return request_json(
-    `/api/summary-conversations/${encodeURIComponent(conversation_id)}/messages`,
+    `/api/summary-agent-sessions/${encodeURIComponent(session_id)}/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -710,20 +710,57 @@ export function create_summary_agent_run(
 }
 
 export type SummaryAgentEvent =
-  | { event: "status"; data: { stage: SummaryAgentRun["stage"] } }
-  | { event: "reply"; data: SummaryConversationState["messages"][number] }
-  | { event: "proposal"; data: SummaryEditProposal }
-  | { event: "complete"; data: { run_id: string } }
-  | { event: "error"; data: { run_id: string; message: string } };
+  | {
+      event: "status";
+      data: AgentStreamData & { stage: string; message?: string };
+    }
+  | { event: "assistant_chunk"; data: AgentStreamData & { content: string } }
+  | {
+      event: "assistant_message";
+      data: AgentStreamData & { content: string; tool_calls: unknown[] };
+    }
+  | { event: "tool_call"; data: AgentStreamData & AgentToolTrace }
+  | {
+      event: "tool_result";
+      data: AgentStreamData & {
+        call_id: string;
+        name: string;
+        result: unknown;
+      };
+    }
+  | {
+      event: "proposal";
+      data: AgentStreamData & { proposal: SummaryEditProposal };
+    }
+  | { event: "complete"; data: AgentStreamData & { run_id: string } }
+  | {
+      event: "cancelled";
+      data: AgentStreamData & { run_id: string; message: string };
+    }
+  | {
+      event: "error";
+      data: AgentStreamData & { run_id: string; message: string };
+    };
+
+type AgentStreamData = { event_id: string; sequence: number };
+type AgentToolTrace = {
+  call_id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
 
 export async function stream_summary_agent_run(
   run_id: string,
   on_event: (event: SummaryAgentEvent) => void,
   signal?: AbortSignal,
+  last_event_id?: string,
 ): Promise<void> {
   const response = await fetch(
-    `${api_base_url}/api/summary-agent-runs/${encodeURIComponent(run_id)}/events`,
-    { signal },
+    `${api_base_url}/api/agent-runs/${encodeURIComponent(run_id)}/events`,
+    {
+      signal,
+      headers: last_event_id ? { "Last-Event-ID": last_event_id } : undefined,
+    },
   );
   if (!response.ok || !response.body) {
     throw new ApiError(`请求失败（${response.status}）`, response.status);
@@ -748,6 +785,16 @@ export async function stream_summary_agent_run(
     }
     if (done) break;
   }
+}
+
+export function cancel_agent_run(
+  run_id: string,
+  signal?: AbortSignal,
+): Promise<AgentRun> {
+  return request_json(`/api/agent-runs/${encodeURIComponent(run_id)}/cancel`, {
+    method: "POST",
+    signal,
+  });
 }
 
 export function resolve_summary_proposal(

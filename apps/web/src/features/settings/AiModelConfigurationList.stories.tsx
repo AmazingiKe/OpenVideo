@@ -14,6 +14,7 @@ const meta = {
         model_id: "model-0198d12345677890abcdef1234567890",
         name: "本地视觉模型",
         litellm_model: "ollama/qwen2.5-vl",
+        tool_calling_mode: "auto",
         api_key: null,
         api_base: "http://127.0.0.1:11434",
         api_version: null,

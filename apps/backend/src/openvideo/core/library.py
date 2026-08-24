@@ -10,6 +10,13 @@ import portalocker
 from pydantic import BaseModel
 
 from openvideo.core.agent_models import AgentJob
+from openvideo.core.agent_runtime_models import (
+    AgentEvent,
+    AgentEventType,
+    AgentRun,
+    AgentRunStage,
+    AgentSession,
+)
 from openvideo.core.analysis_models import AnalysisJob, Transcript, TranscriptionMetadata
 from openvideo.core.identifiers import is_uuid7, uuid7
 from openvideo.core.library_files import (
@@ -715,6 +722,199 @@ class MediaLibrary:
             "SELECT * FROM summary_agent_runs ORDER BY created_at"
         ).fetchall()
         return [SummaryAgentRun.model_validate(dict(row)) for row in rows]
+
+    def save_agent_session(self, session: AgentSession) -> None:
+        self._validate_identifier(session.session_id, "session")
+        self._upsert_runtime_model("agent_sessions", session.model_dump(mode="json"))
+
+    def load_agent_session(self, session_id: str) -> AgentSession | None:
+        self._validate_identifier(session_id, "session")
+        row = self._db().execute(
+            "SELECT * FROM agent_sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        return AgentSession.model_validate(dict(row)) if row else None
+
+    def save_summary_agent_session(
+        self, session: AgentSession, asset_id: str, root_document_id: str
+    ) -> None:
+        self.save_agent_session(session)
+        with self._lock, self._db():
+            self._db().execute(
+                "INSERT INTO summary_agent_sessions(session_id, asset_id, root_document_id) "
+                "VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
+                "asset_id=excluded.asset_id, root_document_id=excluded.root_document_id",
+                (session.session_id, asset_id, root_document_id),
+            )
+
+    def load_summary_agent_sessions(self, asset_id: str) -> list[AgentSession]:
+        self._validate_asset_id(asset_id)
+        rows = self._db().execute(
+            "SELECT sessions.* FROM agent_sessions AS sessions "
+            "JOIN summary_agent_sessions AS summary "
+            "ON summary.session_id = sessions.session_id "
+            "WHERE summary.asset_id = ? ORDER BY sessions.updated_at DESC",
+            (asset_id,),
+        ).fetchall()
+        return [AgentSession.model_validate(dict(row)) for row in rows]
+
+    def load_summary_agent_session_binding(
+        self, session_id: str
+    ) -> tuple[str, str] | None:
+        self._validate_identifier(session_id, "session")
+        row = self._db().execute(
+            "SELECT asset_id, root_document_id FROM summary_agent_sessions "
+            "WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return (row["asset_id"], row["root_document_id"]) if row else None
+
+    def delete_agent_session(self, session_id: str) -> bool:
+        self._validate_identifier(session_id, "session")
+        with self._lock, self._db():
+            cursor = self._db().execute(
+                "DELETE FROM agent_sessions WHERE session_id = ?", (session_id,)
+            )
+        return cursor.rowcount > 0
+
+    def save_agent_run(self, run: AgentRun) -> None:
+        self._validate_identifier(run.run_id, "run")
+        self._upsert_runtime_model("agent_runs", run.model_dump(mode="json"))
+
+    def load_agent_run(self, run_id: str) -> AgentRun | None:
+        self._validate_identifier(run_id, "run")
+        row = self._db().execute(
+            "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return AgentRun.model_validate(dict(row)) if row else None
+
+    def load_agent_runs(self) -> list[AgentRun]:
+        rows = self._db().execute(
+            "SELECT * FROM agent_runs ORDER BY created_at"
+        ).fetchall()
+        return [AgentRun.model_validate(dict(row)) for row in rows]
+
+    def append_agent_event(
+        self,
+        session_id: str,
+        run_id: str | None,
+        event_type: AgentEventType,
+        payload: dict[str, object],
+    ) -> AgentEvent:
+        self._validate_identifier(session_id, "session")
+        if run_id is not None:
+            self._validate_identifier(run_id, "run")
+        with self._lock, self._db():
+            sequence = self._db().execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_events "
+                "WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+            event = AgentEvent(
+                event_id=f"event-{uuid7().hex}",
+                session_id=session_id,
+                sequence=sequence,
+                run_id=run_id,
+                event_type=event_type,
+                payload=payload,
+            )
+            values = event.model_dump(mode="json")
+            values["payload"] = json.dumps(values["payload"], ensure_ascii=False)
+            columns = tuple(values)
+            self._db().execute(
+                f"INSERT INTO agent_events ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)})",
+                tuple(values[column] for column in columns),
+            )
+            self._db().execute(
+                "UPDATE agent_sessions SET updated_at = ? WHERE session_id = ?",
+                (event.created_at.isoformat(), session_id),
+            )
+        return event
+
+    def load_agent_events(
+        self, session_id: str, *, after_sequence: int = 0
+    ) -> list[AgentEvent]:
+        self._validate_identifier(session_id, "session")
+        rows = self._db().execute(
+            "SELECT * FROM agent_events WHERE session_id = ? AND sequence > ? "
+            "ORDER BY sequence",
+            (session_id, after_sequence),
+        ).fetchall()
+        events: list[AgentEvent] = []
+        for row in rows:
+            values = dict(row)
+            values["payload"] = json.loads(values["payload"])
+            events.append(AgentEvent.model_validate(values))
+        return events
+
+    def interrupt_agent_runs(self) -> None:
+        now = datetime.now(UTC)
+        active_stages = (AgentRunStage.PENDING.value, AgentRunStage.RUNNING.value)
+        rows = self._db().execute(
+            "SELECT * FROM agent_runs WHERE stage IN (?, ?)", active_stages
+        ).fetchall()
+        for row in rows:
+            run = AgentRun.model_validate(dict(row)).model_copy(
+                update={
+                    "stage": AgentRunStage.INTERRUPTED,
+                    "error_message": "应用重启中断了 Agent 运行",
+                    "updated_at": now,
+                }
+            )
+            self.save_agent_run(run)
+            self.append_agent_event(
+                run.session_id,
+                run.run_id,
+                AgentEventType.TURN_END,
+                {"stage": AgentRunStage.INTERRUPTED.value},
+            )
+
+    def save_agent_summary_proposal(self, proposal: SummaryEditProposal) -> None:
+        self._validate_identifier(proposal.proposal_id, "proposal")
+        self._validate_identifier(proposal.session_id, "session")
+        values = proposal.model_dump(mode="json")
+        values["suggested_subdocuments"] = json.dumps(
+            values["suggested_subdocuments"], ensure_ascii=False
+        )
+        values["media_suggestions"] = json.dumps(
+            values["media_suggestions"], ensure_ascii=False
+        )
+        self._upsert_runtime_model("summary_agent_proposals", values)
+
+    def load_agent_summary_proposal(
+        self, proposal_id: str
+    ) -> SummaryEditProposal | None:
+        self._validate_identifier(proposal_id, "proposal")
+        row = self._db().execute(
+            "SELECT * FROM summary_agent_proposals WHERE proposal_id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        values = dict(row)
+        values["suggested_subdocuments"] = json.loads(
+            values["suggested_subdocuments"]
+        )
+        values["media_suggestions"] = json.loads(values["media_suggestions"])
+        return SummaryEditProposal.model_validate(values)
+
+    def load_agent_summary_proposals(
+        self, session_id: str
+    ) -> list[SummaryEditProposal]:
+        self._validate_identifier(session_id, "session")
+        rows = self._db().execute(
+            "SELECT proposal_id FROM summary_agent_proposals "
+            "WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        ).fetchall()
+        return [
+            proposal
+            for row in rows
+            if (
+                proposal := self.load_agent_summary_proposal(row["proposal_id"])
+            )
+            is not None
+        ]
 
     def save_summary_media(self, media: SummaryMediaArtifact) -> None:
         self._validate_identifier(media.media_id, "media")

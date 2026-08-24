@@ -6,6 +6,11 @@ import pytest
 
 from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.library import InvalidLibraryError, MediaLibrary
+from openvideo.core.library_files import (
+    SummaryConversationFile,
+    atomic_write_model,
+    conversation_file_path,
+)
 from openvideo.core.models import (
     DownloadJob,
     MediaAsset,
@@ -74,32 +79,35 @@ def _save_summary(library: MediaLibrary) -> None:
     atomic_write_text(asset_directory / "summary" / "index.md", markdown)
     write_manifest(asset_directory, build_manifest(ASSET_ID, [document], []))
     library.create_summary_documents([document])
-    library.save_summary_conversation(
-        SummaryConversation(
-            conversation_id=CONVERSATION_ID,
-            asset_id=ASSET_ID,
-            root_document_id=DOCUMENT_ID,
-            title="修改历史",
-        )
+    conversation = SummaryConversation(
+        conversation_id=CONVERSATION_ID,
+        asset_id=ASSET_ID,
+        root_document_id=DOCUMENT_ID,
+        title="修改历史",
     )
-    library.save_summary_message(
-        SummaryMessage(
+    message = SummaryMessage(
             message_id=MESSAGE_ID,
             conversation_id=CONVERSATION_ID,
             role=SummaryMessageRole.USER,
             content="请精简正文",
-        )
     )
-    library.save_summary_proposal(
-        SummaryEditProposal(
+    proposal = SummaryEditProposal(
             proposal_id=PROPOSAL_ID,
-            conversation_id=CONVERSATION_ID,
+            session_id=f"session-{CONVERSATION_ID.removeprefix('conversation-')}",
             document_id=DOCUMENT_ID,
             base_revision=1,
             proposed_markdown="# 精简总结\n",
             explanation="删去重复内容",
             diff="- 用户总结\n+ 精简总结",
-        )
+            status="accepted",
+    )
+    atomic_write_model(
+        conversation_file_path(asset_directory, CONVERSATION_ID),
+        SummaryConversationFile(
+            conversation=conversation,
+            messages=[message],
+            proposals=[proposal],
+        ),
     )
     media_path = asset_directory / "summary" / "assets" / f"{MEDIA_ID}.jpg"
     media_path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,10 +186,25 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     assert rebuilt.load_segments(ASSET_ID)[0].marker_ids == [MARKER_ID]
     assert rebuilt.load_markers(ASSET_ID)[0].tags == ["重点"]
     assert rebuilt.load_summary_document(DOCUMENT_ID).markdown == "# 用户总结\n"
-    assert rebuilt.load_summary_messages(CONVERSATION_ID)[0].content == "请精简正文"
-    assert rebuilt.load_summary_proposal(PROPOSAL_ID).explanation == "删去重复内容"
+    session_id = f"session-{CONVERSATION_ID.removeprefix('conversation-')}"
+    assert rebuilt.load_agent_events(session_id)[0].payload["content"] == "请精简正文"
+    migrated_proposal = rebuilt.load_agent_summary_proposal(PROPOSAL_ID)
+    assert migrated_proposal.explanation == "删去重复内容"
+    assert migrated_proposal.status == "accepted"
     assert rebuilt.load_summary_media(ASSET_ID)[0].media_id == MEDIA_ID
     assert rebuilt.list_download_jobs() == []
+    tables = {
+        row[0]
+        for row in rebuilt._db().execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    assert not {
+        "summary_conversations",
+        "summary_messages",
+        "summary_agent_runs",
+    } & tables
+    assert rebuilt._db().execute("PRAGMA foreign_key_check").fetchall() == []
     rebuilt.close()
 
 

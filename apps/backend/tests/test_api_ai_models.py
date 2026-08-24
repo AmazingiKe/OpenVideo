@@ -106,6 +106,7 @@ def test_preferences_patch_preserves_typed_ai_models(tmp_path: Path):
             "name": "测试模型",
             "litellm_model": "openai/test-model",
             "input_modalities": ["text"],
+            "tool_calling_mode": "auto",
         }
     ]
 

@@ -9,12 +9,12 @@ import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  create_summary_conversation,
+  create_summary_agent_session,
   create_summary_export,
   generate_summary_documents,
-  get_summary_conversation,
+  get_summary_agent_session,
   list_ai_models,
-  list_summary_conversations,
+  list_summary_agent_sessions,
   list_summary_documents,
   subscribe_summary_documents,
   update_summary_document,
@@ -47,16 +47,16 @@ vi.mock("@/shared/api", async (import_original) => {
   const actual = await import_original<typeof import("@/shared/api")>();
   return {
     ...actual,
-    create_summary_agent_run: vi.fn(),
+    create_summary_agent_message: vi.fn(),
     create_summary_child: vi.fn(),
-    create_summary_conversation: vi.fn(),
+    create_summary_agent_session: vi.fn(),
     create_summary_export: vi.fn(),
     create_summary_media: vi.fn(),
     delete_summary_document: vi.fn(),
     generate_summary_documents: vi.fn(),
-    get_summary_conversation: vi.fn(),
+    get_summary_agent_session: vi.fn(),
     list_ai_models: vi.fn(),
-    list_summary_conversations: vi.fn(),
+    list_summary_agent_sessions: vi.fn(),
     list_summary_documents: vi.fn(),
     reorder_summary_children: vi.fn(),
     resolve_summary_proposal: vi.fn(),
@@ -131,26 +131,30 @@ describe("SummaryWorkspace", () => {
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
     vi.mocked(subscribe_summary_documents).mockReturnValue(() => undefined);
-    vi.mocked(get_summary_conversation).mockResolvedValue({
-      conversation: {
-        conversation_id: "conversation-01890f4c7a2b7cc298c4dc0c0c07398f",
-        asset_id: ASSET.asset_id,
-        root_document_id: DOCUMENT.document_id,
+    vi.mocked(get_summary_agent_session).mockResolvedValue({
+      session: {
+        session_id: "session-01890f4c7a2b7cc298c4dc0c0c07398f",
+        agent_type: "summary",
         title: "默认对话",
         created_at: DOCUMENT.created_at,
         updated_at: DOCUMENT.updated_at,
       },
-      messages: [],
+      asset_id: ASSET.asset_id,
+      root_document_id: DOCUMENT.document_id,
+      events: [],
       proposals: [],
     });
-    vi.mocked(list_summary_conversations).mockResolvedValue([
+    vi.mocked(list_summary_agent_sessions).mockResolvedValue([
       {
-        conversation_id: "conversation-01890f4c7a2b7cc298c4dc0c0c07398f",
+        session: {
+          session_id: "session-01890f4c7a2b7cc298c4dc0c0c07398f",
+          agent_type: "summary",
+          title: "默认对话",
+          created_at: DOCUMENT.created_at,
+          updated_at: DOCUMENT.updated_at,
+        },
         asset_id: ASSET.asset_id,
         root_document_id: DOCUMENT.document_id,
-        title: "默认对话",
-        created_at: DOCUMENT.created_at,
-        updated_at: DOCUMENT.updated_at,
       },
     ]);
   });
@@ -296,16 +300,17 @@ describe("SummaryWorkspace", () => {
 
   it("creates a separate Agent history for the selected document", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
-    vi.mocked(create_summary_conversation).mockResolvedValue({
-      conversation: {
-        conversation_id: "conversation-01890f4c7a2b7cc298c4dc0c0c073990",
-        asset_id: ASSET.asset_id,
-        root_document_id: DOCUMENT.document_id,
+    vi.mocked(create_summary_agent_session).mockResolvedValue({
+      session: {
+        session_id: "session-01890f4c7a2b7cc298c4dc0c0c073990",
+        agent_type: "summary",
         title: DOCUMENT.title,
         created_at: DOCUMENT.created_at,
         updated_at: DOCUMENT.updated_at,
       },
-      messages: [],
+      asset_id: ASSET.asset_id,
+      root_document_id: DOCUMENT.document_id,
+      events: [],
       proposals: [],
     });
 
@@ -323,7 +328,7 @@ describe("SummaryWorkspace", () => {
     );
 
     await waitFor(() =>
-      expect(create_summary_conversation).toHaveBeenCalledWith(
+      expect(create_summary_agent_session).toHaveBeenCalledWith(
         ASSET.asset_id,
         DOCUMENT.document_id,
       ),

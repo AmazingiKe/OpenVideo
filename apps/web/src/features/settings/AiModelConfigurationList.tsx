@@ -43,6 +43,14 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { model_id } from "@/shared/identifiers";
@@ -79,6 +87,7 @@ const NEW_AI_MODEL: Omit<AiModelConfiguration, "model_id"> = {
   api_base: null,
   api_version: null,
   input_modalities: ["text"],
+  tool_calling_mode: "auto",
 };
 
 export function AiModelConfigurationList({
@@ -370,6 +379,34 @@ function AiModelConfigurationDialog({
               />
             </Field>
           </div>
+          <Field>
+            <FieldLabel htmlFor={`${field_prefix}-tool-calling`}>
+              工具调用能力
+            </FieldLabel>
+            <Select
+              value={model.tool_calling_mode}
+              onValueChange={(tool_calling_mode) =>
+                update_model({
+                  tool_calling_mode:
+                    tool_calling_mode as AiModelConfiguration["tool_calling_mode"],
+                })
+              }
+            >
+              <SelectTrigger id={`${field_prefix}-tool-calling`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="auto">自动检测</SelectItem>
+                  <SelectItem value="enabled">强制启用</SelectItem>
+                  <SelectItem value="disabled">禁用</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              自动检测失败时可手动覆盖；禁用后总结 Agent 仍可正常聊天。
+            </FieldDescription>
+          </Field>
           <Field>
             <FieldLabel id={`${field_prefix}-input-modalities`}>
               输入模态

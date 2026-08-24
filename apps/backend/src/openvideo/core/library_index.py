@@ -19,6 +19,19 @@ from openvideo.core.library_files import (
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 DATABASE_VERSION = 10
+REQUIRED_AGENT_TABLES = {
+    "agent_sessions",
+    "agent_events",
+    "agent_runs",
+    "summary_agent_sessions",
+    "summary_agent_proposals",
+}
+LEGACY_AGENT_TABLES = {
+    "summary_conversations",
+    "summary_messages",
+    "summary_proposals",
+    "summary_agent_runs",
+}
 
 
 def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connection:
@@ -190,46 +203,60 @@ def replace_asset_projection(
         document_ids,
     )
 
-    conversation_ids = {
-        record.conversation.conversation_id for record in bundle.conversations
-    }
     for record in bundle.conversations:
-        conversation_values = record.conversation.model_dump(mode="json")
-        conversation_columns = tuple(conversation_values)
+        legacy = record.conversation
+        session_id = f"session-{legacy.conversation_id.removeprefix('conversation-')}"
         connection.execute(
-            f"INSERT INTO summary_conversations ({', '.join(conversation_columns)}) "
-            f"VALUES ({', '.join('?' for _ in conversation_columns)}) "
-            "ON CONFLICT(conversation_id) DO UPDATE SET "
-            "asset_id=excluded.asset_id, root_document_id=excluded.root_document_id, "
-            "title=excluded.title, created_at=excluded.created_at, updated_at=excluded.updated_at",
-            tuple(conversation_values[column] for column in conversation_columns),
-        )
-        conversation_id = record.conversation.conversation_id
-        connection.execute(
-            "DELETE FROM summary_messages WHERE conversation_id = ?",
-            (conversation_id,),
+            "INSERT INTO agent_sessions "
+            "(session_id, agent_type, title, created_at, updated_at) "
+            "VALUES (?, 'summary', ?, ?, ?) ON CONFLICT(session_id) DO NOTHING",
+            (
+                session_id,
+                legacy.title,
+                legacy.created_at.isoformat(),
+                legacy.updated_at.isoformat(),
+            ),
         )
         connection.execute(
-            "DELETE FROM summary_proposals WHERE conversation_id = ?",
-            (conversation_id,),
+            "INSERT INTO summary_agent_sessions(session_id, asset_id, root_document_id) "
+            "VALUES (?, ?, ?) ON CONFLICT(session_id) DO NOTHING",
+            (session_id, legacy.asset_id, legacy.root_document_id),
         )
-        for message in record.messages:
-            _insert_model(connection, "summary_messages", message.model_dump(mode="json"))
-        for proposal in record.proposals:
-            proposal_values = proposal.model_dump(mode="json")
-            _insert_model(
-                connection,
-                "summary_proposals",
-                {key: _sqlite_value(value) for key, value in proposal_values.items()},
+        for sequence, message in enumerate(record.messages, start=1):
+            event_id = f"event-{message.message_id.removeprefix('message-')}"
+            payload = json.dumps(
+                {
+                    "legacy_message_id": message.message_id,
+                    "role": message.role.value,
+                    "content": message.content,
+                    "created_at": message.created_at.isoformat(),
+                },
+                ensure_ascii=False,
             )
-    _delete_missing(
-        connection,
-        "summary_conversations",
-        "conversation_id",
-        "asset_id",
-        asset.asset_id,
-        conversation_ids,
-    )
+            connection.execute(
+                "INSERT OR IGNORE INTO agent_events "
+                "(event_id, session_id, sequence, run_id, event_type, payload, created_at) "
+                "VALUES (?, ?, ?, NULL, 'archive/message', ?, ?)",
+                (
+                    event_id,
+                    session_id,
+                    sequence,
+                    payload,
+                    message.created_at.isoformat(),
+                ),
+            )
+        for proposal in record.proposals:
+            proposal_values = {
+                key: _sqlite_value(value)
+                for key, value in proposal.model_dump(mode="json").items()
+            }
+            columns = tuple(proposal_values)
+            connection.execute(
+                f"INSERT OR IGNORE INTO summary_agent_proposals "
+                f"({', '.join(columns)}) VALUES "
+                f"({', '.join('?' for _ in columns)})",
+                tuple(proposal_values[column] for column in columns),
+            )
 
     connection.execute("DELETE FROM summary_media WHERE asset_id = ?", (asset.asset_id,))
     for media in bundle.summary_media:
@@ -262,10 +289,28 @@ def _database_matches_schema(database_path: Path) -> bool:
         connection = sqlite3.connect(database_path)
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         healthy = connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        proposal_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(summary_agent_proposals)"
+            )
+        }
         connection.close()
     except sqlite3.Error:
         return False
-    return version == DATABASE_VERSION and healthy
+    return (
+        version == DATABASE_VERSION
+        and healthy
+        and REQUIRED_AGENT_TABLES <= tables
+        and not LEGACY_AGENT_TABLES & tables
+        and "session_id" in proposal_columns
+    )
 
 
 def _rebuild_database(
@@ -425,26 +470,31 @@ CREATE TABLE summary_documents (
     position INTEGER NOT NULL, revision INTEGER NOT NULL, created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-CREATE TABLE summary_conversations (
-    conversation_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    root_document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
-    title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+CREATE TABLE agent_sessions (
+    session_id TEXT PRIMARY KEY, agent_type TEXT NOT NULL, title TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
-CREATE TABLE summary_messages (
-    message_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
-    role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
+CREATE TABLE summary_agent_sessions (
+    session_id TEXT PRIMARY KEY REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    root_document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE
 );
-CREATE TABLE summary_proposals (
-    proposal_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
+CREATE TABLE agent_runs (
+    run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    stage TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE agent_events (
+    event_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL, run_id TEXT REFERENCES agent_runs(run_id) ON DELETE SET NULL,
+    event_type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL,
+    UNIQUE(session_id, sequence)
+);
+CREATE TABLE summary_agent_proposals (
+    proposal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
     document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
     base_revision INTEGER NOT NULL, proposed_markdown TEXT NOT NULL, explanation TEXT NOT NULL,
     diff TEXT NOT NULL, suggested_subdocuments TEXT NOT NULL, media_suggestions TEXT NOT NULL,
     status TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE summary_agent_runs (
-    run_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
-    stage TEXT NOT NULL, assistant_message_id TEXT, proposal_id TEXT, error_message TEXT,
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE summary_media (
     media_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
@@ -465,6 +515,7 @@ CREATE INDEX markers_asset_time_index ON markers(asset_id, time_seconds);
 CREATE INDEX agent_jobs_asset_created_index ON agent_jobs(asset_id, created_at DESC);
 CREATE UNIQUE INDEX summary_documents_root_asset_index ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);
-CREATE INDEX summary_conversations_asset_updated_index ON summary_conversations(asset_id, updated_at DESC);
-CREATE INDEX summary_messages_conversation_created_index ON summary_messages(conversation_id, created_at);
+CREATE INDEX agent_sessions_updated_index ON agent_sessions(updated_at DESC);
+CREATE INDEX agent_runs_session_created_index ON agent_runs(session_id, created_at);
+CREATE INDEX agent_events_session_sequence_index ON agent_events(session_id, sequence);
 """

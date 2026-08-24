@@ -8,12 +8,14 @@ const MODELS: AiModelSummary[] = [
     model_id: "model-0198d12345677890abcdef1234567890",
     name: "内容模型",
     litellm_model: "anthropic/claude-sonnet-4-5",
+    tool_calling_mode: "auto",
     input_modalities: ["text"],
   },
   {
     model_id: "model-0198d12345677890abcdef1234567891",
     name: "视觉模型",
     litellm_model: "openai/gpt-5.6-terra",
+    tool_calling_mode: "auto",
     input_modalities: ["text", "image"],
   },
 ];

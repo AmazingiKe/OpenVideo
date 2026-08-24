@@ -11,6 +11,7 @@ const meta = {
         model_id: "model-019c0000000070008000000000000000",
         name: "长上下文模型",
         litellm_model: "openai/example",
+        tool_calling_mode: "auto",
         input_modalities: ["text"],
       },
     ],

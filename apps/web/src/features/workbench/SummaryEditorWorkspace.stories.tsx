@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import type {
   MediaAsset,
-  SummaryConversationState,
+  SummaryAgentSessionState,
   SummaryDocument,
   Transcript,
 } from "@/shared/types";
@@ -11,8 +11,8 @@ import { SummaryWorkspace } from "./SummaryWorkspace";
 const ASSET_ID = "asset-0198dbf112347abc8123456789abcdef";
 const ROOT_DOCUMENT_ID = "document-0198dbf212347abc8123456789abcdef";
 const CHILD_DOCUMENT_ID = "document-0198dbf312347abc8123456789abcdef";
-const CONVERSATION_ID = "conversation-0198dbf412347abc8123456789abcdef";
-const SECOND_CONVERSATION_ID = "conversation-0198dbfb12347abc8123456789abcdef";
+const SESSION_ID = "session-0198dbf412347abc8123456789abcdef";
+const SECOND_SESSION_ID = "session-0198dbfb12347abc8123456789abcdef";
 const CREATED_AT = "2026-08-24T08:00:00Z";
 
 const ASSET: MediaAsset = {
@@ -69,35 +69,42 @@ const DOCUMENTS: SummaryDocument[] = [
   },
 ];
 
-const CONVERSATION: SummaryConversationState = {
-  conversation: {
-    conversation_id: CONVERSATION_ID,
-    asset_id: ASSET_ID,
-    root_document_id: ROOT_DOCUMENT_ID,
+const SESSION: SummaryAgentSessionState = {
+  session: {
+    session_id: SESSION_ID,
+    agent_type: "summary",
     title: "复习要点整理",
     created_at: CREATED_AT,
     updated_at: CREATED_AT,
   },
-  messages: [
+  asset_id: ASSET_ID,
+  root_document_id: ROOT_DOCUMENT_ID,
+  events: [
     {
-      message_id: "message-0198dbf512347abc8123456789abcdef",
-      conversation_id: CONVERSATION_ID,
-      role: "user",
-      content: "把核心结论改得更适合复习。",
+      event_id: "event-0198dbf512347abc8123456789abcdef",
+      session_id: SESSION_ID,
+      sequence: 1,
+      run_id: null,
+      event_type: "user/message",
+      payload: { content: "把核心结论改得更适合复习。" },
       created_at: CREATED_AT,
     },
     {
-      message_id: "message-0198dbf612347abc8123456789abcdef",
-      conversation_id: CONVERSATION_ID,
-      role: "assistant",
-      content: "我整理了三条可快速回忆的结论，并补充了一张关键帧建议。",
+      event_id: "event-0198dbf612347abc8123456789abcdef",
+      session_id: SESSION_ID,
+      sequence: 2,
+      run_id: null,
+      event_type: "assistant/message",
+      payload: {
+        content: "我整理了三条可快速回忆的结论，并补充了一张关键帧建议。",
+      },
       created_at: CREATED_AT,
     },
   ],
   proposals: [
     {
       proposal_id: "proposal-0198dbf712347abc8123456789abcdef",
-      conversation_id: CONVERSATION_ID,
+      session_id: SESSION_ID,
       document_id: ROOT_DOCUMENT_ID,
       base_revision: 3,
       proposed_markdown: DOCUMENTS[0]!.markdown,
@@ -120,16 +127,17 @@ const CONVERSATION: SummaryConversationState = {
   ],
 };
 
-const SECOND_CONVERSATION: SummaryConversationState = {
-  conversation: {
-    conversation_id: SECOND_CONVERSATION_ID,
-    asset_id: ASSET_ID,
-    root_document_id: ROOT_DOCUMENT_ID,
+const SECOND_SESSION: SummaryAgentSessionState = {
+  session: {
+    session_id: SECOND_SESSION_ID,
+    agent_type: "summary",
     title: "案例拆解补充",
     created_at: CREATED_AT,
     updated_at: CREATED_AT,
   },
-  messages: [],
+  asset_id: ASSET_ID,
+  root_document_id: ROOT_DOCUMENT_ID,
+  events: [],
   proposals: [],
 };
 
@@ -164,22 +172,31 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
           model_id: "model-0198dbf912347abc8123456789abcdef",
           name: "课程总结模型",
           litellm_model: "openai/example",
+          tool_calling_mode: "auto",
           input_modalities: ["text", "image"],
         },
       ]),
     );
   }
-  if (url.endsWith(`/api/summary-conversations/${CONVERSATION_ID}`)) {
-    return Promise.resolve(json_response(CONVERSATION));
+  if (url.endsWith(`/api/summary-agent-sessions/${SESSION_ID}`)) {
+    return Promise.resolve(json_response(SESSION));
   }
-  if (url.endsWith(`/api/summary-conversations/${SECOND_CONVERSATION_ID}`)) {
-    return Promise.resolve(json_response(SECOND_CONVERSATION));
+  if (url.endsWith(`/api/summary-agent-sessions/${SECOND_SESSION_ID}`)) {
+    return Promise.resolve(json_response(SECOND_SESSION));
   }
-  if (url.endsWith(`/api/media/assets/${ASSET_ID}/summary-conversations`)) {
+  if (url.endsWith(`/api/media/assets/${ASSET_ID}/summary-agent-sessions`)) {
     return Promise.resolve(
       json_response([
-        CONVERSATION.conversation,
-        SECOND_CONVERSATION.conversation,
+        {
+          session: SESSION.session,
+          asset_id: ASSET_ID,
+          root_document_id: ROOT_DOCUMENT_ID,
+        },
+        {
+          session: SECOND_SESSION.session,
+          asset_id: ASSET_ID,
+          root_document_id: ROOT_DOCUMENT_ID,
+        },
       ]),
     );
   }

@@ -112,15 +112,15 @@ import { cn } from "@/lib/utils";
 import {
   ApiError,
   create_summary_export,
-  create_summary_agent_run,
+  create_summary_agent_message,
+  create_summary_agent_session,
   create_summary_child,
-  create_summary_conversation,
   create_summary_media,
   delete_summary_document,
-  delete_summary_conversation,
+  delete_summary_agent_session,
   generate_summary_documents,
-  get_summary_conversation,
-  list_summary_conversations,
+  get_summary_agent_session,
+  list_summary_agent_sessions,
   list_summary_documents,
   reorder_summary_children,
   resolve_summary_proposal,
@@ -135,15 +135,19 @@ import type {
   AiModelSummary,
   MediaAsset,
   MediaSegment,
-  SummaryConversationState,
-  SummaryConversation,
+  AgentEvent,
+  SummaryAgentSessionState,
+  SummaryAgentSession,
   SummaryDetail,
   SummaryDocument,
   SummaryEditProposal,
   SummaryMediaSuggestion,
-  SummaryMessage,
   Transcript,
 } from "@/shared/types";
+import {
+  SummaryAgentToolTrace,
+  type SummaryAgentToolTraceData,
+} from "./SummaryAgentToolTrace";
 
 const AUTO_SAVE_DELAY_MS = 1_000;
 const SUMMARY_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
@@ -164,14 +168,14 @@ type SummaryWorkspaceProps = {
 
 type SummaryProject = {
   documents: SummaryDocument[];
-  conversations: SummaryConversation[];
-  conversation: SummaryConversationState | null;
+  sessions: SummaryAgentSession[];
+  session: SummaryAgentSessionState | null;
 };
 
 const EMPTY_SUMMARY_PROJECT: SummaryProject = {
   documents: [],
-  conversations: [],
-  conversation: null,
+  sessions: [],
+  session: null,
 };
 
 async function load_summary_project(
@@ -180,15 +184,12 @@ async function load_summary_project(
 ): Promise<SummaryProject> {
   const documents = await list_summary_documents(asset_id, signal);
   if (documents.length === 0) return EMPTY_SUMMARY_PROJECT;
-  const conversations = await list_summary_conversations(asset_id, signal);
-  const active_conversation = conversations[0];
-  const conversation = active_conversation
-    ? await get_summary_conversation(
-        active_conversation.conversation_id,
-        signal,
-      )
+  const sessions = await list_summary_agent_sessions(asset_id, signal);
+  const active_session = sessions[0];
+  const session = active_session
+    ? await get_summary_agent_session(active_session.session.session_id, signal)
     : null;
-  return { documents, conversations, conversation };
+  return { documents, sessions, session };
 }
 
 export function SummaryWorkspace({
@@ -216,11 +217,11 @@ export function SummaryWorkspace({
       (document) => document.parent_document_id === null,
     )?.document_id ?? null,
   );
-  const [conversations, set_conversations] = useState<SummaryConversation[]>(
-    initial_project.conversations,
+  const [agent_sessions, set_agent_sessions] = useState<SummaryAgentSession[]>(
+    initial_project.sessions,
   );
-  const [conversation, set_conversation] =
-    useState<SummaryConversationState | null>(initial_project.conversation);
+  const [agent_session, set_agent_session] =
+    useState<SummaryAgentSessionState | null>(initial_project.session);
   const [is_generating, set_is_generating] = useState(false);
   const [detail, set_detail] = useState<SummaryDetail>("standard");
   const [create_subdocuments, set_create_subdocuments] = useState(false);
@@ -243,8 +244,8 @@ export function SummaryWorkspace({
   const [delete_target, set_delete_target] = useState<SummaryDocument | null>(
     null,
   );
-  const [delete_conversation_target, set_delete_conversation_target] =
-    useState<SummaryConversation | null>(null);
+  const [delete_session_target, set_delete_session_target] =
+    useState<SummaryAgentSession | null>(null);
   const [reordering, set_reordering] = useState(false);
   const [agent_instruction, set_agent_instruction] = useState("");
   const [agent_pending, set_agent_pending] = useState(false);
@@ -286,37 +287,37 @@ export function SummaryWorkspace({
     set_dirty(next_dirty);
   }, []);
 
-  const load_conversation = useCallback(
-    async (conversation_id: string, signal?: AbortSignal) => {
-      set_conversation(await get_summary_conversation(conversation_id, signal));
+  const load_agent_session = useCallback(
+    async (session_id: string, signal?: AbortSignal) => {
+      set_agent_session(await get_summary_agent_session(session_id, signal));
     },
     [],
   );
 
-  const load_conversations = useCallback(
+  const load_agent_sessions = useCallback(
     async (
       asset_id: string,
       signal?: AbortSignal,
-      preferred_conversation_id?: string,
+      preferred_session_id?: string,
     ) => {
-      const loaded = await list_summary_conversations(asset_id, signal);
-      set_conversations(loaded);
+      const loaded = await list_summary_agent_sessions(asset_id, signal);
+      set_agent_sessions(loaded);
       const active =
         loaded.find(
-          (item) => item.conversation_id === preferred_conversation_id,
+          (item) => item.session.session_id === preferred_session_id,
         ) ?? loaded[0];
-      if (active) await load_conversation(active.conversation_id, signal);
-      else set_conversation(null);
+      if (active) await load_agent_session(active.session.session_id, signal);
+      else set_agent_session(null);
       return loaded;
     },
-    [load_conversation],
+    [load_agent_session],
   );
 
   const load_documents = useCallback(
     async (
       asset_id: string,
       signal?: AbortSignal,
-      preferred_conversation_id?: string,
+      preferred_session_id?: string,
     ) => {
       const loaded = await list_summary_documents(asset_id, signal);
       set_documents(loaded);
@@ -327,14 +328,14 @@ export function SummaryWorkspace({
               ?.document_id ?? null),
       );
       if (loaded.length > 0) {
-        await load_conversations(asset_id, signal, preferred_conversation_id);
+        await load_agent_sessions(asset_id, signal, preferred_session_id);
       } else {
-        set_conversations([]);
-        set_conversation(null);
+        set_agent_sessions([]);
+        set_agent_session(null);
       }
       return loaded;
     },
-    [load_conversations],
+    [load_agent_sessions],
   );
 
   useEffect(() => {
@@ -358,8 +359,8 @@ export function SummaryWorkspace({
     if (!selected_asset_id) {
       set_documents([]);
       set_selected_document_id(null);
-      set_conversations([]);
-      set_conversation(null);
+      set_agent_sessions([]);
+      set_agent_session(null);
     }
   }, [selected_asset_id]);
 
@@ -375,13 +376,17 @@ export function SummaryWorkspace({
             (document) => document.parent_document_id === null,
           )?.document_id ?? null),
     );
-    set_conversations(project.conversations);
-    set_conversation(project.conversation);
+    set_agent_sessions(project.sessions);
+    set_agent_session(project.session);
   }, [project_query.data]);
 
   useEffect(() => {
-    project_state_ref.current = { documents, conversations, conversation };
-  }, [conversation, conversations, documents]);
+    project_state_ref.current = {
+      documents,
+      sessions: agent_sessions,
+      session: agent_session,
+    };
+  }, [agent_session, agent_sessions, documents]);
 
   useEffect(() => {
     return () => {
@@ -487,7 +492,7 @@ export function SummaryWorkspace({
         generated.find((document) => document.parent_document_id === null) ??
         null;
       set_selected_document_id(root?.document_id ?? null);
-      if (root) await load_conversations(selected_asset.asset_id);
+      if (root) await load_agent_sessions(selected_asset.asset_id);
     } catch (error) {
       on_error?.(error_message(error));
     } finally {
@@ -589,15 +594,15 @@ export function SummaryWorkspace({
     void reorder_children(reordered.map((document) => document.document_id));
   }
 
-  async function create_agent_conversation() {
+  async function create_agent_session() {
     if (!selected_asset || !selected_document || agent_pending) return;
     try {
-      const created = await create_summary_conversation(
+      const created = await create_summary_agent_session(
         selected_asset.asset_id,
         selected_document.document_id,
       );
-      set_conversations((current) => [created.conversation, ...current]);
-      set_conversation(created);
+      set_agent_sessions((current) => [created, ...current]);
+      set_agent_session(created);
       set_agent_instruction("");
       set_agent_stage(null);
     } catch (error) {
@@ -605,14 +610,11 @@ export function SummaryWorkspace({
     }
   }
 
-  async function select_agent_conversation(conversation_id: string) {
-    if (
-      agent_pending ||
-      conversation?.conversation.conversation_id === conversation_id
-    )
+  async function select_agent_session(session_id: string) {
+    if (agent_pending || agent_session?.session.session_id === session_id)
       return;
     try {
-      await load_conversation(conversation_id);
+      await load_agent_session(session_id);
       set_agent_instruction("");
       set_agent_stage(null);
     } catch (error) {
@@ -620,19 +622,19 @@ export function SummaryWorkspace({
     }
   }
 
-  async function remove_agent_conversation() {
-    if (!delete_conversation_target || !selected_asset) return;
-    const deleted_id = delete_conversation_target.conversation_id;
+  async function remove_agent_session() {
+    if (!delete_session_target || !selected_asset) return;
+    const deleted_id = delete_session_target.session.session_id;
     try {
-      await delete_summary_conversation(deleted_id);
-      const remaining = conversations.filter(
-        (item) => item.conversation_id !== deleted_id,
+      await delete_summary_agent_session(deleted_id);
+      const remaining = agent_sessions.filter(
+        (item) => item.session.session_id !== deleted_id,
       );
-      set_delete_conversation_target(null);
-      await load_conversations(
+      set_delete_session_target(null);
+      await load_agent_sessions(
         selected_asset.asset_id,
         undefined,
-        remaining[0]?.conversation_id,
+        remaining[0]?.session.session_id,
       );
     } catch (error) {
       on_error?.(error_message(error));
@@ -641,7 +643,7 @@ export function SummaryWorkspace({
 
   async function send_agent_instruction() {
     if (
-      !conversation ||
+      !agent_session ||
       !selected_document ||
       !agent_model_id ||
       !agent_instruction.trim()
@@ -652,29 +654,23 @@ export function SummaryWorkspace({
     try {
       const instruction = agent_instruction.trim();
       set_agent_instruction("");
-      set_conversation((current) =>
+      set_agent_session((current) =>
         current
           ? {
               ...current,
-              messages: [
-                ...current.messages,
-                {
-                  message_id: `optimistic-${Date.now()}`,
-                  conversation_id: current.conversation.conversation_id,
-                  role: "user",
-                  content: instruction,
-                  created_at: new Date().toISOString(),
-                },
+              events: [
+                ...current.events,
+                optimistic_agent_event(current.session.session_id, instruction),
               ],
             }
           : current,
       );
-      const run = await create_summary_agent_run(
-        conversation.conversation.conversation_id,
+      const run = await create_summary_agent_message(
+        agent_session.session.session_id,
         {
           document_id: selected_document.document_id,
           expected_revision: selected_document.revision,
-          instruction,
+          content: instruction,
           ai_model_id: agent_model_id,
           selection,
         },
@@ -682,26 +678,51 @@ export function SummaryWorkspace({
       await stream_summary_agent_run(run.run_id, (event) => {
         if (event.event === "status")
           set_agent_stage(status_label(event.data.stage));
-        if (event.event === "reply") {
-          set_conversation((current) =>
+        if (
+          event.event === "assistant_chunk" ||
+          event.event === "assistant_message" ||
+          event.event === "tool_call" ||
+          event.event === "tool_result"
+        ) {
+          const event_types = {
+            assistant_chunk: "assistant/chunk",
+            assistant_message: "assistant/message",
+            tool_call: "tool/call",
+            tool_result: "tool/result",
+          } as const;
+          set_agent_session((current) =>
             current
-              ? { ...current, messages: [...current.messages, event.data] }
+              ? {
+                  ...current,
+                  events: append_agent_event(
+                    current.events,
+                    stream_agent_event(
+                      current.session.session_id,
+                      run.run_id,
+                      event.data,
+                      event_types[event.event],
+                    ),
+                  ),
+                }
               : current,
           );
         }
         if (event.event === "proposal") {
-          set_conversation((current) =>
+          set_agent_session((current) =>
             current
-              ? { ...current, proposals: [...current.proposals, event.data] }
+              ? {
+                  ...current,
+                  proposals: [...current.proposals, event.data.proposal],
+                }
               : current,
           );
         }
         if (event.event === "error") throw new Error(event.data.message);
       });
-      await load_conversations(
+      await load_agent_sessions(
         selected_document.asset_id,
         undefined,
-        conversation.conversation.conversation_id,
+        agent_session.session.session_id,
       );
       set_agent_stage(null);
     } catch (error) {
@@ -722,7 +743,7 @@ export function SummaryWorkspace({
       const loaded = await load_documents(
         selected_asset.asset_id,
         undefined,
-        conversation?.conversation.conversation_id,
+        agent_session?.session.session_id,
       );
       const active = loaded.find(
         (document) => document.document_id === selected_document_id,
@@ -734,8 +755,8 @@ export function SummaryWorkspace({
     } catch (error) {
       on_error?.(error_message(error));
       if (error instanceof ApiError && error.status === 409) {
-        if (conversation) {
-          await load_conversation(conversation.conversation.conversation_id);
+        if (agent_session) {
+          await load_agent_session(agent_session.session.session_id);
         }
       }
     }
@@ -829,26 +850,24 @@ export function SummaryWorkspace({
   const agent_panel = (
     <SummaryAgentPanel
       models={models}
-      conversations={conversations}
-      conversation={conversation?.conversation ?? null}
+      sessions={agent_sessions}
+      session={agent_session}
       model_id={agent_model_id}
       on_model_change={set_agent_model_id}
       selection={selection}
       documents={documents}
       selected_document={selected_document}
-      messages={conversation?.messages ?? []}
-      proposals={conversation?.proposals ?? []}
+      events={agent_session?.events ?? []}
+      proposals={agent_session?.proposals ?? []}
       stage={agent_stage}
       instruction={agent_instruction}
       on_instruction_change={set_agent_instruction}
       pending={agent_pending}
-      disabled={!conversation}
+      disabled={!agent_session}
       on_submit={() => void send_agent_instruction()}
-      on_new_conversation={() => void create_agent_conversation()}
-      on_select_conversation={(conversation_id) =>
-        void select_agent_conversation(conversation_id)
-      }
-      on_delete_conversation={set_delete_conversation_target}
+      on_new_session={() => void create_agent_session()}
+      on_select_session={(session_id) => void select_agent_session(session_id)}
+      on_delete_session={set_delete_session_target}
       on_resolve={(proposal, action) => void resolve_proposal(proposal, action)}
       media_pending_id={media_pending_id}
       on_generate_media={(suggestion, document_id) =>
@@ -978,12 +997,12 @@ export function SummaryWorkspace({
         }}
         on_confirm={() => void remove_child()}
       />
-      <DeleteConversationDialog
-        conversation={delete_conversation_target}
+      <DeleteAgentSessionDialog
+        session={delete_session_target}
         on_open_change={(open) => {
-          if (!open) set_delete_conversation_target(null);
+          if (!open) set_delete_session_target(null);
         }}
-        on_confirm={() => void remove_agent_conversation()}
+        on_confirm={() => void remove_agent_session()}
       />
     </section>
   );
@@ -1484,16 +1503,157 @@ function SaveState({
   );
 }
 
+type AgentDisplayMessage = {
+  message_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+type AgentTimelineItem =
+  | { type: "message"; created_at: string; message: AgentDisplayMessage }
+  | { type: "tool"; created_at: string; trace: SummaryAgentToolTraceData };
+
+function optimistic_agent_event(
+  session_id: string,
+  content: string,
+): AgentEvent {
+  const event_id = `optimistic-${Date.now()}`;
+  return {
+    event_id,
+    session_id,
+    sequence: Number.MAX_SAFE_INTEGER,
+    run_id: null,
+    event_type: "user/message",
+    payload: { content },
+    created_at: new Date().toISOString(),
+  };
+}
+
+function stream_agent_event(
+  session_id: string,
+  run_id: string,
+  data: { event_id: string; sequence: number } & Record<string, unknown>,
+  event_type: AgentEvent["event_type"],
+): AgentEvent {
+  const { event_id, sequence, ...payload } = data;
+  return {
+    event_id,
+    session_id,
+    sequence,
+    run_id,
+    event_type,
+    payload,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function append_agent_event(
+  events: AgentEvent[],
+  event: AgentEvent,
+): AgentEvent[] {
+  if (events.some((item) => item.event_id === event.event_id)) return events;
+  return [...events, event];
+}
+
+function agent_event_timeline(events: AgentEvent[]): AgentTimelineItem[] {
+  const completed_run_ids = new Set(
+    events
+      .filter((event) => event.event_type === "assistant/message")
+      .map((event) => event.run_id),
+  );
+  const streaming_messages = new Map<string, AgentDisplayMessage>();
+  const tool_traces = new Map<
+    string,
+    { created_at: string; trace: SummaryAgentToolTraceData }
+  >();
+  const timeline: AgentTimelineItem[] = [];
+
+  for (const event of events) {
+    if (event.event_type === "assistant/chunk" && event.run_id) {
+      if (completed_run_ids.has(event.run_id)) continue;
+      const current = streaming_messages.get(event.run_id);
+      streaming_messages.set(event.run_id, {
+        message_id: `stream-${event.run_id}`,
+        role: "assistant",
+        content: `${current?.content ?? ""}${String(event.payload.content ?? "")}`,
+        created_at: current?.created_at ?? event.created_at,
+      });
+      continue;
+    }
+    if (
+      event.event_type === "user/message" ||
+      event.event_type === "assistant/message" ||
+      event.event_type === "archive/message"
+    ) {
+      const role =
+        event.event_type === "user/message"
+          ? "user"
+          : event.event_type === "assistant/message"
+            ? "assistant"
+            : event.payload.role === "user"
+              ? "user"
+              : "assistant";
+      const content = String(event.payload.content ?? "");
+      if (!content) continue;
+      const created_at =
+        typeof event.payload.created_at === "string"
+          ? event.payload.created_at
+          : event.created_at;
+      timeline.push({
+        type: "message",
+        created_at,
+        message: {
+          message_id: event.event_id,
+          role,
+          content,
+          created_at,
+        },
+      });
+      continue;
+    }
+    if (event.event_type === "tool/call") {
+      const call_id = String(event.payload.call_id ?? "");
+      if (!call_id) continue;
+      tool_traces.set(call_id, {
+        created_at: event.created_at,
+        trace: {
+          call_id,
+          name: String(event.payload.name ?? "unknown_tool"),
+          arguments:
+            typeof event.payload.arguments === "object" &&
+            event.payload.arguments !== null
+              ? (event.payload.arguments as Record<string, unknown>)
+              : {},
+        },
+      });
+      continue;
+    }
+    if (event.event_type === "tool/result") {
+      const call_id = String(event.payload.call_id ?? "");
+      const current = tool_traces.get(call_id);
+      if (current) current.trace.result = event.payload.result;
+    }
+  }
+  for (const message of streaming_messages.values()) {
+    timeline.push({ type: "message", created_at: message.created_at, message });
+  }
+  for (const trace of tool_traces.values()) {
+    timeline.push({ type: "tool", ...trace });
+  }
+  return timeline;
+}
+
 function SummaryAgentPanel({
   models,
-  conversations,
-  conversation,
+  sessions,
+  session,
   model_id,
   on_model_change,
   selection,
   documents,
   selected_document,
-  messages,
+  events,
   proposals,
   stage,
   instruction,
@@ -1501,22 +1661,22 @@ function SummaryAgentPanel({
   pending,
   disabled,
   on_submit,
-  on_new_conversation,
-  on_select_conversation,
-  on_delete_conversation,
+  on_new_session,
+  on_select_session,
+  on_delete_session,
   on_resolve,
   media_pending_id,
   on_generate_media,
 }: {
   models: AiModelSummary[];
-  conversations: SummaryConversation[];
-  conversation: SummaryConversation | null;
+  sessions: SummaryAgentSession[];
+  session: SummaryAgentSessionState | null;
   model_id: string | null;
   on_model_change: (model_id: string | null) => void;
   selection: MarkdownSelection | null;
   documents: SummaryDocument[];
   selected_document: SummaryDocument;
-  messages: SummaryMessage[];
+  events: AgentEvent[];
   proposals: SummaryEditProposal[];
   stage: string | null;
   instruction: string;
@@ -1524,9 +1684,9 @@ function SummaryAgentPanel({
   pending: boolean;
   disabled: boolean;
   on_submit: () => void;
-  on_new_conversation: () => void;
-  on_select_conversation: (conversation_id: string) => void;
-  on_delete_conversation: (conversation: SummaryConversation) => void;
+  on_new_session: () => void;
+  on_select_session: (session_id: string) => void;
+  on_delete_session: (session: SummaryAgentSession) => void;
   on_resolve: (
     proposal: SummaryEditProposal,
     action: "accept" | "reject",
@@ -1538,11 +1698,7 @@ function SummaryAgentPanel({
   ) => void;
 }) {
   const timeline = [
-    ...messages.map((message) => ({
-      type: "message" as const,
-      created_at: message.created_at,
-      message,
-    })),
+    ...agent_event_timeline(events),
     ...proposals.map((proposal) => ({
       type: "proposal" as const,
       created_at: proposal.created_at,
@@ -1565,7 +1721,7 @@ function SummaryAgentPanel({
               type="button"
               variant="ghost"
               size="icon-sm"
-              onClick={on_new_conversation}
+              onClick={on_new_session}
               disabled={pending}
               aria-label="新建 Agent 对话"
             >
@@ -1575,10 +1731,8 @@ function SummaryAgentPanel({
               type="button"
               variant="ghost"
               size="icon-sm"
-              onClick={() =>
-                conversation && on_delete_conversation(conversation)
-              }
-              disabled={pending || conversations.length <= 1 || !conversation}
+              onClick={() => session && on_delete_session(session)}
+              disabled={pending || sessions.length <= 1 || !session}
               aria-label="删除当前 Agent 对话"
             >
               <Trash2 />
@@ -1591,12 +1745,12 @@ function SummaryAgentPanel({
               type="button"
               variant="outline"
               className="w-full justify-between"
-              disabled={pending || !conversation}
+              disabled={pending || !session}
             >
               <span className="flex min-w-0 items-center gap-2">
                 <History data-icon="inline-start" />
                 <span className="truncate">
-                  {conversation?.title ?? "选择历史"}
+                  {session?.session.title ?? "选择历史"}
                 </span>
               </span>
               <ChevronDown data-icon="inline-end" />
@@ -1604,19 +1758,19 @@ function SummaryAgentPanel({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuLabel>
-              Agent 历史 · {conversations.length} 条
+              Agent 历史 · {sessions.length} 条
             </DropdownMenuLabel>
             <DropdownMenuGroup>
-              {conversations.map((item) => (
+              {sessions.map((item) => (
                 <DropdownMenuItem
-                  key={item.conversation_id}
-                  onSelect={() => on_select_conversation(item.conversation_id)}
+                  key={item.session.session_id}
+                  onSelect={() => on_select_session(item.session.session_id)}
                 >
                   <History />
                   <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate">{item.title}</span>
+                    <span className="truncate">{item.session.title}</span>
                     <time className="text-xs text-muted-foreground">
-                      {format_summary_time(item.updated_at)}
+                      {format_summary_time(item.session.updated_at)}
                     </time>
                   </span>
                 </DropdownMenuItem>
@@ -1624,7 +1778,7 @@ function SummaryAgentPanel({
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={on_new_conversation}>
+              <DropdownMenuItem onSelect={on_new_session}>
                 <Plus /> 新建对话
               </DropdownMenuItem>
             </DropdownMenuGroup>
@@ -1669,6 +1823,11 @@ function SummaryAgentPanel({
                 </time>
               </div>
             </Message>
+          ) : item.type === "tool" ? (
+            <SummaryAgentToolTrace
+              key={item.trace.call_id}
+              trace={item.trace}
+            />
           ) : (
             <ProposalCard
               key={item.proposal.proposal_id}
@@ -1879,22 +2038,22 @@ function DeleteDocumentDialog({
   );
 }
 
-function DeleteConversationDialog({
-  conversation,
+function DeleteAgentSessionDialog({
+  session,
   on_open_change,
   on_confirm,
 }: {
-  conversation: SummaryConversation | null;
+  session: SummaryAgentSession | null;
   on_open_change: (open: boolean) => void;
   on_confirm: () => void;
 }) {
   return (
-    <Dialog open={conversation !== null} onOpenChange={on_open_change}>
+    <Dialog open={session !== null} onOpenChange={on_open_change}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>删除 Agent 历史</DialogTitle>
           <DialogDescription>
-            “{conversation?.title}”中的消息和修改建议将永久删除。
+            “{session?.session.title}”中的消息和修改建议将永久删除。
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -1933,11 +2092,14 @@ function SummaryEmpty({
 }
 
 function status_label(stage: string): string {
-  return stage === "running"
-    ? "正在整理修改建议"
-    : stage === "pending"
-      ? "等待 Agent 开始"
-      : stage;
+  const labels: Record<string, string> = {
+    pending: "等待 Agent 开始",
+    running: "Agent 正在思考",
+    degraded: "当前模型已降级为纯聊天",
+    cancelled: "运行已取消",
+    interrupted: "运行被应用重启中断",
+  };
+  return labels[stage] ?? stage;
 }
 
 function proposal_status_label(status: SummaryEditProposal["status"]): string {

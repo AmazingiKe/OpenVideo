@@ -73,6 +73,7 @@ export type AiModelSummary = {
   model_id: string;
   name: string;
   litellm_model: string;
+  tool_calling_mode: "auto" | "enabled" | "disabled";
   input_modalities: AiInputModality[];
 };
 
@@ -366,20 +367,38 @@ export type SummaryExportResult = {
   size_bytes: number;
   exported_at: string;
 };
-export type SummaryMessage = {
-  message_id: string;
-  conversation_id: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at: string;
-};
-export type SummaryConversation = {
-  conversation_id: string;
-  asset_id: string;
-  root_document_id: string;
+export type AgentSession = {
+  session_id: string;
+  agent_type: string;
   title: string;
   created_at: string;
   updated_at: string;
+};
+export type AgentEventType =
+  | "turn/start"
+  | "turn/end"
+  | "step/start"
+  | "step/end"
+  | "user/message"
+  | "assistant/chunk"
+  | "assistant/message"
+  | "tool/call"
+  | "tool/result"
+  | "run/status"
+  | "archive/message";
+export type AgentEvent = {
+  event_id: string;
+  session_id: string;
+  sequence: number;
+  run_id: string | null;
+  event_type: AgentEventType;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+export type SummaryAgentSession = {
+  session: AgentSession;
+  asset_id: string;
+  root_document_id: string;
 };
 export type SummaryMediaSuggestion = {
   suggestion_id: string;
@@ -402,7 +421,7 @@ export type SummaryMediaArtifact = {
 };
 export type SummaryEditProposal = {
   proposal_id: string;
-  conversation_id: string;
+  session_id: string;
   document_id: string;
   base_revision: number;
   proposed_markdown: string;
@@ -413,17 +432,15 @@ export type SummaryEditProposal = {
   status: "pending" | "accepted" | "rejected" | "stale";
   created_at: string;
 };
-export type SummaryConversationState = {
-  conversation: SummaryConversation;
-  messages: SummaryMessage[];
+export type SummaryAgentSessionState = SummaryAgentSession & {
+  events: AgentEvent[];
   proposals: SummaryEditProposal[];
 };
-export type SummaryAgentRun = {
+export type AgentRun = {
   run_id: string;
-  conversation_id: string;
-  stage: "pending" | "running" | "complete" | "failed";
-  assistant_message_id: string | null;
-  proposal_id: string | null;
+  session_id: string;
+  stage:
+    "pending" | "running" | "complete" | "failed" | "cancelled" | "interrupted";
   error_message: string | null;
   created_at: string;
   updated_at: string;

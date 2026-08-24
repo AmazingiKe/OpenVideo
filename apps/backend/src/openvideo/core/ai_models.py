@@ -24,6 +24,7 @@ LEGACY_VISION_FIELD = "supports_vision"
 INPUT_MODALITIES_FIELD = "input_modalities"
 
 InputModality = Literal["text", "image", "audio", "video"]
+ToolCallingMode = Literal["auto", "enabled", "disabled"]
 
 
 class AiModelConfiguration(BaseModel):
@@ -38,6 +39,7 @@ class AiModelConfiguration(BaseModel):
     input_modalities: list[InputModality] = Field(
         default_factory=lambda: [TEXT_INPUT_MODALITY]
     )
+    tool_calling_mode: ToolCallingMode = "auto"
 
     @model_validator(mode="before")
     @classmethod

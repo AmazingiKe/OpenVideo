@@ -25,10 +25,12 @@ from openvideo.summary_manager import (
     SummaryRevisionConflictError,
 )
 from openvideo.core.agent_models import AgentJob, AgentResponse
+from openvideo.core.agent_runtime_models import AgentEventType, AgentRun, AgentRunStage
 from openvideo.core.ai_models import (
     AiModelCollection,
     AiModelConfiguration,
     InputModality,
+    ToolCallingMode,
 )
 from openvideo.core.analysis_models import (
     ANALYSIS_STRATEGY_PRESETS,
@@ -78,8 +80,10 @@ from openvideo.settings import (
 from openvideo.core.summary_models import (
     SummaryAgentMessageRequest,
     SummaryAgentRun,
+    SummaryAgentSession,
+    SummaryAgentSessionState,
     SummaryConversation,
-    SummaryConversationCreate,
+    SummaryAgentSessionCreate,
     SummaryConversationState,
     SummaryDocument,
     SummaryDocumentCreate,
@@ -266,6 +270,7 @@ class AiModelSummary(BaseModel):
     name: str
     litellm_model: str
     input_modalities: list[InputModality]
+    tool_calling_mode: ToolCallingMode
 
 
 class AiModelTestResponse(BaseModel):
@@ -808,6 +813,7 @@ def create_app(
                 name=model.name,
                 litellm_model=model.litellm_model,
                 input_modalities=model.input_modalities,
+                tool_calling_mode=model.tool_calling_mode,
             )
             for model in resolved_settings.ai_models
         ]
@@ -1190,46 +1196,45 @@ def create_app(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get(
-        "/api/media/assets/{asset_id}/summary-conversations",
-        response_model=list[SummaryConversation],
+        "/api/media/assets/{asset_id}/summary-agent-sessions",
+        response_model=list[SummaryAgentSession],
     )
-    def list_summary_conversations(asset_id: str) -> list[SummaryConversation]:
+    def list_summary_agent_sessions(asset_id: str) -> list[SummaryAgentSession]:
         try:
-            return summary_manager.conversations(asset_id)
+            return summary_manager.agent_sessions(asset_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post(
-        "/api/media/assets/{asset_id}/summary-conversations",
-        response_model=SummaryConversationState,
+        "/api/media/assets/{asset_id}/summary-agent-sessions",
+        response_model=SummaryAgentSessionState,
         status_code=status.HTTP_201_CREATED,
     )
-    def create_summary_conversation(
-        asset_id: str,
-        request: SummaryConversationCreate,
-    ) -> SummaryConversationState:
+    def create_summary_agent_session(
+        asset_id: str, request: SummaryAgentSessionCreate
+    ) -> SummaryAgentSessionState:
         try:
-            return summary_manager.create_conversation(asset_id, request)
+            return summary_manager.create_agent_session(asset_id, request)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get(
-        "/api/summary-conversations/{conversation_id}",
-        response_model=SummaryConversationState,
+        "/api/summary-agent-sessions/{session_id}",
+        response_model=SummaryAgentSessionState,
     )
-    def get_summary_conversation(conversation_id: str) -> SummaryConversationState:
+    def get_summary_agent_session(session_id: str) -> SummaryAgentSessionState:
         try:
-            return summary_manager.conversation_state(conversation_id)
+            return summary_manager.agent_session_state(session_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.delete(
-        "/api/summary-conversations/{conversation_id}",
+        "/api/summary-agent-sessions/{session_id}",
         status_code=status.HTTP_204_NO_CONTENT,
     )
-    def delete_summary_conversation(conversation_id: str) -> Response:
+    def delete_summary_agent_session(session_id: str) -> Response:
         try:
-            summary_manager.delete_conversation(conversation_id)
+            summary_manager.delete_agent_session(session_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except SummaryError as error:
@@ -1237,16 +1242,15 @@ def create_app(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post(
-        "/api/summary-conversations/{conversation_id}/messages",
-        response_model=SummaryAgentRun,
+        "/api/summary-agent-sessions/{session_id}/messages",
+        response_model=AgentRun,
         status_code=status.HTTP_202_ACCEPTED,
     )
-    async def create_summary_agent_run(
-        conversation_id: str,
-        request: SummaryAgentMessageRequest,
-    ) -> SummaryAgentRun:
+    async def create_summary_agent_message(
+        session_id: str, request: SummaryAgentMessageRequest
+    ) -> AgentRun:
         try:
-            return summary_manager.create_agent_run(conversation_id, request)
+            return summary_manager.create_agent_message(session_id, request)
         except SummaryRevisionConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except SummaryNotFoundError as error:
@@ -1254,50 +1258,90 @@ def create_app(
         except SummaryError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-    @app.get("/api/summary-agent-runs/{run_id}/events")
-    async def summary_agent_events(run_id: str) -> StreamingResponse:
+    @app.get("/api/agent-runs/{run_id}/events")
+    async def agent_run_events(
+        run_id: str,
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ) -> StreamingResponse:
         try:
-            summary_manager.agent_run(run_id)
+            summary_manager.generic_agent_run(run_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        after_sequence = 0
+        if last_event_id:
+            source_event_id = last_event_id.removesuffix("-proposal")
+            previous_event = next(
+                (
+                    event
+                    for event in summary_manager.agent_run_events(run_id)
+                    if event.event_id == source_event_id
+                ),
+                None,
+            )
+            if previous_event is not None:
+                after_sequence = previous_event.sequence
 
         async def stream_events():
-            previous_stage = None
+            sequence = after_sequence
             while True:
-                run = summary_manager.agent_run(run_id)
-                if run.stage != previous_stage:
-                    yield _sse_event("status", {"stage": run.stage.value})
-                    previous_stage = run.stage
-                if run.stage.value == "complete":
-                    if run.assistant_message_id:
-                        messages = library.load_summary_messages(run.conversation_id)
-                        message = next(
-                            (
-                                item
-                                for item in messages
-                                if item.message_id == run.assistant_message_id
-                            ),
-                            None,
+                events = summary_manager.agent_run_events(run_id, sequence)
+                for event in events:
+                    sequence = event.sequence
+                    event_name, payload = _public_agent_event(event)
+                    if event_name:
+                        yield _sse_event(
+                            event_name,
+                            {"event_id": event.event_id, "sequence": event.sequence, **payload},
+                            event.event_id,
                         )
-                        if message:
-                            yield _sse_event("reply", message.model_dump(mode="json"))
-                    if run.proposal_id:
-                        proposal = library.load_summary_proposal(run.proposal_id)
-                        if proposal:
-                            yield _sse_event(
-                                "proposal", proposal.model_dump(mode="json")
-                            )
-                    yield _sse_event("complete", {"run_id": run.run_id})
-                    break
-                if run.stage.value == "failed":
+                    result = event.payload.get("result")
+                    if (
+                        event.event_type == AgentEventType.TOOL_RESULT
+                        and event.payload.get("name") == "propose_summary_change"
+                        and isinstance(result, dict)
+                        and result.get("ok") is True
+                    ):
+                        yield _sse_event(
+                            "proposal",
+                            {
+                                "event_id": f"{event.event_id}-proposal",
+                                "sequence": event.sequence,
+                                "proposal": result["proposal"],
+                            },
+                            f"{event.event_id}-proposal",
+                        )
+                run_state = summary_manager.generic_agent_run(run_id)
+                if run_state.stage in {
+                    AgentRunStage.COMPLETE,
+                    AgentRunStage.FAILED,
+                    AgentRunStage.CANCELLED,
+                    AgentRunStage.INTERRUPTED,
+                } and not events:
+                    terminal_event = {
+                        AgentRunStage.COMPLETE: "complete",
+                        AgentRunStage.CANCELLED: "cancelled",
+                    }.get(run_state.stage, "error")
                     yield _sse_event(
-                        "error",
-                        {"run_id": run.run_id, "message": run.error_message},
+                        terminal_event,
+                        {
+                            "event_id": f"{run_id}-{terminal_event}",
+                            "sequence": sequence + 1,
+                            "run_id": run_id,
+                            "message": run_state.error_message,
+                        },
+                        f"{run_id}-{terminal_event}",
                     )
                     break
                 await asyncio.sleep(0.1)
 
         return StreamingResponse(stream_events(), media_type="text/event-stream")
+
+    @app.post("/api/agent-runs/{run_id}/cancel", response_model=AgentRun)
+    def cancel_agent_run(run_id: str) -> AgentRun:
+        try:
+            return summary_manager.cancel_agent_run(run_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post(
         "/api/summary-edit-proposals/{proposal_id}/accept",
@@ -1560,8 +1604,23 @@ def _read_file_range(file_path: Path, start: int, length: int) -> Iterator[bytes
             yield chunk
 
 
-def _sse_event(event: str, payload: object) -> str:
-    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+def _public_agent_event(event) -> tuple[str | None, dict[str, object]]:
+    event_names = {
+        AgentEventType.RUN_STATUS: "status",
+        AgentEventType.ASSISTANT_CHUNK: "assistant_chunk",
+        AgentEventType.ASSISTANT_MESSAGE: "assistant_message",
+        AgentEventType.TOOL_CALL: "tool_call",
+        AgentEventType.TOOL_RESULT: "tool_result",
+    }
+    return event_names.get(event.event_type), dict(event.payload)
+
+
+def _sse_event(event: str, payload: object, event_id: str | None = None) -> str:
+    identifier = f"id: {event_id}\n" if event_id else ""
+    return (
+        f"{identifier}event: {event}\n"
+        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    )
 
 
 app = create_app()

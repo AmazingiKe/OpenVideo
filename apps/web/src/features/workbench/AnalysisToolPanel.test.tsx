@@ -33,6 +33,7 @@ const AI_MODELS: AiModelSummary[] = [
     model_id: "model-0198d12345677890abcdef1234567890",
     name: "测试模型",
     litellm_model: "openai/test-model",
+    tool_calling_mode: "auto",
     input_modalities: ["text", "image"],
   },
 ];

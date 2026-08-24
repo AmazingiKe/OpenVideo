@@ -5,6 +5,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from openvideo.core.agent_runtime_models import AgentEvent, AgentSession
+
 
 class SummaryDetail(StrEnum):
     CONCISE = "concise"
@@ -58,7 +60,7 @@ class SummaryConversation(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class SummaryConversationCreate(BaseModel):
+class SummaryAgentSessionCreate(BaseModel):
     document_id: str
 
 
@@ -90,9 +92,20 @@ class SummarySelection(BaseModel):
 class SummaryAgentMessageRequest(BaseModel):
     document_id: str
     expected_revision: int = Field(ge=1)
-    instruction: str = Field(min_length=1, max_length=20_000)
+    content: str = Field(min_length=1, max_length=20_000)
     ai_model_id: str
     selection: SummarySelection | None = None
+
+
+class SummaryAgentSession(BaseModel):
+    session: AgentSession
+    asset_id: str
+    root_document_id: str
+
+
+class SummaryAgentSessionState(SummaryAgentSession):
+    events: list[AgentEvent] = Field(default_factory=list)
+    proposals: list["SummaryEditProposal"] = Field(default_factory=list)
 
 
 class SummaryMediaType(StrEnum):
@@ -124,7 +137,7 @@ class SummaryProposalStatus(StrEnum):
 
 class SummaryEditProposal(BaseModel):
     proposal_id: str
-    conversation_id: str
+    session_id: str
     document_id: str
     base_revision: int = Field(ge=1)
     proposed_markdown: str
@@ -134,6 +147,21 @@ class SummaryEditProposal(BaseModel):
     media_suggestions: list[SummaryMediaSuggestion] = Field(default_factory=list)
     status: SummaryProposalStatus = SummaryProposalStatus.PENDING
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_conversation_id(cls, values: object) -> object:
+        # TODO(删除)：所有 v9 会话文件完成 v10 归档迁移后删除旧字段读取。
+        if not isinstance(values, dict) or "session_id" in values:
+            return values
+        if "conversation_id" not in values:
+            return values
+        migrated = dict(values)
+        legacy_id = str(migrated.pop("conversation_id"))
+        migrated["session_id"] = (
+            f"session-{legacy_id.removeprefix('conversation-')}"
+        )
+        return migrated
 
 
 class SummaryAgentRunStage(StrEnum):

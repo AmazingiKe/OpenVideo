@@ -141,6 +141,7 @@ def test_ai_model_list_does_not_expose_credentials(tmp_path: Path):
             "name": "测试模型",
             "litellm_model": "openai/test-model",
             "input_modalities": ["text", "image"],
+            "tool_calling_mode": "auto",
         }
     ]
 
