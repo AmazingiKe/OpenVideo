@@ -183,6 +183,7 @@
 /* 原生下拉触发器的箭头旋转过渡。 */
 [data-slot="select"][data-state="open"] [data-slot="select-trigger-icon"] {
   transform: rotate(180deg);
+}
 
 /* 折叠面板内容上下滑入/滑出：外层控制高度，内层控制位移与透明度，避免消失突兀。 */
 [data-slot="accordion-content"] .accordion-content-inner {
@@ -206,6 +207,55 @@
   [data-slot="accordion-content"] .accordion-content-inner {
     transition: none;
   }
+}
+
+/* Milkdown 使用产品语义 token，编辑文档与周围工作台共用明暗主题。 */
+.summary-milkdown .milkdown {
+  min-height: 100%;
+  color: var(--foreground);
+  background: var(--background);
+  --crepe-base-font-size: 15px;
+  --crepe-font-default: var(--font-sans);
+  --crepe-font-title: var(--font-heading);
+  --crepe-font-code: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --crepe-color-background: var(--background);
+  --crepe-color-on-background: var(--foreground);
+  --crepe-color-surface: var(--card);
+  --crepe-color-surface-low: var(--muted);
+  --crepe-color-on-surface: var(--card-foreground);
+  --crepe-color-on-surface-variant: var(--muted-foreground);
+  --crepe-color-outline: var(--border);
+  --crepe-color-primary: var(--primary);
+  --crepe-color-secondary: var(--secondary);
+  --crepe-color-on-secondary: var(--secondary-foreground);
+  --crepe-color-selected: var(--accent);
+  --crepe-color-inline-area: var(--muted);
+  --crepe-color-inline-code: var(--accent-foreground);
+  --crepe-color-hover: var(--accent);
+  --crepe-color-inverse: var(--foreground);
+  --crepe-color-on-inverse: var(--background);
+  --crepe-color-error: var(--destructive);
+  --crepe-shadow-1: 0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent);
+  --crepe-shadow-2: 0 8px 24px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+
+.summary-milkdown .milkdown .ProseMirror {
+  min-height: 100%;
+  padding: 32px clamp(24px, 7vw, 80px) 80px;
+  outline: none;
+}
+
+.summary-milkdown .milkdown .ProseMirror:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .summary-milkdown *,
+  [data-slot="message-scroller"] * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 /* 时间线沿用 Canvas Timeline，仅在工作区范围内统一布局与视觉样式。 */
 .media_timeline { position: relative; display: flex; min-width: 0; grid-column: 1 / -1; grid-row: 2; flex-direction: column; overflow: hidden; border-top: 1px solid var(--line); background: var(--surface-secondary); }

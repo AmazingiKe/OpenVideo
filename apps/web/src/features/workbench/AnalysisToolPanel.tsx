@@ -5,7 +5,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Sparkles, Wrench } from "lucide-react";
+import { SlidersHorizontal, Sparkles, Wrench } from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { Slider } from "@/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_duration, format_time } from "@/shared/format";
 import { transcription_runtime_profile } from "@/shared/transcription";
@@ -41,6 +42,9 @@ import {
   type AgentJob,
   type AgentQuestionAction,
   type AnalysisMode,
+  type AnalysisStrategy,
+  type AnalysisStrategyPresetDescriptor,
+  type AnalysisWeights,
   type AnalysisToolSection,
   type AiModelSummary,
   type MediaAsset,
@@ -66,6 +70,39 @@ const SOURCE_LABELS: Record<MediaAsset["source_platform"], string> = {
   youtube: "YouTube",
 };
 
+const DEFAULT_ANALYSIS_STRATEGY: AnalysisStrategy = {
+  preset: "course_notes",
+  weights: {
+    core_concepts: 90,
+    formula_derivation: 65,
+    case_demonstration: 60,
+    questions_conclusions: 80,
+    visual_content: 55,
+    user_markers: 100,
+  },
+  depth: "balanced",
+  marker_context_seconds: 30,
+};
+
+const DEFAULT_ANALYSIS_PRESET: AnalysisStrategyPresetDescriptor = {
+  preset: "course_notes",
+  name: "课程笔记",
+  description: "突出核心概念、结论与可复习的知识结构。",
+  strategy: DEFAULT_ANALYSIS_STRATEGY,
+};
+
+const ANALYSIS_WEIGHT_FIELDS: {
+  field: keyof AnalysisWeights;
+  label: string;
+}[] = [
+  { field: "core_concepts", label: "核心概念" },
+  { field: "formula_derivation", label: "公式推导" },
+  { field: "case_demonstration", label: "案例演示" },
+  { field: "questions_conclusions", label: "疑问结论" },
+  { field: "visual_content", label: "视觉内容" },
+  { field: "user_markers", label: "用户标记" },
+];
+
 type AnalysisToolPanelProps = {
   asset: MediaAsset | null;
   markers: MediaMarker[];
@@ -77,10 +114,12 @@ type AnalysisToolPanelProps = {
   on_transcription_model_change: (model: TranscriptionModelDescriptor) => void;
   is_analyzing: boolean;
   ai_models: AiModelSummary[];
+  analysis_strategies?: AnalysisStrategyPresetDescriptor[];
   on_start_analysis: (
     mode: AnalysisMode,
     marker_ids: string[],
     ai_model_id: string | null,
+    strategy: AnalysisStrategy,
   ) => void;
   selected_transcript_count: number;
   active_correction_scope: TranscriptCorrectionScope | null;
@@ -110,6 +149,7 @@ export function AnalysisToolPanel({
   on_transcription_model_change,
   is_analyzing,
   ai_models,
+  analysis_strategies = [],
   on_start_analysis,
   selected_transcript_count,
   active_correction_scope,
@@ -122,6 +162,10 @@ export function AnalysisToolPanel({
   on_collapsed_change,
 }: AnalysisToolPanelProps) {
   const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
+  const [analysis_strategy, set_analysis_strategy] = useState<AnalysisStrategy>(
+    () => structuredClone(DEFAULT_ANALYSIS_STRATEGY),
+  );
+  const [advanced_strategy_open, set_advanced_strategy_open] = useState(false);
   const [transcription_options, set_transcription_options] =
     useState<TranscriptionOptions | null>(default_transcription);
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
@@ -138,6 +182,19 @@ export function AnalysisToolPanel({
       ),
     [ai_models],
   );
+  const resolved_strategy_presets = useMemo(
+    () =>
+      analysis_strategies.length > 0
+        ? analysis_strategies
+        : [DEFAULT_ANALYSIS_PRESET],
+    [analysis_strategies],
+  );
+  const strategy_name =
+    analysis_strategy.preset === "custom"
+      ? "自定义"
+      : (resolved_strategy_presets.find(
+          (preset) => preset.preset === analysis_strategy.preset,
+        )?.name ?? "课程笔记");
   const available_transcription_models = useMemo(
     () =>
       transcription_models.filter(
@@ -491,6 +548,163 @@ export function AnalysisToolPanel({
                   标记
                 </ToggleGroupItem>
               </ToggleGroup>
+              <FieldGroup>
+                <Field data-disabled={is_analyzing || undefined}>
+                  <FieldLabel htmlFor="analysis_strategy">分析策略</FieldLabel>
+                  <Select
+                    value={analysis_strategy.preset}
+                    onValueChange={(preset_name) => {
+                      const preset = resolved_strategy_presets.find(
+                        (item) => item.preset === preset_name,
+                      );
+                      if (preset) {
+                        set_analysis_strategy(structuredClone(preset.strategy));
+                      }
+                    }}
+                    disabled={is_analyzing}
+                  >
+                    <SelectTrigger id="analysis_strategy" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {resolved_strategy_presets.map((preset) => (
+                          <SelectItem key={preset.preset} value={preset.preset}>
+                            {preset.name}
+                          </SelectItem>
+                        ))}
+                        {analysis_strategy.preset === "custom" ? (
+                          <SelectItem value="custom">自定义</SelectItem>
+                        ) : null}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    {analysis_strategy.preset === "custom"
+                      ? "按当前自定义权重决定重点片段与分析详细度。"
+                      : resolved_strategy_presets.find(
+                          (preset) =>
+                            preset.preset === analysis_strategy.preset,
+                        )?.description}
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
+              <div className="flex flex-wrap gap-1" aria-label="策略权重摘要">
+                {ANALYSIS_WEIGHT_FIELDS.filter(
+                  ({ field }) => analysis_strategy.weights[field] >= 80,
+                ).map(({ field, label }) => (
+                  <Badge key={field} variant="secondary">
+                    {label} {analysis_strategy.weights[field]}
+                  </Badge>
+                ))}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                className="justify-start"
+                aria-expanded={advanced_strategy_open}
+                onClick={() => set_advanced_strategy_open((open) => !open)}
+                disabled={is_analyzing}
+              >
+                <SlidersHorizontal
+                  data-icon="inline-start"
+                  aria-hidden="true"
+                />
+                高级设置
+              </Button>
+              {advanced_strategy_open ? (
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="analysis_depth">分析深度</FieldLabel>
+                    <Select
+                      value={analysis_strategy.depth}
+                      onValueChange={(depth) =>
+                        set_analysis_strategy((current) => ({
+                          ...current,
+                          depth: depth as AnalysisStrategy["depth"],
+                        }))
+                      }
+                      disabled={is_analyzing}
+                    >
+                      <SelectTrigger id="analysis_depth" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="quick">快速 · 约 40%</SelectItem>
+                          <SelectItem value="balanced">
+                            均衡 · 约 70%
+                          </SelectItem>
+                          <SelectItem value="deep">深入 · 100%</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  {ANALYSIS_WEIGHT_FIELDS.map(({ field, label }) => (
+                    <Field key={field}>
+                      <div className="flex items-center justify-between gap-2">
+                        <FieldLabel htmlFor={`analysis_weight_${field}`}>
+                          {label}
+                        </FieldLabel>
+                        <output
+                          className="text-xs text-muted-foreground tabular-nums"
+                          htmlFor={`analysis_weight_${field}`}
+                        >
+                          {analysis_strategy.weights[field]}
+                        </output>
+                      </div>
+                      <Slider
+                        id={`analysis_weight_${field}`}
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={[analysis_strategy.weights[field]]}
+                        onValueChange={([value]) =>
+                          set_analysis_strategy((current) => ({
+                            ...current,
+                            preset: "custom",
+                            weights: {
+                              ...current.weights,
+                              [field]: value ?? current.weights[field],
+                            },
+                          }))
+                        }
+                        disabled={is_analyzing}
+                        aria-label={`${label}权重`}
+                      />
+                    </Field>
+                  ))}
+                  <Field>
+                    <div className="flex items-center justify-between gap-2">
+                      <FieldLabel htmlFor="marker_context_seconds">
+                        标记上下文
+                      </FieldLabel>
+                      <output
+                        className="text-xs text-muted-foreground tabular-nums"
+                        htmlFor="marker_context_seconds"
+                      >
+                        前后 {analysis_strategy.marker_context_seconds} 秒
+                      </output>
+                    </div>
+                    <Slider
+                      id="marker_context_seconds"
+                      min={10}
+                      max={120}
+                      step={10}
+                      value={[analysis_strategy.marker_context_seconds]}
+                      onValueChange={([value]) =>
+                        set_analysis_strategy((current) => ({
+                          ...current,
+                          marker_context_seconds:
+                            value ?? current.marker_context_seconds,
+                        }))
+                      }
+                      disabled={is_analyzing}
+                      aria-label="标记上下文秒数"
+                    />
+                  </Field>
+                </FieldGroup>
+              ) : null}
               <AiModelSelect
                 id="image-analysis-model"
                 label="图片分析模型"
@@ -535,6 +749,7 @@ export function AnalysisToolPanel({
                     analysis_mode,
                     [...selected_marker_ids],
                     image_model_id,
+                    analysis_strategy,
                   )
                 }
                 disabled={
@@ -547,10 +762,10 @@ export function AnalysisToolPanel({
               >
                 {is_analyzing ? <Spinner data-icon="inline-start" /> : null}
                 {is_analyzing
-                  ? "分析中…"
+                  ? `正在按${strategy_name}分析…`
                   : analysis_mode === "full"
-                    ? "分析全片"
-                    : `分析 ${selected_marker_ids.size} 个标记`}
+                    ? `按${strategy_name}分析全片`
+                    : `按${strategy_name}分析 ${selected_marker_ids.size} 个标记`}
               </Button>
             </div>
           </AccordionContent>

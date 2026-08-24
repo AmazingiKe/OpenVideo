@@ -148,6 +148,33 @@ type AnalysisStage =
   | "failed";
 
 export type AnalysisMode = "full" | "markers";
+export type AnalysisStrategyPreset =
+  | "course_notes"
+  | "formula_derivation"
+  | "operation_tutorial"
+  | "case_review"
+  | "custom";
+export type AnalysisDepth = "quick" | "balanced" | "deep";
+export type AnalysisWeights = {
+  core_concepts: number;
+  formula_derivation: number;
+  case_demonstration: number;
+  questions_conclusions: number;
+  visual_content: number;
+  user_markers: number;
+};
+export type AnalysisStrategy = {
+  preset: AnalysisStrategyPreset;
+  weights: AnalysisWeights;
+  depth: AnalysisDepth;
+  marker_context_seconds: number;
+};
+export type AnalysisStrategyPresetDescriptor = {
+  preset: Exclude<AnalysisStrategyPreset, "custom">;
+  name: string;
+  description: string;
+  strategy: AnalysisStrategy;
+};
 export type AnalysisOperation = "transcription" | "analysis";
 export type TranscriptionEngine = "faster-whisper" | "qwen3-asr" | "sensevoice";
 export type TranscriptionDevice = "auto" | "cpu" | "cuda";
@@ -200,6 +227,7 @@ export type AnalysisJob = {
   mode: AnalysisMode;
   marker_ids: string[];
   ai_model_id: string | null;
+  strategy: AnalysisStrategy;
   capabilities: AnalysisCapability[];
   stage: AnalysisStage;
   progress_percent: number;
@@ -271,6 +299,79 @@ export type MediaAsset = {
   playback_url: string | null;
   thumbnail_url: string | null;
   thumbnail_storyboard: ThumbnailStoryboard | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SummaryDetail = "concise" | "standard" | "detailed";
+export type SummaryDocument = {
+  document_id: string;
+  asset_id: string;
+  parent_document_id: string | null;
+  title: string;
+  markdown: string;
+  position: number;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+};
+export type SummaryMessage = {
+  message_id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+export type SummaryMediaSuggestion = {
+  suggestion_id: string;
+  media_type: "image" | "gif";
+  start_seconds: number;
+  end_seconds: number | null;
+  insert_after: string | null;
+  caption: string;
+};
+export type SummaryMediaArtifact = {
+  media_id: string;
+  asset_id: string;
+  document_id: string;
+  media_type: "image" | "gif";
+  relative_path: string;
+  caption: string;
+  start_seconds: number;
+  end_seconds: number | null;
+  created_at: string;
+};
+export type SummaryEditProposal = {
+  proposal_id: string;
+  conversation_id: string;
+  document_id: string;
+  base_revision: number;
+  proposed_markdown: string;
+  explanation: string;
+  diff: string;
+  suggested_subdocuments: { title: string; markdown: string }[];
+  media_suggestions: SummaryMediaSuggestion[];
+  status: "pending" | "accepted" | "rejected" | "stale";
+  created_at: string;
+};
+export type SummaryConversationState = {
+  conversation: {
+    conversation_id: string;
+    asset_id: string;
+    root_document_id: string;
+    created_at: string;
+    updated_at: string;
+  };
+  messages: SummaryMessage[];
+  proposals: SummaryEditProposal[];
+};
+export type SummaryAgentRun = {
+  run_id: string;
+  conversation_id: string;
+  stage: "pending" | "running" | "complete" | "failed";
+  assistant_message_id: string | null;
+  proposal_id: string | null;
+  error_message: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -25,6 +25,7 @@ import type {
   AnalysisJob,
   AnalysisMode,
   AnalysisOperation,
+  AnalysisStrategy,
   DownloadJob,
   TranscriptionOptions,
   AgentJob,
@@ -43,6 +44,7 @@ type TaskManager = {
     mode: AnalysisMode,
     marker_ids: string[],
     ai_model_id: string | null,
+    strategy: AnalysisStrategy,
   ) => Promise<AnalysisJob>;
   start_transcription: (
     asset_id: string,
@@ -224,9 +226,17 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       mode: AnalysisMode,
       marker_ids: string[],
       ai_model_id: string | null,
+      strategy: AnalysisStrategy,
     ) =>
       run_analysis_operation(asset_id, "analysis", (signal) =>
-        analyze_asset(asset_id, mode, marker_ids, ai_model_id, signal),
+        analyze_asset(
+          asset_id,
+          mode,
+          marker_ids,
+          ai_model_id,
+          strategy,
+          signal,
+        ),
       ),
     [run_analysis_operation],
   );

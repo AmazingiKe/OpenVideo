@@ -2,6 +2,8 @@ import type {
   AgentJob,
   AgentQuestionAction,
   AnalysisJob,
+  AnalysisStrategy,
+  AnalysisStrategyPresetDescriptor,
   AiModelConfiguration,
   AiModelSummary,
   AiModelTestResult,
@@ -19,9 +21,30 @@ import type {
   TranscriptionModelDescriptor,
   TranscriptionModelDownloadJob,
   Preferences,
+  SummaryAgentRun,
+  SummaryConversationState,
+  SummaryDetail,
+  SummaryDocument,
+  SummaryEditProposal,
+  SummaryMediaArtifact,
+  SummaryMediaSuggestion,
 } from "./types";
 
 const api_base_url = import.meta.env.VITE_API_BASE_URL ?? "";
+
+const DEFAULT_ANALYSIS_STRATEGY: AnalysisStrategy = {
+  preset: "course_notes",
+  weights: {
+    core_concepts: 90,
+    formula_derivation: 65,
+    case_demonstration: 60,
+    questions_conclusions: 80,
+    visual_content: 55,
+    user_markers: 100,
+  },
+  depth: "balanced",
+  marker_context_seconds: 30,
+};
 
 export class ApiError extends Error {
   constructor(
@@ -232,6 +255,7 @@ export function analyze_asset(
   mode: AnalysisMode,
   marker_ids: string[],
   ai_model_id: string | null,
+  strategy: AnalysisStrategy = DEFAULT_ANALYSIS_STRATEGY,
   signal?: AbortSignal,
 ): Promise<AnalysisJob> {
   return request_json(
@@ -239,10 +263,22 @@ export function analyze_asset(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode, marker_ids, ai_model_id, force: true }),
+      body: JSON.stringify({
+        mode,
+        marker_ids,
+        ai_model_id,
+        strategy,
+        force: true,
+      }),
       signal,
     },
   );
+}
+
+export function list_analysis_strategies(
+  signal?: AbortSignal,
+): Promise<AnalysisStrategyPresetDescriptor[]> {
+  return request_json("/api/analysis-strategies", { signal });
 }
 
 export function transcribe_asset(
@@ -424,4 +460,205 @@ export function media_url(path: string): string;
 export function media_url(path: string | null | undefined): string | undefined;
 export function media_url(path: string | null | undefined): string | undefined {
   return path ? `${api_base_url}${path}` : undefined;
+}
+
+export function list_summary_documents(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryDocument[]> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents`,
+    { signal },
+  );
+}
+
+export function generate_summary_documents(
+  asset_id: string,
+  options: {
+    ai_model_id: string | null;
+    detail: SummaryDetail;
+    create_subdocuments: boolean;
+    subdocument_mode: "chapters";
+  },
+  signal?: AbortSignal,
+): Promise<SummaryDocument[]> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents/generate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options),
+      signal,
+    },
+  );
+}
+
+export function create_summary_child(
+  root_document_id: string,
+  title: string,
+  signal?: AbortSignal,
+): Promise<SummaryDocument> {
+  return request_json(
+    `/api/summary-documents/${encodeURIComponent(root_document_id)}/children`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, markdown: "" }),
+      signal,
+    },
+  );
+}
+
+export function update_summary_document(
+  document_id: string,
+  expected_revision: number,
+  patch: { title?: string; markdown?: string; position?: number },
+  signal?: AbortSignal,
+): Promise<SummaryDocument> {
+  return request_json(
+    `/api/summary-documents/${encodeURIComponent(document_id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expected_revision, ...patch }),
+      signal,
+    },
+  );
+}
+
+export function reorder_summary_children(
+  root_document_id: string,
+  document_ids: string[],
+  signal?: AbortSignal,
+): Promise<SummaryDocument[]> {
+  return request_json(
+    `/api/summary-documents/${encodeURIComponent(root_document_id)}/children/order`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_ids }),
+      signal,
+    },
+  );
+}
+
+export async function delete_summary_document(
+  document_id: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(
+    `${api_base_url}/api/summary-documents/${encodeURIComponent(document_id)}`,
+    { method: "DELETE", signal },
+  );
+  if (!response.ok)
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
+}
+
+export function get_summary_conversation(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryConversationState> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-conversation`,
+    { signal },
+  );
+}
+
+export function create_summary_agent_run(
+  conversation_id: string,
+  request: {
+    document_id: string;
+    expected_revision: number;
+    instruction: string;
+    ai_model_id: string;
+    selection: { start: number; end: number; text: string } | null;
+  },
+  signal?: AbortSignal,
+): Promise<SummaryAgentRun> {
+  return request_json(
+    `/api/summary-conversations/${encodeURIComponent(conversation_id)}/messages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal,
+    },
+  );
+}
+
+export type SummaryAgentEvent =
+  | { event: "status"; data: { stage: SummaryAgentRun["stage"] } }
+  | { event: "reply"; data: SummaryConversationState["messages"][number] }
+  | { event: "proposal"; data: SummaryEditProposal }
+  | { event: "complete"; data: { run_id: string } }
+  | { event: "error"; data: { run_id: string; message: string } };
+
+export async function stream_summary_agent_run(
+  run_id: string,
+  on_event: (event: SummaryAgentEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(
+    `${api_base_url}/api/summary-agent-runs/${encodeURIComponent(run_id)}/events`,
+    { signal },
+  );
+  if (!response.ok || !response.body) {
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) {
+      const event_name = block.match(/^event: (.+)$/m)?.[1];
+      const data = block.match(/^data: (.+)$/m)?.[1];
+      if (event_name && data) {
+        on_event({
+          event: event_name,
+          data: JSON.parse(data),
+        } as SummaryAgentEvent);
+      }
+    }
+    if (done) break;
+  }
+}
+
+export function resolve_summary_proposal(
+  proposal_id: string,
+  action: "accept" | "reject",
+  signal?: AbortSignal,
+): Promise<SummaryEditProposal> {
+  return request_json(
+    `/api/summary-edit-proposals/${encodeURIComponent(proposal_id)}/${action}`,
+    { method: "POST", signal },
+  );
+}
+
+export function create_summary_media(
+  document: SummaryDocument,
+  suggestion: SummaryMediaSuggestion,
+  signal?: AbortSignal,
+): Promise<{ artifact: SummaryMediaArtifact; document: SummaryDocument }> {
+  return request_json("/api/summary-media", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document_id: document.document_id,
+      expected_revision: document.revision,
+      media_type: suggestion.media_type,
+      start_seconds: suggestion.start_seconds,
+      end_seconds: suggestion.end_seconds,
+      insert_after: suggestion.insert_after,
+      caption: suggestion.caption,
+    }),
+    signal,
+  });
+}
+
+export function summary_export_url(asset_id: string): string {
+  return `${api_base_url}/api/media/assets/${encodeURIComponent(asset_id)}/summary-export`;
 }

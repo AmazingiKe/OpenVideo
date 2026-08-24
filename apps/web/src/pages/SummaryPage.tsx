@@ -28,6 +28,7 @@ export function SummaryPage() {
         selected_asset={selected_asset}
         segments={segments}
         transcript={transcript}
+        on_error={set_page_error}
       />
       {error ? <FloatingError message={error} /> : null}
     </>

@@ -1,0 +1,195 @@
+import type { Meta, StoryObj } from "@storybook/react-vite";
+
+import type {
+  MediaAsset,
+  SummaryConversationState,
+  SummaryDocument,
+  Transcript,
+} from "@/shared/types";
+import { SummaryWorkspace } from "./SummaryWorkspace";
+
+const ASSET_ID = "asset-0198dbf112347abc8123456789abcdef";
+const ROOT_DOCUMENT_ID = "document-0198dbf212347abc8123456789abcdef";
+const CHILD_DOCUMENT_ID = "document-0198dbf312347abc8123456789abcdef";
+const CONVERSATION_ID = "conversation-0198dbf412347abc8123456789abcdef";
+const CREATED_AT = "2026-08-24T08:00:00Z";
+
+const ASSET: MediaAsset = {
+  asset_id: ASSET_ID,
+  media_type: "video",
+  source_url: "https://example.com/course.mp4",
+  source_platform: "bilibili",
+  source_video_id: null,
+  title: "镜头语言与电影叙事",
+  author_name: "开放影像课",
+  description: "课程示例",
+  duration_seconds: 180,
+  width: 1920,
+  height: 1080,
+  video_codec: "h264",
+  audio_codec: "aac",
+  status: "ready",
+  error_message: null,
+  playback_url: "/stream",
+  thumbnail_url: null,
+  thumbnail_storyboard: null,
+  created_at: CREATED_AT,
+  updated_at: CREATED_AT,
+};
+
+const DOCUMENTS: SummaryDocument[] = [
+  {
+    document_id: ROOT_DOCUMENT_ID,
+    asset_id: ASSET_ID,
+    parent_document_id: null,
+    title: "镜头语言课程笔记",
+    markdown:
+      "# 镜头语言课程笔记\n\n## 核心结论\n\n镜头不仅记录动作，也通过景别与运动组织观众注意力。\n\n- 全景建立空间关系\n- 特写强调人物反应\n\n详见 [案例拆解](docs/document-0198dbf312347abc8123456789abcdef.md)。",
+    position: 0,
+    revision: 3,
+    created_at: CREATED_AT,
+    updated_at: CREATED_AT,
+  },
+  {
+    document_id: CHILD_DOCUMENT_ID,
+    asset_id: ASSET_ID,
+    parent_document_id: ROOT_DOCUMENT_ID,
+    title: "案例拆解",
+    markdown:
+      "# 案例拆解\n\n00:42 的推轨镜头逐步缩短观众与人物之间的心理距离。",
+    position: 0,
+    revision: 1,
+    created_at: CREATED_AT,
+    updated_at: CREATED_AT,
+  },
+];
+
+const CONVERSATION: SummaryConversationState = {
+  conversation: {
+    conversation_id: CONVERSATION_ID,
+    asset_id: ASSET_ID,
+    root_document_id: ROOT_DOCUMENT_ID,
+    created_at: CREATED_AT,
+    updated_at: CREATED_AT,
+  },
+  messages: [
+    {
+      message_id: "message-0198dbf512347abc8123456789abcdef",
+      conversation_id: CONVERSATION_ID,
+      role: "user",
+      content: "把核心结论改得更适合复习。",
+      created_at: CREATED_AT,
+    },
+    {
+      message_id: "message-0198dbf612347abc8123456789abcdef",
+      conversation_id: CONVERSATION_ID,
+      role: "assistant",
+      content: "我整理了三条可快速回忆的结论，并补充了一张关键帧建议。",
+      created_at: CREATED_AT,
+    },
+  ],
+  proposals: [
+    {
+      proposal_id: "proposal-0198dbf712347abc8123456789abcdef",
+      conversation_id: CONVERSATION_ID,
+      document_id: ROOT_DOCUMENT_ID,
+      base_revision: 3,
+      proposed_markdown: DOCUMENTS[0]!.markdown,
+      explanation: "将核心结论改写为可复习的要点，并保留案例入口。",
+      diff: "+ 增加三条镜头语言复习要点",
+      suggested_subdocuments: [],
+      media_suggestions: [
+        {
+          suggestion_id: "suggestion-0198dbf812347abc8123456789abcdef",
+          media_type: "image",
+          start_seconds: 42,
+          end_seconds: null,
+          insert_after: "## 核心结论",
+          caption: "推轨镜头开始靠近人物的关键帧",
+        },
+      ],
+      status: "pending",
+      created_at: CREATED_AT,
+    },
+  ],
+};
+
+const TRANSCRIPT: Transcript = {
+  asset_id: ASSET_ID,
+  language: "zh",
+  segments: [
+    { start_seconds: 38, end_seconds: 48, text: "摄影机开始向人物缓慢推进。" },
+  ],
+  created_at: CREATED_AT,
+};
+
+function json_response(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function summary_fetch(input: RequestInfo | URL): Promise<Response> {
+  const url = typeof input === "string" ? input : input.toString();
+  if (url.endsWith("/api/ai/models")) {
+    return Promise.resolve(
+      json_response([
+        {
+          model_id: "model-0198dbf912347abc8123456789abcdef",
+          name: "课程总结模型",
+          litellm_model: "openai/example",
+          input_modalities: ["text", "image"],
+        },
+      ]),
+    );
+  }
+  if (url.includes("/summary-conversation")) {
+    return Promise.resolve(json_response(CONVERSATION));
+  }
+  if (url.includes("/summary-documents")) {
+    return Promise.resolve(json_response(DOCUMENTS));
+  }
+  return Promise.resolve(json_response({}));
+}
+
+const meta = {
+  title: "Summary/Workspace",
+  component: SummaryWorkspace,
+  args: {
+    selected_asset: ASSET,
+    transcript: TRANSCRIPT,
+    segments: [],
+  },
+  beforeEach() {
+    const original_fetch = window.fetch;
+    window.fetch = summary_fetch;
+    return () => {
+      window.fetch = original_fetch;
+    };
+  },
+  decorators: [
+    (StoryComponent) => (
+      <div className="h-[760px] min-w-0 overflow-hidden bg-background text-foreground">
+        <StoryComponent />
+      </div>
+    ),
+  ],
+} satisfies Meta<typeof SummaryWorkspace>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Desktop: Story = {};
+
+export const Dark: Story = {
+  decorators: [
+    (StoryComponent) => (
+      <div className="dark bg-background text-foreground">
+        <StoryComponent />
+      </div>
+    ),
+  ],
+};
+
+export const Narrow: Story = {};

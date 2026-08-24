@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from openvideo.core.analysis import TimelineMoment, select_timeline_moments
-from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, Transcript
+from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, AnalysisStrategy, Transcript
 from openvideo.core.identifiers import uuid7
 from openvideo.core.models import MediaMarker, MediaSegment
 from openvideo.settings import Settings
@@ -38,6 +38,7 @@ def build_segments(
     describer: VisionDescriber | None,
     mode: AnalysisMode,
     markers: list[MediaMarker],
+    strategy: AnalysisStrategy,
     progress_callback: AnalysisProgress,
 ) -> list[MediaSegment]:
     """基础音频分析始终产出事件，视觉能力缺失或局部失败不会丢失文本结果。"""
@@ -52,6 +53,7 @@ def build_segments(
         markers,
         duration_seconds,
         scene_boundaries,
+        strategy,
     )
     segments: list[MediaSegment] = []
     progress_span = 20 / max(len(moments), 1)
@@ -69,6 +71,7 @@ def build_segments(
             asset_directory,
             settings,
             describer,
+            strategy,
             lambda: progress_callback(
                 AnalysisStage.DESCRIBING_VISUALS,
                 75 + progress_span * (index + 0.5),
@@ -85,18 +88,23 @@ def _build_segment(
     asset_directory: Path,
     settings: Settings,
     describer: VisionDescriber | None,
+    strategy: AnalysisStrategy,
     on_describing_visuals: Callable[[], None],
 ) -> MediaSegment:
     segment_id = f"segment-{uuid7().hex}"
-    frames = _extract_event_frames(
-        moment,
-        media_path,
-        asset_directory / FRAMES_DIRECTORY_NAME / segment_id,
-        settings,
+    frames = (
+        _extract_event_frames(
+            moment,
+            media_path,
+            asset_directory / FRAMES_DIRECTORY_NAME / segment_id,
+            settings,
+        )
+        if moment.detailed
+        else []
     )
     if describer is not None and frames:
         on_describing_visuals()
-    visual_description = _describe_event(moment, frames, describer)
+    visual_description = _describe_event(moment, frames, describer, strategy)
     transcript_text = moment.transcript_text or None
     return MediaSegment(
         segment_id=segment_id,
@@ -140,16 +148,17 @@ def _describe_event(
     moment: TimelineMoment,
     frames: list[Path],
     describer: VisionDescriber | None,
+    strategy: AnalysisStrategy,
 ) -> str | None:
     if describer is None or not frames:
         return None
     try:
-        return describer.describe(frames, _analysis_prompt(moment))
+        return describer.describe(frames, _analysis_prompt(moment, strategy))
     except VisionDescriptionError:
         return None
 
 
-def _analysis_prompt(moment: TimelineMoment) -> str:
+def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
     tag_instructions = [
         TAG_ANALYSIS_INSTRUCTIONS[tag]
         for tag in moment.tags
@@ -160,9 +169,23 @@ def _analysis_prompt(moment: TimelineMoment) -> str:
     if custom_tags:
         focus = f"{focus}；同时关注用户标签：{'、'.join(custom_tags)}"
     transcript = moment.transcript_text[:MAX_PROMPT_TRANSCRIPT_CHARACTERS]
+    weights = strategy.weights
+    emphasis = ""
+    if weights is not None:
+        weighted_topics = sorted(
+            (
+                (weights.core_concepts, "核心概念"),
+                (weights.formula_derivation, "公式推导"),
+                (weights.case_demonstration, "案例演示"),
+                (weights.questions_conclusions, "疑问与结论"),
+                (weights.visual_content, "视觉内容"),
+            ),
+            reverse=True,
+        )[:3]
+        emphasis = "、".join(topic for _, topic in weighted_topics)
     return (
         "你正在分析同一视频片段按时间排列的多张画面。"
-        f"分析目标：{focus}。"
+        f"分析目标：{focus}。策略优先关注：{emphasis or '核心内容'}。"
         "请结合转写和画面，用中文输出一段可复习的详细笔记；"
         "区分视频明确表达的内容与合理推断，不得补造事实。"
         f"\n转写：{transcript or '该片段没有可用转写，请只依据画面。'}"

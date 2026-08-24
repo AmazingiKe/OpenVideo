@@ -24,11 +24,14 @@ import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
 import {
   get_preferences,
+  list_analysis_strategies,
   list_ai_models,
   list_transcription_models,
 } from "@/shared/api";
 import type {
   AnalysisMode,
+  AnalysisStrategy,
+  AnalysisStrategyPresetDescriptor,
   AiModelSummary,
   TranscriptCorrectionScope,
   TranscriptionModelDescriptor,
@@ -69,6 +72,9 @@ export function AnalysisPage() {
     useState<number[]>([]);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [ai_models, set_ai_models] = useState<AiModelSummary[]>([]);
+  const [analysis_strategies, set_analysis_strategies] = useState<
+    AnalysisStrategyPresetDescriptor[]
+  >([]);
   const [transcription_models, set_transcription_models] = useState<
     TranscriptionModelDescriptor[]
   >([]);
@@ -104,13 +110,17 @@ export function AnalysisPage() {
       list_ai_models(controller.signal),
       list_transcription_models(controller.signal),
       get_preferences(controller.signal),
+      list_analysis_strategies(controller.signal),
     ])
-      .then(([models, loaded_transcription_models, preferences]) => {
-        set_ai_models(models);
-        set_transcription_models(loaded_transcription_models);
-        set_default_transcription(preferences.default_transcription);
-        set_model_error(null);
-      })
+      .then(
+        ([models, loaded_transcription_models, preferences, strategies]) => {
+          set_ai_models(models);
+          set_transcription_models(loaded_transcription_models);
+          set_default_transcription(preferences.default_transcription);
+          set_analysis_strategies(strategies);
+          set_model_error(null);
+        },
+      )
       .catch((error: unknown) => {
         if (!is_abort_error(error)) set_model_error(error_message(error));
       });
@@ -166,11 +176,18 @@ export function AnalysisPage() {
     mode: AnalysisMode,
     marker_ids: string[],
     ai_model_id: string | null,
+    strategy: AnalysisStrategy,
   ) {
     if (!selected_asset_id) return;
     set_page_error(null);
     try {
-      await start_analysis(selected_asset_id, mode, marker_ids, ai_model_id);
+      await start_analysis(
+        selected_asset_id,
+        mode,
+        marker_ids,
+        ai_model_id,
+        strategy,
+      );
       if (mounted_ref.current) await reload_analysis();
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
@@ -330,8 +347,9 @@ export function AnalysisPage() {
       }
       is_analyzing={is_analyzing}
       ai_models={ai_models}
-      on_start_analysis={(mode, marker_ids, ai_model_id) =>
-        void run_analysis(mode, marker_ids, ai_model_id)
+      analysis_strategies={analysis_strategies}
+      on_start_analysis={(mode, marker_ids, ai_model_id, strategy) =>
+        void run_analysis(mode, marker_ids, ai_model_id, strategy)
       }
       selected_transcript_count={selected_transcript_indices.length}
       active_correction_scope={active_correction_scope}

@@ -9,6 +9,7 @@ from openvideo.core.analysis_models import (
     AnalysisMode,
     AnalysisOperation,
     AnalysisStage,
+    AnalysisStrategy,
     TERMINAL_ANALYSIS_STAGES,
     Transcript,
     TranscriptionMetadata,
@@ -293,6 +294,7 @@ class AnalysisManager:
         mode: AnalysisMode,
         marker_ids: list[str],
         ai_model_id: str | None,
+        strategy: AnalysisStrategy,
         force: bool,
     ) -> AnalysisJob:
         asset = self.library.get(asset_id)
@@ -322,6 +324,7 @@ class AnalysisManager:
             mode=mode,
             marker_ids=resolved_marker_ids,
             ai_model_id=ai_model_id,
+            strategy=strategy,
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -527,6 +530,7 @@ class AnalysisManager:
                     describer,
                     job.mode,
                     markers,
+                    job.strategy,
                     lambda stage, progress, message: self._update_job(
                         job_id,
                         stage,
@@ -620,7 +624,7 @@ class AnalysisManager:
 
     def _job_markers(self, job: AnalysisJob) -> list[MediaMarker]:
         if job.mode == AnalysisMode.FULL:
-            return []
+            return self.library.load_markers(job.asset_id)
         selected_ids = set(job.marker_ids)
         return [
             marker
@@ -669,7 +673,6 @@ class AnalysisManager:
             job.message = message
             job.error_message = error_message
             job.updated_at = datetime.now(UTC)
-            self.library.save_download_job(job)
             self.library.save_analysis_job(job)
 
     def _fail(self, job_id: str, message: str) -> None:
@@ -706,6 +709,7 @@ class AnalysisManager:
             asset_id=asset_id,
             mode=mode,
             marker_ids=marker_ids,
+            strategy=AnalysisStrategy(),
             capabilities=[AnalysisCapability.TRANSCRIPT, AnalysisCapability.TIMELINE],
             stage=AnalysisStage.COMPLETE,
             progress_percent=100,

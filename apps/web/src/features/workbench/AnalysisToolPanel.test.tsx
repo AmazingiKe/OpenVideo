@@ -84,15 +84,20 @@ describe("AnalysisToolPanel", () => {
     fireEvent.click(screen.getByRole("radio", { name: "标记" }));
     const marker_options = screen.getAllByRole("checkbox");
     expect(marker_options).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "分析 2 个标记" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "按课程笔记分析 2 个标记" }),
+    ).toBeEnabled();
 
     fireEvent.click(marker_options[0]);
-    fireEvent.click(screen.getByRole("button", { name: "分析 1 个标记" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "按课程笔记分析 1 个标记" }),
+    );
 
     expect(start_analysis).toHaveBeenCalledWith(
       "markers",
       ["marker-1123456789abcdef0123456789abcdef"],
       null,
+      expect.objectContaining({ preset: "course_notes" }),
     );
   });
 

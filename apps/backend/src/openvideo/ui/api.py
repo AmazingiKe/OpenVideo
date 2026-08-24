@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 import asyncio
+import json
 import os
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
@@ -17,6 +18,12 @@ from openvideo.application import (
     AnalysisPrerequisiteError,
     DownloadManager,
 )
+from openvideo.summary_manager import (
+    SummaryError,
+    SummaryManager,
+    SummaryNotFoundError,
+    SummaryRevisionConflictError,
+)
 from openvideo.core.agent_models import AgentJob, AgentResponse
 from openvideo.core.ai_models import (
     AiModelCollection,
@@ -24,8 +31,11 @@ from openvideo.core.ai_models import (
     InputModality,
 )
 from openvideo.core.analysis_models import (
+    ANALYSIS_STRATEGY_PRESETS,
     AnalysisJob,
     AnalysisMode,
+    AnalysisStrategy,
+    AnalysisStrategyPresetDescriptor,
     Transcript,
     TranscriptionComputeType,
     TranscriptionDevice,
@@ -64,6 +74,19 @@ from openvideo.settings import (
     Settings,
     load_settings,
     preferences_from_settings,
+)
+from openvideo.core.summary_models import (
+    SummaryAgentMessageRequest,
+    SummaryAgentRun,
+    SummaryConversationState,
+    SummaryDocument,
+    SummaryDocumentCreate,
+    SummaryDocumentReorder,
+    SummaryDocumentUpdate,
+    SummaryEditProposal,
+    SummaryGenerationRequest,
+    SummaryMediaArtifact,
+    SummaryMediaCreate,
 )
 from openvideo.tools.downloader import (
     DownloadFailure,
@@ -151,6 +174,7 @@ class AnalysisCreateRequest(BaseModel):
     marker_ids: list[str] = Field(default_factory=list)
     force: bool = False
     ai_model_id: str | None = None
+    strategy: AnalysisStrategy = Field(default_factory=AnalysisStrategy)
 
 
 class TranscriptionCreateRequest(BaseModel):
@@ -201,6 +225,11 @@ class AiModelTestResponse(BaseModel):
     message: str
 
 
+class SummaryMediaCreateResponse(BaseModel):
+    artifact: SummaryMediaArtifact
+    document: SummaryDocument
+
+
 def create_app(
     settings: Settings | None = None,
     preference_store: PreferenceStore | None = None,
@@ -212,17 +241,19 @@ def create_app(
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
     agent_manager: AgentManager | None = None
+    summary_manager: SummaryManager | None = None
     transcription_model_manager = TranscriptionModelManager(resolved_settings)
     page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
     directory_picker_lock = asyncio.Lock()
 
     async def install_library(opened_library: MediaLibrary) -> None:
-        nonlocal library, manager, analysis_manager, agent_manager, page_settings_store
+        nonlocal library, manager, analysis_manager, agent_manager, summary_manager, page_settings_store
         library = opened_library
         manager = DownloadManager(opened_library, resolved_settings)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
         agent_manager = AgentManager(opened_library, resolved_settings)
+        summary_manager = SummaryManager(opened_library, resolved_settings)
         page_settings_store = PageSettingsStore(
             preference_store.path.parent,
             opened_library.manifest.library_id,
@@ -234,6 +265,7 @@ def create_app(
         app.state.download_manager = manager
         app.state.analysis_manager = analysis_manager
         app.state.agent_manager = agent_manager
+        app.state.summary_manager = summary_manager
         app.state.page_settings_store = page_settings_store
 
     def require_library() -> MediaLibrary:
@@ -273,6 +305,8 @@ def create_app(
         finally:
             if agent_manager:
                 await agent_manager.close()
+            if summary_manager:
+                await summary_manager.close()
             if library:
                 library.close()
 
@@ -281,6 +315,7 @@ def create_app(
     app.state.download_manager = manager
     app.state.analysis_manager = analysis_manager
     app.state.agent_manager = agent_manager
+    app.state.summary_manager = summary_manager
     app.state.transcription_model_manager = transcription_model_manager
     app.state.page_settings_store = page_settings_store
     app.state.settings = resolved_settings
@@ -381,6 +416,7 @@ def create_app(
                 request.mode,
                 request.marker_ids,
                 request.ai_model_id,
+                request.strategy,
                 request.force,
             )
         except AnalysisPrerequisiteError as error:
@@ -390,6 +426,13 @@ def create_app(
         if job.stage.value != "complete":
             analysis_manager.start(job.job_id)
         return job
+
+    @app.get(
+        "/api/analysis-strategies",
+        response_model=list[AnalysisStrategyPresetDescriptor],
+    )
+    def list_analysis_strategies() -> list[AnalysisStrategyPresetDescriptor]:
+        return [preset.model_copy(deep=True) for preset in ANALYSIS_STRATEGY_PRESETS]
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException):
@@ -404,7 +447,9 @@ def create_app(
             "/api/downloads",
             "/api/analysis",
             "/api/agent-jobs",
+            "/api/summary",
             "/api/page-settings",
+            "/assets/media-",
         )
         if request.url.path.startswith(managed_prefixes) and library is None:
             return JSONResponse(
@@ -432,7 +477,7 @@ def create_app(
     async def create_library(request: LibraryCreateRequest) -> LibraryDescription:
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
             _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法切换")
-        _ensure_switch_allowed(manager, analysis_manager, agent_manager)
+        _ensure_switch_allowed(manager, analysis_manager, agent_manager, summary_manager)
         requested_path = _absolute_library_path(request.path)
         try:
             opened = MediaLibrary.initialize_directory(requested_path)
@@ -454,7 +499,7 @@ def create_app(
         target = _absolute_library_path(request.path)
         if library and target == library.library_path:
             return library.description
-        _ensure_switch_allowed(manager, analysis_manager, agent_manager)
+        _ensure_switch_allowed(manager, analysis_manager, agent_manager, summary_manager)
         try:
             opened = MediaLibrary.open(target)
         except (LibraryError, OSError) as error:
@@ -473,7 +518,7 @@ def create_app(
         nonlocal library, manager, analysis_manager, agent_manager, page_settings_store
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
             _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法关闭")
-        _ensure_switch_allowed(manager, analysis_manager, agent_manager)
+        _ensure_switch_allowed(manager, analysis_manager, agent_manager, summary_manager)
         if agent_manager:
             await agent_manager.close()
         if library:
@@ -810,6 +855,236 @@ def create_app(
             raise HTTPException(status_code=404, detail="标记不存在")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    @app.get(
+        "/api/media/assets/{asset_id}/summary-documents",
+        response_model=list[SummaryDocument],
+    )
+    def list_summary_documents(asset_id: str) -> list[SummaryDocument]:
+        try:
+            return summary_manager.documents(asset_id)
+        except SummaryError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
+        "/api/media/assets/{asset_id}/summary-documents/generate",
+        response_model=list[SummaryDocument],
+        status_code=status.HTTP_201_CREATED,
+    )
+    def generate_summary_documents(
+        asset_id: str,
+        request: SummaryGenerationRequest,
+    ) -> list[SummaryDocument]:
+        try:
+            return summary_manager.generate(asset_id, request)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except SummaryError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post(
+        "/api/summary-documents/{root_document_id}/children",
+        response_model=SummaryDocument,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_summary_child(
+        root_document_id: str,
+        request: SummaryDocumentCreate,
+    ) -> SummaryDocument:
+        try:
+            return summary_manager.create_child(root_document_id, request)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (SummaryError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.patch(
+        "/api/summary-documents/{document_id}",
+        response_model=SummaryDocument,
+    )
+    def update_summary_document(
+        document_id: str,
+        request: SummaryDocumentUpdate,
+    ) -> SummaryDocument:
+        try:
+            return summary_manager.update_document(document_id, request)
+        except SummaryRevisionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.put(
+        "/api/summary-documents/{root_document_id}/children/order",
+        response_model=list[SummaryDocument],
+    )
+    def reorder_summary_children(
+        root_document_id: str,
+        request: SummaryDocumentReorder,
+    ) -> list[SummaryDocument]:
+        try:
+            return summary_manager.reorder_children(root_document_id, request.document_ids)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.delete(
+        "/api/summary-documents/{document_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_summary_document(document_id: str) -> Response:
+        try:
+            summary_manager.delete_child(document_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get(
+        "/api/media/assets/{asset_id}/summary-conversation",
+        response_model=SummaryConversationState,
+    )
+    def get_summary_conversation(asset_id: str) -> SummaryConversationState:
+        try:
+            return summary_manager.conversation_state(asset_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
+        "/api/summary-conversations/{conversation_id}/messages",
+        response_model=SummaryAgentRun,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def create_summary_agent_run(
+        conversation_id: str,
+        request: SummaryAgentMessageRequest,
+    ) -> SummaryAgentRun:
+        try:
+            return summary_manager.create_agent_run(conversation_id, request)
+        except SummaryRevisionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except SummaryError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/summary-agent-runs/{run_id}/events")
+    async def summary_agent_events(run_id: str) -> StreamingResponse:
+        try:
+            summary_manager.agent_run(run_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+        async def stream_events():
+            previous_stage = None
+            while True:
+                run = summary_manager.agent_run(run_id)
+                if run.stage != previous_stage:
+                    yield _sse_event("status", {"stage": run.stage.value})
+                    previous_stage = run.stage
+                if run.stage.value == "complete":
+                    if run.assistant_message_id:
+                        messages = library.load_summary_messages(run.conversation_id)
+                        message = next(
+                            (
+                                item
+                                for item in messages
+                                if item.message_id == run.assistant_message_id
+                            ),
+                            None,
+                        )
+                        if message:
+                            yield _sse_event("reply", message.model_dump(mode="json"))
+                    if run.proposal_id:
+                        proposal = library.load_summary_proposal(run.proposal_id)
+                        if proposal:
+                            yield _sse_event("proposal", proposal.model_dump(mode="json"))
+                    yield _sse_event("complete", {"run_id": run.run_id})
+                    break
+                if run.stage.value == "failed":
+                    yield _sse_event(
+                        "error",
+                        {"run_id": run.run_id, "message": run.error_message},
+                    )
+                    break
+                await asyncio.sleep(0.1)
+
+        return StreamingResponse(stream_events(), media_type="text/event-stream")
+
+    @app.post(
+        "/api/summary-edit-proposals/{proposal_id}/accept",
+        response_model=SummaryEditProposal,
+    )
+    def accept_summary_proposal(proposal_id: str) -> SummaryEditProposal:
+        try:
+            return summary_manager.accept_proposal(proposal_id)
+        except SummaryRevisionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
+        "/api/summary-edit-proposals/{proposal_id}/reject",
+        response_model=SummaryEditProposal,
+    )
+    def reject_summary_proposal(proposal_id: str) -> SummaryEditProposal:
+        try:
+            return summary_manager.reject_proposal(proposal_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
+        "/api/summary-media",
+        response_model=SummaryMediaCreateResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_summary_media(
+        request: SummaryMediaCreate,
+    ) -> SummaryMediaCreateResponse:
+        try:
+            artifact, document = await summary_manager.create_media(request)
+            return SummaryMediaCreateResponse(artifact=artifact, document=document)
+        except SummaryRevisionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except SummaryError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/summary-media/{media_id}")
+    def get_summary_media(media_id: str) -> FileResponse:
+        try:
+            return FileResponse(summary_manager.media_path(media_id))
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/assets/{media_file}")
+    def get_relative_summary_media(media_file: str) -> FileResponse:
+        file_name = Path(media_file)
+        if file_name.name != media_file or file_name.suffix not in {".jpg", ".gif"}:
+            raise HTTPException(status_code=404, detail="总结媒体不存在")
+        try:
+            media_path = summary_manager.media_path(file_name.stem)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if media_path.suffix != file_name.suffix:
+            raise HTTPException(status_code=404, detail="总结媒体不存在")
+        return FileResponse(media_path)
+
+    @app.get("/api/media/assets/{asset_id}/summary-export")
+    def export_summary(asset_id: str) -> Response:
+        try:
+            file_name, content = summary_manager.export(asset_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except SummaryError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return Response(
+            content=content,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+        )
+
     @app.get("/api/media/assets/{asset_id}/frames/{frame_path:path}")
     def get_frame(asset_id: str, frame_path: str) -> FileResponse:
         asset = _ready_asset(library, asset_id)
@@ -928,11 +1203,14 @@ def _ensure_switch_allowed(
     manager: DownloadManager | None,
     analysis_manager: AnalysisManager | None,
     agent_manager: AgentManager | None,
+    summary_manager: SummaryManager | None,
 ) -> None:
     if (manager and manager.has_active_jobs()) or (
         analysis_manager and analysis_manager.has_active_jobs()
     ) or (
         agent_manager and agent_manager.has_active_jobs()
+    ) or (
+        summary_manager and summary_manager.has_active_jobs()
     ):
         _library_error(409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库")
 
@@ -981,6 +1259,10 @@ def _read_file_range(file_path: Path, start: int, length: int) -> Iterator[bytes
                 break
             remaining -= len(chunk)
             yield chunk
+
+
+def _sse_event(event: str, payload: object) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 app = create_app()

@@ -15,11 +15,15 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  optimizeDeps: {
+    include: ["@milkdown/kit/core"],
+  },
   server: {
     host: "127.0.0.1",
     port: 5173,
     proxy: {
       "/api": "http://127.0.0.1:8000",
+      "/assets/media-": "http://127.0.0.1:8000",
     },
   },
   test: {

@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
-from openvideo.core.analysis_models import AnalysisMode, Transcript, TranscriptSegment
+from openvideo.core.analysis_models import (
+    AnalysisDepth,
+    AnalysisMode,
+    AnalysisStrategy,
+    Transcript,
+    TranscriptSegment,
+)
 from openvideo.core.models import MediaMarker
 
 
-MARKER_CONTEXT_SECONDS = 30.0
 MAX_EVENT_DURATION_SECONDS = 180.0
 MIN_SCENE_SPLIT_DURATION_SECONDS = 45.0
 SPEECH_GAP_SECONDS = 8.0
@@ -23,6 +29,9 @@ class TimelineMoment:
     transcript_text: str
     marker_ids: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
+    content_type: str = "core_concepts"
+    priority: float = 0
+    detailed: bool = True
 
 
 def select_timeline_moments(
@@ -31,16 +40,91 @@ def select_timeline_moments(
     markers: list[MediaMarker],
     duration_seconds: float | None,
     scene_boundaries: list[float] | None = None,
+    strategy: AnalysisStrategy | None = None,
 ) -> list[TimelineMoment]:
     """全片按内容边界建事件；标记模式只保留用户主动关注的上下文。"""
+    resolved_strategy = strategy or AnalysisStrategy()
     if mode == AnalysisMode.MARKERS:
-        return _marker_moments(
+        moments = _marker_moments(
             transcript.segments,
             markers,
             duration_seconds,
             scene_boundaries or [],
+            resolved_strategy.marker_context_seconds,
         )
-    return _full_timeline_moments(transcript.segments, scene_boundaries or [])
+    else:
+        moments = _full_timeline_moments(transcript.segments, scene_boundaries or [])
+        moments = _attach_markers(
+            moments,
+            transcript.segments,
+            markers,
+            duration_seconds,
+            scene_boundaries or [],
+            resolved_strategy.marker_context_seconds,
+        )
+    return prioritize_timeline_moments(moments, resolved_strategy)
+
+
+def prioritize_timeline_moments(
+    moments: list[TimelineMoment],
+    strategy: AnalysisStrategy,
+) -> list[TimelineMoment]:
+    """覆盖率只控制详细视觉分析，所有候选仍按时间顺序保留文本事件。"""
+    if not moments:
+        return []
+    ranked = [_score_moment(moment, strategy) for moment in moments]
+    coverage = {
+        AnalysisDepth.QUICK: 0.4,
+        AnalysisDepth.BALANCED: 0.7,
+        AnalysisDepth.DEEP: 1.0,
+    }[strategy.depth]
+    detailed_count = math.ceil(len(ranked) * coverage)
+    selected = {
+        index
+        for index, _ in sorted(
+            enumerate(ranked),
+            key=lambda item: item[1].priority,
+            reverse=True,
+        )[:detailed_count]
+    }
+    selected.update(index for index, moment in enumerate(ranked) if moment.marker_ids)
+    return [
+        TimelineMoment(**{**moment.__dict__, "detailed": index in selected})
+        for index, moment in enumerate(ranked)
+    ]
+
+
+def _score_moment(moment: TimelineMoment, strategy: AnalysisStrategy) -> TimelineMoment:
+    content_type = _classify_content(moment)
+    weights = strategy.weights
+    if weights is None:
+        raise ValueError("分析策略权重尚未解析")
+    score = float(getattr(weights, content_type))
+    if moment.marker_ids:
+        score += weights.user_markers
+    if moment.tags:
+        score += min(len(moment.tags) * 5, 20)
+    return TimelineMoment(
+        **{
+            **moment.__dict__,
+            "content_type": content_type,
+            "priority": score,
+        }
+    )
+
+
+def _classify_content(moment: TimelineMoment) -> str:
+    combined = f"{moment.transcript_text} {' '.join(moment.tags)}".lower()
+    signals = (
+        ("formula_derivation", ("公式", "推导", "等于", "方程", "theorem", "proof", "=")),
+        ("case_demonstration", ("案例", "示例", "例如", "演示", "操作", "步骤", "demo")),
+        ("questions_conclusions", ("疑问", "问题", "结论", "总结", "因此", "为什么", "?", "？")),
+        ("visual_content", ("画面", "图表", "界面", "这里可以看到", "如图")),
+    )
+    return next(
+        (content_type for content_type, keywords in signals if any(keyword in combined for keyword in keywords)),
+        "core_concepts",
+    )
 
 
 def _full_timeline_moments(
@@ -84,9 +168,16 @@ def _marker_moments(
     markers: list[MediaMarker],
     duration_seconds: float | None,
     scene_boundaries: list[float],
+    marker_context_seconds: float,
 ) -> list[TimelineMoment]:
     moments = [
-        _moment_around_marker(transcript_segments, marker, duration_seconds, scene_boundaries)
+        _moment_around_marker(
+            transcript_segments,
+            marker,
+            duration_seconds,
+            scene_boundaries,
+            marker_context_seconds,
+        )
         for marker in sorted(markers, key=lambda item: item.time_seconds)
     ]
     merged: list[TimelineMoment] = []
@@ -103,9 +194,10 @@ def _moment_around_marker(
     marker: MediaMarker,
     duration_seconds: float | None,
     scene_boundaries: list[float],
+    marker_context_seconds: float,
 ) -> TimelineMoment:
-    requested_start = max(0.0, marker.time_seconds - MARKER_CONTEXT_SECONDS)
-    requested_end = marker.time_seconds + MARKER_CONTEXT_SECONDS
+    requested_start = max(0.0, marker.time_seconds - marker_context_seconds)
+    requested_end = marker.time_seconds + marker_context_seconds
     if duration_seconds is not None:
         requested_end = min(requested_end, duration_seconds)
     previous_boundaries = [
@@ -153,6 +245,46 @@ def _merge_marker_moments(left: TimelineMoment, right: TimelineMoment) -> Timeli
         marker_ids=tuple(dict.fromkeys((*left.marker_ids, *right.marker_ids))),
         tags=tuple(dict.fromkeys((*left.tags, *right.tags))),
     )
+
+
+def _attach_markers(
+    moments: list[TimelineMoment],
+    transcript_segments: list[TranscriptSegment],
+    markers: list[MediaMarker],
+    duration_seconds: float | None,
+    scene_boundaries: list[float],
+    marker_context_seconds: float,
+) -> list[TimelineMoment]:
+    resolved = list(moments)
+    for marker in markers:
+        matching_index = next(
+            (
+                index
+                for index, moment in enumerate(resolved)
+                if moment.start_seconds <= marker.time_seconds <= moment.end_seconds
+            ),
+            None,
+        )
+        if matching_index is None:
+            resolved.append(
+                _moment_around_marker(
+                    transcript_segments,
+                    marker,
+                    duration_seconds,
+                    scene_boundaries,
+                    marker_context_seconds,
+                )
+            )
+            continue
+        moment = resolved[matching_index]
+        resolved[matching_index] = TimelineMoment(
+            **{
+                **moment.__dict__,
+                "marker_ids": tuple(dict.fromkeys((*moment.marker_ids, marker.marker_id))),
+                "tags": tuple(dict.fromkeys((*moment.tags, *marker.tags))),
+            }
+        )
+    return sorted(resolved, key=lambda moment: moment.start_seconds)
 
 
 def _moment_from_segments(segments: list[TranscriptSegment]) -> TimelineMoment:

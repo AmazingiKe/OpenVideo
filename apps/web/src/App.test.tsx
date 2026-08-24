@@ -14,6 +14,7 @@ import {
   get_transcript,
   list_assets,
   list_ai_models,
+  list_analysis_strategies,
   list_transcription_models,
   probe_source,
 } from "./shared/api";
@@ -35,6 +36,7 @@ vi.mock("./shared/api", () => ({
   get_transcript: vi.fn(),
   list_assets: vi.fn(),
   list_ai_models: vi.fn(),
+  list_analysis_strategies: vi.fn(),
   list_transcription_models: vi.fn(),
   media_url: (path: string) => path,
   probe_source: vi.fn(),
@@ -89,6 +91,7 @@ describe("App", () => {
       open_tool_sections: ["video_information"],
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
+    vi.mocked(list_analysis_strategies).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
   });
 

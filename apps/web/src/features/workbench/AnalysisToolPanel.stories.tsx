@@ -1,7 +1,33 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, userEvent, within } from "storybook/test";
 
 import { AnalysisToolPanel } from "./AnalysisToolPanel";
-import type { MediaAsset, TranscriptionModelDescriptor } from "@/shared/types";
+import type {
+  AnalysisStrategyPresetDescriptor,
+  MediaAsset,
+  TranscriptionModelDescriptor,
+} from "@/shared/types";
+
+const ANALYSIS_STRATEGIES: AnalysisStrategyPresetDescriptor[] = [
+  {
+    preset: "course_notes",
+    name: "课程笔记",
+    description: "突出核心概念、结论与可复习的知识结构。",
+    strategy: {
+      preset: "course_notes",
+      weights: {
+        core_concepts: 90,
+        formula_derivation: 65,
+        case_demonstration: 60,
+        questions_conclusions: 80,
+        visual_content: 55,
+        user_markers: 100,
+      },
+      depth: "balanced",
+      marker_context_seconds: 30,
+    },
+  },
+];
 
 const TRANSCRIPTION_MODELS: TranscriptionModelDescriptor[] = [
   {
@@ -63,6 +89,7 @@ const meta = {
     on_transcription_model_change: () => undefined,
     is_analyzing: false,
     ai_models: [],
+    analysis_strategies: ANALYSIS_STRATEGIES,
     on_start_analysis: () => undefined,
     selected_transcript_count: 0,
     active_correction_scope: null,
@@ -105,6 +132,53 @@ export const Transcribing: Story = {
     is_transcribing: true,
     open_sections: ["transcription"],
   },
+};
+
+export const DefaultStrategy: Story = {
+  args: {
+    has_transcript: true,
+    open_sections: ["analysis"],
+  },
+};
+
+export const CustomStrategy: Story = {
+  args: DefaultStrategy.args,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "高级设置" }));
+    const slider = canvas.getByRole("slider", { name: "核心概念权重" });
+    slider.focus();
+    await userEvent.keyboard("{ArrowLeft}");
+    await expect(
+      canvas.getByRole("combobox", { name: "分析策略" }),
+    ).toHaveTextContent("自定义");
+  },
+};
+
+export const AnalysisDisabled: Story = {
+  args: {
+    has_transcript: false,
+    open_sections: ["analysis"],
+  },
+};
+
+export const AnalysisRunning: Story = {
+  args: {
+    has_transcript: true,
+    is_analyzing: true,
+    open_sections: ["analysis"],
+  },
+};
+
+export const NarrowStrategy: Story = {
+  args: DefaultStrategy.args,
+  decorators: [
+    (StoryComponent) => (
+      <div className="h-[640px] w-[280px] overflow-hidden bg-background text-foreground">
+        <StoryComponent />
+      </div>
+    ),
+  ],
 };
 
 export const Collapsed: Story = {

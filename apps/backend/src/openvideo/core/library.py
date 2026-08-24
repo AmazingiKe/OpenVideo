@@ -19,6 +19,14 @@ from openvideo.core.analysis_models import (
     TranscriptionMetadata,
 )
 from openvideo.core.identifiers import is_uuid7, uuid7
+from openvideo.core.summary_models import (
+    SummaryAgentRun,
+    SummaryConversation,
+    SummaryDocument,
+    SummaryEditProposal,
+    SummaryMediaArtifact,
+    SummaryMessage,
+)
 from openvideo.core.models import (
     AssetMetadata,
     AssetSourceMetadata,
@@ -39,7 +47,7 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 FORMAT_VERSION = 1
-DATABASE_VERSION = 4
+DATABASE_VERSION = 5
 MANIFEST_FILE_NAME = "library.json"
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 AGENT_CHECKPOINT_DATABASE_FILE_NAME = "agent_checkpoints.sqlite3"
@@ -201,6 +209,9 @@ class MediaLibrary:
             version = 3
         if version == 3:
             self._migrate_agent_jobs()
+            version = 4
+        if version == 4:
+            self._migrate_summaries()
 
     def _migrate_analysis_model(self) -> None:
         connection = self._db()
@@ -216,6 +227,27 @@ class MediaLibrary:
         connection = self._db()
         with connection:
             connection.executescript(_AGENT_JOB_SCHEMA)
+            connection.execute("PRAGMA user_version = 4")
+
+    def _migrate_summaries(self) -> None:
+        connection = self._db()
+        default_strategy = json.dumps(
+            AnalysisJob(job_id="job-migration", asset_id="migration").strategy.model_dump(
+                mode="json"
+            ),
+            ensure_ascii=False,
+        )
+        with connection:
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(analysis_jobs)")
+            }
+            if "strategy" not in columns:
+                connection.execute("ALTER TABLE analysis_jobs ADD COLUMN strategy TEXT")
+                connection.execute(
+                    "UPDATE analysis_jobs SET strategy = ? WHERE strategy IS NULL",
+                    (default_strategy,),
+                )
+            connection.executescript(_SUMMARY_SCHEMA)
             connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
 
     def _migrate_asset_storage(self) -> None:
@@ -615,6 +647,8 @@ class MediaLibrary:
         for row in rows:
             job_id = row["job_id"]
             values = dict(row)
+            if values.get("strategy"):
+                values["strategy"] = json.loads(values["strategy"])
             values["marker_ids"] = [item[0] for item in self._db().execute("SELECT marker_id FROM analysis_job_markers WHERE job_id = ? ORDER BY marker_id", (job_id,))]
             values["capabilities"] = [item[0] for item in self._db().execute("SELECT capability FROM analysis_job_capabilities WHERE job_id = ? ORDER BY capability", (job_id,))]
             jobs.append(AnalysisJob.model_validate(values))
@@ -651,6 +685,236 @@ class MediaLibrary:
         with self._lock, self._db():
             cursor = self._db().execute("DELETE FROM markers WHERE marker_id = ? AND asset_id = ?", (marker_id, asset_id))
         return cursor.rowcount > 0
+
+    def create_summary_document(self, document: SummaryDocument) -> SummaryDocument:
+        self._validate_identifier(document.document_id, "document")
+        self._validate_asset_id(document.asset_id)
+        if document.parent_document_id is not None:
+            self._validate_identifier(document.parent_document_id, "document")
+            parent = self.load_summary_document(document.parent_document_id)
+            if parent is None or parent.asset_id != document.asset_id:
+                raise ValueError("子文档的主文档不存在")
+            if parent.parent_document_id is not None:
+                raise ValueError("总结文档只允许一级子文档")
+        values = document.model_dump(mode="json")
+        columns = tuple(values)
+        with self._lock, self._db():
+            self._db().execute(
+                f"INSERT INTO summary_documents ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)})",
+                tuple(values[column] for column in columns),
+            )
+        return document.model_copy(deep=True)
+
+    def load_summary_document(self, document_id: str) -> SummaryDocument | None:
+        self._validate_identifier(document_id, "document")
+        row = self._db().execute(
+            "SELECT * FROM summary_documents WHERE document_id = ?",
+            (document_id,),
+        ).fetchone()
+        return SummaryDocument.model_validate(dict(row)) if row else None
+
+    def load_summary_documents(self, asset_id: str) -> list[SummaryDocument]:
+        self._validate_asset_id(asset_id)
+        rows = self._db().execute(
+            "SELECT * FROM summary_documents WHERE asset_id = ? "
+            "ORDER BY parent_document_id IS NOT NULL, position, created_at",
+            (asset_id,),
+        ).fetchall()
+        return [SummaryDocument.model_validate(dict(row)) for row in rows]
+
+    def update_summary_document(
+        self,
+        document_id: str,
+        expected_revision: int,
+        *,
+        title: str | None = None,
+        markdown: str | None = None,
+        position: int | None = None,
+    ) -> SummaryDocument | None:
+        self._validate_identifier(document_id, "document")
+        assignments: list[str] = []
+        values: list[object] = []
+        for field_name, value in (
+            ("title", title),
+            ("markdown", markdown),
+            ("position", position),
+        ):
+            if value is not None:
+                assignments.append(f"{field_name} = ?")
+                values.append(value)
+        assignments.extend(("revision = revision + 1", "updated_at = ?"))
+        values.append(datetime.now(UTC).isoformat())
+        values.extend((document_id, expected_revision))
+        with self._lock, self._db():
+            cursor = self._db().execute(
+                f"UPDATE summary_documents SET {', '.join(assignments)} "
+                "WHERE document_id = ? AND revision = ?",
+                tuple(values),
+            )
+        return self.load_summary_document(document_id) if cursor.rowcount else None
+
+    def reorder_summary_documents(self, parent_document_id: str, document_ids: list[str]) -> None:
+        parent = self.load_summary_document(parent_document_id)
+        if parent is None or parent.parent_document_id is not None:
+            raise ValueError("主文档不存在")
+        current_ids = {
+            document.document_id
+            for document in self.load_summary_documents(parent.asset_id)
+            if document.parent_document_id == parent_document_id
+        }
+        if set(document_ids) != current_ids or len(document_ids) != len(current_ids):
+            raise ValueError("排序列表必须包含全部子文档且不能重复")
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._db():
+            for position, document_id in enumerate(document_ids):
+                self._db().execute(
+                    "UPDATE summary_documents SET position = ?, revision = revision + 1, "
+                    "updated_at = ? WHERE document_id = ?",
+                    (position, now, document_id),
+                )
+
+    def delete_summary_document(self, document_id: str) -> bool:
+        document = self.load_summary_document(document_id)
+        if document is None:
+            return False
+        if document.parent_document_id is None:
+            raise ValueError("主文档不能单独删除")
+        with self._lock, self._db():
+            cursor = self._db().execute(
+                "DELETE FROM summary_documents WHERE document_id = ?",
+                (document_id,),
+            )
+        return cursor.rowcount > 0
+
+    def save_summary_conversation(self, conversation: SummaryConversation) -> None:
+        self._validate_identifier(conversation.conversation_id, "conversation")
+        values = conversation.model_dump(mode="json")
+        columns = tuple(values)
+        with self._lock, self._db():
+            self._db().execute(
+                f"INSERT INTO summary_conversations ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)}) "
+                "ON CONFLICT(conversation_id) DO UPDATE SET updated_at=excluded.updated_at",
+                tuple(values[column] for column in columns),
+            )
+
+    def load_summary_conversation(self, asset_id: str) -> SummaryConversation | None:
+        row = self._db().execute(
+            "SELECT * FROM summary_conversations WHERE asset_id = ?",
+            (asset_id,),
+        ).fetchone()
+        return SummaryConversation.model_validate(dict(row)) if row else None
+
+    def load_summary_conversation_by_id(
+        self, conversation_id: str
+    ) -> SummaryConversation | None:
+        self._validate_identifier(conversation_id, "conversation")
+        row = self._db().execute(
+            "SELECT * FROM summary_conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        return SummaryConversation.model_validate(dict(row)) if row else None
+
+    def save_summary_message(self, message: SummaryMessage) -> None:
+        self._validate_identifier(message.message_id, "message")
+        values = message.model_dump(mode="json")
+        columns = tuple(values)
+        with self._lock, self._db():
+            self._db().execute(
+                f"INSERT INTO summary_messages ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)})",
+                tuple(values[column] for column in columns),
+            )
+
+    def load_summary_messages(self, conversation_id: str) -> list[SummaryMessage]:
+        rows = self._db().execute(
+            "SELECT * FROM summary_messages WHERE conversation_id = ? ORDER BY created_at",
+            (conversation_id,),
+        ).fetchall()
+        return [SummaryMessage.model_validate(dict(row)) for row in rows]
+
+    def save_summary_proposal(self, proposal: SummaryEditProposal) -> None:
+        self._validate_identifier(proposal.proposal_id, "proposal")
+        values = proposal.model_dump(mode="json")
+        columns = tuple(values)
+        updates = ", ".join(f"{column}=excluded.{column}" for column in columns[1:])
+        with self._lock, self._db():
+            self._db().execute(
+                f"INSERT INTO summary_proposals ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)}) "
+                f"ON CONFLICT(proposal_id) DO UPDATE SET {updates}",
+                tuple(_sqlite_value(values[column]) for column in columns),
+            )
+
+    def load_summary_proposal(self, proposal_id: str) -> SummaryEditProposal | None:
+        self._validate_identifier(proposal_id, "proposal")
+        row = self._db().execute(
+            "SELECT * FROM summary_proposals WHERE proposal_id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        values = dict(row)
+        values["suggested_subdocuments"] = json.loads(values["suggested_subdocuments"])
+        values["media_suggestions"] = json.loads(values["media_suggestions"])
+        return SummaryEditProposal.model_validate(values)
+
+    def load_summary_proposals(self, conversation_id: str) -> list[SummaryEditProposal]:
+        rows = self._db().execute(
+            "SELECT proposal_id FROM summary_proposals WHERE conversation_id = ? ORDER BY created_at",
+            (conversation_id,),
+        ).fetchall()
+        return [
+            proposal
+            for row in rows
+            if (proposal := self.load_summary_proposal(row["proposal_id"])) is not None
+        ]
+
+    def save_summary_agent_run(self, run: SummaryAgentRun) -> None:
+        self._validate_identifier(run.run_id, "run")
+        values = run.model_dump(mode="json")
+        columns = tuple(values)
+        updates = ", ".join(f"{column}=excluded.{column}" for column in columns[1:])
+        with self._lock, self._db():
+            self._db().execute(
+                f"INSERT INTO summary_agent_runs ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)}) "
+                f"ON CONFLICT(run_id) DO UPDATE SET {updates}",
+                tuple(values[column] for column in columns),
+            )
+
+    def load_summary_agent_run(self, run_id: str) -> SummaryAgentRun | None:
+        self._validate_identifier(run_id, "run")
+        row = self._db().execute(
+            "SELECT * FROM summary_agent_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        return SummaryAgentRun.model_validate(dict(row)) if row else None
+
+    def load_summary_agent_runs(self) -> list[SummaryAgentRun]:
+        rows = self._db().execute(
+            "SELECT * FROM summary_agent_runs ORDER BY created_at"
+        ).fetchall()
+        return [SummaryAgentRun.model_validate(dict(row)) for row in rows]
+
+    def save_summary_media(self, media: SummaryMediaArtifact) -> None:
+        self._validate_identifier(media.media_id, "media")
+        values = media.model_dump(mode="json")
+        columns = tuple(values)
+        with self._lock, self._db():
+            self._db().execute(
+                f"INSERT INTO summary_media ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)})",
+                tuple(values[column] for column in columns),
+            )
+
+    def load_summary_media(self, asset_id: str) -> list[SummaryMediaArtifact]:
+        rows = self._db().execute(
+            "SELECT * FROM summary_media WHERE asset_id = ? ORDER BY created_at",
+            (asset_id,),
+        ).fetchall()
+        return [SummaryMediaArtifact.model_validate(dict(row)) for row in rows]
 
     def _db(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -728,7 +992,7 @@ CREATE TABLE download_jobs (
 );
 CREATE TABLE analysis_jobs (
     job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, stage TEXT NOT NULL, progress_percent REAL NOT NULL,
+    operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, strategy TEXT NOT NULL, stage TEXT NOT NULL, progress_percent REAL NOT NULL,
     message TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE agent_jobs (
@@ -765,6 +1029,45 @@ CREATE TABLE artifacts (artifact_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REF
 CREATE INDEX assets_created_at_index ON assets(created_at DESC);
 CREATE INDEX markers_asset_time_index ON markers(asset_id, time_seconds);
 CREATE INDEX agent_jobs_asset_created_index ON agent_jobs(asset_id, created_at DESC);
+CREATE TABLE summary_documents (
+    document_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    parent_document_id TEXT REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    title TEXT NOT NULL, markdown TEXT NOT NULL, position INTEGER NOT NULL, revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX summary_documents_root_asset_index
+ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
+CREATE INDEX summary_documents_parent_position_index
+ON summary_documents(parent_document_id, position);
+CREATE TABLE summary_conversations (
+    conversation_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    root_document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(asset_id)
+);
+CREATE TABLE summary_messages (
+    message_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
+    role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX summary_messages_conversation_created_index
+ON summary_messages(conversation_id, created_at);
+CREATE TABLE summary_proposals (
+    proposal_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    base_revision INTEGER NOT NULL, proposed_markdown TEXT NOT NULL, explanation TEXT NOT NULL,
+    diff TEXT NOT NULL, suggested_subdocuments TEXT NOT NULL, media_suggestions TEXT NOT NULL,
+    status TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE summary_agent_runs (
+    run_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
+    stage TEXT NOT NULL, assistant_message_id TEXT, proposal_id TEXT, error_message TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE summary_media (
+    media_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    media_type TEXT NOT NULL, relative_path TEXT NOT NULL, caption TEXT NOT NULL,
+    start_seconds REAL NOT NULL, end_seconds REAL, created_at TEXT NOT NULL
+);
 """
 
 
@@ -778,4 +1081,47 @@ CREATE TABLE IF NOT EXISTS agent_jobs (
 );
 CREATE INDEX IF NOT EXISTS agent_jobs_asset_created_index
 ON agent_jobs(asset_id, created_at DESC);
+"""
+
+
+_SUMMARY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS summary_documents (
+    document_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    parent_document_id TEXT REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    title TEXT NOT NULL, markdown TEXT NOT NULL, position INTEGER NOT NULL, revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS summary_documents_root_asset_index
+ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
+CREATE INDEX IF NOT EXISTS summary_documents_parent_position_index
+ON summary_documents(parent_document_id, position);
+CREATE TABLE IF NOT EXISTS summary_conversations (
+    conversation_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    root_document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(asset_id)
+);
+CREATE TABLE IF NOT EXISTS summary_messages (
+    message_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
+    role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS summary_messages_conversation_created_index
+ON summary_messages(conversation_id, created_at);
+CREATE TABLE IF NOT EXISTS summary_proposals (
+    proposal_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    base_revision INTEGER NOT NULL, proposed_markdown TEXT NOT NULL, explanation TEXT NOT NULL,
+    diff TEXT NOT NULL, suggested_subdocuments TEXT NOT NULL, media_suggestions TEXT NOT NULL,
+    status TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS summary_agent_runs (
+    run_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
+    stage TEXT NOT NULL, assistant_message_id TEXT, proposal_id TEXT, error_message TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS summary_media (
+    media_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    media_type TEXT NOT NULL, relative_path TEXT NOT NULL, caption TEXT NOT NULL,
+    start_seconds REAL NOT NULL, end_seconds REAL, created_at TEXT NOT NULL
+);
 """
