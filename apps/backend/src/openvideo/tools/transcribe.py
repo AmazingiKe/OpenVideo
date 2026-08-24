@@ -59,6 +59,8 @@ CPU_DEVICE_NAME = "cpu"
 FASTER_WHISPER_ENGINE_NAME = "Faster-Whisper"
 QWEN_MAX_CHUNK_SECONDS = 240
 QWEN_MAX_SEGMENT_SECONDS = 15
+# 过滤字词对齐的自然间隔，同时让清晰的口语停顿形成字幕断点。
+QWEN_SILENCE_BREAK_SECONDS = 0.8
 QWEN_MAX_INFERENCE_BATCH_SIZE = 1
 QWEN_MAX_NEW_TOKENS = 256
 QWEN_SENTENCE_ENDINGS = frozenset("。！？!?；;.")
@@ -688,13 +690,18 @@ def _aggregate_qwen_segments(
     current: list[TimedText] = []
     primary_language = language.split(",", maxsplit=1)[0]
     for item in items:
-        if (
-            current
-            and item.end_seconds - current[0].start_seconds
-            > QWEN_MAX_SEGMENT_SECONDS
-        ):
-            segments.append(_qwen_segment(current, primary_language))
-            current = []
+        if current:
+            silence_duration = max(
+                item.start_seconds - current[-1].end_seconds,
+                0,
+            )
+            segment_duration = item.end_seconds - current[0].start_seconds
+            if (
+                silence_duration >= QWEN_SILENCE_BREAK_SECONDS
+                or segment_duration > QWEN_MAX_SEGMENT_SECONDS
+            ):
+                segments.append(_qwen_segment(current, primary_language))
+                current = []
         current.append(item)
         if item.text.rstrip()[-1:] in QWEN_SENTENCE_ENDINGS:
             segments.append(_qwen_segment(current, primary_language))

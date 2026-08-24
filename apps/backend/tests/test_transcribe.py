@@ -383,6 +383,28 @@ def test_qwen_aggregates_by_punctuation_and_maximum_duration():
     )
 
 
+def test_qwen_keeps_text_together_across_short_pause():
+    items = [
+        TimedText("短暂停顿前", 0, 1),
+        TimedText("短暂停顿后", 1.5, 2.5),
+    ]
+
+    segments = _aggregate_qwen_segments(items, "zh")
+
+    assert [segment.text for segment in segments] == ["短暂停顿前短暂停顿后"]
+
+
+def test_qwen_splits_text_at_silence_break():
+    items = [
+        TimedText("明显停顿前", 0, 1),
+        TimedText("明显停顿后", 1.8, 2.8),
+    ]
+
+    segments = _aggregate_qwen_segments(items, "zh")
+
+    assert [segment.text for segment in segments] == ["明显停顿前", "明显停顿后"]
+
+
 def test_qwen_rejects_empty_timestamp_result(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "openvideo.tools.transcribe._load_qwen_audio_chunks",
