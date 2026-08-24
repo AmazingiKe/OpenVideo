@@ -6,20 +6,20 @@ import {
   create_transcript_correction,
   create_marker,
   create_download,
-  delete_douyin_download_account,
+  delete_download_account,
   download_transcription_model,
-  get_douyin_download_account,
+  get_download_accounts,
   get_transcription_model_download,
   get_analysis_page_settings,
-  import_douyin_download_account_from_browser,
+  import_download_account_from_browser,
   list_transcription_models,
   media_url,
   probe_source,
-  save_douyin_download_account,
+  save_download_account,
   respond_to_agent_job,
   select_directory,
   test_ai_model,
-  test_douyin_download_account,
+  test_download_account,
   transcribe_asset,
   update_analysis_page_settings,
   update_marker,
@@ -208,13 +208,12 @@ describe("api client", () => {
       ),
     );
 
-    await get_douyin_download_account();
-    expect(fetch_mock).toHaveBeenLastCalledWith(
-      "/api/download-accounts/douyin",
-      { signal: undefined },
-    );
+    await get_download_accounts();
+    expect(fetch_mock).toHaveBeenLastCalledWith("/api/download-accounts", {
+      signal: undefined,
+    });
 
-    await save_douyin_download_account("sessionid=secret");
+    await save_download_account("douyin", "sessionid=secret");
     expect(fetch_mock).toHaveBeenLastCalledWith(
       "/api/download-accounts/douyin",
       {
@@ -225,7 +224,8 @@ describe("api client", () => {
       },
     );
 
-    await import_douyin_download_account_from_browser(
+    await import_download_account_from_browser(
+      "douyin",
       "edge",
       "https://www.douyin.com/video/123",
     );
@@ -242,7 +242,7 @@ describe("api client", () => {
       },
     );
 
-    await test_douyin_download_account("https://www.douyin.com/video/123");
+    await test_download_account("douyin", "https://www.douyin.com/video/123");
     expect(fetch_mock).toHaveBeenLastCalledWith(
       "/api/download-accounts/douyin/test",
       {
@@ -256,7 +256,7 @@ describe("api client", () => {
     );
 
     fetch_mock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-    await delete_douyin_download_account();
+    await delete_download_account("douyin");
     expect(fetch_mock).toHaveBeenLastCalledWith(
       "/api/download-accounts/douyin",
       { method: "DELETE", signal: undefined },

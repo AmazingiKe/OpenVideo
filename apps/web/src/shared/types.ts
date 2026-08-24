@@ -4,11 +4,11 @@ type DependencyStatus = {
   ffprobe: boolean;
 };
 
-type SourcePlatform = "bilibili" | "douyin" | "youtube";
+export type SourcePlatform = "bilibili" | "douyin" | "youtube";
 
 export type DownloadAccount = {
   account_id: string;
-  platform: "douyin";
+  platform: SourcePlatform;
   display_name: string;
   status: "untested" | "available" | "expired";
   last_tested_at: string | null;

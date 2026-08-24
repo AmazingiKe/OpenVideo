@@ -97,11 +97,11 @@ from openvideo.download_accounts import (
     DownloadAccountExpired,
     DownloadAccountStore,
     DownloadCookieBrowser,
+    import_cookie_from_browser,
 )
 from openvideo.tools.downloader import (
     DownloadFailure,
     PlaylistProbe,
-    import_douyin_cookie_from_browser,
     is_authentication_failure,
     probe_source,
     read_download_metadata,
@@ -128,7 +128,11 @@ MODEL_TEST_SUCCESS_MESSAGE = "模型响应正常"
 MODEL_TEST_TIMEOUT_SECONDS = 30
 SUMMARY_DOCUMENT_EVENT_POLL_SECONDS = 0.5
 SUMMARY_DOCUMENT_EVENT_KEEPALIVE_SECONDS = 15
-DOUYIN_ACCOUNT_TEST_URL = "https://www.douyin.com/video/6961737553342991651"
+DOWNLOAD_ACCOUNT_TEST_URLS = {
+    SourcePlatform.BILIBILI: "https://www.bilibili.com/video/BV1xx411c7mD",
+    SourcePlatform.DOUYIN: "https://www.douyin.com/video/6961737553342991651",
+    SourcePlatform.YOUTUBE: "https://www.youtube.com/watch?v=BaW_jenozKc",
+}
 
 
 class DependencyStatus(BaseModel):
@@ -157,6 +161,22 @@ class DownloadAccountTestRequest(BaseModel):
 class DownloadAccountBrowserImportRequest(BaseModel):
     browser: DownloadCookieBrowser
     source_url: str | None = None
+
+
+def _download_account_test_url(
+    platform: SourcePlatform,
+    source_url: str | None,
+) -> str:
+    """账号测试必须使用同平台链接，避免误把另一平台的公开访问判为登录成功。"""
+    if not source_url:
+        return DOWNLOAD_ACCOUNT_TEST_URLS[platform]
+    try:
+        match = resolve_source(source_url)
+    except UnsupportedSourceError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if match.platform != platform:
+        raise HTTPException(status_code=422, detail="请使用当前平台的视频地址测试账号")
+    return match.normalized_url
 
 
 class ProbeEntry(BaseModel):
@@ -421,91 +441,83 @@ def create_app(
         return _probe_response(match.platform, probe)
 
     @app.get(
-        "/api/download-accounts/douyin",
+        "/api/download-accounts",
+        response_model=list[DownloadAccount],
+    )
+    def list_download_accounts() -> list[DownloadAccount]:
+        try:
+            return account_store.list_accounts()
+        except DownloadAccountError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get(
+        "/api/download-accounts/{platform}",
         response_model=DownloadAccount | None,
     )
-    def get_douyin_download_account() -> DownloadAccount | None:
+    def get_download_account(platform: SourcePlatform) -> DownloadAccount | None:
         try:
-            return account_store.get(SourcePlatform.DOUYIN)
+            return account_store.get(platform)
         except DownloadAccountError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.put(
-        "/api/download-accounts/douyin",
+        "/api/download-accounts/{platform}",
         response_model=DownloadAccount,
     )
-    def save_douyin_download_account(
+    def save_download_account(
+        platform: SourcePlatform,
         request: DownloadAccountConnectRequest,
     ) -> DownloadAccount:
         try:
-            return account_store.save_douyin(request.cookie.get_secret_value())
+            return account_store.save(platform, request.cookie.get_secret_value())
         except DownloadAccountError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post(
-        "/api/download-accounts/douyin/import-browser",
+        "/api/download-accounts/{platform}/import-browser",
         response_model=DownloadAccount,
     )
-    async def import_douyin_download_account_from_browser(
+    async def import_download_account_from_browser(
+        platform: SourcePlatform,
         request: DownloadAccountBrowserImportRequest,
     ) -> DownloadAccount:
-        test_url = DOUYIN_ACCOUNT_TEST_URL
-        if request.source_url:
-            try:
-                match = resolve_source(request.source_url)
-            except UnsupportedSourceError as error:
-                raise HTTPException(status_code=422, detail=str(error)) from error
-            if match.platform != SourcePlatform.DOUYIN:
-                raise HTTPException(
-                    status_code=422, detail="请使用抖音视频地址测试账号"
-                )
-            test_url = match.normalized_url
+        test_url = _download_account_test_url(platform, request.source_url)
         try:
             cookie_header = await asyncio.to_thread(
-                import_douyin_cookie_from_browser,
-                request.browser.value,
+                import_cookie_from_browser,
+                platform,
+                request.browser,
                 test_url,
             )
-            account_store.save_douyin(cookie_header)
-            imported_account = account_store.mark_available(SourcePlatform.DOUYIN)
+            account_store.save(platform, cookie_header)
+            imported_account = account_store.mark_available(platform)
             assert imported_account is not None
             return imported_account
         except DownloadAccountError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        except DownloadFailure as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post(
-        "/api/download-accounts/douyin/test",
+        "/api/download-accounts/{platform}/test",
         response_model=DownloadAccount,
     )
-    async def test_douyin_download_account(
+    async def test_download_account(
+        platform: SourcePlatform,
         request: DownloadAccountTestRequest,
     ) -> DownloadAccount:
-        account = account_store.get(SourcePlatform.DOUYIN)
+        account = account_store.get(platform)
         if account is None:
-            raise HTTPException(status_code=404, detail="尚未连接抖音账号")
-        test_url = DOUYIN_ACCOUNT_TEST_URL
-        if request.source_url:
-            try:
-                match = resolve_source(request.source_url)
-            except UnsupportedSourceError as error:
-                raise HTTPException(status_code=422, detail=str(error)) from error
-            if match.platform != SourcePlatform.DOUYIN:
-                raise HTTPException(
-                    status_code=422, detail="请使用抖音视频地址测试账号"
-                )
-            test_url = match.normalized_url
+            raise HTTPException(status_code=404, detail="尚未连接该平台账号")
+        test_url = _download_account_test_url(platform, request.source_url)
         try:
-            with account_store.cookie_file(SourcePlatform.DOUYIN) as cookie_source:
+            with account_store.cookie_file(platform) as cookie_source:
                 assert cookie_source is not None
                 await asyncio.to_thread(
                     read_download_metadata,
                     test_url,
-                    SourcePlatform.DOUYIN,
+                    platform,
                     cookie_source,
                 )
-            tested_account = account_store.mark_available(SourcePlatform.DOUYIN)
+            tested_account = account_store.mark_available(platform)
             assert tested_account is not None
             return tested_account
         except DownloadAccountExpired as error:
@@ -514,17 +526,17 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(error)) from error
         except DownloadFailure as error:
             if is_authentication_failure(error):
-                account_store.mark_expired(SourcePlatform.DOUYIN)
+                account_store.mark_expired(platform)
                 raise HTTPException(status_code=401, detail=str(error)) from error
             raise HTTPException(status_code=502, detail=str(error)) from error
 
     @app.delete(
-        "/api/download-accounts/douyin",
+        "/api/download-accounts/{platform}",
         status_code=status.HTTP_204_NO_CONTENT,
     )
-    def delete_douyin_download_account() -> Response:
+    def delete_download_account(platform: SourcePlatform) -> Response:
         try:
-            account_store.delete(SourcePlatform.DOUYIN)
+            account_store.delete(platform)
         except DownloadAccountError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)

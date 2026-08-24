@@ -4,7 +4,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +19,6 @@ PROGRESS_PREFIX = "openvideo-progress:"
 PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
 COMMAND_TIMEOUT_SECONDS = 60 * 60 * 6
 MAX_DIAGNOSTIC_LINES = 30
-COOKIE_IMPORT_TIMEOUT_SECONDS = 180
 PLAYLIST_PROBE_LIMIT = 100
 BILIBILI_VIEW_API_URL = "https://api.bilibili.com/x/web-interface/view"
 BILIBILI_VIEW_TIMEOUT_SECONDS = 20
@@ -485,75 +483,6 @@ def _friendly_failure(diagnostic: str) -> str:
 def is_authentication_failure(error: Exception) -> bool:
     """账号状态只有在下载工具明确要求重新登录时才标记过期，避免把网络故障误判为过期。"""
     return "登录状态已失效" in str(error)
-
-
-def import_douyin_cookie_from_browser(browser: str, source_url: str) -> str:
-    """浏览器 Cookie 只在临时目录中导出，并过滤为抖音域后交给账号存储层。"""
-    with tempfile.TemporaryDirectory(prefix="openvideo-browser-cookie-") as directory:
-        cookie_path = Path(directory) / "cookies.txt"
-        command = [
-            sys.executable,
-            "-m",
-            "yt_dlp",
-            "--ignore-config",
-            "--no-warnings",
-            "--skip-download",
-            "--dump-single-json",
-            "--cookies-from-browser",
-            browser,
-            "--cookies",
-            str(cookie_path),
-            source_url,
-        ]
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                check=False,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=COOKIE_IMPORT_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise DownloadFailure("浏览器 Cookie 导入超时，请关闭浏览器后重试") from error
-        diagnostic = result.stderr or result.stdout
-        if result.returncode != 0:
-            lowered = diagnostic.casefold()
-            if (
-                "could not copy" in lowered
-                or "permission denied" in lowered
-                or "database is locked" in lowered
-            ):
-                raise DownloadFailure("无法读取浏览器 Cookie，请完全关闭该浏览器后重试")
-            raise DownloadFailure(_friendly_failure(diagnostic))
-        if not cookie_path.is_file():
-            raise DownloadFailure("浏览器没有导出可用的 Cookie")
-        cookie_header = _douyin_cookie_header_from_netscape_file(cookie_path)
-        if not cookie_header:
-            raise DownloadFailure("该浏览器中没有找到抖音登录状态")
-        return cookie_header
-
-
-def _douyin_cookie_header_from_netscape_file(cookie_path: Path) -> str:
-    cookies: list[str] = []
-    for raw_line in cookie_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if line.startswith("#HttpOnly_"):
-            line = line.removeprefix("#HttpOnly_")
-        elif not line or line.startswith("#"):
-            continue
-        fields = line.split("\t")
-        if len(fields) != 7:
-            continue
-        domain, _, _, _, _, name, value = fields
-        normalized_domain = domain.lstrip(".").casefold()
-        if normalized_domain != "douyin.com" and not normalized_domain.endswith(
-            ".douyin.com"
-        ):
-            continue
-        cookies.append(f"{name}={value}")
-    return "; ".join(cookies)
 
 
 def _required_text(value: object, message: str) -> str:

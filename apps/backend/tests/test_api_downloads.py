@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
+import pytest
 
-from openvideo.download_accounts import DownloadAccountStore
+from openvideo.core.models import SourcePlatform
+from openvideo.download_accounts import DownloadAccountStore, DownloadCookieBrowser
 from openvideo.settings import Settings
 from openvideo.tools.downloader import (
     DownloadFailure,
@@ -53,8 +55,7 @@ def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
             "/api/downloads/probe",
             json={
                 "source_url": (
-                    "https://www.douyin.com/search/dy"
-                    "?modal_id=6961737553342991651"
+                    "https://www.douyin.com/search/dy?modal_id=6961737553342991651"
                 )
             },
         )
@@ -62,11 +63,17 @@ def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
     assert response.status_code == 200
     payload = response.json()
     assert payload["platform"] == "douyin"
-    assert payload["entries"][0]["url"] == "https://www.douyin.com/video/6961737553342991651"
+    assert (
+        payload["entries"][0]["url"]
+        == "https://www.douyin.com/video/6961737553342991651"
+    )
     assert probe_targets == ["https://www.douyin.com/video/6961737553342991651"]
 
 
-def test_douyin_account_can_be_saved_tested_and_removed(monkeypatch, tmp_path):
+def test_platform_account_can_be_saved_tested_listed_and_removed(
+    monkeypatch,
+    tmp_path,
+):
     tested_cookie_files: list[str] = []
 
     def read_metadata(source_url, platform, cookie_source):
@@ -96,7 +103,7 @@ def test_douyin_account_can_be_saved_tested_and_removed(monkeypatch, tmp_path):
             "/api/download-accounts/douyin",
             json={"cookie": "ttwid=device-token; sessionid=login-token"},
         )
-        listed_response = client.get("/api/download-accounts/douyin")
+        listed_response = client.get("/api/download-accounts")
         tested_response = client.post(
             "/api/download-accounts/douyin/test",
             json={"source_url": "https://www.douyin.com/video/6961737553342991651"},
@@ -107,7 +114,9 @@ def test_douyin_account_can_be_saved_tested_and_removed(monkeypatch, tmp_path):
     assert saved_response.status_code == 200
     assert saved_response.json()["status"] == "untested"
     assert "cookie" not in saved_response.json()
-    assert listed_response.json()["account_id"] == saved_response.json()["account_id"]
+    assert (
+        listed_response.json()[0]["account_id"] == saved_response.json()["account_id"]
+    )
     assert tested_response.status_code == 200
     assert tested_response.json()["status"] == "available"
     assert "sessionid\tlogin-token" in tested_cookie_files[0]
@@ -124,7 +133,7 @@ def test_failed_douyin_account_test_marks_cookie_as_expired(monkeypatch, tmp_pat
         tmp_path / "config",
         MemoryDownloadAccountSecretStore(),
     )
-    account_store.save_douyin("sessionid=expired-token")
+    account_store.save(SourcePlatform.DOUYIN, "sessionid=expired-token")
     app = api.create_app(
         Settings(library_path=tmp_path / "library"),
         download_account_store=account_store,
@@ -138,17 +147,44 @@ def test_failed_douyin_account_test_marks_cookie_as_expired(monkeypatch, tmp_pat
     assert account_response.json()["status"] == "expired"
 
 
-def test_douyin_account_can_be_imported_from_a_logged_in_browser(
+@pytest.mark.parametrize(
+    ("platform", "source_url", "cookie_header"),
+    [
+        (
+            SourcePlatform.BILIBILI,
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+            "SESSDATA=browser-login-token",
+        ),
+        (
+            SourcePlatform.DOUYIN,
+            "https://www.douyin.com/video/6961737553342991651",
+            "sessionid=browser-login-token",
+        ),
+        (
+            SourcePlatform.YOUTUBE,
+            "https://www.youtube.com/watch?v=BaW_jenozKc",
+            "SAPISID=browser-login-token",
+        ),
+    ],
+)
+def test_platform_account_can_be_imported_from_a_logged_in_browser(
     monkeypatch,
     tmp_path,
+    platform: SourcePlatform,
+    source_url: str,
+    cookie_header: str,
 ):
-    import_calls: list[tuple[str, str]] = []
+    import_calls: list[tuple[SourcePlatform, DownloadCookieBrowser, str]] = []
 
-    def import_cookie(browser: str, source_url: str) -> str:
-        import_calls.append((browser, source_url))
-        return "ttwid=device-token; sessionid=browser-login-token"
+    def import_cookie(
+        platform: SourcePlatform,
+        browser: DownloadCookieBrowser,
+        source_url: str,
+    ) -> str:
+        import_calls.append((platform, browser, source_url))
+        return cookie_header
 
-    monkeypatch.setattr(api, "import_douyin_cookie_from_browser", import_cookie)
+    monkeypatch.setattr(api, "import_cookie_from_browser", import_cookie)
     account_store = DownloadAccountStore(
         tmp_path / "config",
         MemoryDownloadAccountSecretStore(),
@@ -160,15 +196,19 @@ def test_douyin_account_can_be_imported_from_a_logged_in_browser(
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/download-accounts/douyin/import-browser",
+            f"/api/download-accounts/{platform.value}/import-browser",
             json={
                 "browser": "edge",
-                "source_url": "https://www.douyin.com/video/6961737553342991651",
+                "source_url": source_url,
             },
         )
 
     assert response.status_code == 200
     assert response.json()["status"] == "available"
     assert import_calls == [
-        ("edge", "https://www.douyin.com/video/6961737553342991651")
+        (
+            platform,
+            DownloadCookieBrowser.EDGE,
+            source_url,
+        )
     ]

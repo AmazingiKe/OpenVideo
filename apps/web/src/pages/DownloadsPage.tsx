@@ -3,13 +3,13 @@ import { type FormEvent, useEffect, useState } from "react";
 import { use_task_manager } from "@/app/task_manager";
 import { DownloadWorkspace } from "@/features/workbench/DownloadWorkspace";
 import {
-  delete_douyin_download_account,
-  get_douyin_download_account,
+  delete_download_account,
+  get_download_accounts,
   get_health,
-  import_douyin_download_account_from_browser,
+  import_download_account_from_browser,
   probe_source,
-  save_douyin_download_account,
-  test_douyin_download_account,
+  save_download_account,
+  test_download_account,
 } from "@/shared/api";
 import { error_message, is_abort_error } from "@/shared/errors";
 import type {
@@ -18,6 +18,7 @@ import type {
   HealthResponse,
   ProbeEntry,
   ProbeResponse,
+  SourcePlatform,
 } from "@/shared/types";
 
 const DOUYIN_VIDEO_HOSTS = new Set([
@@ -37,11 +38,14 @@ export function DownloadsPage() {
   const [selected_urls, set_selected_urls] = useState<Set<string>>(new Set());
   const [is_submitting, set_is_submitting] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
-  const [douyin_account, set_douyin_account] = useState<DownloadAccount | null>(
-    null,
-  );
-  const [is_account_loading, set_is_account_loading] = useState(true);
-  const [account_error, set_account_error] = useState<string | null>(null);
+  const [download_accounts, set_download_accounts] = useState<
+    DownloadAccount[]
+  >([]);
+  const [account_loading_platform, set_account_loading_platform] =
+    useState<SourcePlatform | null>(null);
+  const [account_errors, set_account_errors] = useState<
+    Partial<Record<SourcePlatform, string>>
+  >({});
 
   useEffect(() => {
     const controller = new AbortController();
@@ -50,12 +54,11 @@ export function DownloadsPage() {
       .catch((error: unknown) => {
         if (!is_abort_error(error)) set_page_error(error_message(error));
       });
-    void get_douyin_download_account(controller.signal)
-      .then(set_douyin_account)
+    void get_download_accounts(controller.signal)
+      .then(set_download_accounts)
       .catch((error: unknown) => {
-        if (!is_abort_error(error)) set_account_error(error_message(error));
-      })
-      .finally(() => set_is_account_loading(false));
+        if (!is_abort_error(error)) set_page_error(error_message(error));
+      });
     return () => controller.abort();
   }, []);
 
@@ -75,7 +78,7 @@ export function DownloadsPage() {
     } catch (error) {
       if (!is_abort_error(error)) {
         set_page_error(error_message(error));
-        await refresh_douyin_account();
+        await refresh_download_accounts();
       }
     } finally {
       set_is_submitting(false);
@@ -99,7 +102,7 @@ export function DownloadsPage() {
       const failed_job = final_jobs.find((job) => job.stage === "failed");
       if (failed_job)
         set_page_error(failed_job.error_message ?? "部分视频下载失败");
-      if (failed_job) await refresh_douyin_account();
+      if (failed_job) await refresh_download_accounts();
     } catch (error) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
@@ -107,72 +110,107 @@ export function DownloadsPage() {
     }
   }
 
-  async function save_douyin_account(cookie: string) {
-    set_is_account_loading(true);
-    set_account_error(null);
+  async function save_platform_account(
+    platform: SourcePlatform,
+    cookie: string,
+  ) {
+    set_account_loading_platform(platform);
+    clear_account_error(platform);
     try {
-      set_douyin_account(await save_douyin_download_account(cookie));
+      update_download_account(await save_download_account(platform, cookie));
     } catch (error) {
-      if (!is_abort_error(error)) set_account_error(error_message(error));
+      if (!is_abort_error(error))
+        set_account_error(platform, error_message(error));
       throw error;
     } finally {
-      set_is_account_loading(false);
+      set_account_loading_platform(null);
     }
   }
 
-  async function import_douyin_account(browser: DownloadCookieBrowser) {
-    set_is_account_loading(true);
-    set_account_error(null);
+  async function import_platform_account(
+    platform: SourcePlatform,
+    browser: DownloadCookieBrowser,
+  ) {
+    set_account_loading_platform(platform);
+    clear_account_error(platform);
     try {
-      const test_url = is_douyin_source_url(source_url)
-        ? source_url.trim()
-        : undefined;
-      set_douyin_account(
-        await import_douyin_download_account_from_browser(browser, test_url),
+      const test_url =
+        source_platform_from_url(source_url) === platform
+          ? source_url.trim()
+          : undefined;
+      update_download_account(
+        await import_download_account_from_browser(platform, browser, test_url),
       );
     } catch (error) {
-      if (!is_abort_error(error)) set_account_error(error_message(error));
+      if (!is_abort_error(error))
+        set_account_error(platform, error_message(error));
       throw error;
     } finally {
-      set_is_account_loading(false);
+      set_account_loading_platform(null);
     }
   }
 
-  async function test_douyin_account() {
-    set_is_account_loading(true);
-    set_account_error(null);
+  async function test_platform_account(platform: SourcePlatform) {
+    set_account_loading_platform(platform);
+    clear_account_error(platform);
     try {
-      const test_url = is_douyin_source_url(source_url)
-        ? source_url.trim()
-        : undefined;
-      set_douyin_account(await test_douyin_download_account(test_url));
+      const test_url =
+        source_platform_from_url(source_url) === platform
+          ? source_url.trim()
+          : undefined;
+      update_download_account(await test_download_account(platform, test_url));
     } catch (error) {
-      if (!is_abort_error(error)) set_account_error(error_message(error));
-      await refresh_douyin_account();
+      if (!is_abort_error(error))
+        set_account_error(platform, error_message(error));
+      await refresh_download_accounts();
     } finally {
-      set_is_account_loading(false);
+      set_account_loading_platform(null);
     }
   }
 
-  async function disconnect_douyin_account() {
-    set_is_account_loading(true);
-    set_account_error(null);
+  async function disconnect_platform_account(platform: SourcePlatform) {
+    set_account_loading_platform(platform);
+    clear_account_error(platform);
     try {
-      await delete_douyin_download_account();
-      set_douyin_account(null);
+      await delete_download_account(platform);
+      set_download_accounts((current) =>
+        current.filter((account) => account.platform !== platform),
+      );
     } catch (error) {
-      if (!is_abort_error(error)) set_account_error(error_message(error));
+      if (!is_abort_error(error))
+        set_account_error(platform, error_message(error));
     } finally {
-      set_is_account_loading(false);
+      set_account_loading_platform(null);
     }
   }
 
-  async function refresh_douyin_account() {
+  async function refresh_download_accounts() {
     try {
-      set_douyin_account(await get_douyin_download_account());
+      set_download_accounts(await get_download_accounts());
     } catch (error) {
-      if (!is_abort_error(error)) set_account_error(error_message(error));
+      if (!is_abort_error(error)) set_page_error(error_message(error));
     }
+  }
+
+  function update_download_account(updated_account: DownloadAccount) {
+    set_download_accounts((current) => [
+      ...current.filter(
+        (account) => account.platform !== updated_account.platform,
+      ),
+      updated_account,
+    ]);
+  }
+
+  function set_account_error(platform: SourcePlatform, message: string) {
+    set_account_errors((current) => ({ ...current, [platform]: message }));
+  }
+
+  function clear_account_error(platform: SourcePlatform) {
+    set_account_errors((current) => {
+      const next = { ...current };
+      delete next[platform];
+      return next;
+    });
   }
 
   function toggle_url(url: string) {
@@ -194,27 +232,33 @@ export function DownloadsPage() {
       current_source_video_id={source_video_id_from_url(source_url)}
       is_submitting={is_submitting}
       error={page_error}
-      douyin_account={douyin_account}
-      is_account_loading={is_account_loading}
-      account_error={account_error}
+      download_accounts={download_accounts}
+      account_loading_platform={account_loading_platform}
+      account_errors={account_errors}
       on_source_url_change={set_source_url}
       on_submit_probe={submit_source_probe}
       on_toggle_url={toggle_url}
       on_replace_selection={(urls) => set_selected_urls(new Set(urls))}
       on_start_download={() => void start_selected_downloads()}
-      on_save_douyin_account={save_douyin_account}
-      on_import_douyin_account={import_douyin_account}
-      on_test_douyin_account={test_douyin_account}
-      on_disconnect_douyin_account={disconnect_douyin_account}
+      on_save_download_account={save_platform_account}
+      on_import_download_account={import_platform_account}
+      on_test_download_account={test_platform_account}
+      on_disconnect_download_account={disconnect_platform_account}
     />
   );
 }
 
-function is_douyin_source_url(source_url: string): boolean {
+function source_platform_from_url(source_url: string): SourcePlatform | null {
   try {
-    return DOUYIN_VIDEO_HOSTS.has(new URL(source_url.trim()).hostname);
+    const hostname = new URL(source_url.trim()).hostname;
+    if (DOUYIN_VIDEO_HOSTS.has(hostname)) return "douyin";
+    if (hostname.endsWith("bilibili.com") || hostname === "b23.tv")
+      return "bilibili";
+    if (hostname.endsWith("youtube.com") || hostname === "youtu.be")
+      return "youtube";
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 

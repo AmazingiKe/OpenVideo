@@ -73,25 +73,6 @@ def test_reports_fresh_cookie_requirement_as_an_expired_login():
     assert message == "保存的登录状态已失效，请重新登录"
 
 
-def test_browser_cookie_import_keeps_only_douyin_domains(tmp_path):
-    cookie_path = tmp_path / "cookies.txt"
-    cookie_path.write_text(
-        "\n".join(
-            [
-                "# Netscape HTTP Cookie File",
-                "#HttpOnly_.douyin.com\tTRUE\t/\tTRUE\t0\tsessionid\tlogin-token",
-                "www.douyin.com\tFALSE\t/\tTRUE\t0\tttwid\tdevice-token",
-                ".example.com\tTRUE\t/\tTRUE\t0\tsecret\tdiscarded",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    cookie_header = downloader._douyin_cookie_header_from_netscape_file(cookie_path)
-
-    assert cookie_header == "sessionid=login-token; ttwid=device-token"
-
-
 def test_bilibili_ugc_season_probe_returns_all_episodes(monkeypatch):
     payload = {
         "code": 0,
