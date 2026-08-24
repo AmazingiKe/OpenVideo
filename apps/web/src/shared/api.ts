@@ -32,6 +32,7 @@ import type {
 } from "./types";
 
 const api_base_url = import.meta.env.VITE_API_BASE_URL ?? "";
+const SUMMARY_DOCUMENTS_EVENT = "documents";
 
 const DEFAULT_ANALYSIS_STRATEGY: AnalysisStrategy = {
   preset: "course_notes",
@@ -471,6 +472,24 @@ export function list_summary_documents(
     `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents`,
     { signal },
   );
+}
+
+export function subscribe_summary_documents(
+  asset_id: string,
+  on_documents: (documents: SummaryDocument[]) => void,
+): () => void {
+  if (typeof EventSource === "undefined") return () => undefined;
+  const event_source = new EventSource(
+    `${api_base_url}/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents/events`,
+  );
+  const handle_documents = (event: MessageEvent<string>) => {
+    on_documents(JSON.parse(event.data) as SummaryDocument[]);
+  };
+  event_source.addEventListener(SUMMARY_DOCUMENTS_EVENT, handle_documents);
+  return () => {
+    event_source.removeEventListener(SUMMARY_DOCUMENTS_EVENT, handle_documents);
+    event_source.close();
+  };
 }
 
 export function generate_summary_documents(

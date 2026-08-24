@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -7,6 +13,7 @@ import {
   get_summary_conversation,
   list_ai_models,
   list_summary_documents,
+  subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
 import type { MediaAsset, SummaryDocument, Transcript } from "@/shared/types";
@@ -44,6 +51,7 @@ vi.mock("@/shared/api", async (import_original) => {
     reorder_summary_children: vi.fn(),
     resolve_summary_proposal: vi.fn(),
     stream_summary_agent_run: vi.fn(),
+    subscribe_summary_documents: vi.fn(),
     update_summary_document: vi.fn(),
   };
 });
@@ -104,6 +112,7 @@ describe("SummaryWorkspace", () => {
       })),
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
+    vi.mocked(subscribe_summary_documents).mockReturnValue(() => undefined);
     vi.mocked(get_summary_conversation).mockResolvedValue({
       conversation: {
         conversation_id: "conversation-01890f4c7a2b7cc298c4dc0c0c07398f",
@@ -173,6 +182,58 @@ describe("SummaryWorkspace", () => {
       { timeout: 2_000 },
     );
     expect(await screen.findByText("已保存")).toBeInTheDocument();
+  });
+
+  it("refreshes a clean editor when the document event stream changes", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+    let publish_documents: ((documents: SummaryDocument[]) => void) | undefined;
+    vi.mocked(subscribe_summary_documents).mockImplementation(
+      (_asset_id, on_documents) => {
+        publish_documents = on_documents;
+        return () => undefined;
+      },
+    );
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", {
+      name: "可视化 Markdown",
+    });
+    act(() =>
+      publish_documents?.([
+        {
+          ...DOCUMENT,
+          markdown: "# 外部修改\n",
+          revision: 2,
+        },
+      ]),
+    );
+
+    await waitFor(() => expect(editor).toHaveValue("# 外部修改\n"));
+  });
+
+  it("uses accessible icons for preview and source modes", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("tab", { name: "预览模式" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "源码模式" })).toBeInTheDocument();
+    expect(screen.queryByText("所见即所得")).not.toBeInTheDocument();
   });
 
   it("saves exports in the asset directory without browser download", async () => {

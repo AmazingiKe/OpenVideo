@@ -10,7 +10,9 @@ import {
   ArrowDown,
   ArrowUp,
   Bot,
+  Code2,
   Download,
+  Eye,
   FilePlus2,
   FileText,
   FolderTree,
@@ -104,6 +106,7 @@ import {
   reorder_summary_children,
   resolve_summary_proposal,
   stream_summary_agent_run,
+  subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
 import { error_message, is_abort_error } from "@/shared/errors";
@@ -183,8 +186,10 @@ export function SummaryWorkspace({
     selected_asset?.asset_id ?? null,
   );
   const active_document_id_ref = useRef<string | null>(null);
+  const active_document_revision_ref = useRef<number | null>(null);
   const draft_markdown_ref = useRef("");
   const draft_title_ref = useRef("");
+  const dirty_ref = useRef(false);
 
   const selected_document = useMemo(
     () =>
@@ -198,6 +203,11 @@ export function SummaryWorkspace({
   const child_documents = documents
     .filter((document) => document.parent_document_id !== null)
     .sort((left, right) => left.position - right.position);
+
+  const update_dirty = useCallback((next_dirty: boolean) => {
+    dirty_ref.current = next_dirty;
+    set_dirty(next_dirty);
+  }, []);
 
   const load_conversation = useCallback(
     async (asset_id: string, signal?: AbortSignal) => {
@@ -262,18 +272,37 @@ export function SummaryWorkspace({
   }, [load_documents, on_error, selected_asset]);
 
   useEffect(() => {
+    if (!selected_asset) return;
+    return subscribe_summary_documents(selected_asset.asset_id, (loaded) => {
+      if (dirty_ref.current) return;
+      set_documents(loaded);
+      set_selected_document_id((current) =>
+        loaded.some((document) => document.document_id === current)
+          ? current
+          : (loaded.find((document) => document.parent_document_id === null)
+              ?.document_id ?? null),
+      );
+    });
+  }, [selected_asset]);
+
+  useEffect(() => {
     if (!selected_document) return;
-    if (active_document_id_ref.current !== selected_document.document_id) {
+    const document_changed =
+      active_document_id_ref.current !== selected_document.document_id;
+    const revision_changed =
+      active_document_revision_ref.current !== selected_document.revision;
+    if (document_changed || (revision_changed && !dirty)) {
       active_document_id_ref.current = selected_document.document_id;
+      active_document_revision_ref.current = selected_document.revision;
       set_draft_markdown(selected_document.markdown);
       set_draft_title(selected_document.title);
       draft_markdown_ref.current = selected_document.markdown;
       draft_title_ref.current = selected_document.title;
-      set_dirty(false);
+      update_dirty(false);
       set_save_status("saved");
       set_selection(null);
     }
-  }, [selected_document]);
+  }, [dirty, selected_document, update_dirty]);
 
   useEffect(() => {
     if (!selected_document || !dirty || save_status === "conflict") return;
@@ -296,7 +325,7 @@ export function SummaryWorkspace({
           const unchanged =
             draft_markdown_ref.current === markdown &&
             draft_title_ref.current.trim() === title;
-          set_dirty(!unchanged);
+          update_dirty(!unchanged);
           set_save_status(unchanged ? "saved" : "saving");
         })
         .catch((error: unknown) => {
@@ -308,7 +337,14 @@ export function SummaryWorkspace({
         });
     }, AUTO_SAVE_DELAY_MS);
     return () => window.clearTimeout(timeout);
-  }, [dirty, draft_markdown, draft_title, save_status, selected_document]);
+  }, [
+    dirty,
+    draft_markdown,
+    draft_title,
+    save_status,
+    selected_document,
+    update_dirty,
+  ]);
 
   async function generate_documents() {
     if (!selected_asset) return;
@@ -532,7 +568,7 @@ export function SummaryWorkspace({
       if (result.document.document_id === selected_document_id) {
         set_draft_markdown(result.document.markdown);
         draft_markdown_ref.current = result.document.markdown;
-        set_dirty(false);
+        update_dirty(false);
         set_save_status("saved");
       }
     } catch (error) {
@@ -627,20 +663,20 @@ export function SummaryWorkspace({
       on_title_change={(title) => {
         set_draft_title(title);
         draft_title_ref.current = title;
-        set_dirty(true);
+        update_dirty(true);
         set_save_status("saving");
       }}
       on_markdown_change={(markdown) => {
         set_draft_markdown(markdown);
         draft_markdown_ref.current = markdown;
-        set_dirty(true);
+        update_dirty(true);
         set_save_status("saving");
       }}
       on_mode_change={set_editor_mode}
       on_selection_change={set_selection}
       on_retry={() => {
         set_save_status("saving");
-        set_dirty(true);
+        update_dirty(true);
       }}
       compact_actions={
         compact_layout ? (
@@ -1017,8 +1053,12 @@ function DocumentEditor({
         />
         <SaveState status={save_status} on_retry={on_retry} />
         <TabsList aria-label="编辑模式">
-          <TabsTrigger value="visual">所见即所得</TabsTrigger>
-          <TabsTrigger value="source">源码</TabsTrigger>
+          <TabsTrigger value="visual" aria-label="预览模式" title="预览模式">
+            <Eye />
+          </TabsTrigger>
+          <TabsTrigger value="source" aria-label="源码模式" title="源码模式">
+            <Code2 />
+          </TabsTrigger>
         </TabsList>
         <Button
           type="button"
@@ -1046,7 +1086,7 @@ function DocumentEditor({
       </header>
       <TabsContent value="visual" className="min-h-0">
         <MarkdownEditor
-          document_key={`${document.document_id}:${document.revision}`}
+          document_key={document.document_id}
           markdown={markdown}
           on_change={on_markdown_change}
           on_selection_change={on_selection_change}

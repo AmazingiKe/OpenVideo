@@ -8,6 +8,7 @@ import { placeholder } from "@milkdown/crepe/feature/placeholder";
 import { table } from "@milkdown/crepe/feature/table";
 import { toolbar } from "@milkdown/crepe/feature/toolbar";
 import { editorViewOptionsCtx } from "@milkdown/kit/core";
+import { replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
 import "@milkdown/crepe/theme/common/style.css";
 
@@ -42,13 +43,16 @@ function MarkdownEditorInner({
 }: MarkdownEditorProps) {
   const change_ref = useRef(on_change);
   const selection_ref = useRef(on_selection_change);
+  const controlled_markdown_ref = useRef(markdown);
+  const editor_markdown_ref = useRef(markdown);
 
   useEffect(() => {
     change_ref.current = on_change;
     selection_ref.current = on_selection_change;
-  }, [on_change, on_selection_change]);
+    controlled_markdown_ref.current = markdown;
+  }, [markdown, on_change, on_selection_change]);
 
-  const { loading } = useEditor(
+  const { get, loading } = useEditor(
     (root) => {
       const editor = new CrepeBuilder({ root, defaultValue: markdown })
         .addFeature(blockEdit)
@@ -71,7 +75,11 @@ function MarkdownEditorInner({
       editor.on((listener) => {
         listener.markdownUpdated(
           (_context, next_markdown, previous_markdown) => {
-            if (next_markdown !== previous_markdown)
+            editor_markdown_ref.current = next_markdown;
+            if (
+              next_markdown !== previous_markdown &&
+              next_markdown !== controlled_markdown_ref.current
+            )
               change_ref.current(next_markdown);
           },
         );
@@ -92,6 +100,14 @@ function MarkdownEditorInner({
     },
     [document_key, readonly],
   );
+
+  useEffect(() => {
+    if (loading || editor_markdown_ref.current === markdown) return;
+    const editor = get();
+    if (!editor) return;
+    editor_markdown_ref.current = markdown;
+    editor.action(replaceAll(markdown));
+  }, [get, loading, markdown]);
 
   return (
     <div

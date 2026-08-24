@@ -114,6 +114,8 @@ MODEL_TEST_PROMPT = "Reply only with OK."
 MODEL_TEST_REDACTED_SECRET = "[已隐藏]"
 MODEL_TEST_SUCCESS_MESSAGE = "模型响应正常"
 MODEL_TEST_TIMEOUT_SECONDS = 30
+SUMMARY_DOCUMENT_EVENT_POLL_SECONDS = 0.5
+SUMMARY_DOCUMENT_EVENT_KEEPALIVE_SECONDS = 15
 
 
 class DependencyStatus(BaseModel):
@@ -907,6 +909,48 @@ def create_app(
             return summary_manager.documents(asset_id)
         except SummaryError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/media/assets/{asset_id}/summary-documents/events")
+    async def summary_document_events(
+        asset_id: str,
+        request: Request,
+    ) -> StreamingResponse:
+        try:
+            initial_documents = summary_manager.documents(asset_id)
+        except SummaryError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+        async def stream_events():
+            documents = initial_documents
+            previous_signature: tuple[tuple[str, int], ...] | None = None
+            idle_seconds = 0.0
+            while not await request.is_disconnected():
+                signature = tuple(
+                    (document.document_id, document.revision)
+                    for document in documents
+                )
+                if signature != previous_signature:
+                    payload = [
+                        document.model_dump(mode="json") for document in documents
+                    ]
+                    yield _sse_event("documents", payload)
+                    previous_signature = signature
+                    idle_seconds = 0.0
+                elif idle_seconds >= SUMMARY_DOCUMENT_EVENT_KEEPALIVE_SECONDS:
+                    yield ": keep-alive\n\n"
+                    idle_seconds = 0.0
+                await asyncio.sleep(SUMMARY_DOCUMENT_EVENT_POLL_SECONDS)
+                idle_seconds += SUMMARY_DOCUMENT_EVENT_POLL_SECONDS
+                documents = summary_manager.documents(asset_id)
+
+        return StreamingResponse(
+            stream_events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.post(
         "/api/media/assets/{asset_id}/summary-documents/generate",
