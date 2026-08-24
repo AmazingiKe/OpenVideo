@@ -19,6 +19,10 @@ from openvideo.core.analysis_models import (
 from openvideo.core.library import MediaLibrary
 from openvideo.core.models import MediaAsset, SourcePlatform
 from openvideo.tools.transcribe import (
+    AUTOMATIC_COMPUTE_TYPE,
+    CPU_DEVICE_NAME,
+    DEFAULT_WHISPER_COMPUTE_TYPE,
+    FasterWhisperTranscriber,
     QWEN_MAX_CHUNK_SECONDS,
     Qwen3AsrTranscriber,
     SenseVoiceTranscriber,
@@ -227,6 +231,59 @@ def test_factory_creates_qwen_and_sensevoice_adapters(tmp_path: Path):
     assert isinstance(sensevoice, SenseVoiceTranscriber)
 
 
+def test_faster_whisper_auto_device_falls_back_to_cpu(tmp_path: Path, monkeypatch):
+    class UnavailableCudaModel:
+        def transcribe(self, *_args, **_kwargs):
+            raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+
+    cpu_model = SimpleNamespace(
+        transcribe=lambda *_args, **_kwargs: (
+            [SimpleNamespace(start=0.0, end=1.0, text="你好")],
+            SimpleNamespace(language="zh"),
+        )
+    )
+    transcriber = FasterWhisperTranscriber(
+        model_size="small",
+        model_root_directory=tmp_path,
+        language="zh",
+        device="auto",
+        compute_type=AUTOMATIC_COMPUTE_TYPE,
+    )
+    models = iter([UnavailableCudaModel(), cpu_model])
+    monkeypatch.setattr(transcriber, "_load_model", lambda: next(models))
+
+    transcript = transcriber.transcribe(tmp_path / "audio.wav", TRANSCRIPT_ASSET_ID)
+
+    assert [segment.text for segment in transcript.segments] == ["你好"]
+    assert transcriber.device == CPU_DEVICE_NAME
+    assert transcriber.compute_type == DEFAULT_WHISPER_COMPUTE_TYPE
+
+
+def test_faster_whisper_explicit_cuda_reports_runtime_failure(
+    tmp_path: Path,
+    monkeypatch,
+):
+    transcriber = FasterWhisperTranscriber(
+        model_size="small",
+        model_root_directory=tmp_path,
+        language="zh",
+        device="cuda",
+        compute_type="float16",
+    )
+    monkeypatch.setattr(
+        transcriber,
+        "_load_model",
+        lambda: SimpleNamespace(
+            transcribe=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("CUDA runtime unavailable")
+            )
+        ),
+    )
+
+    with pytest.raises(TranscriptionFailure, match="Faster-Whisper 转录失败"):
+        transcriber.transcribe(tmp_path / "audio.wav", TRANSCRIPT_ASSET_ID)
+
+
 @pytest.mark.parametrize(
     ("code", "name"),
     [("zh", "Chinese"), ("yue", "Cantonese"), ("es", "Spanish")],
@@ -282,6 +339,11 @@ def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
                     text="一句。",
                     time_stamps=SimpleNamespace(
                         items=[
+                            SimpleNamespace(
+                                text="乱码",
+                                start_time=0.5,
+                                end_time=0.5,
+                            ),
                             SimpleNamespace(
                                 text="一句。",
                                 start_time=0.5,

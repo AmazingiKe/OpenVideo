@@ -54,6 +54,9 @@ SUPPORTED_WHISPER_MODELS = frozenset(
     if descriptor.engine == TranscriptionEngine.FASTER_WHISPER
 )
 AUTOMATIC_COMPUTE_TYPE = "default"
+AUTOMATIC_DEVICE = "auto"
+CPU_DEVICE_NAME = "cpu"
+FASTER_WHISPER_ENGINE_NAME = "Faster-Whisper"
 QWEN_MAX_CHUNK_SECONDS = 240
 QWEN_MAX_SEGMENT_SECONDS = 15
 QWEN_MAX_INFERENCE_BATCH_SIZE = 1
@@ -286,6 +289,29 @@ class FasterWhisperTranscriber:
         self._model = None
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
+        try:
+            return self._transcribe_once(audio_path, asset_id)
+        except Exception as error:
+            if self.device != AUTOMATIC_DEVICE:
+                raise _runtime_transcription_failure(
+                    FASTER_WHISPER_ENGINE_NAME,
+                    error,
+                ) from error
+            self._model = None
+            _release_cuda_memory()
+            self.device = CPU_DEVICE_NAME
+            if self.compute_type == AUTOMATIC_COMPUTE_TYPE:
+                self.compute_type = DEFAULT_WHISPER_COMPUTE_TYPE
+            try:
+                return self._transcribe_once(audio_path, asset_id)
+            except Exception as fallback_error:
+                raise _runtime_transcription_failure(
+                    FASTER_WHISPER_ENGINE_NAME,
+                    fallback_error,
+                ) from fallback_error
+
+    def _transcribe_once(self, audio_path: Path, asset_id: str) -> Transcript:
+        """单次推理与自动设备回退分离，确保失败后会重建 CPU 模型。"""
         if self._model is None:
             self._model = self._load_model()
         segments, info = self._model.transcribe(
@@ -374,15 +400,19 @@ class Qwen3AsrTranscriber:
                 detected_languages.extend(language_codes)
                 if result.time_stamps is None or not result.time_stamps.items:
                     raise TranscriptionFailure("Qwen3-ASR 未返回有效的强制对齐时间戳")
-                timed_items.extend(
-                    TimedText(
-                        text=item.text,
-                        start_seconds=float(item.start_time) + offset_seconds,
-                        end_seconds=float(item.end_time) + offset_seconds,
+                for item in result.time_stamps.items:
+                    text = item.text.strip()
+                    start_seconds = float(item.start_time) + offset_seconds
+                    end_seconds = float(item.end_time) + offset_seconds
+                    if not text or end_seconds <= start_seconds:
+                        continue
+                    timed_items.append(
+                        TimedText(
+                            text=text,
+                            start_seconds=start_seconds,
+                            end_seconds=end_seconds,
+                        )
                     )
-                    for item in result.time_stamps.items
-                    if item.text.strip()
-                )
             if not timed_items:
                 raise TranscriptionFailure("Qwen3-ASR 没有识别到可用的带时间戳文本")
             language = _merge_language_codes(detected_languages)
