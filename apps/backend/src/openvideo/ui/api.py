@@ -1937,7 +1937,7 @@ def _entry_download_url(platform: SourcePlatform, video_id: str, raw_url: str) -
     确保批量下载端点里的每个地址都能通过来源校验。
     """
     if platform == SourcePlatform.BILIBILI:
-        return f"https://www.bilibili.com/video/{video_id}"
+        return raw_url or f"https://www.bilibili.com/video/{video_id}"
     if platform == SourcePlatform.DOUYIN:
         return f"https://www.douyin.com/video/{video_id}"
     if platform == SourcePlatform.YOUTUBE:

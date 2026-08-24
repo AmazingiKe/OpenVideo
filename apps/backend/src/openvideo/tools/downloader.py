@@ -12,6 +12,12 @@ import httpx
 
 from openvideo.core.media_models import SourcePlatform
 from openvideo.tools.media import resolve_tool
+from openvideo.tools.sources import UnsupportedSourceError, resolve_source
+from openvideo.tools.sources.bilibili import (
+    bilibili_base_video_id,
+    bilibili_source_video_id,
+    build_bilibili_video_url,
+)
 
 
 OUTPUT_PREFIX = "openvideo-output:"
@@ -218,18 +224,19 @@ def probe_source(
 ) -> PlaylistProbe:
     """先补全平台独有的合集信息，再回退到 yt-dlp 的通用列表探测。"""
     if platform == SourcePlatform.BILIBILI and source_video_id:
-        season_probe = probe_bilibili_ugc_season(source_video_id)
-        if season_probe is not None:
-            return season_probe
+        collection_probe = probe_bilibili_collection(source_video_id)
+        if collection_probe is not None:
+            return collection_probe
     return probe_playlist(source_url, cookie_source)
 
 
-def probe_bilibili_ugc_season(source_video_id: str) -> PlaylistProbe | None:
-    """Bilibili 普通视频 URL 不携带合集参数时，仍从视频详情中找出其所属的 UGC 合集。"""
+def probe_bilibili_collection(source_video_id: str) -> PlaylistProbe | None:
+    """Bilibili 的合集和分P都不完整暴露在 URL 中，需要详情接口补齐可选条目。"""
+    bvid = bilibili_base_video_id(source_video_id)
     try:
         response = httpx.get(
             BILIBILI_VIEW_API_URL,
-            params={"bvid": source_video_id},
+            params={"bvid": bvid},
             headers=BILIBILI_VIEW_HEADERS,
             timeout=BILIBILI_VIEW_TIMEOUT_SECONDS,
         )
@@ -243,17 +250,22 @@ def probe_bilibili_ugc_season(source_video_id: str) -> PlaylistProbe | None:
     if not isinstance(data, dict):
         return None
     season = data.get("ugc_season")
-    if not isinstance(season, dict):
-        return None
-
-    entries = _bilibili_season_entries(season)
-    if not entries:
+    if isinstance(season, dict):
+        entries = _bilibili_season_entries(season)
+        title = _optional_text(season.get("title"))
+    else:
+        entries = []
+        title = None
+    if len(entries) < 2:
+        entries = _bilibili_page_entries(data, bvid)
+        title = _optional_text(data.get("title"))
+    if len(entries) < 2:
         return None
     total_count = len(entries)
     visible_entries = entries[:PLAYLIST_PROBE_LIMIT]
     return PlaylistProbe(
         is_playlist=True,
-        title=_optional_text(season.get("title")),
+        title=title,
         entries=visible_entries,
         truncated=total_count > len(visible_entries),
         total_count=total_count,
@@ -290,11 +302,38 @@ def _bilibili_season_entry(episode: object) -> PlaylistEntry | None:
     author_data = author if isinstance(author, dict) else {}
     return PlaylistEntry(
         source_video_id=source_video_id,
-        url=f"https://www.bilibili.com/video/{source_video_id}",
+        url=build_bilibili_video_url(source_video_id),
         title=_optional_text(episode.get("title")) or _optional_text(metadata.get("title")),
         duration_seconds=_optional_float(metadata.get("duration")),
         uploader=_optional_text(author_data.get("name")),
     )
+
+
+def _bilibili_page_entries(data: dict, bvid: str) -> list[PlaylistEntry]:
+    """分P共享一个 BV 号，使用 yt-dlp 的 `_pN` 资源 ID 保持下载和去重语义一致。"""
+    pages = data.get("pages")
+    if not isinstance(pages, list):
+        return []
+    owner = data.get("owner")
+    owner_data = owner if isinstance(owner, dict) else {}
+    uploader = _optional_text(owner_data.get("name"))
+    entries: list[PlaylistEntry] = []
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        part_number = _optional_int(page.get("page"))
+        if part_number is None or part_number < 1:
+            continue
+        entries.append(
+            PlaylistEntry(
+                source_video_id=bilibili_source_video_id(bvid, part_number),
+                url=build_bilibili_video_url(bvid, part_number),
+                title=_optional_text(page.get("part")),
+                duration_seconds=_optional_float(page.get("duration")),
+                uploader=uploader,
+            )
+        )
+    return entries
 
 
 def probe_playlist(source_url: str, cookie_source: Path | None = None) -> PlaylistProbe:
@@ -354,12 +393,22 @@ def parse_playlist_payload(payload: dict) -> PlaylistProbe:
 def _single_entry(item: object) -> PlaylistEntry | None:
     if not isinstance(item, dict):
         return None
+    entry_url = (
+        _optional_text(item.get("url"))
+        or _optional_text(item.get("webpage_url"))
+        or ""
+    )
     video_id = _optional_text(item.get("id"))
+    if not video_id and entry_url:
+        try:
+            video_id = resolve_source(entry_url).source_video_id
+        except UnsupportedSourceError:
+            video_id = None
     if not video_id:
         return None
     return PlaylistEntry(
         source_video_id=video_id,
-        url=_optional_text(item.get("url")) or _optional_text(item.get("webpage_url")) or "",
+        url=entry_url,
         title=_optional_text(item.get("title")),
         duration_seconds=_optional_float(item.get("duration")),
         uploader=_optional_text(item.get("uploader")),

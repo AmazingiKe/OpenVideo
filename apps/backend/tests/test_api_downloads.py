@@ -77,6 +77,44 @@ def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
     assert probe_targets == ["https://www.douyin.com/video/6961737553342991651"]
 
 
+def test_probe_preserves_bilibili_part_download_urls(monkeypatch, tmp_path):
+    def probe_bilibili(*_: object) -> PlaylistProbe:
+        return PlaylistProbe(
+            is_playlist=True,
+            title="分P视频",
+            entries=[
+                PlaylistEntry(
+                    source_video_id="BV1X7411F744_p2",
+                    url="https://www.bilibili.com/video/BV1X7411F744?p=2",
+                    title="第二P",
+                    duration_seconds=60,
+                    uploader="示例作者",
+                )
+            ],
+            truncated=False,
+            total_count=1,
+        )
+
+    monkeypatch.setattr(api, "probe_source", probe_bilibili)
+    app = api.create_app(Settings(library_path=tmp_path))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/downloads/probe",
+            json={
+                "source_url": (
+                    "https://www.bilibili.com/video/BV1X7411F744/"
+                    "?p=2&spm_id_from=333.337.search-card.all.click"
+                )
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["entries"][0]["url"] == (
+        "https://www.bilibili.com/video/BV1X7411F744?p=2"
+    )
+
+
 def test_platform_account_can_be_saved_tested_listed_and_removed(
     monkeypatch,
     tmp_path,

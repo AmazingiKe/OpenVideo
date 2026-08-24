@@ -314,6 +314,53 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "下载 1 个视频" })).toBeEnabled();
   });
 
+  it("selects the requested part from a Bilibili multipart URL", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    vi.mocked(probe_source).mockResolvedValue({
+      platform: "bilibili",
+      is_playlist: true,
+      title: "GAMES101",
+      entries: [
+        {
+          source_video_id: "BV1X7411F744_p1",
+          url: "https://www.bilibili.com/video/BV1X7411F744?p=1",
+          title: "Lecture 01",
+          duration_seconds: 3589,
+          uploader: "GAMES-Webinar",
+        },
+        {
+          source_video_id: "BV1X7411F744_p2",
+          url: "https://www.bilibili.com/video/BV1X7411F744?p=2",
+          title: "Lecture 02",
+          duration_seconds: 3588,
+          uploader: "GAMES-Webinar",
+        },
+      ],
+      truncated: false,
+      total_count: 2,
+    });
+
+    render(<App />);
+
+    const source_url =
+      "https://www.bilibili.com/video/BV1X7411F744/?p=2&spm_id_from=333.337.search-card.all.click";
+    fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
+      target: { value: source_url },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "检测链接" }));
+
+    await waitFor(() => expect(probe_source).toHaveBeenCalledWith(source_url));
+    const entries = await screen.findAllByRole("checkbox");
+    expect(entries[0]).not.toBeChecked();
+    expect(entries[1]).toBeChecked();
+    expect(screen.getByText("Lecture 02").parentElement).toHaveTextContent(
+      "当前",
+    );
+  });
+
   it("saves and tests a Bilibili download account", async () => {
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",

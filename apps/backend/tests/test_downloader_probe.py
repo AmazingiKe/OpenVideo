@@ -68,6 +68,31 @@ def test_playlist_payload_skips_entries_without_id():
     assert [entry.source_video_id for entry in probe.entries] == ["aaaaaaaaaaa"]
 
 
+def test_playlist_payload_recovers_bilibili_part_ids_from_flat_urls():
+    payload = {
+        "title": "分P视频",
+        "playlist_count": 2,
+        "entries": [
+            {
+                "_type": "url",
+                "url": "https://www.bilibili.com/video/BV1X7411F744?p=1",
+            },
+            {
+                "_type": "url",
+                "url": "https://www.bilibili.com/video/BV1X7411F744?p=2",
+            },
+        ],
+    }
+
+    probe = parse_playlist_payload(payload)
+
+    assert [entry.source_video_id for entry in probe.entries] == [
+        "BV1X7411F744_p1",
+        "BV1X7411F744_p2",
+    ]
+    assert probe.truncated is False
+
+
 def test_reports_fresh_cookie_requirement_as_an_expired_login():
     message = _friendly_failure("ERROR: [Douyin] video: Fresh cookies are needed")
     assert message == "保存的登录状态已失效，请重新登录"
@@ -106,7 +131,10 @@ def test_bilibili_ugc_season_probe_returns_all_episodes(monkeypatch):
         return httpx.Response(
             200,
             json=payload,
-            request=httpx.Request("GET", "https://api.bilibili.com/x/web-interface/view"),
+            request=httpx.Request(
+                "GET",
+                "https://api.bilibili.com/x/web-interface/view",
+            ),
         )
 
     monkeypatch.setattr(
@@ -127,3 +155,49 @@ def test_bilibili_ugc_season_probe_returns_all_episodes(monkeypatch):
     assert [entry.source_video_id for entry in probe.entries] == ["BV1xx411c7mD", "BV1xx411c7mE"]
     assert probe.entries[0].uploader == "示例作者"
     assert request_arguments["headers"]["Referer"] == "https://www.bilibili.com/"
+
+
+def test_bilibili_multipart_probe_returns_downloadable_parts(monkeypatch):
+    payload = {
+        "code": 0,
+        "data": {
+            "title": "GAMES101-现代计算机图形学入门-闫令琪",
+            "owner": {"name": "GAMES-Webinar"},
+            "pages": [
+                {"page": 1, "part": "Lecture 01 Overview", "duration": 3589},
+                {"page": 2, "part": "Lecture 02 Linear Algebra", "duration": 3588},
+            ],
+        },
+    }
+    request_arguments = {}
+
+    def get_bilibili_view(*args, **kwargs):
+        request_arguments.update(kwargs)
+        return httpx.Response(
+            200,
+            json=payload,
+            request=httpx.Request("GET", "https://api.bilibili.com/x/web-interface/view"),
+        )
+
+    monkeypatch.setattr(downloader.httpx, "get", get_bilibili_view)
+
+    probe = probe_source(
+        "https://www.bilibili.com/video/BV1X7411F744?p=2",
+        SourcePlatform.BILIBILI,
+        "BV1X7411F744_p2",
+    )
+
+    assert probe.is_playlist is True
+    assert probe.title == "GAMES101-现代计算机图形学入门-闫令琪"
+    assert [entry.source_video_id for entry in probe.entries] == [
+        "BV1X7411F744_p1",
+        "BV1X7411F744_p2",
+    ]
+    assert [entry.url for entry in probe.entries] == [
+        "https://www.bilibili.com/video/BV1X7411F744?p=1",
+        "https://www.bilibili.com/video/BV1X7411F744?p=2",
+    ]
+    assert probe.entries[1].title == "Lecture 02 Linear Algebra"
+    assert probe.entries[1].duration_seconds == 3588
+    assert probe.entries[1].uploader == "GAMES-Webinar"
+    assert request_arguments["params"] == {"bvid": "BV1X7411F744"}

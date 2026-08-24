@@ -34,6 +34,11 @@ const DOUYIN_VIDEO_HOSTS = new Set([
 const DOUYIN_VIDEO_PATH = "video";
 const DOUYIN_SEARCH_PATH = "search/dy";
 const DOUYIN_MODAL_VIDEO_ID_PARAMETER = "modal_id";
+const BILIBILI_HOST_SUFFIX = "bilibili.com";
+const BILIBILI_SHORT_HOST = "b23.tv";
+const BILIBILI_PART_PARAMETER = "p";
+const BILIBILI_PART_ID_SEPARATOR = "_p";
+const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/;
 
 export function DownloadsPage() {
   const query_client = useQueryClient();
@@ -324,7 +329,10 @@ export function DownloadsPage() {
       source_url={source_url}
       probe_result={probe_result}
       selected_urls={selected_urls}
-      current_source_video_id={source_video_id_from_url(source_url)}
+      current_source_video_id={
+        current_probe_entry(probe_result?.entries ?? [], source_url)
+          ?.source_video_id ?? null
+      }
       is_submitting={is_submitting}
       error={
         page_error ??
@@ -357,7 +365,10 @@ function source_platform_from_url(source_url: string): SourcePlatform | null {
   try {
     const hostname = new URL(source_url.trim()).hostname;
     if (DOUYIN_VIDEO_HOSTS.has(hostname)) return "douyin";
-    if (hostname.endsWith("bilibili.com") || hostname === "b23.tv")
+    if (
+      hostname.endsWith(BILIBILI_HOST_SUFFIX) ||
+      hostname === BILIBILI_SHORT_HOST
+    )
       return "bilibili";
     if (hostname.endsWith("youtube.com") || hostname === "youtu.be")
       return "youtube";
@@ -371,11 +382,36 @@ function initial_selected_urls(
   entries: ProbeEntry[],
   source_url: string,
 ): Set<string> {
-  const source_video_id = source_video_id_from_url(source_url);
-  const current_entry = entries.find(
-    (entry) => entry.source_video_id === source_video_id,
-  );
+  const current_entry = current_probe_entry(entries, source_url);
   return current_entry ? new Set([current_entry.url]) : new Set();
+}
+
+function current_probe_entry(
+  entries: ProbeEntry[],
+  source_url: string,
+): ProbeEntry | null {
+  const source_video_id = source_video_id_from_url(source_url);
+  if (!source_video_id) return null;
+  try {
+    const url = new URL(source_url);
+    if (url.hostname.endsWith(BILIBILI_HOST_SUFFIX)) {
+      const raw_part_number = url.searchParams.get(BILIBILI_PART_PARAMETER);
+      const part_number =
+        raw_part_number && POSITIVE_INTEGER_PATTERN.test(raw_part_number)
+          ? Number(raw_part_number)
+          : 1;
+      const part_source_video_id = `${source_video_id}${BILIBILI_PART_ID_SEPARATOR}${part_number}`;
+      const part_entry = entries.find(
+        (entry) => entry.source_video_id === part_source_video_id,
+      );
+      if (part_entry) return part_entry;
+    }
+  } catch {
+    return null;
+  }
+  return (
+    entries.find((entry) => entry.source_video_id === source_video_id) ?? null
+  );
 }
 
 function source_video_id_from_url(source_url: string): string | null {
@@ -384,7 +420,10 @@ function source_video_id_from_url(source_url: string): string | null {
     const path_parts = url.pathname.split("/").filter(Boolean);
     if (url.hostname.endsWith("youtube.com")) return url.searchParams.get("v");
     if (url.hostname === "youtu.be") return path_parts[0] ?? null;
-    if (url.hostname.endsWith("bilibili.com") || url.hostname === "b23.tv")
+    if (
+      url.hostname.endsWith(BILIBILI_HOST_SUFFIX) ||
+      url.hostname === BILIBILI_SHORT_HOST
+    )
       return path_parts.at(-1) ?? null;
     if (DOUYIN_VIDEO_HOSTS.has(url.hostname)) {
       if (path_parts[0] === DOUYIN_VIDEO_PATH) return path_parts[1] ?? null;
