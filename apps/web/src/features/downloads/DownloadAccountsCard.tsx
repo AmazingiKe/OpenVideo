@@ -63,6 +63,7 @@ import type {
 type PlatformAccountPresentation = {
   platform: SourcePlatform;
   label: string;
+  icon_url: string;
   login_url: string;
   cookie_placeholder: string;
 };
@@ -71,18 +72,21 @@ const PLATFORM_ACCOUNTS: PlatformAccountPresentation[] = [
   {
     platform: "bilibili",
     label: "Bilibili",
+    icon_url: "https://www.bilibili.com/favicon.ico",
     login_url: "https://passport.bilibili.com/login",
     cookie_placeholder: "SESSDATA=...; bili_jct=...; ...",
   },
   {
     platform: "douyin",
     label: "抖音",
+    icon_url: "https://www.douyin.com/favicon.ico",
     login_url: "https://www.douyin.com/",
     cookie_placeholder: "sessionid=...; ttwid=...; ...",
   },
   {
     platform: "youtube",
     label: "YouTube",
+    icon_url: "https://www.youtube.com/favicon.ico",
     login_url: "https://www.youtube.com/",
     cookie_placeholder: "SAPISID=...; SID=...; ...",
   },
@@ -213,27 +217,24 @@ export function DownloadAccountsCard({
                 aria-labelledby={`${presentation.platform}_account_title`}
               >
                 {index > 0 ? <Separator className="-mt-5" /> : null}
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3
-                        id={`${presentation.platform}_account_title`}
-                        className="font-medium"
-                      >
-                        {presentation.label}
-                      </h3>
-                      <Badge variant={status.variant}>
-                        <StatusIcon data-icon="inline-start" />
-                        {status.label}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {account?.last_tested_at
-                        ? `上次测试：${format_account_time(account.last_tested_at)}`
-                        : account
-                          ? "Cookie 已保存，建议先测试可用性。"
-                          : `在专用窗口登录 ${presentation.label}，完成后会自动连接。`}
-                    </p>
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <img
+                      src={presentation.icon_url}
+                      alt=""
+                      className="size-5 rounded-sm"
+                      aria-hidden="true"
+                    />
+                    <h3
+                      id={`${presentation.platform}_account_title`}
+                      className="font-medium"
+                    >
+                      {presentation.label}
+                    </h3>
+                    <Badge variant={status.variant}>
+                      <StatusIcon data-icon="inline-start" />
+                      {status.label}
+                    </Badge>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {account ? (
@@ -535,14 +536,4 @@ function account_status(
     variant: "outline" as const,
     icon: CircleDashed,
   };
-}
-
-function format_account_time(value: string): string {
-  const time = new Date(value);
-  return Number.isNaN(time.getTime())
-    ? "未知"
-    : new Intl.DateTimeFormat("zh-CN", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(time);
 }
