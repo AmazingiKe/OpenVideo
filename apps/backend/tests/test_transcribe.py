@@ -6,7 +6,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from openvideo.core.analysis_models import (
+from openvideo.core.transcription_models import (
     TRANSCRIPTION_MODEL_CATALOG,
     Transcript,
     TranscriptAudioEvent,
@@ -17,7 +17,7 @@ from openvideo.core.analysis_models import (
     TranscriptionOptions,
 )
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import MediaAsset, SourcePlatform
+from openvideo.core.media_models import MediaAsset, SourcePlatform
 from openvideo.tools.transcribe import (
     AUTOMATIC_COMPUTE_TYPE,
     CPU_DEVICE_NAME,

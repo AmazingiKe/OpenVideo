@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from openvideo.configuration import OPENVIDEO_CONFIG_DIRECTORY
 from openvideo.core.identifiers import uuid7
-from openvideo.core.models import SourcePlatform
+from openvideo.core.media_models import SourcePlatform
 
 
 DOWNLOAD_ACCOUNTS_FILE_NAME = "download_accounts.json"

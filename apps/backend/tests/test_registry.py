@@ -1,6 +1,6 @@
 import pytest
 
-from openvideo.core.models import SourcePlatform
+from openvideo.core.media_models import SourcePlatform
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
 
 

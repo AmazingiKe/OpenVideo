@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
+from openvideo.core.media_models import MediaAsset, MediaAssetStatus, SourcePlatform
 from openvideo.core.library import MediaLibrary
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app

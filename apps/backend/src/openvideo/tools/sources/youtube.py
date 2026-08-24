@@ -1,7 +1,7 @@
 import re
 from urllib.parse import SplitResult, parse_qs, urlencode, urlunsplit
 
-from openvideo.core.models import SourcePlatform
+from openvideo.core.media_models import SourcePlatform
 from openvideo.tools.sources.base import SourceMatch, VideoSource
 
 

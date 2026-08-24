@@ -8,9 +8,9 @@ from fastapi.testclient import TestClient
 
 from openvideo.core.agent_runtime_models import AgentModelResponse, AgentToolCall
 from openvideo.core.ai_models import TEXT_INPUT_MODALITY, AiModelConfiguration
-from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import (
+from openvideo.core.media_models import (
     MediaAsset,
     MediaAssetStatus,
     MediaSegment,

@@ -10,14 +10,14 @@ from openvideo.core.ai_models import (
     AiModelConfiguration,
     InputModality,
 )
-from openvideo.core.analysis_models import (
+from openvideo.core.transcription_models import (
     Transcript,
     TranscriptAudioEvent,
     TranscriptEmotion,
     TranscriptSegment,
 )
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
+from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
 from openvideo.settings import Settings
 from openvideo.tools.transcribe import TranscriptionResult
 from openvideo.ui.api import create_app

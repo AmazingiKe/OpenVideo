@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from openvideo.core.analysis_models import (
+from openvideo.core.transcription_models import (
     TRANSCRIPTION_MODEL_CATALOG,
     TranscriptionEngine,
     TranscriptionIntegrationStatus,

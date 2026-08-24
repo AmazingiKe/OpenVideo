@@ -38,6 +38,8 @@ from openvideo.core.analysis_models import (
     AnalysisMode,
     AnalysisStrategy,
     AnalysisStrategyPresetDescriptor,
+)
+from openvideo.core.transcription_models import (
     Transcript,
     TranscriptionComputeType,
     TranscriptionDevice,
@@ -47,14 +49,14 @@ from openvideo.core.analysis_models import (
     TranscriptionOptions,
 )
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
+from openvideo.core.download_models import DownloadJob
 from openvideo.core.library import (
     LibraryDescription,
     LibraryError,
     MediaLibrary,
 )
 from openvideo.core.identifiers import uuid7
-from openvideo.core.models import (
-    DownloadJob,
+from openvideo.core.media_models import (
     MediaAssetResponse,
     MediaAssetStatus,
     MediaMarker,

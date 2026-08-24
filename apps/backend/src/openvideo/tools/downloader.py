@@ -10,7 +10,7 @@ from pathlib import Path
 
 import httpx
 
-from openvideo.core.models import SourcePlatform
+from openvideo.core.media_models import SourcePlatform
 from openvideo.tools.media import resolve_tool
 
 

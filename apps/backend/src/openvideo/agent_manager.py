@@ -24,7 +24,7 @@ from openvideo.core.agent_models import (
     AgentResponse,
     AgentStage,
 )
-from openvideo.core.analysis_models import Transcript
+from openvideo.core.transcription_models import Transcript
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.settings import Settings

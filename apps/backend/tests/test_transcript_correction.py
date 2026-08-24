@@ -4,7 +4,7 @@ import pytest
 from litellm.exceptions import ContextWindowExceededError
 
 from openvideo.core.ai_models import AiModelConfiguration
-from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.tools import llm
 from openvideo.tools.transcript_correction import (
     LiteLlmTranscriptCorrector,

@@ -9,10 +9,9 @@ from openvideo.core.analysis_models import (
     AnalysisDepth,
     AnalysisMode,
     AnalysisStrategy,
-    Transcript,
-    TranscriptSegment,
 )
-from openvideo.core.models import MediaMarker
+from openvideo.core.media_models import MediaMarker
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 
 MAX_EVENT_DURATION_SECONDS = 180.0

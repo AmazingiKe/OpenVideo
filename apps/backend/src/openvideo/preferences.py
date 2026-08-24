@@ -11,7 +11,7 @@ from openvideo.configuration import (
     migrate_configuration_file,
 )
 from openvideo.core.ai_models import AiModelCollection
-from openvideo.core.analysis_models import TranscriptionOptions
+from openvideo.core.transcription_models import TranscriptionOptions
 
 
 PREFERENCES_FILE_NAME = "preferences.json"

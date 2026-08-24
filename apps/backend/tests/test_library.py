@@ -4,15 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.download_models import DownloadJob
 from openvideo.core.library import InvalidLibraryError, MediaLibrary
 from openvideo.core.library_files import (
     SummaryConversationFile,
     atomic_write_model,
     conversation_file_path,
 )
-from openvideo.core.models import (
-    DownloadJob,
+from openvideo.core.media_models import (
     MediaAsset,
     MediaAssetStatus,
     MediaMarker,
@@ -33,6 +32,7 @@ from openvideo.core.summary_models import (
     SummaryMessage,
     SummaryMessageRole,
 )
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"

@@ -10,7 +10,7 @@ from threading import RLock
 
 from huggingface_hub import HfApi, hf_hub_download
 
-from openvideo.core.analysis_models import (
+from openvideo.core.transcription_models import (
     TERMINAL_TRANSCRIPTION_MODEL_DOWNLOAD_STAGES,
     TRANSCRIPTION_MODEL_CATALOG,
     TranscriptionEngine,

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from openvideo.core.analysis_models import TranscriptionEngine, find_transcription_model
+from openvideo.core.transcription_models import TranscriptionEngine, find_transcription_model
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
 from openvideo.transcription_model_manager import (

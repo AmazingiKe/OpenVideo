@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from openvideo.core.analysis_models import (
+from openvideo.core.transcription_models import (
     TRANSCRIPTION_MODEL_CATALOG,
     Transcript,
     TranscriptAudioEvent,

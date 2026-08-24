@@ -6,9 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from openvideo.core.analysis import TimelineMoment, select_timeline_moments
-from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, AnalysisStrategy, Transcript
+from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, AnalysisStrategy
 from openvideo.core.identifiers import uuid7
-from openvideo.core.models import MediaMarker, MediaSegment
+from openvideo.core.media_models import MediaMarker, MediaSegment
+from openvideo.core.transcription_models import Transcript
 from openvideo.settings import Settings
 from openvideo.tools.frames import FrameExtractionError, extract_frames
 from openvideo.tools.scenes import detect_scene_boundaries

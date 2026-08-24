@@ -5,10 +5,9 @@ from openvideo.core.analysis_models import (
     AnalysisStrategy,
     AnalysisStrategyPreset,
     AnalysisWeights,
-    Transcript,
-    TranscriptSegment,
 )
-from openvideo.core.models import MediaMarker
+from openvideo.core.media_models import MediaMarker
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"

@@ -8,9 +8,8 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, Field
 
-from openvideo.core.analysis_models import Transcript, TranscriptionMetadata
 from openvideo.core.identifiers import is_uuid7
-from openvideo.core.models import (
+from openvideo.core.media_models import (
     AssetMetadata,
     AssetSourceMetadata,
     AssetStoryboardMetadata,
@@ -21,6 +20,7 @@ from openvideo.core.models import (
     MediaType,
     VideoMetadata,
 )
+from openvideo.core.transcription_models import Transcript, TranscriptionMetadata
 from openvideo.core.summary_files import (
     SUMMARY_DIRECTORY_NAME,
     SUMMARY_MANIFEST_FILE_NAME,

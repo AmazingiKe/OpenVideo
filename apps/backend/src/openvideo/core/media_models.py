@@ -1,9 +1,11 @@
+"""媒体资源、元数据、时间轴片段与用户标记的数据契约。"""
+
 from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, HttpUrl
 
-from openvideo.core.analysis_models import TranscriptionStatus
+from openvideo.core.transcription_models import TranscriptionStatus
 
 
 class SourcePlatform(StrEnum):
@@ -23,18 +25,6 @@ class MediaAssetStatus(StrEnum):
 class MediaType(StrEnum):
     VIDEO = "video"
     IMAGE = "image"
-
-
-class DownloadStage(StrEnum):
-    PENDING = "pending"
-    READING_METADATA = "reading_metadata"
-    DOWNLOADING = "downloading"
-    PROCESSING = "processing"
-    COMPLETE = "complete"
-    FAILED = "failed"
-
-
-TERMINAL_DOWNLOAD_STAGES = {DownloadStage.COMPLETE, DownloadStage.FAILED}
 
 
 class MediaAsset(BaseModel):
@@ -151,17 +141,6 @@ class AssetMetadata(BaseModel):
     storyboard: AssetStoryboardMetadata | None = None
     created_at: datetime
     updated_at: datetime
-
-
-class DownloadJob(BaseModel):
-    job_id: str
-    asset_id: str
-    stage: DownloadStage = DownloadStage.PENDING
-    progress_percent: float = 0
-    message: str = "等待开始"
-    error_message: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class MediaSegment(BaseModel):

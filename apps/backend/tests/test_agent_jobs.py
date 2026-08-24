@@ -7,9 +7,9 @@ from fastapi.testclient import TestClient
 
 import openvideo.agent_manager as agent_manager_module
 from openvideo.core.ai_models import AiModelConfiguration
-from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
+from openvideo.core.media_models import MediaAsset, MediaAssetStatus, SourcePlatform
 from openvideo.settings import Settings
 from openvideo.tools.transcript_correction import (
     TranscriptCorrectionContextLengthError,

@@ -1,6 +1,6 @@
 import httpx
 
-from openvideo.core.models import SourcePlatform
+from openvideo.core.media_models import SourcePlatform
 from openvideo.tools import downloader
 from openvideo.tools.downloader import _friendly_failure, parse_playlist_payload, probe_source
 

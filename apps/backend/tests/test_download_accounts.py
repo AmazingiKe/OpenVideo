@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 
 from openvideo import download_accounts
-from openvideo.core.models import SourcePlatform
+from openvideo.core.media_models import SourcePlatform
 from openvideo.download_accounts import (
     DownloadAccountExpired,
     DownloadAccountStatus,

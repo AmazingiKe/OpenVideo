@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import Field
 
 from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration
-from openvideo.core.analysis_models import TranscriptionEngine, TranscriptionOptions
+from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
 from openvideo.preferences import PreferenceStore, Preferences
 
 

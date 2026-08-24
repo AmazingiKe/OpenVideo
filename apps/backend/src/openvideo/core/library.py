@@ -17,7 +17,8 @@ from openvideo.core.agent_runtime_models import (
     AgentRunStage,
     AgentSession,
 )
-from openvideo.core.analysis_models import AnalysisJob, Transcript, TranscriptionMetadata
+from openvideo.core.analysis_models import AnalysisJob
+from openvideo.core.download_models import DownloadJob, DownloadStage
 from openvideo.core.identifiers import is_uuid7, uuid7
 from openvideo.core.library_files import (
     ARTIFACTS_DIRECTORY_NAME,
@@ -39,9 +40,7 @@ from openvideo.core.library_index import (
     open_index_database,
     synchronize_asset,
 )
-from openvideo.core.models import (
-    DownloadJob,
-    DownloadStage,
+from openvideo.core.media_models import (
     MediaAsset,
     MediaAssetResponse,
     MediaAssetStatus,
@@ -51,6 +50,7 @@ from openvideo.core.models import (
     ThumbnailStoryboardResponse,
     ThumbnailStoryboardTile,
 )
+from openvideo.core.transcription_models import Transcript, TranscriptionMetadata
 from openvideo.core.summary_files import load_manifest, read_markdown, write_manifest
 from openvideo.core.summary_models import (
     SummaryAgentRun,

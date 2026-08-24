@@ -26,10 +26,10 @@ from openvideo.core.agent_runtime_models import (
     AgentRunStage,
     AgentSession,
 )
-from openvideo.core.analysis_models import TranscriptSegment
+from openvideo.core.transcription_models import TranscriptSegment
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import MediaAssetStatus, MediaSegment
+from openvideo.core.media_models import MediaAssetStatus, MediaSegment
 from openvideo.core.summary_models import (
     SummaryAgentMessageRequest,
     SummaryAgentRun,

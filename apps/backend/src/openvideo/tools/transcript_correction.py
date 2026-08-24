@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from openvideo.core.ai_models import AiModelConfiguration
-from openvideo.core.analysis_models import Transcript
+from openvideo.core.transcription_models import Transcript
 from openvideo.tools.llm import LlmCompletionError, LlmContextLengthError, complete_text
 
 

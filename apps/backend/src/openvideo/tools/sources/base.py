@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from urllib.parse import SplitResult
 
-from openvideo.core.models import SourcePlatform
+from openvideo.core.media_models import SourcePlatform
 
 
 class UnsupportedSourceError(ValueError):

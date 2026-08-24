@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 import pytest
 
-from openvideo.core.models import SourcePlatform
+from openvideo.core.media_models import SourcePlatform
 from openvideo.download_accounts import DownloadAccountStore, DownloadCookieBrowser
 from openvideo.settings import Settings
 from openvideo.tools.downloader import (

@@ -11,21 +11,25 @@ from openvideo.core.analysis_models import (
     AnalysisStage,
     AnalysisStrategy,
     TERMINAL_ANALYSIS_STAGES,
-    Transcript,
-    TranscriptionMetadata,
-    TranscriptionOptions,
-    TranscriptionStatus,
+)
+from openvideo.core.download_models import (
+    DownloadJob,
+    DownloadStage,
+    TERMINAL_DOWNLOAD_STAGES,
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import (
-    DownloadJob,
-    DownloadStage,
+from openvideo.core.media_models import (
     MediaAsset,
     MediaAssetStatus,
     MediaMarker,
     MediaSegment,
-    TERMINAL_DOWNLOAD_STAGES,
+)
+from openvideo.core.transcription_models import (
+    Transcript,
+    TranscriptionMetadata,
+    TranscriptionOptions,
+    TranscriptionStatus,
 )
 from openvideo.settings import Settings
 from openvideo.transcription_model_manager import (

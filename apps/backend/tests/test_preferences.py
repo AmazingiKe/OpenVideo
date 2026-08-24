@@ -10,7 +10,7 @@ from openvideo.configuration import (
     migrate_configuration_file,
 )
 from openvideo.core.ai_models import AiModelConfiguration
-from openvideo.core.analysis_models import TranscriptionEngine, TranscriptionOptions
+from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
 from openvideo.preferences import PreferenceStore, Preferences
 from openvideo.settings import (
     DEFAULT_MODELS_DIRECTORY,
