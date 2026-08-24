@@ -87,11 +87,20 @@ function WorkspaceRouter() {
         const WorkspacePage = route.component;
         const is_active = route.path === active_workspace_route?.path;
         if (!is_active && !visited_paths.has(route.path)) return null;
+        const workspace_page = (
+          <Suspense
+            key={route.path}
+            fallback={is_active ? <WorkspaceLoading /> : null}
+          >
+            <WorkspacePage />
+          </Suspense>
+        );
+        if (!route.preserve_state_when_hidden) {
+          return is_active ? workspace_page : null;
+        }
         return (
           <Activity key={route.path} mode={is_active ? "visible" : "hidden"}>
-            <Suspense fallback={is_active ? <WorkspaceLoading /> : null}>
-              <WorkspacePage />
-            </Suspense>
+            {workspace_page}
           </Activity>
         );
       })}

@@ -15,7 +15,7 @@ describe("Topbar", () => {
     expect(
       screen.getByRole("navigation", { name: "工作区导航" }),
     ).toBeVisible();
-    expect(screen.getByRole("link", { name: "分析" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "标记" })).toHaveAttribute(
       "aria-current",
       "page",
     );

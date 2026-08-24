@@ -254,7 +254,7 @@ describe("App", () => {
     const download_module = screen.getByRole("link", { name: "下载" });
     expect(download_module).toHaveAttribute("aria-current", "page");
 
-    fireEvent.click(screen.getByRole("link", { name: "分析" }));
+    fireEvent.click(screen.getByRole("link", { name: "标记" }));
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "演示视频" }),
@@ -268,7 +268,7 @@ describe("App", () => {
 
     expect(window.location.pathname).toBe("/analysis");
     expect(download_module).not.toHaveAttribute("aria-current");
-    expect(screen.getByRole("link", { name: "分析" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "标记" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -533,13 +533,47 @@ describe("App", () => {
     fireEvent.change(source_input, {
       target: { value: "https://example.com/preserved-video" },
     });
-    fireEvent.click(screen.getByRole("link", { name: "分析" }));
+    fireEvent.click(screen.getByRole("link", { name: "标记" }));
     await waitFor(() => expect(window.location.pathname).toBe("/analysis"));
     fireEvent.click(screen.getByRole("link", { name: "下载" }));
 
     expect(await screen.findByLabelText("视频或播放列表地址")).toHaveValue(
       "https://example.com/preserved-video",
     );
+  });
+
+  it("unmounts the analysis player while another workspace is active", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    vi.mocked(list_assets).mockResolvedValue([
+      create_asset({
+        status: "ready",
+        title: "播放器生命周期测试",
+        playback_url: "/stream",
+      }),
+    ]);
+    vi.mocked(get_markers).mockResolvedValue([]);
+    vi.mocked(get_segments).mockResolvedValue([]);
+    vi.mocked(get_transcript).mockResolvedValue({
+      asset_id: ASSET_ID,
+      language: "zh",
+      created_at: "2026-01-01T00:00:00Z",
+      segments: [],
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("link", { name: "标记" }));
+    expect(await screen.findByTestId("player")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "下载" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("player")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "标记" }));
+    expect(await screen.findByTestId("player")).toBeInTheDocument();
   });
 
   it("does not load media data on the settings page", async () => {
