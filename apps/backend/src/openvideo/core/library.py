@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +28,15 @@ from openvideo.core.summary_models import (
     SummaryMediaArtifact,
     SummaryMessage,
 )
+from openvideo.core.summary_files import (
+    SUMMARY_ASSETS_DIRECTORY_NAME,
+    SUMMARY_DIRECTORY_NAME,
+    build_manifest,
+    document_relative_path,
+    file_digest,
+    markdown_digest,
+    read_markdown,
+)
 from openvideo.core.models import (
     AssetMetadata,
     AssetSourceMetadata,
@@ -47,8 +57,9 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 FORMAT_VERSION = 1
+DATABASE_VERSION = 7
 SUMMARY_DATABASE_VERSION = 5
-DATABASE_VERSION = 6
+TRANSCRIPT_METADATA_DATABASE_VERSION = 6
 MANIFEST_FILE_NAME = "library.json"
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 AGENT_CHECKPOINT_DATABASE_FILE_NAME = "agent_checkpoints.sqlite3"
@@ -168,6 +179,10 @@ class MediaLibrary:
             self._migrate()
             self._recover_interrupted_downloads()
         except Exception:
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
+            self._file_lock = None
             lock.release()
             raise
 
@@ -216,6 +231,9 @@ class MediaLibrary:
             version = SUMMARY_DATABASE_VERSION
         if version == SUMMARY_DATABASE_VERSION:
             self._migrate_transcript_metadata()
+            version = TRANSCRIPT_METADATA_DATABASE_VERSION
+        if version == TRANSCRIPT_METADATA_DATABASE_VERSION:
+            self._migrate_summary_files()
 
     def _migrate_analysis_model(self) -> None:
         connection = self._db()
@@ -270,7 +288,141 @@ class MediaLibrary:
                     "ALTER TABLE transcript_segments "
                     "ADD COLUMN audio_events TEXT NOT NULL DEFAULT '[]'"
                 )
-            connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
+            connection.execute(
+                f"PRAGMA user_version = {TRANSCRIPT_METADATA_DATABASE_VERSION}"
+            )
+
+    def _migrate_summary_files(self) -> None:
+        connection = self._db()
+        backup_path = self.library_path / f"{DATABASE_FILE_NAME}.v6.backup"
+        if not backup_path.exists():
+            temporary_backup = backup_path.with_suffix(".backup.tmp")
+            backup_connection = sqlite3.connect(temporary_backup)
+            try:
+                connection.backup(backup_connection)
+            finally:
+                backup_connection.close()
+            os.replace(temporary_backup, backup_path)
+
+        rows = connection.execute(
+            "SELECT * FROM summary_documents ORDER BY asset_id, "
+            "parent_document_id IS NOT NULL, position, created_at"
+        ).fetchall()
+        media_rows = connection.execute(
+            "SELECT * FROM summary_media ORDER BY asset_id, created_at"
+        ).fetchall()
+        documents_by_asset: dict[str, list[SummaryDocument]] = {}
+        staged_directories: dict[str, Path] = {}
+        migration_root = self.library_path / "temp" / "summary-v7-migration"
+        if migration_root.exists():
+            shutil.rmtree(migration_root)
+        try:
+            for row in rows:
+                values = dict(row)
+                markdown = values.pop("markdown")
+                document = SummaryDocument(
+                    **values,
+                    markdown=markdown,
+                    relative_path="",
+                    content_digest=markdown_digest(markdown),
+                )
+                document = document.model_copy(
+                    update={"relative_path": document_relative_path(document)}
+                )
+                documents_by_asset.setdefault(document.asset_id, []).append(document)
+
+            media_by_asset: dict[str, list[SummaryMediaArtifact]] = {}
+            migrated_media_paths: dict[str, str] = {}
+            for row in media_rows:
+                artifact = SummaryMediaArtifact.model_validate(dict(row))
+                source_path = self.asset_directory(artifact.asset_id) / artifact.relative_path
+                if not source_path.is_file() or source_path.is_symlink():
+                    raise InvalidLibraryError(f"总结资源缺失：{artifact.media_id}")
+                suffix = source_path.suffix.lower()
+                relative_path = (
+                    f"{SUMMARY_DIRECTORY_NAME}/{SUMMARY_ASSETS_DIRECTORY_NAME}/"
+                    f"{artifact.media_id}{suffix}"
+                )
+                migrated = artifact.model_copy(update={"relative_path": relative_path})
+                media_by_asset.setdefault(artifact.asset_id, []).append(migrated)
+                migrated_media_paths[artifact.media_id] = relative_path
+
+            for asset_id, documents in documents_by_asset.items():
+                staged_summary = migration_root / asset_id / SUMMARY_DIRECTORY_NAME
+                staged_directories[asset_id] = staged_summary
+                for document in documents:
+                    destination = staged_summary.joinpath(
+                        *Path(document.relative_path).parts
+                    )
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(document.markdown, encoding="utf-8")
+                for artifact in media_by_asset.get(asset_id, []):
+                    original = next(
+                        item
+                        for item in media_rows
+                        if item["media_id"] == artifact.media_id
+                    )
+                    source_path = self.asset_directory(asset_id) / original["relative_path"]
+                    destination = migration_root / asset_id / artifact.relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_path, destination)
+                    if file_digest(source_path) != file_digest(destination):
+                        raise InvalidLibraryError(f"总结资源迁移校验失败：{artifact.media_id}")
+                manifest = build_manifest(
+                    asset_id,
+                    documents,
+                    media_by_asset.get(asset_id, []),
+                )
+                (staged_summary / "manifest.json").write_text(
+                    manifest.model_dump_json(indent=2),
+                    encoding="utf-8",
+                )
+
+            for asset_id, staged_summary in staged_directories.items():
+                target = self.asset_directory(asset_id) / SUMMARY_DIRECTORY_NAME
+                if target.exists():
+                    if target.is_symlink():
+                        raise InvalidLibraryError("总结目录不能是符号链接")
+                    shutil.rmtree(target)
+                os.replace(staged_summary, target)
+
+            connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                with connection:
+                    connection.execute(_SUMMARY_DOCUMENTS_V7_TABLE)
+                    for documents in documents_by_asset.values():
+                        for document in documents:
+                            values = document.model_dump(
+                                mode="json", exclude={"markdown"}
+                            )
+                            columns = tuple(values)
+                            connection.execute(
+                                f"INSERT INTO summary_documents_v7 "
+                                f"({', '.join(columns)}) VALUES "
+                                f"({', '.join('?' for _ in columns)})",
+                                tuple(values[column] for column in columns),
+                            )
+                    connection.execute("DROP TABLE summary_documents")
+                    connection.execute(
+                        "ALTER TABLE summary_documents_v7 RENAME TO summary_documents"
+                    )
+                    for index_statement in _SUMMARY_DOCUMENT_INDEXES:
+                        connection.execute(index_statement)
+                    for media_id, relative_path in migrated_media_paths.items():
+                        connection.execute(
+                            "UPDATE summary_media SET relative_path = ? WHERE media_id = ?",
+                            (relative_path, media_id),
+                        )
+                    connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
+            finally:
+                connection.execute("PRAGMA foreign_keys = ON")
+        finally:
+            if migration_root.exists():
+                shutil.rmtree(migration_root)
+
+        for row in media_rows:
+            old_path = self.asset_directory(row["asset_id"]) / row["relative_path"]
+            old_path.unlink(missing_ok=True)
 
     def _migrate_asset_storage(self) -> None:
         connection = self._db()
@@ -729,25 +881,40 @@ class MediaLibrary:
             cursor = self._db().execute("DELETE FROM markers WHERE marker_id = ? AND asset_id = ?", (marker_id, asset_id))
         return cursor.rowcount > 0
 
-    def create_summary_document(self, document: SummaryDocument) -> SummaryDocument:
-        self._validate_identifier(document.document_id, "document")
-        self._validate_asset_id(document.asset_id)
-        if document.parent_document_id is not None:
+    def create_summary_documents(
+        self, documents: list[SummaryDocument]
+    ) -> list[SummaryDocument]:
+        if not documents:
+            return []
+        known_documents = {
+            document.document_id: document
+            for asset_id in {document.asset_id for document in documents}
+            for document in self.load_summary_documents(asset_id)
+        }
+        known_documents.update(
+            {document.document_id: document for document in documents}
+        )
+        for document in documents:
+            self._validate_identifier(document.document_id, "document")
+            self._validate_asset_id(document.asset_id)
+            if document.parent_document_id is None:
+                continue
             self._validate_identifier(document.parent_document_id, "document")
-            parent = self.load_summary_document(document.parent_document_id)
+            parent = known_documents.get(document.parent_document_id)
             if parent is None or parent.asset_id != document.asset_id:
                 raise ValueError("子文档的主文档不存在")
             if parent.parent_document_id is not None:
                 raise ValueError("总结文档只允许一级子文档")
-        values = document.model_dump(mode="json")
-        columns = tuple(values)
         with self._lock, self._db():
-            self._db().execute(
-                f"INSERT INTO summary_documents ({', '.join(columns)}) "
-                f"VALUES ({', '.join('?' for _ in columns)})",
-                tuple(values[column] for column in columns),
-            )
-        return document.model_copy(deep=True)
+            for document in documents:
+                values = document.model_dump(mode="json", exclude={"markdown"})
+                columns = tuple(values)
+                self._db().execute(
+                    f"INSERT INTO summary_documents ({', '.join(columns)}) "
+                    f"VALUES ({', '.join('?' for _ in columns)})",
+                    tuple(values[column] for column in columns),
+                )
+        return [document.model_copy(deep=True) for document in documents]
 
     def load_summary_document(self, document_id: str) -> SummaryDocument | None:
         self._validate_identifier(document_id, "document")
@@ -755,7 +922,7 @@ class MediaLibrary:
             "SELECT * FROM summary_documents WHERE document_id = ?",
             (document_id,),
         ).fetchone()
-        return SummaryDocument.model_validate(dict(row)) if row else None
+        return self._summary_document_from_row(row) if row else None
 
     def load_summary_documents(self, asset_id: str) -> list[SummaryDocument]:
         self._validate_asset_id(asset_id)
@@ -764,7 +931,7 @@ class MediaLibrary:
             "ORDER BY parent_document_id IS NOT NULL, position, created_at",
             (asset_id,),
         ).fetchall()
-        return [SummaryDocument.model_validate(dict(row)) for row in rows]
+        return [self._summary_document_from_row(row) for row in rows]
 
     def update_summary_document(
         self,
@@ -772,7 +939,8 @@ class MediaLibrary:
         expected_revision: int,
         *,
         title: str | None = None,
-        markdown: str | None = None,
+        relative_path: str | None = None,
+        content_digest: str | None = None,
         position: int | None = None,
     ) -> SummaryDocument | None:
         self._validate_identifier(document_id, "document")
@@ -780,7 +948,8 @@ class MediaLibrary:
         values: list[object] = []
         for field_name, value in (
             ("title", title),
-            ("markdown", markdown),
+            ("relative_path", relative_path),
+            ("content_digest", content_digest),
             ("position", position),
         ):
             if value is not None:
@@ -796,6 +965,36 @@ class MediaLibrary:
                 tuple(values),
             )
         return self.load_summary_document(document_id) if cursor.rowcount else None
+
+    def refresh_summary_document_index(
+        self,
+        document: SummaryDocument,
+        *,
+        increment_revision: bool = False,
+    ) -> SummaryDocument:
+        values: list[object] = [
+            document.parent_document_id,
+            document.title,
+            document.relative_path,
+            document.content_digest,
+            document.position,
+            document.updated_at.isoformat(),
+        ]
+        revision_assignment = "revision + 1" if increment_revision else "?"
+        if not increment_revision:
+            values.append(document.revision)
+        values.append(document.document_id)
+        with self._lock, self._db():
+            self._db().execute(
+                "UPDATE summary_documents SET parent_document_id = ?, title = ?, "
+                "relative_path = ?, content_digest = ?, position = ?, updated_at = ?, "
+                f"revision = {revision_assignment} WHERE document_id = ?",
+                tuple(values),
+            )
+        refreshed = self.load_summary_document(document.document_id)
+        if refreshed is None:
+            raise ValueError("总结文档不存在")
+        return refreshed
 
     def reorder_summary_documents(self, parent_document_id: str, document_ids: list[str]) -> None:
         parent = self.load_summary_document(parent_document_id)
@@ -959,6 +1158,37 @@ class MediaLibrary:
         ).fetchall()
         return [SummaryMediaArtifact.model_validate(dict(row)) for row in rows]
 
+    def replace_summary_media_index(
+        self,
+        asset_id: str,
+        media: list[SummaryMediaArtifact],
+    ) -> None:
+        if any(artifact.asset_id != asset_id for artifact in media):
+            raise ValueError("总结媒体不属于当前素材")
+        with self._lock, self._db():
+            self._db().execute("DELETE FROM summary_media WHERE asset_id = ?", (asset_id,))
+            for artifact in media:
+                self._validate_identifier(artifact.media_id, "media")
+                values = artifact.model_dump(mode="json")
+                columns = tuple(values)
+                self._db().execute(
+                    f"INSERT INTO summary_media ({', '.join(columns)}) "
+                    f"VALUES ({', '.join('?' for _ in columns)})",
+                    tuple(values[column] for column in columns),
+                )
+
+    def _summary_document_from_row(self, row: sqlite3.Row) -> SummaryDocument:
+        values = dict(row)
+        relative_path = values["relative_path"]
+        try:
+            markdown = read_markdown(
+                self.asset_directory(values["asset_id"]),
+                relative_path,
+            )
+        except (OSError, UnicodeError, ValueError) as error:
+            raise InvalidLibraryError("总结 Markdown 文件缺失或路径无效") from error
+        return SummaryDocument.model_validate({**values, "markdown": markdown})
+
     def _db(self) -> sqlite3.Connection:
         if self._connection is None:
             raise RuntimeError("资料库未打开")
@@ -1076,7 +1306,8 @@ CREATE INDEX agent_jobs_asset_created_index ON agent_jobs(asset_id, created_at D
 CREATE TABLE summary_documents (
     document_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     parent_document_id TEXT REFERENCES summary_documents(document_id) ON DELETE CASCADE,
-    title TEXT NOT NULL, markdown TEXT NOT NULL, position INTEGER NOT NULL, revision INTEGER NOT NULL,
+    title TEXT NOT NULL, relative_path TEXT NOT NULL, content_digest TEXT NOT NULL,
+    position INTEGER NOT NULL, revision INTEGER NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX summary_documents_root_asset_index
@@ -1169,3 +1400,22 @@ CREATE TABLE IF NOT EXISTS summary_media (
     start_seconds REAL NOT NULL, end_seconds REAL, created_at TEXT NOT NULL
 );
 """
+
+
+_SUMMARY_DOCUMENTS_V7_TABLE = """
+CREATE TABLE summary_documents_v7 (
+    document_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    parent_document_id TEXT REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    title TEXT NOT NULL, relative_path TEXT NOT NULL, content_digest TEXT NOT NULL,
+    position INTEGER NOT NULL, revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+)
+"""
+
+
+_SUMMARY_DOCUMENT_INDEXES = (
+    "CREATE UNIQUE INDEX summary_documents_root_asset_index "
+    "ON summary_documents(asset_id) WHERE parent_document_id IS NULL",
+    "CREATE INDEX summary_documents_parent_position_index "
+    "ON summary_documents(parent_document_id, position)",
+)

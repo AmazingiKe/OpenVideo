@@ -1,6 +1,9 @@
 import json
+import shutil
 import sqlite3
 from pathlib import Path
+
+import pytest
 
 from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.library import MediaLibrary
@@ -137,6 +140,104 @@ def test_migrates_transcript_metadata_from_database_version_five(tmp_path: Path)
     assert transcript.segments[0].emotion is None
     assert transcript.segments[0].audio_events == []
     migrated.close()
+
+
+def test_migrates_summary_bodies_and_media_from_database_version_six(
+    tmp_path: Path,
+    monkeypatch,
+):
+    document_id = "document-01890f4c7a2b7cc298c4dc0c0c07398f"
+    media_id = "media-01890f4c7a2b7cc298c4dc0c0c07398f"
+    created_at = "2026-01-01T00:00:00+00:00"
+    library = MediaLibrary.initialize_directory(tmp_path)
+    library.save(
+        MediaAsset(
+            asset_id=ASSET_ID,
+            source_url="https://example.com/video",
+            source_platform=SourcePlatform.YOUTUBE,
+        )
+    )
+    library.close()
+    asset_directory = tmp_path / "assets" / ASSET_ID
+    old_media_path = asset_directory / "artifacts" / "summaries" / f"{media_id}.jpg"
+    old_media_path.parent.mkdir(parents=True)
+    old_media_path.write_bytes(b"jpeg-data")
+
+    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("DROP TABLE summary_documents")
+    connection.execute(
+        """
+        CREATE TABLE summary_documents (
+            document_id TEXT PRIMARY KEY,
+            asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+            parent_document_id TEXT REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            markdown TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            revision INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO summary_documents VALUES (?, ?, NULL, ?, ?, 0, 3, ?, ?)",
+        (document_id, ASSET_ID, "旧总结", "# 旧正文\n", created_at, created_at),
+    )
+    connection.execute(
+        "INSERT INTO summary_media VALUES (?, ?, ?, 'image', ?, ?, 1, NULL, ?)",
+        (
+            media_id,
+            ASSET_ID,
+            document_id,
+            f"artifacts/summaries/{media_id}.jpg",
+            "画面",
+            created_at,
+        ),
+    )
+    connection.execute("PRAGMA user_version = 6")
+    connection.commit()
+    connection.close()
+
+    original_copy = shutil.copy2
+
+    def interrupt_copy(*_args, **_kwargs):
+        raise OSError("模拟迁移中断")
+
+    monkeypatch.setattr("openvideo.core.library.shutil.copy2", interrupt_copy)
+    with pytest.raises(OSError, match="模拟迁移中断"):
+        MediaLibrary.open(tmp_path)
+    assert old_media_path.is_file()
+    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
+    interrupted_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(summary_documents)")
+    }
+    connection.close()
+    assert "markdown" in interrupted_columns
+
+    monkeypatch.setattr("openvideo.core.library.shutil.copy2", original_copy)
+    migrated = MediaLibrary.open(tmp_path)
+    document = migrated.load_summary_document(document_id)
+    media = migrated.load_summary_media(ASSET_ID)[0]
+    migrated.close()
+    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(summary_documents)")
+    }
+    connection.close()
+
+    assert document is not None
+    assert document.markdown == "# 旧正文\n"
+    assert document.revision == 3
+    assert document.relative_path == "index.md"
+    assert "markdown" not in columns
+    assert media.relative_path == f"summary/assets/{media_id}.jpg"
+    assert (asset_directory / media.relative_path).read_bytes() == b"jpeg-data"
+    assert not old_media_path.exists()
+    assert (asset_directory / "summary" / "manifest.json").is_file()
+    assert (tmp_path / "openvideo.sqlite3.v6.backup").is_file()
 
 
 def test_marks_interrupted_asset_as_failed(tmp_path: Path):

@@ -84,6 +84,7 @@ from openvideo.core.summary_models import (
     SummaryDocumentReorder,
     SummaryDocumentUpdate,
     SummaryEditProposal,
+    SummaryExportResult,
     SummaryGenerationRequest,
     SummaryMediaArtifact,
     SummaryMediaCreate,
@@ -248,7 +249,13 @@ def create_app(
     directory_picker_lock = asyncio.Lock()
 
     async def install_library(opened_library: MediaLibrary) -> None:
-        nonlocal library, manager, analysis_manager, agent_manager, summary_manager, page_settings_store
+        nonlocal \
+            library, \
+            manager, \
+            analysis_manager, \
+            agent_manager, \
+            summary_manager, \
+            page_settings_store
         library = opened_library
         manager = DownloadManager(opened_library, resolved_settings)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
@@ -295,9 +302,17 @@ def create_app(
         if library is None and resolved_settings.library_path:
             try:
                 if (resolved_settings.library_path / "library.json").is_file():
-                    await install_library(MediaLibrary.open(resolved_settings.library_path))
-                elif settings is not None and not any(resolved_settings.library_path.iterdir()):
-                    await install_library(MediaLibrary.initialize_directory(resolved_settings.library_path))
+                    await install_library(
+                        MediaLibrary.open(resolved_settings.library_path)
+                    )
+                elif settings is not None and not any(
+                    resolved_settings.library_path.iterdir()
+                ):
+                    await install_library(
+                        MediaLibrary.initialize_directory(
+                            resolved_settings.library_path
+                        )
+                    )
             except (LibraryError, OSError):
                 pass
         try:
@@ -339,7 +354,9 @@ def create_app(
             ffmpeg=tools.ffmpeg_available,
             ffprobe=tools.ffprobe_available,
         )
-        service_status = "ready" if dependencies.yt_dlp and dependencies.ffmpeg else "degraded"
+        service_status = (
+            "ready" if dependencies.yt_dlp and dependencies.ffmpeg else "degraded"
+        )
         return HealthResponse(status=service_status, dependencies=dependencies)
 
     @app.post("/api/downloads/probe", response_model=ProbeResponse)
@@ -357,7 +374,9 @@ def create_app(
                 match.source_video_id,
             )
         except DownloadFailure as error:
-            raise HTTPException(status_code=502, detail=str(error) or "无法读取视频信息") from error
+            raise HTTPException(
+                status_code=502, detail=str(error) or "无法读取视频信息"
+            ) from error
         return _probe_response(match.platform, probe)
 
     @app.post(
@@ -438,7 +457,9 @@ def create_app(
     async def http_error(_: Request, error: HTTPException):
         if isinstance(error.detail, dict) and "code" in error.detail:
             return JSONResponse(status_code=error.status_code, content=error.detail)
-        return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
+        return JSONResponse(
+            status_code=error.status_code, content={"detail": error.detail}
+        )
 
     @app.middleware("http")
     async def require_open_library(request: Request, call_next):
@@ -476,13 +497,21 @@ def create_app(
     @app.post("/api/library/create", response_model=LibraryDescription, status_code=201)
     async def create_library(request: LibraryCreateRequest) -> LibraryDescription:
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
-            _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法切换")
-        _ensure_switch_allowed(manager, analysis_manager, agent_manager, summary_manager)
+            _library_error(
+                409, "library_managed_by_environment", "资料库由环境变量固定，无法切换"
+            )
+        _ensure_switch_allowed(
+            manager, analysis_manager, agent_manager, summary_manager
+        )
         requested_path = _absolute_library_path(request.path)
         try:
             opened = MediaLibrary.initialize_directory(requested_path)
         except (LibraryError, OSError) as error:
-            error_code = error.code if isinstance(error, LibraryError) else "library_create_failed"
+            error_code = (
+                error.code
+                if isinstance(error, LibraryError)
+                else "library_create_failed"
+            )
             _library_error(422, error_code, str(error))
         if agent_manager:
             await agent_manager.close()
@@ -495,15 +524,21 @@ def create_app(
     @app.post("/api/library/open", response_model=LibraryDescription)
     async def open_library(request: LibraryOpenRequest) -> LibraryDescription:
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
-            _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法切换")
+            _library_error(
+                409, "library_managed_by_environment", "资料库由环境变量固定，无法切换"
+            )
         target = _absolute_library_path(request.path)
         if library and target == library.library_path:
             return library.description
-        _ensure_switch_allowed(manager, analysis_manager, agent_manager, summary_manager)
+        _ensure_switch_allowed(
+            manager, analysis_manager, agent_manager, summary_manager
+        )
         try:
             opened = MediaLibrary.open(target)
         except (LibraryError, OSError) as error:
-            error_code = error.code if isinstance(error, LibraryError) else "library_open_failed"
+            error_code = (
+                error.code if isinstance(error, LibraryError) else "library_open_failed"
+            )
             _library_error(422, error_code, str(error))
         if agent_manager:
             await agent_manager.close()
@@ -517,8 +552,12 @@ def create_app(
     async def close_library() -> Response:
         nonlocal library, manager, analysis_manager, agent_manager, page_settings_store
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
-            _library_error(409, "library_managed_by_environment", "资料库由环境变量固定，无法关闭")
-        _ensure_switch_allowed(manager, analysis_manager, agent_manager, summary_manager)
+            _library_error(
+                409, "library_managed_by_environment", "资料库由环境变量固定，无法关闭"
+            )
+        _ensure_switch_allowed(
+            manager, analysis_manager, agent_manager, summary_manager
+        )
         if agent_manager:
             await agent_manager.close()
         if library:
@@ -687,9 +726,13 @@ def create_app(
                 request.force,
             )
         except ValidationError as error:
-            message = error.errors()[0].get("ctx", {}).get(
-                "error",
-                error.errors()[0]["msg"],
+            message = (
+                error.errors()[0]
+                .get("ctx", {})
+                .get(
+                    "error",
+                    error.errors()[0]["msg"],
+                )
             )
             raise HTTPException(status_code=422, detail=str(message)) from error
         except AnalysisPrerequisiteError as error:
@@ -921,7 +964,9 @@ def create_app(
         request: SummaryDocumentReorder,
     ) -> list[SummaryDocument]:
         try:
-            return summary_manager.reorder_children(root_document_id, request.document_ids)
+            return summary_manager.reorder_children(
+                root_document_id, request.document_ids
+            )
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except ValueError as error:
@@ -998,7 +1043,9 @@ def create_app(
                     if run.proposal_id:
                         proposal = library.load_summary_proposal(run.proposal_id)
                         if proposal:
-                            yield _sse_event("proposal", proposal.model_dump(mode="json"))
+                            yield _sse_event(
+                                "proposal", proposal.model_dump(mode="json")
+                            )
                     yield _sse_event("complete", {"run_id": run.run_id})
                     break
                 if run.stage.value == "failed":
@@ -1071,19 +1118,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="总结媒体不存在")
         return FileResponse(media_path)
 
-    @app.get("/api/media/assets/{asset_id}/summary-export")
-    def export_summary(asset_id: str) -> Response:
+    @app.post(
+        "/api/media/assets/{asset_id}/summary-exports",
+        response_model=SummaryExportResult,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def export_summary(asset_id: str) -> SummaryExportResult:
         try:
-            file_name, content = summary_manager.export(asset_id)
+            return summary_manager.export(asset_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except SummaryError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        return Response(
-            content=content,
-            media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-        )
 
     @app.get("/api/media/assets/{asset_id}/frames/{frame_path:path}")
     def get_frame(asset_id: str, frame_path: str) -> FileResponse:
@@ -1117,7 +1163,10 @@ def create_app(
             except InvalidByteRange:
                 return Response(
                     status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
-                    headers={**common_headers, "Content-Range": f"bytes */{total_size}"},
+                    headers={
+                        **common_headers,
+                        "Content-Range": f"bytes */{total_size}",
+                    },
                 )
             headers = {
                 **common_headers,
@@ -1125,7 +1174,9 @@ def create_app(
                 "Content-Length": str(byte_range.length),
             }
             if request.method == "HEAD":
-                return Response(status_code=206, media_type=VIDEO_MEDIA_TYPE, headers=headers)
+                return Response(
+                    status_code=206, media_type=VIDEO_MEDIA_TYPE, headers=headers
+                )
             return StreamingResponse(
                 _read_file_range(media_file, byte_range.start, byte_range.length),
                 status_code=206,
@@ -1134,7 +1185,9 @@ def create_app(
             )
         headers = {**common_headers, "Content-Length": str(total_size)}
         if request.method == "HEAD":
-            return Response(status_code=200, media_type=VIDEO_MEDIA_TYPE, headers=headers)
+            return Response(
+                status_code=200, media_type=VIDEO_MEDIA_TYPE, headers=headers
+            )
         return StreamingResponse(
             _read_file_range(media_file, 0, total_size),
             status_code=200,
@@ -1182,7 +1235,9 @@ def _probe_response(platform: SourcePlatform, probe: PlaylistProbe) -> ProbeResp
 
 
 def _library_error(status_code: int, code: str, message: str):
-    raise HTTPException(status_code=status_code, detail={"code": code, "message": message})
+    raise HTTPException(
+        status_code=status_code, detail={"code": code, "message": message}
+    )
 
 
 def _absolute_library_path(raw_path: str) -> Path:
@@ -1205,18 +1260,21 @@ def _ensure_switch_allowed(
     agent_manager: AgentManager | None,
     summary_manager: SummaryManager | None,
 ) -> None:
-    if (manager and manager.has_active_jobs()) or (
-        analysis_manager and analysis_manager.has_active_jobs()
-    ) or (
-        agent_manager and agent_manager.has_active_jobs()
-    ) or (
-        summary_manager and summary_manager.has_active_jobs()
+    if (
+        (manager and manager.has_active_jobs())
+        or (analysis_manager and analysis_manager.has_active_jobs())
+        or (agent_manager and agent_manager.has_active_jobs())
+        or (summary_manager and summary_manager.has_active_jobs())
     ):
-        _library_error(409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库")
+        _library_error(
+            409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库"
+        )
 
 
 def _preferences_response(settings: Settings) -> PreferencesResponse:
-    values = settings.model_dump(exclude={"library_path", "cors_origins", "managed_fields"})
+    values = settings.model_dump(
+        exclude={"library_path", "cors_origins", "managed_fields"}
+    )
     return PreferencesResponse(
         **values,
         managed_fields=sorted(settings.managed_fields),

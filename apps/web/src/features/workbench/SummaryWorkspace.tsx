@@ -92,6 +92,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   ApiError,
+  create_summary_export,
   create_summary_agent_run,
   create_summary_child,
   create_summary_media,
@@ -103,7 +104,6 @@ import {
   reorder_summary_children,
   resolve_summary_proposal,
   stream_summary_agent_run,
-  summary_export_url,
   update_summary_document,
 } from "@/shared/api";
 import { error_message, is_abort_error } from "@/shared/errors";
@@ -174,7 +174,14 @@ export function SummaryWorkspace({
   const [media_pending_id, set_media_pending_id] = useState<string | null>(
     null,
   );
+  const [export_pending, set_export_pending] = useState(false);
+  const [export_relative_path, set_export_relative_path] = useState<
+    string | null
+  >(null);
   const compact_layout = use_compact_summary_layout();
+  const active_asset_id_ref = useRef<string | null>(
+    selected_asset?.asset_id ?? null,
+  );
   const active_document_id_ref = useRef<string | null>(null);
   const draft_markdown_ref = useRef("");
   const draft_title_ref = useRef("");
@@ -235,6 +242,9 @@ export function SummaryWorkspace({
   }, [on_error]);
 
   useEffect(() => {
+    active_asset_id_ref.current = selected_asset?.asset_id ?? null;
+    set_export_relative_path(null);
+    set_export_pending(false);
     if (!selected_asset) {
       set_documents([]);
       set_selected_document_id(null);
@@ -324,6 +334,25 @@ export function SummaryWorkspace({
       on_error?.(error_message(error));
     } finally {
       set_is_generating(false);
+    }
+  }
+
+  async function export_summary() {
+    if (!selected_asset || export_pending) return;
+    const asset_id = selected_asset.asset_id;
+    set_export_pending(true);
+    on_error?.(null);
+    try {
+      const result = await create_summary_export(asset_id);
+      if (active_asset_id_ref.current === asset_id) {
+        set_export_relative_path(result.relative_path);
+      }
+    } catch (error) {
+      on_error?.(error_message(error));
+    } finally {
+      if (active_asset_id_ref.current === asset_id) {
+        set_export_pending(false);
+      }
     }
   }
 
@@ -635,7 +664,9 @@ export function SummaryWorkspace({
           </>
         ) : null
       }
-      export_url={summary_export_url(selected_asset.asset_id)}
+      export_pending={export_pending}
+      export_relative_path={export_relative_path}
+      on_export={() => void export_summary()}
     />
   );
 
@@ -950,7 +981,9 @@ function DocumentEditor({
   on_selection_change,
   on_retry,
   compact_actions,
-  export_url,
+  export_pending,
+  export_relative_path,
+  on_export,
 }: {
   document: SummaryDocument;
   title: string;
@@ -963,7 +996,9 @@ function DocumentEditor({
   on_selection_change: (selection: MarkdownSelection | null) => void;
   on_retry: () => void;
   compact_actions: ReactNode;
-  export_url: string;
+  export_pending: boolean;
+  export_relative_path: string | null;
+  on_export: () => void;
 }) {
   return (
     <Tabs
@@ -985,11 +1020,29 @@ function DocumentEditor({
           <TabsTrigger value="visual">所见即所得</TabsTrigger>
           <TabsTrigger value="source">源码</TabsTrigger>
         </TabsList>
-        <Button asChild variant="outline" size="sm">
-          <a href={export_url} download>
-            <Download data-icon="inline-start" /> 导出 ZIP
-          </a>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={export_pending}
+          onClick={on_export}
+        >
+          {export_pending ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <Download data-icon="inline-start" />
+          )}
+          {export_pending ? "导出中" : "导出 ZIP"}
         </Button>
+        {export_relative_path ? (
+          <span
+            className="max-w-72 truncate text-xs text-muted-foreground"
+            role="status"
+            title={export_relative_path}
+          >
+            已保存：{export_relative_path}
+          </span>
+        ) : null}
       </header>
       <TabsContent value="visual" className="min-h-0">
         <MarkdownEditor

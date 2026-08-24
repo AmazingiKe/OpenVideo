@@ -45,6 +45,8 @@ const DOCUMENTS: SummaryDocument[] = [
     title: "镜头语言课程笔记",
     markdown:
       "# 镜头语言课程笔记\n\n## 核心结论\n\n镜头不仅记录动作，也通过景别与运动组织观众注意力。\n\n- 全景建立空间关系\n- 特写强调人物反应\n\n详见 [案例拆解](docs/document-0198dbf312347abc8123456789abcdef.md)。",
+    relative_path: "index.md",
+    content_digest: "storybook-root-digest",
     position: 0,
     revision: 3,
     created_at: CREATED_AT,
@@ -57,6 +59,8 @@ const DOCUMENTS: SummaryDocument[] = [
     title: "案例拆解",
     markdown:
       "# 案例拆解\n\n00:42 的推轨镜头逐步缩短观众与人物之间的心理距离。",
+    relative_path: `docs/${CHILD_DOCUMENT_ID}.md`,
+    content_digest: "storybook-child-digest",
     position: 0,
     revision: 1,
     created_at: CREATED_AT,
@@ -146,6 +150,19 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
   }
   if (url.includes("/summary-conversation")) {
     return Promise.resolve(json_response(CONVERSATION));
+  }
+  if (url.includes("/summary-exports")) {
+    return Promise.resolve(
+      json_response({
+        export_id: "export-0198dbfa12347abc8123456789abcdef",
+        relative_path:
+          "summary_output/summary-20260824-143015-382-export-0198dbfa12347abc8123456789abcdef.zip",
+        file_name:
+          "summary-20260824-143015-382-export-0198dbfa12347abc8123456789abcdef.zip",
+        size_bytes: 4096,
+        exported_at: "2026-08-24T14:30:15.382+08:00",
+      }),
+    );
   }
   if (url.includes("/summary-documents")) {
     return Promise.resolve(json_response(DOCUMENTS));

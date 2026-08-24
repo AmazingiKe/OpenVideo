@@ -1,5 +1,6 @@
-import io
 import json
+import re
+import sqlite3
 import zipfile
 from pathlib import Path
 
@@ -8,7 +9,12 @@ from fastapi.testclient import TestClient
 from openvideo.core.ai_models import TEXT_INPUT_MODALITY, AiModelConfiguration
 from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.library import MediaLibrary
-from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
+from openvideo.core.models import (
+    MediaAsset,
+    MediaAssetStatus,
+    MediaSegment,
+    SourcePlatform,
+)
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
@@ -99,7 +105,9 @@ def test_summary_generation_enforces_one_root_and_one_child_level(tmp_path: Path
     with create_client(tmp_path) as client:
         documents = generate_documents(client, children=True)
         root = next(item for item in documents if item["parent_document_id"] is None)
-        child = next(item for item in documents if item["parent_document_id"] is not None)
+        child = next(
+            item for item in documents if item["parent_document_id"] is not None
+        )
         duplicate = client.post(
             f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
             json={},
@@ -120,9 +128,7 @@ def test_summary_generation_uses_selected_ai_model(tmp_path: Path, monkeypatch):
     response_payload = {
         "title": "AI 课程总结",
         "markdown": "# AI 课程总结\n\n模型整理的核心结论。",
-        "subdocuments": [
-            {"title": "第一章", "markdown": "# 第一章\n\n章节内容。\n"}
-        ],
+        "subdocuments": [{"title": "第一章", "markdown": "# 第一章\n\n章节内容。\n"}],
     }
     monkeypatch.setattr(
         "openvideo.summary_manager.complete_text",
@@ -203,12 +209,8 @@ def test_summary_agent_stream_persists_proposal_and_requires_acceptance(
                 "selection": None,
             },
         )
-        events = client.get(
-            f"/api/summary-agent-runs/{run.json()['run_id']}/events"
-        )
-        state = client.get(
-            f"/api/media/assets/{ASSET_ID}/summary-conversation"
-        ).json()
+        events = client.get(f"/api/summary-agent-runs/{run.json()['run_id']}/events")
+        state = client.get(f"/api/media/assets/{ASSET_ID}/summary-conversation").json()
         proposal = state["proposals"][0]
         before_accept = client.get(
             f"/api/media/assets/{ASSET_ID}/summary-documents"
@@ -232,17 +234,76 @@ def test_summary_project_exports_stable_relative_paths(tmp_path: Path):
     with create_client(tmp_path) as client:
         documents = generate_documents(client, children=True)
         root = next(item for item in documents if item["parent_document_id"] is None)
-        child = next(item for item in documents if item["parent_document_id"] is not None)
-        response = client.get(f"/api/media/assets/{ASSET_ID}/summary-export")
+        child = next(
+            item for item in documents if item["parent_document_id"] is not None
+        )
+        first = client.post(f"/api/media/assets/{ASSET_ID}/summary-exports")
+        second = client.post(f"/api/media/assets/{ASSET_ID}/summary-exports")
 
-    assert response.status_code == 200
-    assert f'filename="{root["document_id"]}.zip"' in response.headers["content-disposition"]
-    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["export_id"] != second.json()["export_id"]
+    file_name = first.json()["file_name"]
+    assert re.fullmatch(
+        r"summary-\d{8}-\d{6}-\d{3}-export-[0-9a-f]{32}\.zip",
+        file_name,
+    )
+    export_path = tmp_path / "assets" / ASSET_ID / first.json()["relative_path"]
+    assert export_path.is_file()
+    assert len(list(export_path.parent.glob("*.zip"))) == 2
+    with zipfile.ZipFile(export_path) as archive:
         names = set(archive.namelist())
         assert names == {"index.md", f"docs/{child['document_id']}.md", "manifest.json"}
         assert f"docs/{child['document_id']}.md" in archive.read("index.md").decode()
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["root_document_id"] == root["document_id"]
+        assert re.search(r"[+-]\d{2}:\d{2}$", manifest["exported_at"])
+
+
+def test_summary_files_are_source_of_truth_and_stale_save_conflicts(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        document = generate_documents(client)[0]
+        summary_directory = tmp_path / "assets" / ASSET_ID / "summary"
+        markdown_path = summary_directory / "index.md"
+        manifest_path = summary_directory / "manifest.json"
+        before_markdown_mtime = markdown_path.stat().st_mtime_ns
+        before_manifest_mtime = manifest_path.stat().st_mtime_ns
+
+        loaded = client.get(f"/api/media/assets/{ASSET_ID}/summary-documents")
+        assert loaded.status_code == 200
+        assert markdown_path.stat().st_mtime_ns == before_markdown_mtime
+        assert manifest_path.stat().st_mtime_ns == before_manifest_mtime
+
+        markdown_path.write_text("# 外部修改\n", encoding="utf-8")
+        refreshed = client.get(
+            f"/api/media/assets/{ASSET_ID}/summary-documents"
+        ).json()[0]
+        conflict = client.patch(
+            f"/api/summary-documents/{document['document_id']}",
+            json={"expected_revision": document["revision"], "markdown": "# 旧草稿\n"},
+        )
+
+    assert refreshed["markdown"] == "# 外部修改\n"
+    assert refreshed["revision"] == document["revision"] + 1
+    assert conflict.status_code == 409
+    assert markdown_path.read_text(encoding="utf-8") == "# 外部修改\n"
+
+
+def test_summary_manifest_contains_paths_and_no_markdown_body(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        documents = generate_documents(client, children=True)
+
+    summary_directory = tmp_path / "assets" / ASSET_ID / "summary"
+    manifest = json.loads(
+        (summary_directory / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["format_version"] == 1
+    assert "markdown" not in json.dumps(manifest)
+    root = next(item for item in documents if item["parent_document_id"] is None)
+    child = next(item for item in documents if item["parent_document_id"] is not None)
+    assert root["relative_path"] == "index.md"
+    assert child["relative_path"] == f"docs/{child['document_id']}.md"
+    assert (summary_directory / child["relative_path"]).is_file()
 
 
 def test_gif_default_range_must_fit_video_duration(tmp_path: Path):
@@ -262,3 +323,53 @@ def test_gif_default_range_must_fit_video_duration(tmp_path: Path):
 
     assert response.status_code == 422
     assert response.json()["detail"] == "媒体时间范围超出视频范围"
+
+
+def test_child_media_uses_summary_assets_and_parent_relative_link(
+    tmp_path: Path,
+    monkeypatch,
+):
+    def write_media(_playback, output_path, *_args, **_kwargs):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"image")
+
+    monkeypatch.setattr("openvideo.summary_manager.generate_summary_media", write_media)
+    with create_client(tmp_path) as client:
+        documents = generate_documents(client, children=True)
+        child = next(
+            item for item in documents if item["parent_document_id"] is not None
+        )
+        response = client.post(
+            "/api/summary-media",
+            json={
+                "document_id": child["document_id"],
+                "expected_revision": child["revision"],
+                "media_type": "image",
+                "start_seconds": 1,
+                "end_seconds": None,
+                "caption": "关键画面",
+            },
+        )
+
+    assert response.status_code == 201
+    payload = response.json()
+    artifact = payload["artifact"]
+    assert artifact["relative_path"].startswith("summary/assets/media-")
+    assert f"../assets/{artifact['media_id']}.jpg" in payload["document"]["markdown"]
+    assert (tmp_path / "assets" / ASSET_ID / artifact["relative_path"]).is_file()
+
+    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
+    connection.execute("DELETE FROM summary_media")
+    connection.commit()
+    connection.close()
+    with TestClient(create_app(Settings(library_path=tmp_path))) as reopened:
+        assert (
+            reopened.get(f"/api/media/assets/{ASSET_ID}/summary-documents").status_code
+            == 200
+        )
+    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
+    restored_count = connection.execute(
+        "SELECT COUNT(*) FROM summary_media"
+    ).fetchone()[0]
+    connection.close()
+    assert restored_count == 1

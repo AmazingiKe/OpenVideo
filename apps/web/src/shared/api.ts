@@ -25,6 +25,7 @@ import type {
   SummaryConversationState,
   SummaryDetail,
   SummaryDocument,
+  SummaryExportResult,
   SummaryEditProposal,
   SummaryMediaArtifact,
   SummaryMediaSuggestion,
@@ -659,6 +660,12 @@ export function create_summary_media(
   });
 }
 
-export function summary_export_url(asset_id: string): string {
-  return `${api_base_url}/api/media/assets/${encodeURIComponent(asset_id)}/summary-export`;
+export function create_summary_export(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryExportResult> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-exports`,
+    { method: "POST", signal },
+  );
 }

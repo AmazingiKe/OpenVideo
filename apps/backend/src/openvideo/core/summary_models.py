@@ -18,6 +18,8 @@ class SummaryDocument(BaseModel):
     parent_document_id: str | None = None
     title: str = Field(min_length=1, max_length=200)
     markdown: str = ""
+    relative_path: str = ""
+    content_digest: str = ""
     position: int = Field(default=0, ge=0)
     revision: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -173,3 +175,11 @@ class SummaryMediaArtifact(BaseModel):
     start_seconds: float
     end_seconds: float | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SummaryExportResult(BaseModel):
+    export_id: str
+    relative_path: str
+    file_name: str
+    size_bytes: int = Field(ge=0)
+    exported_at: datetime

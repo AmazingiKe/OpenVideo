@@ -333,10 +333,19 @@ export type SummaryDocument = {
   parent_document_id: string | null;
   title: string;
   markdown: string;
+  relative_path: string;
+  content_digest: string;
   position: number;
   revision: number;
   created_at: string;
   updated_at: string;
+};
+export type SummaryExportResult = {
+  export_id: string;
+  relative_path: string;
+  file_name: string;
+  size_bytes: number;
+  exported_at: string;
 };
 export type SummaryMessage = {
   message_id: string;

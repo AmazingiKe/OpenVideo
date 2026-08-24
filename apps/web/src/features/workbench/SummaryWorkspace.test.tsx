@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  create_summary_export,
   generate_summary_documents,
   get_summary_conversation,
   list_ai_models,
@@ -33,6 +34,7 @@ vi.mock("@/shared/api", async (import_original) => {
     ...actual,
     create_summary_agent_run: vi.fn(),
     create_summary_child: vi.fn(),
+    create_summary_export: vi.fn(),
     create_summary_media: vi.fn(),
     delete_summary_document: vi.fn(),
     generate_summary_documents: vi.fn(),
@@ -42,7 +44,6 @@ vi.mock("@/shared/api", async (import_original) => {
     reorder_summary_children: vi.fn(),
     resolve_summary_proposal: vi.fn(),
     stream_summary_agent_run: vi.fn(),
-    summary_export_url: vi.fn(() => "/export.zip"),
     update_summary_document: vi.fn(),
   };
 });
@@ -83,6 +84,8 @@ const DOCUMENT: SummaryDocument = {
   parent_document_id: null,
   title: "课程总结",
   markdown: "# 原内容\n",
+  relative_path: "index.md",
+  content_digest: "digest",
   position: 0,
   revision: 1,
   created_at: "2026-01-01T00:00:00Z",
@@ -170,5 +173,34 @@ describe("SummaryWorkspace", () => {
       { timeout: 2_000 },
     );
     expect(await screen.findByText("已保存")).toBeInTheDocument();
+  });
+
+  it("saves exports in the asset directory without browser download", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+    vi.mocked(create_summary_export).mockResolvedValue({
+      export_id: "export-01890f4c7a2b7cc298c4dc0c0c07398f",
+      relative_path: "summary_output/summary-test.zip",
+      file_name: "summary-test.zip",
+      size_bytes: 128,
+      exported_at: "2026-01-01T00:00:00+08:00",
+    });
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "导出 ZIP" }));
+
+    expect(
+      await screen.findByText(/summary_output\/summary-test\.zip/),
+    ).toHaveTextContent("summary_output/summary-test.zip");
+    expect(create_summary_export).toHaveBeenCalledWith(ASSET.asset_id);
+    expect(
+      screen.queryByRole("link", { name: "导出 ZIP" }),
+    ).not.toBeInTheDocument();
   });
 });
