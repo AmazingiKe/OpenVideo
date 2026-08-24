@@ -33,6 +33,8 @@ describe("use_asset_markers", () => {
         end_seconds: null,
         title: "",
         tags: [],
+        marker_range_before_seconds: null,
+        marker_range_after_seconds: null,
       },
     ]);
     vi.mocked(create_marker).mockResolvedValueOnce({
@@ -42,6 +44,8 @@ describe("use_asset_markers", () => {
       end_seconds: null,
       title: "",
       tags: [],
+      marker_range_before_seconds: null,
+      marker_range_after_seconds: null,
     });
     const { result } = renderHook(() => use_asset_markers(ASSET_ID), {
       wrapper: ApplicationQueryProvider,
@@ -55,6 +59,8 @@ describe("use_asset_markers", () => {
       end_seconds: null,
       title: "",
       tags: [],
+      marker_range_before_seconds: null,
+      marker_range_after_seconds: null,
     });
     expect(
       result.current.markers.map((marker) => marker.start_seconds),
@@ -70,6 +76,8 @@ describe("use_asset_markers", () => {
         end_seconds: null,
         title: "重点",
         tags: ["重点"],
+        marker_range_before_seconds: null,
+        marker_range_after_seconds: null,
       },
     ]);
     vi.mocked(update_marker).mockResolvedValueOnce({
@@ -79,6 +87,8 @@ describe("use_asset_markers", () => {
       end_seconds: 27,
       title: "重点",
       tags: ["关键帧"],
+      marker_range_before_seconds: 15,
+      marker_range_after_seconds: 0,
     });
     const { result } = renderHook(() => use_asset_markers(ASSET_ID), {
       wrapper: ApplicationQueryProvider,
@@ -91,6 +101,8 @@ describe("use_asset_markers", () => {
         end_seconds: 27,
         title: "重点",
         tags: ["关键帧"],
+        marker_range_before_seconds: 15,
+        marker_range_after_seconds: 0,
       }),
     );
     expect(update_marker).toHaveBeenCalledWith(ASSET_ID, "marker-a", {
@@ -98,6 +110,8 @@ describe("use_asset_markers", () => {
       end_seconds: 27,
       title: "重点",
       tags: ["关键帧"],
+      marker_range_before_seconds: 15,
+      marker_range_after_seconds: 0,
     });
     expect(result.current.markers[0].tags).toEqual(["关键帧"]);
 
@@ -117,6 +131,8 @@ describe("use_asset_markers", () => {
           end_seconds: null,
           title: "",
           tags: [],
+          marker_range_before_seconds: null,
+          marker_range_after_seconds: null,
         },
       ]);
     const { result, rerender } = renderHook(

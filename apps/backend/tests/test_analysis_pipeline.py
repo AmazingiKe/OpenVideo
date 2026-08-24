@@ -32,6 +32,8 @@ def test_marker_event_frames_include_marker_point_and_context(
             MarkerInfluence(
                 marker_id="marker-0123456789abcdef0123456789abcdef",
                 anchor_seconds=4,
+                focus_start_seconds=4,
+                focus_end_seconds=4,
                 range_before_seconds=4,
                 range_after_seconds=6,
                 event_weight=1,
@@ -58,6 +60,8 @@ def test_analysis_prompt_explains_effective_range_and_event_weight():
             MarkerInfluence(
                 marker_id="marker-0123456789abcdef0123456789abcdef",
                 anchor_seconds=4,
+                focus_start_seconds=4,
+                focus_end_seconds=4,
                 range_before_seconds=4,
                 range_after_seconds=6,
                 event_weight=0.75,
@@ -70,3 +74,26 @@ def test_analysis_prompt_explains_effective_range_and_event_weight():
     assert "标记 4.0 秒" in prompt
     assert "有效向前 4.0 秒、向后 6.0 秒" in prompt
     assert "本事件权重 0.75" in prompt
+
+
+def test_analysis_prompt_identifies_range_marker_focus():
+    moment = TimelineMoment(
+        start_seconds=0,
+        end_seconds=20,
+        transcript_text="正文",
+        marker_influences=(
+            MarkerInfluence(
+                marker_id="marker-0123456789abcdef0123456789abcdef",
+                anchor_seconds=10,
+                focus_start_seconds=5,
+                focus_end_seconds=15,
+                range_before_seconds=5,
+                range_after_seconds=5,
+                event_weight=1,
+            ),
+        ),
+    )
+
+    prompt = _analysis_prompt(moment, AnalysisStrategy())
+
+    assert "范围标记 5.0–15.0 秒" in prompt

@@ -38,12 +38,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { Slider } from "@/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_duration, format_time } from "@/shared/format";
+import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import {
-  DEFAULT_ANALYSIS_STRATEGY,
   MARKER_RANGE_MAX_SECONDS,
   MARKER_RANGE_MIN_SECONDS,
   MARKER_RANGE_STEP_SECONDS,
-} from "@/shared/analysis";
+} from "@/shared/marker_ranges";
 import { transcription_runtime_profile } from "@/shared/transcription";
 import {
   IMAGE_INPUT_MODALITY,

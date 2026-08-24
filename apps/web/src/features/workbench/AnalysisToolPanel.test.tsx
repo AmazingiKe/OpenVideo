@@ -23,6 +23,8 @@ const MARKERS: MediaMarker[] = [
     end_seconds: null,
     title: "公式",
     tags: ["公式"],
+    marker_range_before_seconds: null,
+    marker_range_after_seconds: null,
   },
   {
     marker_id: "marker-1123456789abcdef0123456789abcdef",
@@ -31,6 +33,8 @@ const MARKERS: MediaMarker[] = [
     end_seconds: null,
     title: "疑问",
     tags: ["疑问"],
+    marker_range_before_seconds: null,
+    marker_range_after_seconds: null,
   },
 ];
 
@@ -127,6 +131,24 @@ describe("AnalysisToolPanel", () => {
       "transcript_correction",
       "analysis",
     ]);
+  });
+
+  it("edits the default marker ranges independently in advanced settings", () => {
+    render_panel(["analysis"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
+    const before_slider = screen.getByRole("slider", {
+      name: "默认向前范围秒数",
+    });
+    const after_slider = screen.getByRole("slider", {
+      name: "默认向后范围秒数",
+    });
+    expect(before_slider).toHaveAttribute("aria-valuenow", "10");
+    expect(after_slider).toHaveAttribute("aria-valuenow", "20");
+
+    fireEvent.keyDown(before_slider, { key: "ArrowRight" });
+    expect(before_slider).toHaveAttribute("aria-valuenow", "15");
+    expect(after_slider).toHaveAttribute("aria-valuenow", "20");
   });
 
   it("collapses all sections with Shift plus keyboard activation", () => {

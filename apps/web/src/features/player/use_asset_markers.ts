@@ -53,6 +53,8 @@ export function use_asset_markers(asset_id: string) {
           end_seconds: rounded_end,
           title: "",
           tags: [],
+          marker_range_before_seconds: null,
+          marker_range_after_seconds: null,
         });
         update_cached_markers((current) => sort_markers([...current, marker]));
         set_mutation_error(null);

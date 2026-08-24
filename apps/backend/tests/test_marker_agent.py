@@ -239,7 +239,12 @@ def test_accepting_merge_rewrites_event_references_atomically(tmp_path: Path):
 def test_conflict_marks_the_whole_batch_stale_without_partial_changes(tmp_path: Path):
     library, manager = create_manager(tmp_path)
     session = manager.create_session(ASSET_ID)
-    original = marker(f"marker-{uuid7().hex}", 10, "原标题")
+    original = marker(f"marker-{uuid7().hex}", 10, "原标题").model_copy(
+        update={
+            "marker_range_before_seconds": 15,
+            "marker_range_after_seconds": 0,
+        }
+    )
     library.create_marker(original)
     result = manager._propose_changes(
         session.session.session_id,
@@ -265,6 +270,9 @@ def test_conflict_marks_the_whole_batch_stale_without_partial_changes(tmp_path: 
     proposal = result["proposal"]
     assert isinstance(proposal, dict)
     proposal_id = str(proposal["proposal_id"])
+    proposed_update = proposal["changes"][0]["after"]
+    assert proposed_update["marker_range_before_seconds"] == 15
+    assert proposed_update["marker_range_after_seconds"] == 0
     library.update_marker(
         ASSET_ID,
         original.marker_id,
@@ -272,6 +280,8 @@ def test_conflict_marks_the_whole_batch_stale_without_partial_changes(tmp_path: 
         end_seconds=None,
         title="用户已修改",
         tags=[],
+        marker_range_before_seconds=15,
+        marker_range_after_seconds=0,
     )
 
     with pytest.raises(MarkerProposalConflictError):

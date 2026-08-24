@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from openvideo.core.analysis import TimelineMoment, select_timeline_moments
+from openvideo.core.analysis import (
+    MarkerInfluence,
+    TimelineMoment,
+    select_timeline_moments,
+)
 from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, AnalysisStrategy
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import MediaMarker, MediaSegment
@@ -192,12 +196,7 @@ def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
     marker_context = ""
     if moment.marker_influences:
         marker_lines = [
-            (
-                f"标记 {influence.anchor_seconds:.1f} 秒，"
-                f"有效向前 {influence.range_before_seconds:.1f} 秒、"
-                f"向后 {influence.range_after_seconds:.1f} 秒，"
-                f"本事件权重 {influence.event_weight:.2f}"
-            )
+            _marker_influence_prompt(influence)
             for influence in moment.marker_influences
         ]
         marker_context = "\n标记范围权重：" + "；".join(marker_lines)
@@ -208,6 +207,22 @@ def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
         "区分视频明确表达的内容与合理推断，不得补造事实。"
         f"{marker_context}"
         f"\n转写：{transcript or '该片段没有可用转写，请只依据画面。'}"
+    )
+
+
+def _marker_influence_prompt(influence: MarkerInfluence) -> str:
+    if influence.focus_end_seconds > influence.focus_start_seconds:
+        marker_position = (
+            f"范围标记 {influence.focus_start_seconds:.1f}–"
+            f"{influence.focus_end_seconds:.1f} 秒，"
+        )
+    else:
+        marker_position = f"标记 {influence.anchor_seconds:.1f} 秒，"
+    return (
+        f"{marker_position}"
+        f"有效向前 {influence.range_before_seconds:.1f} 秒、"
+        f"向后 {influence.range_after_seconds:.1f} 秒，"
+        f"本事件权重 {influence.event_weight:.2f}"
     )
 
 

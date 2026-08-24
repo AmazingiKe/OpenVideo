@@ -497,6 +497,8 @@ describe("api client", () => {
       end_seconds: null,
       title: "重点",
       tags: ["重点"],
+      marker_range_before_seconds: null,
+      marker_range_after_seconds: null,
     };
     const fetch_mock = vi
       .spyOn(globalThis, "fetch")
@@ -515,6 +517,8 @@ describe("api client", () => {
         end_seconds: marker.end_seconds,
         title: marker.title,
         tags: marker.tags,
+        marker_range_before_seconds: null,
+        marker_range_after_seconds: null,
       }),
     ).resolves.toEqual(marker);
     await expect(
@@ -523,6 +527,8 @@ describe("api client", () => {
         end_seconds: 27.5,
         title: "关键帧",
         tags: ["关键帧"],
+        marker_range_before_seconds: 15,
+        marker_range_after_seconds: 0,
       }),
     ).resolves.toEqual({
       ...marker,
@@ -539,6 +545,8 @@ describe("api client", () => {
           end_seconds: null,
           title: "重点",
           tags: ["重点"],
+          marker_range_before_seconds: null,
+          marker_range_after_seconds: null,
         }),
         signal: undefined,
       },
@@ -554,6 +562,8 @@ describe("api client", () => {
           end_seconds: 27.5,
           title: "关键帧",
           tags: ["关键帧"],
+          marker_range_before_seconds: 15,
+          marker_range_after_seconds: 0,
         }),
         signal: undefined,
       },

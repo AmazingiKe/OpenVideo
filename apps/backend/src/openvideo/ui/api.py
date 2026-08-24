@@ -67,6 +67,9 @@ from openvideo.core.library import (
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import (
+    MARKER_RANGE_MAX_SECONDS,
+    MARKER_RANGE_MIN_SECONDS,
+    MARKER_RANGE_STEP_SECONDS,
     MediaAssetResponse,
     MediaAssetStatus,
     MediaMarker,
@@ -252,6 +255,18 @@ class MarkerCreateRequest(BaseModel):
     end_seconds: float | None = Field(default=None, ge=0)
     title: str = Field(default="", max_length=200)
     tags: list[str] = Field(default_factory=list)
+    marker_range_before_seconds: int | None = Field(
+        default=None,
+        ge=MARKER_RANGE_MIN_SECONDS,
+        le=MARKER_RANGE_MAX_SECONDS,
+        multiple_of=MARKER_RANGE_STEP_SECONDS,
+    )
+    marker_range_after_seconds: int | None = Field(
+        default=None,
+        ge=MARKER_RANGE_MIN_SECONDS,
+        le=MARKER_RANGE_MAX_SECONDS,
+        multiple_of=MARKER_RANGE_STEP_SECONDS,
+    )
 
 
 class MarkerUpdateRequest(BaseModel):
@@ -259,6 +274,16 @@ class MarkerUpdateRequest(BaseModel):
     end_seconds: float | None = Field(default=None, ge=0)
     title: str = Field(default="", max_length=200)
     tags: list[str] = Field(default_factory=list)
+    marker_range_before_seconds: int | None = Field(
+        ge=MARKER_RANGE_MIN_SECONDS,
+        le=MARKER_RANGE_MAX_SECONDS,
+        multiple_of=MARKER_RANGE_STEP_SECONDS,
+    )
+    marker_range_after_seconds: int | None = Field(
+        ge=MARKER_RANGE_MIN_SECONDS,
+        le=MARKER_RANGE_MAX_SECONDS,
+        multiple_of=MARKER_RANGE_STEP_SECONDS,
+    )
 
 
 class TranscriptSegmentUpdateRequest(BaseModel):
@@ -1263,6 +1288,8 @@ def create_app(
             end_seconds=request.end_seconds,
             title=request.title,
             tags=request.tags,
+            marker_range_before_seconds=request.marker_range_before_seconds,
+            marker_range_after_seconds=request.marker_range_after_seconds,
         )
         return library.create_marker(marker)
 
@@ -1287,6 +1314,8 @@ def create_app(
                 end_seconds=request.end_seconds,
                 title=request.title,
                 tags=request.tags,
+                marker_range_before_seconds=request.marker_range_before_seconds,
+                marker_range_after_seconds=request.marker_range_after_seconds,
             )
         except ValueError as error:
             raise HTTPException(status_code=404, detail="标记不存在") from error

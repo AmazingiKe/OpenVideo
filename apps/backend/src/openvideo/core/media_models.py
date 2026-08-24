@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 from openvideo.core.transcription_models import TranscriptionStatus
 
 
+MARKER_RANGE_MIN_SECONDS = 0
+MARKER_RANGE_MAX_SECONDS = 120
+MARKER_RANGE_STEP_SECONDS = 5
+
+
 class SourcePlatform(StrEnum):
     BILIBILI = "bilibili"
     DOUYIN = "douyin"
@@ -168,6 +173,18 @@ class MediaMarker(BaseModel):
     end_seconds: float | None = Field(default=None, ge=0)
     title: str = Field(default="", max_length=200)
     tags: list[str] = Field(default_factory=list)
+    marker_range_before_seconds: int | None = Field(
+        default=None,
+        ge=MARKER_RANGE_MIN_SECONDS,
+        le=MARKER_RANGE_MAX_SECONDS,
+        multiple_of=MARKER_RANGE_STEP_SECONDS,
+    )
+    marker_range_after_seconds: int | None = Field(
+        default=None,
+        ge=MARKER_RANGE_MIN_SECONDS,
+        le=MARKER_RANGE_MAX_SECONDS,
+        multiple_of=MARKER_RANGE_STEP_SECONDS,
+    )
 
     @field_validator("title")
     @classmethod

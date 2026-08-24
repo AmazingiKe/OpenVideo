@@ -39,6 +39,8 @@ const PROPOSAL: MarkerProposal = {
         end_seconds: 20,
         title: "关键结论",
         tags: ["重点"],
+        marker_range_before_seconds: null,
+        marker_range_after_seconds: null,
       },
       reason: "转录中出现明确结论。",
       evidence: ["00:12–00:20"],

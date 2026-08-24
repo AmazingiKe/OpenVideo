@@ -182,6 +182,8 @@ def test_range_marker_uses_its_exact_bounds():
         asset_id=ASSET_ID,
         start_seconds=5,
         end_seconds=15,
+        marker_range_before_seconds=0,
+        marker_range_after_seconds=0,
     )
 
     moment = select_timeline_moments(
@@ -192,8 +194,49 @@ def test_range_marker_uses_its_exact_bounds():
     )[0]
 
     assert (moment.start_seconds, moment.end_seconds) == (5, 15)
-    assert moment.marker_influences[0].range_before_seconds == 5
-    assert moment.marker_influences[0].range_after_seconds == 5
+    assert moment.marker_influences[0].range_before_seconds == 0
+    assert moment.marker_influences[0].range_after_seconds == 0
+
+
+def test_range_marker_inherits_tails_and_clips_them_to_video_bounds():
+    marker = MediaMarker(
+        marker_id="marker-0123456789abcdef0123456789abcdef",
+        asset_id=ASSET_ID,
+        start_seconds=5,
+        end_seconds=15,
+    )
+
+    moment = select_timeline_moments(
+        Transcript(asset_id=ASSET_ID),
+        AnalysisMode.MARKERS,
+        [marker],
+        30,
+    )[0]
+
+    assert (moment.start_seconds, moment.end_seconds) == (0, 30)
+    influence = moment.marker_influences[0]
+    assert influence.range_before_seconds == 5
+    assert influence.range_after_seconds == 15
+
+
+def test_marker_overrides_one_side_and_inherits_the_other():
+    marker = MediaMarker(
+        marker_id="marker-0123456789abcdef0123456789abcdef",
+        asset_id=ASSET_ID,
+        start_seconds=20,
+        marker_range_before_seconds=0,
+    )
+
+    moment = select_timeline_moments(
+        Transcript(asset_id=ASSET_ID),
+        AnalysisMode.MARKERS,
+        [marker],
+        100,
+    )[0]
+
+    assert (moment.start_seconds, moment.end_seconds) == (20, 40)
+    assert moment.marker_influences[0].range_before_seconds == 0
+    assert moment.marker_influences[0].range_after_seconds == 20
 
 
 def test_marker_weight_decays_asymmetrically_and_marker_event_is_one():
@@ -295,3 +338,10 @@ def test_full_mode_preserves_unweighted_events_and_marker_mode_filters_them():
 def test_marker_ranges_validate_boundaries_and_five_second_steps(value: int):
     with pytest.raises(ValueError):
         AnalysisStrategy(marker_range_before_seconds=value)
+    with pytest.raises(ValueError):
+        MediaMarker(
+            marker_id="marker-0123456789abcdef0123456789abcdef",
+            asset_id=ASSET_ID,
+            start_seconds=10,
+            marker_range_after_seconds=value,
+        )

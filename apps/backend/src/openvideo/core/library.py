@@ -512,7 +512,8 @@ class MediaLibrary:
         rows = (
             self._db()
             .execute(
-                "SELECT marker_id, asset_id, start_seconds, end_seconds, title FROM markers "
+                "SELECT marker_id, asset_id, start_seconds, end_seconds, title, "
+                "marker_range_before_seconds, marker_range_after_seconds FROM markers "
                 "WHERE asset_id = ? ORDER BY start_seconds",
                 (asset_id,),
             )
@@ -548,6 +549,8 @@ class MediaLibrary:
         end_seconds: float | None,
         title: str,
         tags: list[str],
+        marker_range_before_seconds: int | None,
+        marker_range_after_seconds: int | None,
     ) -> MediaMarker | None:
         self._validate_identifier(marker_id, "marker")
         markers = self.load_markers(asset_id)
@@ -561,6 +564,8 @@ class MediaLibrary:
                 "end_seconds": end_seconds,
                 "title": title,
                 "tags": tags,
+                "marker_range_before_seconds": marker_range_before_seconds,
+                "marker_range_after_seconds": marker_range_after_seconds,
             }
         )
         self._write_markers(

@@ -25,6 +25,8 @@ class MarkerInfluence:
 
     marker_id: str
     anchor_seconds: float
+    focus_start_seconds: float
+    focus_end_seconds: float
     range_before_seconds: float
     range_after_seconds: float
     event_weight: float
@@ -195,15 +197,23 @@ def _fallback_marker_moment(
     duration_seconds: float | None,
     strategy: AnalysisStrategy,
 ) -> TimelineMoment:
-    range_start, range_end, before_seconds, after_seconds = _resolved_marker_range(
-        marker, strategy, duration_seconds
-    )
+    (
+        range_start,
+        range_end,
+        focus_start,
+        focus_end,
+        before_seconds,
+        after_seconds,
+    ) = _resolved_marker_range(marker, strategy, duration_seconds)
     if range_end <= range_start:
-        range_start = max(0.0, marker.start_seconds - 0.1)
-        range_end = max(marker.start_seconds, range_start + 0.1)
+        range_start = max(0.0, focus_start - 0.1)
+        range_end = max(focus_end, range_start + 0.1)
+    anchor_seconds = (focus_start + focus_end) / 2
     influence = MarkerInfluence(
         marker_id=marker.marker_id,
-        anchor_seconds=marker.start_seconds,
+        anchor_seconds=anchor_seconds,
+        focus_start_seconds=focus_start,
+        focus_end_seconds=focus_end,
         range_before_seconds=before_seconds,
         range_after_seconds=after_seconds,
         event_weight=1,
@@ -270,65 +280,84 @@ def _marker_influence_for_moment(
     strategy: AnalysisStrategy,
     duration_seconds: float | None,
 ) -> MarkerInfluence | None:
-    range_start, range_end, before_seconds, after_seconds = _resolved_marker_range(
-        marker, strategy, duration_seconds
+    (
+        range_start,
+        range_end,
+        focus_start,
+        focus_end,
+        before_seconds,
+        after_seconds,
+    ) = _resolved_marker_range(marker, strategy, duration_seconds)
+    anchor_seconds = (focus_start + focus_end) / 2
+    contains_marker = (
+        moment.end_seconds >= focus_start and moment.start_seconds <= focus_end
     )
-    anchor_seconds = (
-        marker.start_seconds
-        if marker.end_seconds is None
-        else (marker.start_seconds + marker.end_seconds) / 2
+    overlaps_range = (
+        moment.end_seconds > range_start and moment.start_seconds < range_end
     )
-    contains_marker = moment.start_seconds <= anchor_seconds <= moment.end_seconds
-    overlaps_range = moment.end_seconds > range_start and moment.start_seconds < range_end
     if not contains_marker and not overlaps_range:
         return None
     if contains_marker:
         event_weight = 1.0
-    elif moment.end_seconds < anchor_seconds:
-        event_weight = max(
-            0.0,
-            1 - (anchor_seconds - moment.end_seconds) / max(before_seconds, 0.1),
+    elif moment.end_seconds < focus_start:
+        event_weight = _linear_marker_weight(
+            focus_start - moment.end_seconds,
+            before_seconds,
         )
     else:
-        event_weight = max(
-            0.0,
-            1 - (moment.start_seconds - anchor_seconds) / max(after_seconds, 0.1),
+        event_weight = _linear_marker_weight(
+            moment.start_seconds - focus_end,
+            after_seconds,
         )
     if event_weight <= 0:
         return None
     return MarkerInfluence(
         marker_id=marker.marker_id,
         anchor_seconds=anchor_seconds,
+        focus_start_seconds=focus_start,
+        focus_end_seconds=focus_end,
         range_before_seconds=before_seconds,
         range_after_seconds=after_seconds,
         event_weight=event_weight,
     )
 
 
+def _linear_marker_weight(distance_seconds: float, range_seconds: float) -> float:
+    if range_seconds <= 0:
+        return 0.0
+    return max(0.0, 1 - distance_seconds / range_seconds)
+
+
 def _resolved_marker_range(
     marker: MediaMarker,
     strategy: AnalysisStrategy,
     duration_seconds: float | None,
-) -> tuple[float, float, float, float]:
-    if marker.end_seconds is not None:
-        anchor_seconds = (marker.start_seconds + marker.end_seconds) / 2
-        return (
-            marker.start_seconds,
-            marker.end_seconds,
-            anchor_seconds - marker.start_seconds,
-            marker.end_seconds - anchor_seconds,
-        )
-    requested_before = strategy.marker_range_before_seconds
-    requested_after = strategy.marker_range_after_seconds
-    range_start = max(0.0, marker.start_seconds - requested_before)
-    range_end = marker.start_seconds + requested_after
+) -> tuple[float, float, float, float, float, float]:
+    focus_start = marker.start_seconds
+    focus_end = (
+        marker.end_seconds if marker.end_seconds is not None else marker.start_seconds
+    )
+    requested_before = (
+        marker.marker_range_before_seconds
+        if marker.marker_range_before_seconds is not None
+        else strategy.marker_range_before_seconds
+    )
+    requested_after = (
+        marker.marker_range_after_seconds
+        if marker.marker_range_after_seconds is not None
+        else strategy.marker_range_after_seconds
+    )
+    range_start = max(0.0, focus_start - requested_before)
+    range_end = focus_end + requested_after
     if duration_seconds is not None:
         range_end = min(range_end, duration_seconds)
     return (
         range_start,
         range_end,
-        marker.start_seconds - range_start,
-        max(0.0, range_end - marker.start_seconds),
+        focus_start,
+        focus_end,
+        focus_start - range_start,
+        max(0.0, range_end - focus_end),
     )
 
 

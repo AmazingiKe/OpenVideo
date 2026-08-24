@@ -1,9 +1,5 @@
 import type { AnalysisStrategy } from "./types";
 
-export const MARKER_RANGE_MIN_SECONDS = 0;
-export const MARKER_RANGE_MAX_SECONDS = 120;
-export const MARKER_RANGE_STEP_SECONDS = 5;
-
 export const DEFAULT_ANALYSIS_STRATEGY: AnalysisStrategy = {
   preset: "course_notes",
   weights: {

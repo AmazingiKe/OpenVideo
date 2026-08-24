@@ -327,11 +327,18 @@ export type MediaMarker = {
   end_seconds: number | null;
   title: string;
   tags: string[];
+  marker_range_before_seconds: number | null;
+  marker_range_after_seconds: number | null;
 };
 
 export type MediaMarkerInput = Pick<
   MediaMarker,
-  "start_seconds" | "end_seconds" | "title" | "tags"
+  | "start_seconds"
+  | "end_seconds"
+  | "title"
+  | "tags"
+  | "marker_range_before_seconds"
+  | "marker_range_after_seconds"
 >;
 
 type ThumbnailStoryboard = {

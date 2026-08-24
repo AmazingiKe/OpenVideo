@@ -37,6 +37,8 @@ def test_marker_lifecycle_persists_point_and_range_fields(tmp_path: Path):
                 "end_seconds": None,
                 "title": "结论",
                 "tags": ["重点"],
+                "marker_range_before_seconds": None,
+                "marker_range_after_seconds": None,
             },
         )
         assert created_response.status_code == 201
@@ -47,6 +49,8 @@ def test_marker_lifecycle_persists_point_and_range_fields(tmp_path: Path):
         assert marker["end_seconds"] is None
         assert marker["title"] == "结论"
         assert marker["tags"] == ["重点"]
+        assert marker["marker_range_before_seconds"] is None
+        assert marker["marker_range_after_seconds"] is None
 
         marker_id = marker["marker_id"]
         updated_response = client.patch(
@@ -56,10 +60,14 @@ def test_marker_lifecycle_persists_point_and_range_fields(tmp_path: Path):
                 "end_seconds": 18,
                 "title": "完整结论",
                 "tags": ["关键帧", "待核对"],
+                "marker_range_before_seconds": 15,
+                "marker_range_after_seconds": 0,
             },
         )
         assert updated_response.status_code == 200
         assert updated_response.json()["end_seconds"] == 18
+        assert updated_response.json()["marker_range_before_seconds"] == 15
+        assert updated_response.json()["marker_range_after_seconds"] == 0
 
     with TestClient(create_app(Settings(library_path=tmp_path))) as restored_client:
         assert restored_client.get(f"/api/media/assets/{ASSET_ID}/markers").json() == [
@@ -70,6 +78,8 @@ def test_marker_lifecycle_persists_point_and_range_fields(tmp_path: Path):
                 "end_seconds": 18,
                 "title": "完整结论",
                 "tags": ["关键帧", "待核对"],
+                "marker_range_before_seconds": 15,
+                "marker_range_after_seconds": 0,
             }
         ]
         assert (
@@ -99,8 +109,18 @@ def test_markers_reject_missing_assets_and_invalid_ranges(tmp_path: Path):
             f"/api/media/assets/{ASSET_ID}/markers",
             json={**point, "start_seconds": 55, "end_seconds": 65},
         )
+        invalid_step_response = client.post(
+            f"/api/media/assets/{ASSET_ID}/markers",
+            json={**point, "marker_range_before_seconds": 7},
+        )
+        invalid_max_response = client.post(
+            f"/api/media/assets/{ASSET_ID}/markers",
+            json={**point, "marker_range_after_seconds": 125},
+        )
 
     assert missing_response.status_code == 404
     assert negative_response.status_code == 422
     assert reversed_response.status_code == 422
     assert outside_response.status_code == 422
+    assert invalid_step_response.status_code == 422
+    assert invalid_max_response.status_code == 422

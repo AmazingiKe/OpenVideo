@@ -18,7 +18,7 @@ from openvideo.core.library_files import (
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 12
+DATABASE_VERSION = 13
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -138,14 +138,17 @@ def replace_asset_projection(
     connection.execute("DELETE FROM markers WHERE asset_id = ?", (asset.asset_id,))
     for marker in bundle.markers:
         connection.execute(
-            "INSERT INTO markers(marker_id, asset_id, start_seconds, end_seconds, title) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO markers(marker_id, asset_id, start_seconds, end_seconds, title, "
+            "marker_range_before_seconds, marker_range_after_seconds) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 marker.marker_id,
                 marker.asset_id,
                 marker.start_seconds,
                 marker.end_seconds,
                 marker.title,
+                marker.marker_range_before_seconds,
+                marker.marker_range_after_seconds,
             ),
         )
         _replace_tags(connection, "marker_tags", "marker_id", marker.marker_id, marker.tags)
@@ -463,7 +466,8 @@ CREATE TABLE timeline_segments (
 );
 CREATE TABLE markers (
     marker_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    start_seconds REAL NOT NULL, end_seconds REAL, title TEXT NOT NULL
+    start_seconds REAL NOT NULL, end_seconds REAL, title TEXT NOT NULL,
+    marker_range_before_seconds INTEGER, marker_range_after_seconds INTEGER
 );
 CREATE TABLE tags (name TEXT PRIMARY KEY);
 CREATE TABLE marker_tags (marker_id TEXT NOT NULL REFERENCES markers(marker_id) ON DELETE CASCADE, tag_name TEXT NOT NULL REFERENCES tags(name), PRIMARY KEY(marker_id, tag_name));

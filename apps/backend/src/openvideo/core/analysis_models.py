@@ -5,6 +5,12 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from openvideo.core.media_models import (
+    MARKER_RANGE_MAX_SECONDS,
+    MARKER_RANGE_MIN_SECONDS,
+    MARKER_RANGE_STEP_SECONDS,
+)
+
 
 class AnalysisStage(StrEnum):
     PENDING = "pending"
@@ -101,8 +107,18 @@ class AnalysisStrategy(BaseModel):
     preset: AnalysisStrategyPreset = AnalysisStrategyPreset.COURSE_NOTES
     weights: AnalysisWeights | None = None
     depth: AnalysisDepth = AnalysisDepth.BALANCED
-    marker_range_before_seconds: int = Field(default=10, ge=0, le=120, multiple_of=5)
-    marker_range_after_seconds: int = Field(default=20, ge=0, le=120, multiple_of=5)
+    marker_range_before_seconds: int = Field(
+        default=10,
+        ge=MARKER_RANGE_MIN_SECONDS,
+        le=MARKER_RANGE_MAX_SECONDS,
+        multiple_of=MARKER_RANGE_STEP_SECONDS,
+    )
+    marker_range_after_seconds: int = Field(
+        default=20,
+        ge=MARKER_RANGE_MIN_SECONDS,
+        le=MARKER_RANGE_MAX_SECONDS,
+        multiple_of=MARKER_RANGE_STEP_SECONDS,
+    )
 
     @model_validator(mode="after")
     def resolve_weights(self) -> "AnalysisStrategy":

@@ -3,6 +3,7 @@ import { type ReactNode, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MediaTimeline } from "./MediaTimeline";
+import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 
 type MockClip = {
   id: string;
@@ -205,6 +206,8 @@ function render_timeline() {
       end_seconds: null,
       title: "重点",
       tags: ["重点"],
+      marker_range_before_seconds: null,
+      marker_range_after_seconds: null,
     },
   ];
 
@@ -218,6 +221,7 @@ function render_timeline() {
         transcript={transcript}
         segments={segments}
         markers={markers}
+        analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={null}
         on_seek={callbacks.seek_to}
         on_selected_transcript_indices_change={(segment_indices) => {
@@ -301,10 +305,18 @@ describe("MediaTimeline", () => {
     expect(timeline).not.toContainElement(marker_editor);
     expect(marker_anchor).toHaveStyle({ left: "240px", top: "360px" });
     expect(change_selected_transcript_indices).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("img", {
+        name: "重点：向前 10 秒，向后 20 秒",
+      }),
+    ).toHaveAttribute("data-selected", "true");
+    expect(screen.getByText("使用默认（当前 10 秒）")).toBeInTheDocument();
+    expect(screen.getByText("使用默认（当前 20 秒）")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("编辑标记标签"), {
       target: { value: "重点, 公式" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "向前范围：单独设置" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() =>
@@ -315,6 +327,8 @@ describe("MediaTimeline", () => {
           end_seconds: null,
           title: "重点",
           tags: ["重点", "公式"],
+          marker_range_before_seconds: 10,
+          marker_range_after_seconds: null,
         },
       ),
     );
@@ -331,6 +345,22 @@ describe("MediaTimeline", () => {
 
     expect(add_marker).toHaveBeenNthCalledWith(1, 60);
     expect(add_marker).toHaveBeenNthCalledWith(2, 30);
+  });
+
+  it("keeps the marker editor and draft open after a save failure", async () => {
+    const { update_marker } = render_timeline();
+    update_marker.mockRejectedValueOnce(new Error("request failed"));
+    fireEvent.click(screen.getByLabelText("canvas-item-marker"));
+    const tags_input = screen.getByLabelText("编辑标记标签");
+    fireEvent.change(tags_input, { target: { value: "未保存草稿" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "标记保存失败，请稍后重试",
+    );
+    expect(tags_input).toHaveValue("未保存草稿");
+    expect(screen.getByText("编辑标记")).toBeInTheDocument();
   });
 
   it("creates point and range markers directly on the marker track", () => {
@@ -376,6 +406,8 @@ describe("MediaTimeline", () => {
         end_seconds: 35,
         title: "重点",
         tags: ["重点"],
+        marker_range_before_seconds: null,
+        marker_range_after_seconds: null,
       },
     );
     expect(update_marker).toHaveBeenNthCalledWith(
@@ -386,6 +418,8 @@ describe("MediaTimeline", () => {
         end_seconds: 40,
         title: "重点",
         tags: ["重点"],
+        marker_range_before_seconds: null,
+        marker_range_after_seconds: null,
       },
     );
   });

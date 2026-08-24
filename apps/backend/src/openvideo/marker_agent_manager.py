@@ -641,6 +641,16 @@ class MarkerAgentManager:
             if requested.operation == MarkerProposalOperation.UPDATE
             else f"marker-{uuid7().hex}"
         )
+        inherited_before = (
+            before[0].marker_range_before_seconds
+            if requested.operation == MarkerProposalOperation.UPDATE
+            else None
+        )
+        inherited_after = (
+            before[0].marker_range_after_seconds
+            if requested.operation == MarkerProposalOperation.UPDATE
+            else None
+        )
         return MediaMarker(
             marker_id=marker_id,
             asset_id=asset_id,
@@ -648,6 +658,8 @@ class MarkerAgentManager:
             end_seconds=requested.end_seconds,
             title=requested.title,
             tags=requested.tags,
+            marker_range_before_seconds=inherited_before,
+            marker_range_after_seconds=inherited_after,
         )
 
     @staticmethod

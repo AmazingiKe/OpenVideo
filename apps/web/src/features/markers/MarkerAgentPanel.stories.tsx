@@ -12,6 +12,8 @@ const POINT_MARKER = {
   end_seconds: null,
   title: "核心定义",
   tags: ["概念", "重点"],
+  marker_range_before_seconds: null,
+  marker_range_after_seconds: null,
 };
 const RANGE_MARKER = {
   marker_id: "marker-11890f4c7a2b7cc298c4dc0c0c07398f",
@@ -20,6 +22,8 @@ const RANGE_MARKER = {
   end_seconds: 58,
   title: "完整推导过程",
   tags: ["公式"],
+  marker_range_before_seconds: 15,
+  marker_range_after_seconds: 25,
 };
 const PENDING_PROPOSAL: MarkerProposal = {
   proposal_id: "proposal-01890f4c7a2b7cc298c4dc0c0c07398f",

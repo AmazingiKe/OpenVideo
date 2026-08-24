@@ -21,6 +21,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
@@ -49,13 +50,16 @@ import {
   PopoverTitle,
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
+import { MarkerRangeField } from "@/features/workbench/MarkerRangeField";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { format_time } from "@/shared/format";
+import { effective_marker_ranges } from "@/shared/marker_ranges";
 import type {
+  AnalysisStrategy,
   MediaMarker,
   MediaMarkerInput,
   MediaSegment,
@@ -99,6 +103,7 @@ type MediaTimelineProps = {
   segments: MediaSegment[];
   markers: MediaMarker[];
   candidate_markers?: MediaMarker[];
+  analysis_strategy: AnalysisStrategy;
   marker_error: string | null;
   on_seek: (seconds: number) => void;
   on_selected_transcript_indices_change: (segment_indices: number[]) => void;
@@ -155,6 +160,9 @@ type TimelineSurfaceProps = {
   current_time: number;
   duration: number;
   engine: TimelineEngine;
+  markers: MediaMarker[];
+  analysis_strategy: AnalysisStrategy;
+  selected_marker_id: string | null;
   on_seek: (seconds: number) => void;
   on_add_marker: (
     start_seconds: number,
@@ -177,6 +185,9 @@ function TimelineSurface({
   current_time,
   duration,
   engine,
+  markers,
+  analysis_strategy,
+  selected_marker_id,
   on_seek,
   on_add_marker,
   on_update_marker_bounds,
@@ -412,6 +423,13 @@ function TimelineSurface({
             onWheelCapture={zoom_with_alt}
           >
             <CanvasRenderer />
+            <MarkerRangeBands
+              engine={engine}
+              duration={duration}
+              markers={markers}
+              analysis_strategy={analysis_strategy}
+              selected_marker_id={selected_marker_id}
+            />
             <TimelineLayers
               on_clip_double_click={(hit) => {
                 const metadata = hit.clip.metadata as
@@ -439,6 +457,79 @@ function TimelineSurface({
   );
 }
 
+function MarkerRangeBands({
+  engine,
+  duration,
+  markers,
+  analysis_strategy,
+  selected_marker_id,
+}: {
+  engine: TimelineEngine;
+  duration: number;
+  markers: MediaMarker[];
+  analysis_strategy: AnalysisStrategy;
+  selected_marker_id: string | null;
+}) {
+  const [, set_render_revision] = useState(0);
+
+  useEffect(() => {
+    const rerender = () => set_render_revision((revision) => revision + 1);
+    const unsubscribe_scroll = engine.on("scroll:change", rerender);
+    const unsubscribe_zoom = engine.on("zoom:change", rerender);
+    const unsubscribe_resize = engine.on("viewport:resize", rerender);
+    return () => {
+      unsubscribe_scroll();
+      unsubscribe_zoom();
+      unsubscribe_resize();
+    };
+  }, [engine]);
+
+  return (
+    <div className="timeline-marker-ranges" aria-label="标记范围权重">
+      {markers.map((marker) => {
+        const { before_seconds, after_seconds } = effective_marker_ranges(
+          marker,
+          analysis_strategy,
+        );
+        const focus_end = marker.end_seconds ?? marker.start_seconds;
+        const range_start = Math.max(0, marker.start_seconds - before_seconds);
+        const range_end = Math.min(duration, focus_end + after_seconds);
+        if (range_end <= range_start) return null;
+        const left = engine.timeToPixel(fromSeconds(range_start));
+        const right = engine.timeToPixel(fromSeconds(range_end));
+        const width = right - left;
+        if (width <= 0) return null;
+        const core_start_position =
+          ((marker.start_seconds - range_start) / (range_end - range_start)) *
+          100;
+        const core_end_position =
+          ((focus_end - range_start) / (range_end - range_start)) * 100;
+        const style = {
+          left,
+          width,
+          "--marker-core-start-position": `${core_start_position}%`,
+          "--marker-core-end-position": `${core_end_position}%`,
+        } as CSSProperties;
+        const marker_name =
+          marker.title || marker.tags.join("、") || "未命名标记";
+
+        return (
+          <span
+            key={marker.marker_id}
+            className="timeline-marker-range"
+            data-selected={
+              marker.marker_id === selected_marker_id ? "true" : undefined
+            }
+            style={style}
+            role="img"
+            aria-label={`${marker_name}：向前 ${before_seconds} 秒，向后 ${after_seconds} 秒`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export function MediaTimeline({
   duration_seconds,
   current_time,
@@ -446,6 +537,7 @@ export function MediaTimeline({
   segments,
   markers,
   candidate_markers = EMPTY_MARKERS,
+  analysis_strategy,
   marker_error,
   on_seek,
   on_selected_transcript_indices_change,
@@ -471,6 +563,12 @@ export function MediaTimeline({
   const [marker_end_draft, set_marker_end_draft] = useState<number | null>(
     null,
   );
+  const [marker_range_before_draft, set_marker_range_before_draft] = useState<
+    number | null
+  >(null);
+  const [marker_range_after_draft, set_marker_range_after_draft] = useState<
+    number | null
+  >(null);
   const [confirming_delete, set_confirming_delete] = useState(false);
   const [marker_save_error, set_marker_save_error] = useState<string | null>(
     null,
@@ -595,7 +693,7 @@ export function MediaTimeline({
           </PopoverAnchor>
         ) : null}
         <PopoverContent
-          className="w-80 max-w-[calc(100vw-1rem)]"
+          className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto"
           side="bottom"
           align="start"
           sideOffset={MARKER_EDITOR_OFFSET}
@@ -678,6 +776,29 @@ export function MediaTimeline({
                   ) : null}
                 </Field>
               ) : null}
+              <div className="rounded-md border bg-muted/30 p-4">
+                <p className="mb-4 text-sm font-medium">标记范围权重</p>
+                <div className="flex flex-col gap-4">
+                  <MarkerRangeField
+                    id="marker-range-before"
+                    label="向前范围"
+                    value={marker_range_before_draft}
+                    default_value={
+                      analysis_strategy.marker_range_before_seconds
+                    }
+                    disabled={is_saving_marker}
+                    on_change={set_marker_range_before_draft}
+                  />
+                  <MarkerRangeField
+                    id="marker-range-after"
+                    label="向后范围"
+                    value={marker_range_after_draft}
+                    default_value={analysis_strategy.marker_range_after_seconds}
+                    disabled={is_saving_marker}
+                    on_change={set_marker_range_after_draft}
+                  />
+                </div>
+              </div>
             </FieldGroup>
             <Button
               type="button"
@@ -754,6 +875,9 @@ export function MediaTimeline({
             current_time={current_time}
             duration={duration}
             engine={engine}
+            markers={markers}
+            analysis_strategy={analysis_strategy}
+            selected_marker_id={editing_marker_id}
             on_seek={on_seek}
             on_add_marker={on_add_marker}
             on_update_marker_bounds={(
@@ -770,6 +894,8 @@ export function MediaTimeline({
                 end_seconds,
                 title: marker.title,
                 tags: marker.tags,
+                marker_range_before_seconds: marker.marker_range_before_seconds,
+                marker_range_after_seconds: marker.marker_range_after_seconds,
               });
             }}
             on_select_marker={select_marker}
@@ -810,6 +936,8 @@ export function MediaTimeline({
     set_marker_tags_draft(marker.tags.join(", "));
     set_marker_start_draft(marker.start_seconds);
     set_marker_end_draft(marker.end_seconds);
+    set_marker_range_before_draft(marker.marker_range_before_seconds);
+    set_marker_range_after_draft(marker.marker_range_after_seconds);
     set_confirming_delete(false);
     set_marker_save_error(null);
     set_marker_editor_position(pointer_position);
@@ -862,6 +990,8 @@ export function MediaTimeline({
       end_seconds: marker_end_draft,
       title: marker_title_draft,
       tags,
+      marker_range_before_seconds: marker_range_before_draft,
+      marker_range_after_seconds: marker_range_after_draft,
     })
       .then(cancel_marker_edit)
       .catch(() => set_marker_save_error("标记保存失败，请稍后重试"))
@@ -874,6 +1004,8 @@ export function MediaTimeline({
     set_marker_tags_draft("");
     set_marker_start_draft(0);
     set_marker_end_draft(null);
+    set_marker_range_before_draft(null);
+    set_marker_range_after_draft(null);
     set_confirming_delete(false);
     set_marker_save_error(null);
     set_marker_editor_position(null);

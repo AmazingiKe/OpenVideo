@@ -491,6 +491,7 @@ export function MarkersPage() {
         segments={segments}
         markers={markers}
         candidate_markers={candidate_markers}
+        analysis_strategy={analysis_strategy}
         marker_error={marker_error}
         on_seek={seek_player}
         on_selected_transcript_indices_change={set_selected_transcript_indices}

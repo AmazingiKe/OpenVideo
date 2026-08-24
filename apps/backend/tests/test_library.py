@@ -156,6 +156,8 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
         end_seconds=4,
         title="重点片段",
         tags=["重点"],
+        marker_range_before_seconds=15,
+        marker_range_after_seconds=0,
     )
     library.create_marker(marker)
     library.save_transcript(
@@ -192,6 +194,8 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     assert rebuilt.load_markers(ASSET_ID)[0].tags == ["重点"]
     assert rebuilt.load_markers(ASSET_ID)[0].end_seconds == 4
     assert rebuilt.load_markers(ASSET_ID)[0].title == "重点片段"
+    assert rebuilt.load_markers(ASSET_ID)[0].marker_range_before_seconds == 15
+    assert rebuilt.load_markers(ASSET_ID)[0].marker_range_after_seconds == 0
     assert rebuilt.load_summary_document(DOCUMENT_ID).markdown == "# 用户总结\n"
     session_id = f"session-{CONVERSATION_ID.removeprefix('conversation-')}"
     assert rebuilt.load_agent_events(session_id)[0].payload["content"] == "请精简正文"
@@ -219,6 +223,8 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
         "start_seconds",
         "end_seconds",
         "title",
+        "marker_range_before_seconds",
+        "marker_range_after_seconds",
     } <= marker_columns
     rebuilt.close()
 
@@ -252,6 +258,8 @@ def test_old_marker_file_without_ranges_loads_as_inherited(tmp_path: Path):
     assert marker.start_seconds == 2
     assert marker.end_seconds is None
     assert marker.title == ""
+    assert marker.marker_range_before_seconds is None
+    assert marker.marker_range_after_seconds is None
     migrated = json.loads(marker_path.read_text(encoding="utf-8"))
     assert migrated["format_version"] == 2
     assert "time_seconds" not in migrated["markers"][0]

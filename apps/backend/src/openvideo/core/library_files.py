@@ -96,8 +96,6 @@ class MarkersFile(BaseModel):
             marker["start_seconds"] = marker.pop("time_seconds")
             marker["end_seconds"] = None
             marker["title"] = ""
-            marker.pop("marker_range_before_seconds", None)
-            marker.pop("marker_range_after_seconds", None)
             migrated_markers.append(marker)
         migrated["markers"] = migrated_markers
         return migrated
