@@ -184,6 +184,28 @@ describe("SummaryWorkspace", () => {
     );
   });
 
+  it("explains when requested subdocuments are not suitable", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([]);
+    vi.mocked(generate_summary_documents).mockResolvedValue([DOCUMENT]);
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "适合时按章节拆分" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "生成主文档" }));
+
+    expect(
+      await screen.findByRole("status", { name: "已保留单一主文档" }),
+    ).toHaveTextContent("当前内容不足以形成独立章节");
+  });
+
   it("auto-saves markdown with the expected revision", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
     vi.mocked(update_summary_document).mockResolvedValue({

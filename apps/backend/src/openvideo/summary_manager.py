@@ -564,13 +564,20 @@ class SummaryManager:
         root_id = f"document-{uuid7().hex}"
         children: list[SummaryDocument] = []
         if request.create_subdocuments:
-            child_sources = generated_children or [
-                SummaryDocumentCreate(
-                    title=segment.title,
-                    markdown=self._segment_markdown(segment, request.detail.value),
-                )
-                for segment in segments
-            ]
+            child_sources = (
+                generated_children
+                if model is not None
+                else [
+                    SummaryDocumentCreate(
+                        title=segment.title,
+                        markdown=self._segment_markdown(
+                            segment, request.detail.value
+                        ),
+                    )
+                    for segment in segments
+                    if _segment_summary(segment) is not None
+                ]
+            )
             for position, child_source in enumerate(child_sources):
                 document_id = f"document-{uuid7().hex}"
                 children.append(
@@ -1315,11 +1322,7 @@ class SummaryManager:
             lines.append("尚无时间轴分析结果，可在标记页完成内容分析后再补充。")
         for segment in segments:
             timestamp = _timestamp(segment.start_seconds)
-            summary = (
-                segment.detailed_summary
-                or segment.transcript_text
-                or "该片段暂无文字说明。"
-            )
+            summary = _segment_summary(segment) or "该片段暂无文字说明。"
             if detail == "concise":
                 summary = summary[:180]
             lines.extend((f"### [{timestamp}] {segment.title}", "", summary, ""))
@@ -1327,11 +1330,7 @@ class SummaryManager:
 
     @staticmethod
     def _segment_markdown(segment: MediaSegment, detail: str) -> str:
-        summary = (
-            segment.detailed_summary
-            or segment.transcript_text
-            or "该片段暂无文字说明。"
-        )
+        summary = _segment_summary(segment) or "该片段暂无文字说明。"
         lines = [
             f"# {segment.title}",
             "",
@@ -1393,7 +1392,9 @@ class SummaryManager:
             f"分析片段：\n{analysis_context}"
         )[:SUMMARY_GENERATION_CONTEXT_LIMIT]
         child_instruction = (
-            "按章节返回一级子文档，每项包含 title 和 markdown。"
+            "仅当内容形成多个可独立阅读的章节时返回一级子文档；"
+            "每项必须包含 title 和有实际正文的完整 markdown，不得只返回标题。"
+            "内容不足或不适合拆分时，subdocuments 必须返回空数组。"
             if request.create_subdocuments
             else "subdocuments 必须返回空数组。"
         )
@@ -1424,6 +1425,13 @@ def _timestamp(seconds: float) -> str:
         if hour
         else f"{minute:02d}:{second:02d}"
     )
+
+
+def _segment_summary(segment: MediaSegment) -> str | None:
+    for content in (segment.detailed_summary, segment.transcript_text):
+        if content and content.strip():
+            return content.strip()
+    return None
 
 
 def _markdown_diff(original: str, proposed: str) -> str:
@@ -1464,14 +1472,7 @@ def _parse_agent_response(
         payload.get("proposed_markdown"), str
     ):
         return normalized, fallback_explanation, [], []
-    subdocuments: list[SummaryDocumentCreate] = []
-    for item in payload.get("suggested_subdocuments", []):
-        if not isinstance(item, dict):
-            continue
-        try:
-            subdocuments.append(SummaryDocumentCreate.model_validate(item))
-        except ValueError:
-            continue
+    subdocuments = _parse_subdocuments(payload.get("suggested_subdocuments"))
     media_suggestions: list[SummaryMediaSuggestion] = []
     for item in payload.get("media_suggestions", []):
         if not isinstance(item, dict):
@@ -1512,15 +1513,38 @@ def _parse_generation_response(
     title = payload.get("title")
     if not isinstance(title, str) or not title.strip():
         title = None
+    subdocuments = _parse_subdocuments(payload.get("subdocuments"))
+    return title.strip() if title else None, markdown + "\n", subdocuments
+
+
+def _parse_subdocuments(value: object) -> list[SummaryDocumentCreate]:
+    if not isinstance(value, list):
+        return []
     subdocuments: list[SummaryDocumentCreate] = []
-    for item in payload.get("subdocuments", []):
+    for item in value:
         if not isinstance(item, dict):
             continue
         try:
-            subdocuments.append(SummaryDocumentCreate.model_validate(item))
+            subdocument = SummaryDocumentCreate.model_validate(item)
         except ValueError:
             continue
-    return title.strip() if title else None, markdown + "\n", subdocuments
+        title = subdocument.title.strip()
+        markdown = subdocument.markdown.strip()
+        if not title or not _has_markdown_body(markdown):
+            continue
+        subdocuments.append(
+            subdocument.model_copy(
+                update={"title": title, "markdown": f"{markdown}\n"}
+            )
+        )
+    return subdocuments
+
+
+def _has_markdown_body(markdown: str) -> bool:
+    return any(
+        line and not re.match(r"^#{1,6}(?:\s|$)", line)
+        for line in (item.strip() for item in markdown.splitlines())
+    )
 
 
 def _append_document_index(

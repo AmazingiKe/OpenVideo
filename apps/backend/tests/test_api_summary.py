@@ -156,6 +156,69 @@ def test_summary_generation_uses_selected_ai_model(tmp_path: Path, monkeypatch):
     assert child["title"] == "第一章"
 
 
+def test_summary_generation_does_not_force_children_when_ai_returns_none(
+    tmp_path: Path, monkeypatch
+):
+    response_payload = {
+        "title": "AI 课程总结",
+        "markdown": "# AI 课程总结\n\n内容不适合继续拆分。",
+        "subdocuments": [],
+    }
+    monkeypatch.setattr(
+        "openvideo.summary_manager.complete_text",
+        lambda *args, **kwargs: json.dumps(response_payload, ensure_ascii=False),
+    )
+    with create_client(tmp_path, with_model=True) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={
+                "ai_model_id": MODEL_ID,
+                "detail": "standard",
+                "create_subdocuments": True,
+                "subdocument_mode": "chapters",
+            },
+        )
+
+    assert response.status_code == 201
+    documents = response.json()
+    assert len(documents) == 1
+    assert documents[0]["parent_document_id"] is None
+
+
+def test_summary_generation_ignores_ai_children_without_body(
+    tmp_path: Path, monkeypatch
+):
+    response_payload = {
+        "title": "AI 课程总结",
+        "markdown": "# AI 课程总结\n\n模型整理的核心结论。",
+        "subdocuments": [
+            {"title": "空章节", "markdown": "# 空章节\n"},
+            {"title": "有效章节", "markdown": "# 有效章节\n\n章节正文。"},
+        ],
+    }
+    monkeypatch.setattr(
+        "openvideo.summary_manager.complete_text",
+        lambda *args, **kwargs: json.dumps(response_payload, ensure_ascii=False),
+    )
+    with create_client(tmp_path, with_model=True) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={
+                "ai_model_id": MODEL_ID,
+                "detail": "standard",
+                "create_subdocuments": True,
+                "subdocument_mode": "chapters",
+            },
+        )
+
+    assert response.status_code == 201
+    children = [
+        item for item in response.json() if item["parent_document_id"] is not None
+    ]
+    assert [child["title"] for child in children] == ["有效章节"]
+    assert children[0]["markdown"] == "# 有效章节\n\n章节正文。\n"
+
+
 def test_summary_document_update_detects_revision_conflict(tmp_path: Path):
     with create_client(tmp_path) as client:
         document = generate_documents(client)[0]
