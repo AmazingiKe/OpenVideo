@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AudioLines,
   Bot,
   Database,
   FolderOpen,
   Info,
-  Save,
   Settings2,
   TriangleAlert,
   Wrench,
@@ -20,7 +19,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -33,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { LibraryPathForm } from "@/features/library/LibraryPathForm";
+import { error_message, is_abort_error } from "@/shared/errors";
 import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
 import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
 import {
@@ -46,6 +45,8 @@ import type { Preferences, TranscriptionModelDescriptor } from "@/shared/types";
 
 type EditableField = "tools_directory" | "models_directory";
 
+const SETTINGS_SAVE_DELAY_MS = 500;
+
 export function SettingsPage() {
   const { library, set_library } = use_library();
   const [preferences, set_preferences] = useState<Preferences | null>(null);
@@ -54,6 +55,7 @@ export function SettingsPage() {
   >([]);
   const [saving, set_saving] = useState(false);
   const [message, set_message] = useState<string | null>(null);
+  const saved_preferences_ref = useRef<Preferences | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -63,41 +65,49 @@ export function SettingsPage() {
     ])
       .then(([loaded_preferences, models]) => {
         set_preferences(loaded_preferences);
+        saved_preferences_ref.current = loaded_preferences;
         set_transcription_models(models);
       })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          set_message(error instanceof Error ? error.message : "读取设置失败");
-        }
+        if (!is_abort_error(error)) set_message(error_message(error));
       });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (preferences === null || preferences === saved_preferences_ref.current)
+      return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      set_saving(true);
+      set_message(null);
+      void update_preferences(
+        {
+          tools_directory: preferences.tools_directory,
+          models_directory: preferences.models_directory,
+          default_transcription: preferences.default_transcription,
+          ai_models: preferences.ai_models,
+        },
+        controller.signal,
+      )
+        .then(() => {
+          saved_preferences_ref.current = preferences;
+        })
+        .catch((error: unknown) => {
+          if (!is_abort_error(error)) set_message(error_message(error));
+        })
+        .finally(() => set_saving(false));
+    }, SETTINGS_SAVE_DELAY_MS);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [preferences]);
 
   function update_field(field: EditableField, value: string) {
     set_preferences((current) =>
       current ? { ...current, [field]: value || null } : current,
     );
-  }
-
-  async function save() {
-    if (!preferences) return;
-    set_saving(true);
-    set_message(null);
-    try {
-      set_preferences(
-        await update_preferences({
-          tools_directory: preferences.tools_directory,
-          models_directory: preferences.models_directory,
-          default_transcription: preferences.default_transcription,
-          ai_models: preferences.ai_models,
-        }),
-      );
-      set_message("设置已保存");
-    } catch (error) {
-      set_message(error instanceof Error ? error.message : "保存设置失败");
-    } finally {
-      set_saving(false);
-    }
   }
 
   return (
@@ -231,25 +241,19 @@ export function SettingsPage() {
             />
           </SettingsCard>
           {message ? (
-            <Alert
-              variant={message === "设置已保存" ? "default" : "destructive"}
-            >
+            <Alert variant="destructive">
               <TriangleAlert aria-hidden="true" />
-              <AlertTitle>{message}</AlertTitle>
+              <AlertTitle>保存失败</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
             </Alert>
           ) : null}
-          <Card>
-            <CardFooter className="justify-end">
-              <Button type="button" onClick={save} disabled={saving}>
-                {saving ? (
-                  <Spinner data-icon="inline-start" />
-                ) : (
-                  <Save data-icon="inline-start" />
-                )}
-                {saving ? "正在保存" : "保存设置"}
-              </Button>
-            </CardFooter>
-          </Card>
+          <p
+            className="flex items-center gap-2 text-sm text-muted-foreground"
+            role="status"
+          >
+            {saving ? <Spinner /> : null}
+            {saving ? "正在保存设置" : "设置更改后会自动保存"}
+          </p>
         </>
       )}
     </section>
