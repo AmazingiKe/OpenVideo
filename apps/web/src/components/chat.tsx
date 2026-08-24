@@ -25,10 +25,7 @@ export function MessageScroller({
 
   useEffect(() => {
     if (is_at_latest) {
-      viewport_ref.current?.scrollTo({
-        top: viewport_ref.current.scrollHeight,
-        behavior: "smooth",
-      });
+      scroll_to_latest(viewport_ref.current);
     }
   }, [children, is_at_latest]);
 
@@ -55,10 +52,7 @@ export function MessageScroller({
           className="absolute right-4 bottom-4 rounded-full"
           aria-label="跳到最新消息"
           onClick={() => {
-            viewport_ref.current?.scrollTo({
-              top: viewport_ref.current.scrollHeight,
-              behavior: "smooth",
-            });
+            scroll_to_latest(viewport_ref.current);
           }}
         >
           <ArrowDown />
@@ -66,6 +60,15 @@ export function MessageScroller({
       ) : null}
     </div>
   );
+}
+
+function scroll_to_latest(viewport: HTMLDivElement | null): void {
+  if (!viewport) return;
+  if (typeof viewport.scrollTo === "function") {
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+    return;
+  }
+  viewport.scrollTop = viewport.scrollHeight;
 }
 
 export function Message({
@@ -97,6 +100,22 @@ export function Bubble({
       data-role={role}
       className={cn(
         "max-w-[88%] rounded-xl px-3 py-2 text-sm leading-relaxed break-words data-[role=assistant]:bg-muted data-[role=user]:bg-primary data-[role=user]:text-primary-foreground",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export function Marker({
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      role="status"
+      className={cn(
+        "mx-auto rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground",
         className,
       )}
       {...props}

@@ -24,6 +24,7 @@ import type {
   TranscriptionModelDownloadJob,
   Preferences,
   SummaryAgentRun,
+  SummaryConversation,
   SummaryConversationState,
   SummaryDetail,
   SummaryDocument,
@@ -630,14 +631,52 @@ export async function delete_summary_document(
     throw new ApiError(`请求失败（${response.status}）`, response.status);
 }
 
-export function get_summary_conversation(
+export function list_summary_conversations(
   asset_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryConversation[]> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-conversations`,
+    { signal },
+  );
+}
+
+export function create_summary_conversation(
+  asset_id: string,
+  document_id: string,
   signal?: AbortSignal,
 ): Promise<SummaryConversationState> {
   return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-conversation`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-conversations`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_id }),
+      signal,
+    },
+  );
+}
+
+export function get_summary_conversation(
+  conversation_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryConversationState> {
+  return request_json(
+    `/api/summary-conversations/${encodeURIComponent(conversation_id)}`,
     { signal },
   );
+}
+
+export async function delete_summary_conversation(
+  conversation_id: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(
+    `${api_base_url}/api/summary-conversations/${encodeURIComponent(conversation_id)}`,
+    { method: "DELETE", signal },
+  );
+  if (!response.ok)
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
 }
 
 export function create_summary_agent_run(

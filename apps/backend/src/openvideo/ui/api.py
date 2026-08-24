@@ -78,6 +78,8 @@ from openvideo.settings import (
 from openvideo.core.summary_models import (
     SummaryAgentMessageRequest,
     SummaryAgentRun,
+    SummaryConversation,
+    SummaryConversationCreate,
     SummaryConversationState,
     SummaryDocument,
     SummaryDocumentCreate,
@@ -1176,14 +1178,51 @@ def create_app(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get(
-        "/api/media/assets/{asset_id}/summary-conversation",
-        response_model=SummaryConversationState,
+        "/api/media/assets/{asset_id}/summary-conversations",
+        response_model=list[SummaryConversation],
     )
-    def get_summary_conversation(asset_id: str) -> SummaryConversationState:
+    def list_summary_conversations(asset_id: str) -> list[SummaryConversation]:
         try:
-            return summary_manager.conversation_state(asset_id)
+            return summary_manager.conversations(asset_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
+        "/api/media/assets/{asset_id}/summary-conversations",
+        response_model=SummaryConversationState,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_summary_conversation(
+        asset_id: str,
+        request: SummaryConversationCreate,
+    ) -> SummaryConversationState:
+        try:
+            return summary_manager.create_conversation(asset_id, request)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get(
+        "/api/summary-conversations/{conversation_id}",
+        response_model=SummaryConversationState,
+    )
+    def get_summary_conversation(conversation_id: str) -> SummaryConversationState:
+        try:
+            return summary_manager.conversation_state(conversation_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.delete(
+        "/api/summary-conversations/{conversation_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_summary_conversation(conversation_id: str) -> Response:
+        try:
+            summary_manager.delete_conversation(conversation_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except SummaryError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post(
         "/api/summary-conversations/{conversation_id}/messages",

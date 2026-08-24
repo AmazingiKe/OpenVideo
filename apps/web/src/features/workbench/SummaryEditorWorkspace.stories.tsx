@@ -12,6 +12,7 @@ const ASSET_ID = "asset-0198dbf112347abc8123456789abcdef";
 const ROOT_DOCUMENT_ID = "document-0198dbf212347abc8123456789abcdef";
 const CHILD_DOCUMENT_ID = "document-0198dbf312347abc8123456789abcdef";
 const CONVERSATION_ID = "conversation-0198dbf412347abc8123456789abcdef";
+const SECOND_CONVERSATION_ID = "conversation-0198dbfb12347abc8123456789abcdef";
 const CREATED_AT = "2026-08-24T08:00:00Z";
 
 const ASSET: MediaAsset = {
@@ -73,6 +74,7 @@ const CONVERSATION: SummaryConversationState = {
     conversation_id: CONVERSATION_ID,
     asset_id: ASSET_ID,
     root_document_id: ROOT_DOCUMENT_ID,
+    title: "复习要点整理",
     created_at: CREATED_AT,
     updated_at: CREATED_AT,
   },
@@ -118,6 +120,19 @@ const CONVERSATION: SummaryConversationState = {
   ],
 };
 
+const SECOND_CONVERSATION: SummaryConversationState = {
+  conversation: {
+    conversation_id: SECOND_CONVERSATION_ID,
+    asset_id: ASSET_ID,
+    root_document_id: ROOT_DOCUMENT_ID,
+    title: "案例拆解补充",
+    created_at: CREATED_AT,
+    updated_at: CREATED_AT,
+  },
+  messages: [],
+  proposals: [],
+};
+
 const TRANSCRIPT: Transcript = {
   asset_id: ASSET_ID,
   language: "zh",
@@ -148,8 +163,19 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
       ]),
     );
   }
-  if (url.includes("/summary-conversation")) {
+  if (url.endsWith(`/api/summary-conversations/${CONVERSATION_ID}`)) {
     return Promise.resolve(json_response(CONVERSATION));
+  }
+  if (url.endsWith(`/api/summary-conversations/${SECOND_CONVERSATION_ID}`)) {
+    return Promise.resolve(json_response(SECOND_CONVERSATION));
+  }
+  if (url.endsWith(`/api/media/assets/${ASSET_ID}/summary-conversations`)) {
+    return Promise.resolve(
+      json_response([
+        CONVERSATION.conversation,
+        SECOND_CONVERSATION.conversation,
+      ]),
+    );
   }
   if (url.includes("/summary-exports")) {
     return Promise.resolve(

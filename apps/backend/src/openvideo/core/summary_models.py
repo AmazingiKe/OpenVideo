@@ -53,8 +53,13 @@ class SummaryConversation(BaseModel):
     conversation_id: str
     asset_id: str
     root_document_id: str
+    title: str = Field(min_length=1, max_length=120)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SummaryConversationCreate(BaseModel):
+    document_id: str
 
 
 class SummaryMessageRole(StrEnum):

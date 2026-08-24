@@ -10,15 +10,20 @@ import {
   ArrowDown,
   ArrowUp,
   Bot,
+  ChevronDown,
   Code2,
   Download,
   Eye,
   FilePlus2,
   FileText,
   FolderTree,
+  GripVertical,
+  History,
   MessageSquareText,
+  MoreVertical,
   PanelLeft,
   PanelRight,
+  Plus,
   Save,
   Trash2,
 } from "lucide-react";
@@ -30,6 +35,7 @@ import {
 } from "@/components/MarkdownEditor";
 import {
   Bubble,
+  Marker,
   Message,
   MessageComposer,
   MessageScroller,
@@ -45,6 +51,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogClose,
@@ -97,11 +112,14 @@ import {
   create_summary_export,
   create_summary_agent_run,
   create_summary_child,
+  create_summary_conversation,
   create_summary_media,
   delete_summary_document,
+  delete_summary_conversation,
   generate_summary_documents,
   get_summary_conversation,
   list_ai_models,
+  list_summary_conversations,
   list_summary_documents,
   reorder_summary_children,
   resolve_summary_proposal,
@@ -116,6 +134,7 @@ import type {
   MediaAsset,
   MediaSegment,
   SummaryConversationState,
+  SummaryConversation,
   SummaryDetail,
   SummaryDocument,
   SummaryEditProposal,
@@ -125,6 +144,12 @@ import type {
 } from "@/shared/types";
 
 const AUTO_SAVE_DELAY_MS = 1_000;
+const SUMMARY_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 type SaveStatus = "saved" | "saving" | "failed" | "conflict";
 
@@ -146,6 +171,9 @@ export function SummaryWorkspace({
     string | null
   >(null);
   const [models, set_models] = useState<AiModelSummary[]>([]);
+  const [conversations, set_conversations] = useState<SummaryConversation[]>(
+    [],
+  );
   const [conversation, set_conversation] =
     useState<SummaryConversationState | null>(null);
   const [is_loading, set_is_loading] = useState(false);
@@ -171,6 +199,9 @@ export function SummaryWorkspace({
   const [delete_target, set_delete_target] = useState<SummaryDocument | null>(
     null,
   );
+  const [delete_conversation_target, set_delete_conversation_target] =
+    useState<SummaryConversation | null>(null);
+  const [reordering, set_reordering] = useState(false);
   const [agent_instruction, set_agent_instruction] = useState("");
   const [agent_pending, set_agent_pending] = useState(false);
   const [agent_stage, set_agent_stage] = useState<string | null>(null);
@@ -210,14 +241,37 @@ export function SummaryWorkspace({
   }, []);
 
   const load_conversation = useCallback(
-    async (asset_id: string, signal?: AbortSignal) => {
-      set_conversation(await get_summary_conversation(asset_id, signal));
+    async (conversation_id: string, signal?: AbortSignal) => {
+      set_conversation(await get_summary_conversation(conversation_id, signal));
     },
     [],
   );
 
+  const load_conversations = useCallback(
+    async (
+      asset_id: string,
+      signal?: AbortSignal,
+      preferred_conversation_id?: string,
+    ) => {
+      const loaded = await list_summary_conversations(asset_id, signal);
+      set_conversations(loaded);
+      const active =
+        loaded.find(
+          (item) => item.conversation_id === preferred_conversation_id,
+        ) ?? loaded[0];
+      if (active) await load_conversation(active.conversation_id, signal);
+      else set_conversation(null);
+      return loaded;
+    },
+    [load_conversation],
+  );
+
   const load_documents = useCallback(
-    async (asset_id: string, signal?: AbortSignal) => {
+    async (
+      asset_id: string,
+      signal?: AbortSignal,
+      preferred_conversation_id?: string,
+    ) => {
       const loaded = await list_summary_documents(asset_id, signal);
       set_documents(loaded);
       set_selected_document_id((current) =>
@@ -226,11 +280,15 @@ export function SummaryWorkspace({
           : (loaded.find((document) => document.parent_document_id === null)
               ?.document_id ?? null),
       );
-      if (loaded.length > 0) await load_conversation(asset_id, signal);
-      else set_conversation(null);
+      if (loaded.length > 0) {
+        await load_conversations(asset_id, signal, preferred_conversation_id);
+      } else {
+        set_conversations([]);
+        set_conversation(null);
+      }
       return loaded;
     },
-    [load_conversation],
+    [load_conversations],
   );
 
   useEffect(() => {
@@ -258,6 +316,7 @@ export function SummaryWorkspace({
     if (!selected_asset) {
       set_documents([]);
       set_selected_document_id(null);
+      set_conversations([]);
       set_conversation(null);
       return;
     }
@@ -365,7 +424,7 @@ export function SummaryWorkspace({
         generated.find((document) => document.parent_document_id === null) ??
         null;
       set_selected_document_id(root?.document_id ?? null);
-      if (root) await load_conversation(selected_asset.asset_id);
+      if (root) await load_conversations(selected_asset.asset_id);
     } catch (error) {
       on_error?.(error_message(error));
     } finally {
@@ -426,8 +485,29 @@ export function SummaryWorkspace({
     }
   }
 
-  async function move_child(document_id: string, direction: -1 | 1) {
-    if (!root_document) return;
+  async function reorder_children(document_ids: string[]) {
+    if (!root_document || reordering) return;
+    const previous_documents = documents;
+    set_reordering(true);
+    set_documents((current) =>
+      current.map((document) => {
+        const position = document_ids.indexOf(document.document_id);
+        return position >= 0 ? { ...document, position } : document;
+      }),
+    );
+    try {
+      set_documents(
+        await reorder_summary_children(root_document.document_id, document_ids),
+      );
+    } catch (error) {
+      set_documents(previous_documents);
+      on_error?.(error_message(error));
+    } finally {
+      set_reordering(false);
+    }
+  }
+
+  function move_child(document_id: string, direction: -1 | 1) {
     const current_index = child_documents.findIndex(
       (document) => document.document_id === document_id,
     );
@@ -443,12 +523,53 @@ export function SummaryWorkspace({
       reordered[target_index]!,
       reordered[current_index]!,
     ];
+    void reorder_children(reordered.map((document) => document.document_id));
+  }
+
+  async function create_agent_conversation() {
+    if (!selected_asset || !selected_document || agent_pending) return;
     try {
-      set_documents(
-        await reorder_summary_children(
-          root_document.document_id,
-          reordered.map((document) => document.document_id),
-        ),
+      const created = await create_summary_conversation(
+        selected_asset.asset_id,
+        selected_document.document_id,
+      );
+      set_conversations((current) => [created.conversation, ...current]);
+      set_conversation(created);
+      set_agent_instruction("");
+      set_agent_stage(null);
+    } catch (error) {
+      on_error?.(error_message(error));
+    }
+  }
+
+  async function select_agent_conversation(conversation_id: string) {
+    if (
+      agent_pending ||
+      conversation?.conversation.conversation_id === conversation_id
+    )
+      return;
+    try {
+      await load_conversation(conversation_id);
+      set_agent_instruction("");
+      set_agent_stage(null);
+    } catch (error) {
+      on_error?.(error_message(error));
+    }
+  }
+
+  async function remove_agent_conversation() {
+    if (!delete_conversation_target || !selected_asset) return;
+    const deleted_id = delete_conversation_target.conversation_id;
+    try {
+      await delete_summary_conversation(deleted_id);
+      const remaining = conversations.filter(
+        (item) => item.conversation_id !== deleted_id,
+      );
+      set_delete_conversation_target(null);
+      await load_conversations(
+        selected_asset.asset_id,
+        undefined,
+        remaining[0]?.conversation_id,
       );
     } catch (error) {
       on_error?.(error_message(error));
@@ -514,7 +635,11 @@ export function SummaryWorkspace({
         }
         if (event.event === "error") throw new Error(event.data.message);
       });
-      await load_conversation(selected_document.asset_id);
+      await load_conversations(
+        selected_document.asset_id,
+        undefined,
+        conversation.conversation.conversation_id,
+      );
       set_agent_stage(null);
     } catch (error) {
       on_error?.(error_message(error));
@@ -531,7 +656,11 @@ export function SummaryWorkspace({
     if (!selected_asset) return;
     try {
       await resolve_summary_proposal(proposal.proposal_id, action);
-      const loaded = await load_documents(selected_asset.asset_id);
+      const loaded = await load_documents(
+        selected_asset.asset_id,
+        undefined,
+        conversation?.conversation.conversation_id,
+      );
       const active = loaded.find(
         (document) => document.document_id === selected_document_id,
       );
@@ -542,7 +671,9 @@ export function SummaryWorkspace({
     } catch (error) {
       on_error?.(error_message(error));
       if (error instanceof ApiError && error.status === 409) {
-        await load_conversation(selected_asset.asset_id);
+        if (conversation) {
+          await load_conversation(conversation.conversation.conversation_id);
+        }
       }
     }
   }
@@ -626,18 +757,22 @@ export function SummaryWorkspace({
         set_tree_sheet_open(false);
       }}
       on_create={() => set_new_document_open(true)}
-      on_move={(document_id, direction) =>
-        void move_child(document_id, direction)
-      }
+      on_move={(document_id, direction) => move_child(document_id, direction)}
+      on_reorder={(document_ids) => void reorder_children(document_ids)}
+      reordering={reordering}
       on_delete={set_delete_target}
     />
   );
   const agent_panel = (
     <SummaryAgentPanel
       models={models}
+      conversations={conversations}
+      conversation={conversation?.conversation ?? null}
       model_id={agent_model_id}
       on_model_change={set_agent_model_id}
       selection={selection}
+      documents={documents}
+      selected_document={selected_document}
       messages={conversation?.messages ?? []}
       proposals={conversation?.proposals ?? []}
       stage={agent_stage}
@@ -646,6 +781,11 @@ export function SummaryWorkspace({
       pending={agent_pending}
       disabled={!conversation}
       on_submit={() => void send_agent_instruction()}
+      on_new_conversation={() => void create_agent_conversation()}
+      on_select_conversation={(conversation_id) =>
+        void select_agent_conversation(conversation_id)
+      }
+      on_delete_conversation={set_delete_conversation_target}
       on_resolve={(proposal, action) => void resolve_proposal(proposal, action)}
       media_pending_id={media_pending_id}
       on_generate_media={(suggestion, document_id) =>
@@ -728,7 +868,7 @@ export function SummaryWorkspace({
               side="right"
               className="w-[min(92vw,26rem)] gap-0 p-0"
             >
-              <SheetHeader className="border-b">
+              <SheetHeader className="sr-only">
                 <SheetTitle>总结 Agent</SheetTitle>
                 <SheetDescription>建议需确认后才会应用</SheetDescription>
               </SheetHeader>
@@ -747,15 +887,15 @@ export function SummaryWorkspace({
             {document_tree}
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel id="summary-editor" defaultSize="54%" minSize="35%">
+          <ResizablePanel id="summary-editor" defaultSize="50%" minSize="34%">
             {editor}
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel
             id="summary-agent"
-            defaultSize="26%"
-            minSize="20%"
-            maxSize="36%"
+            defaultSize="30%"
+            minSize="24%"
+            maxSize="42%"
           >
             {agent_panel}
           </ResizablePanel>
@@ -774,6 +914,13 @@ export function SummaryWorkspace({
           if (!open) set_delete_target(null);
         }}
         on_confirm={() => void remove_child()}
+      />
+      <DeleteConversationDialog
+        conversation={delete_conversation_target}
+        on_open_change={(open) => {
+          if (!open) set_delete_conversation_target(null);
+        }}
+        on_confirm={() => void remove_agent_conversation()}
       />
     </section>
   );
@@ -897,6 +1044,8 @@ function DocumentTree({
   on_select,
   on_create,
   on_move,
+  on_reorder,
+  reordering,
   on_delete,
 }: {
   root: SummaryDocument;
@@ -905,8 +1054,36 @@ function DocumentTree({
   on_select: (document_id: string) => void;
   on_create: () => void;
   on_move: (document_id: string, direction: -1 | 1) => void;
+  on_reorder: (document_ids: string[]) => void;
+  reordering: boolean;
   on_delete: (document: SummaryDocument) => void;
 }) {
+  const [dragged_document_id, set_dragged_document_id] = useState<
+    string | null
+  >(null);
+  const [drop_target, set_drop_target] = useState<{
+    document_id: string;
+    edge: "before" | "after";
+  } | null>(null);
+
+  function finish_drag() {
+    set_dragged_document_id(null);
+    set_drop_target(null);
+  }
+
+  function drop_document(target_document_id: string, edge: "before" | "after") {
+    if (!dragged_document_id) return;
+    const document_ids = children.map((document) => document.document_id);
+    const reordered = reorder_document_ids(
+      document_ids,
+      dragged_document_id,
+      target_document_id,
+      edge,
+    );
+    finish_drag();
+    if (reordered.join() !== document_ids.join()) on_reorder(reordered);
+  }
+
   return (
     <nav className="flex h-full min-h-0 flex-col bg-card" aria-label="总结文档">
       <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
@@ -932,52 +1109,142 @@ function DocumentTree({
         <div className="flex flex-col gap-1 pl-3">
           {children.map((document, index) => (
             <div
-              className="group flex min-w-0 items-center gap-1"
+              className={cn(
+                "flex min-w-0 items-center gap-1 rounded-md border-y-2 border-transparent",
+                drop_target?.document_id === document.document_id &&
+                  drop_target.edge === "before" &&
+                  "border-t-primary",
+                drop_target?.document_id === document.document_id &&
+                  drop_target.edge === "after" &&
+                  "border-b-primary",
+                dragged_document_id === document.document_id && "opacity-50",
+              )}
               key={document.document_id}
+              onDragOver={(event) => {
+                if (!dragged_document_id || reordering) return;
+                event.preventDefault();
+                const bounds = event.currentTarget.getBoundingClientRect();
+                set_drop_target({
+                  document_id: document.document_id,
+                  edge:
+                    event.clientY < bounds.top + bounds.height / 2
+                      ? "before"
+                      : "after",
+                });
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const bounds = event.currentTarget.getBoundingClientRect();
+                drop_document(
+                  document.document_id,
+                  event.clientY < bounds.top + bounds.height / 2
+                    ? "before"
+                    : "after",
+                );
+              }}
             >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                draggable={!reordering}
+                disabled={reordering}
+                onDragStart={(event) => {
+                  set_dragged_document_id(document.document_id);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData(
+                    "text/plain",
+                    document.document_id,
+                  );
+                }}
+                onDragEnd={finish_drag}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp" && index > 0) {
+                    event.preventDefault();
+                    on_move(document.document_id, -1);
+                  }
+                  if (
+                    event.key === "ArrowDown" &&
+                    index < children.length - 1
+                  ) {
+                    event.preventDefault();
+                    on_move(document.document_id, 1);
+                  }
+                }}
+                aria-label={`拖动 ${document.title} 调整顺序；也可使用上下方向键`}
+              >
+                <GripVertical />
+              </Button>
               <DocumentButton
                 document={document}
                 selected={document.document_id === selected_document_id}
                 on_select={on_select}
                 className="flex-1"
               />
-              <div className="flex shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => on_move(document.document_id, -1)}
-                  disabled={index === 0}
-                  aria-label={`上移 ${document.title}`}
-                >
-                  <ArrowUp />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => on_move(document.document_id, 1)}
-                  disabled={index === children.length - 1}
-                  aria-label={`下移 ${document.title}`}
-                >
-                  <ArrowDown />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => on_delete(document)}
-                  aria-label={`删除 ${document.title}`}
-                >
-                  <Trash2 />
-                </Button>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    disabled={reordering}
+                    aria-label={`${document.title} 操作`}
+                  >
+                    <MoreVertical />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      disabled={index === 0}
+                      onSelect={() => on_move(document.document_id, -1)}
+                    >
+                      <ArrowUp /> 上移
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={index === children.length - 1}
+                      onSelect={() => on_move(document.document_id, 1)}
+                    >
+                      <ArrowDown /> 下移
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => on_delete(document)}
+                    >
+                      <Trash2 /> 删除
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           ))}
         </div>
       </div>
+      <span className="sr-only" aria-live="polite">
+        {reordering ? "正在保存文档顺序" : ""}
+      </span>
     </nav>
   );
+}
+
+export function reorder_document_ids(
+  document_ids: string[],
+  dragged_document_id: string,
+  target_document_id: string,
+  edge: "before" | "after",
+): string[] {
+  if (dragged_document_id === target_document_id) return document_ids;
+  const reordered = document_ids.filter(
+    (document_id) => document_id !== dragged_document_id,
+  );
+  const target_index = reordered.indexOf(target_document_id);
+  if (target_index < 0) return document_ids;
+  const insertion_index = target_index + (edge === "after" ? 1 : 0);
+  reordered.splice(insertion_index, 0, dragged_document_id);
+  return reordered;
 }
 
 function DocumentButton({
@@ -1156,9 +1423,13 @@ function SaveState({
 
 function SummaryAgentPanel({
   models,
+  conversations,
+  conversation,
   model_id,
   on_model_change,
   selection,
+  documents,
+  selected_document,
   messages,
   proposals,
   stage,
@@ -1167,14 +1438,21 @@ function SummaryAgentPanel({
   pending,
   disabled,
   on_submit,
+  on_new_conversation,
+  on_select_conversation,
+  on_delete_conversation,
   on_resolve,
   media_pending_id,
   on_generate_media,
 }: {
   models: AiModelSummary[];
+  conversations: SummaryConversation[];
+  conversation: SummaryConversation | null;
   model_id: string | null;
   on_model_change: (model_id: string | null) => void;
   selection: MarkdownSelection | null;
+  documents: SummaryDocument[];
+  selected_document: SummaryDocument;
   messages: SummaryMessage[];
   proposals: SummaryEditProposal[];
   stage: string | null;
@@ -1183,6 +1461,9 @@ function SummaryAgentPanel({
   pending: boolean;
   disabled: boolean;
   on_submit: () => void;
+  on_new_conversation: () => void;
+  on_select_conversation: (conversation_id: string) => void;
+  on_delete_conversation: (conversation: SummaryConversation) => void;
   on_resolve: (
     proposal: SummaryEditProposal,
     action: "accept" | "reject",
@@ -1193,15 +1474,99 @@ function SummaryAgentPanel({
     document_id: string,
   ) => void;
 }) {
+  const timeline = [
+    ...messages.map((message) => ({
+      type: "message" as const,
+      created_at: message.created_at,
+      message,
+    })),
+    ...proposals.map((proposal) => ({
+      type: "proposal" as const,
+      created_at: proposal.created_at,
+      proposal,
+    })),
+  ].sort((left, right) => left.created_at.localeCompare(right.created_at));
+
   return (
     <aside
       className="flex h-full min-h-0 flex-col bg-card"
       aria-label="总结 Agent"
     >
       <div className="flex flex-col gap-3 border-b p-3">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Bot aria-hidden="true" /> 总结 Agent
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+            <Bot aria-hidden="true" /> 总结 Agent
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={on_new_conversation}
+              disabled={pending}
+              aria-label="新建 Agent 对话"
+            >
+              <Plus />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() =>
+                conversation && on_delete_conversation(conversation)
+              }
+              disabled={pending || conversations.length <= 1 || !conversation}
+              aria-label="删除当前 Agent 对话"
+            >
+              <Trash2 />
+            </Button>
+          </div>
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-between"
+              disabled={pending || !conversation}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <History data-icon="inline-start" />
+                <span className="truncate">
+                  {conversation?.title ?? "选择历史"}
+                </span>
+              </span>
+              <ChevronDown data-icon="inline-end" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuLabel>
+              Agent 历史 · {conversations.length} 条
+            </DropdownMenuLabel>
+            <DropdownMenuGroup>
+              {conversations.map((item) => (
+                <DropdownMenuItem
+                  key={item.conversation_id}
+                  onSelect={() => on_select_conversation(item.conversation_id)}
+                >
+                  <History />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{item.title}</span>
+                    <time className="text-xs text-muted-foreground">
+                      {format_summary_time(item.updated_at)}
+                    </time>
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={on_new_conversation}>
+                <Plus /> 新建对话
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <AiModelSelect
           id="summary-agent-model"
           label="对话模型"
@@ -1211,13 +1576,12 @@ function SummaryAgentPanel({
           disabled={pending}
         />
         <Badge variant="outline" className="max-w-full justify-start truncate">
-          {selection
-            ? `已选择 ${selection.text.length} 个字符`
-            : "当前文档全文"}
+          {selected_document.title} ·{" "}
+          {selection ? `已选择 ${selection.text.length} 个字符` : "全文"}
         </Badge>
       </div>
       <MessageScroller className="flex-1">
-        {messages.length === 0 ? (
+        {timeline.length === 0 ? (
           <Empty className="border-0">
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -1230,25 +1594,35 @@ function SummaryAgentPanel({
             </EmptyHeader>
           </Empty>
         ) : null}
-        {messages.map((message) => (
-          <Message key={message.message_id} role={message.role}>
-            <Bubble role={message.role}>{message.content}</Bubble>
-          </Message>
-        ))}
-        {stage ? (
-          <Message role="assistant">
-            <Bubble role="assistant">{stage}</Bubble>
-          </Message>
-        ) : null}
-        {proposals.map((proposal) => (
-          <ProposalCard
-            key={proposal.proposal_id}
-            proposal={proposal}
-            on_resolve={on_resolve}
-            media_pending_id={media_pending_id}
-            on_generate_media={on_generate_media}
-          />
-        ))}
+        {timeline.map((item) =>
+          item.type === "message" ? (
+            <Message key={item.message.message_id} role={item.message.role}>
+              <div className="flex max-w-[88%] flex-col gap-1">
+                <Bubble role={item.message.role} className="max-w-full">
+                  {item.message.content}
+                </Bubble>
+                <time className="px-1 text-xs text-muted-foreground">
+                  {format_summary_time(item.message.created_at)}
+                </time>
+              </div>
+            </Message>
+          ) : (
+            <ProposalCard
+              key={item.proposal.proposal_id}
+              proposal={item.proposal}
+              document_title={
+                documents.find(
+                  (document) =>
+                    document.document_id === item.proposal.document_id,
+                )?.title ?? "已删除文档"
+              }
+              on_resolve={on_resolve}
+              media_pending_id={media_pending_id}
+              on_generate_media={on_generate_media}
+            />
+          ),
+        )}
+        {stage ? <Marker>{stage}</Marker> : null}
       </MessageScroller>
       <MessageComposer
         value={instruction}
@@ -1263,11 +1637,13 @@ function SummaryAgentPanel({
 
 function ProposalCard({
   proposal,
+  document_title,
   on_resolve,
   media_pending_id,
   on_generate_media,
 }: {
   proposal: SummaryEditProposal;
+  document_title: string;
   on_resolve: (
     proposal: SummaryEditProposal,
     action: "accept" | "reject",
@@ -1279,56 +1655,68 @@ function ProposalCard({
   ) => void;
 }) {
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-sm">修改建议</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm">修改建议</CardTitle>
+          <Badge
+            variant={proposal.status === "stale" ? "destructive" : "secondary"}
+          >
+            {proposal_status_label(proposal.status)}
+          </Badge>
+        </div>
         <CardDescription>{proposal.explanation}</CardDescription>
+        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+          <span>{document_title}</span>
+          <span>版本 {proposal.base_revision}</span>
+          <time>{format_summary_time(proposal.created_at)}</time>
+        </div>
       </CardHeader>
-      <CardContent>
-        <pre className="max-h-40 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap">
-          {proposal.diff || "文档内容已重新整理。"}
-        </pre>
-        {proposal.media_suggestions.length > 0 ? (
-          <div className="mt-3 flex flex-col gap-2">
-            {proposal.media_suggestions.map((suggestion) => (
-              <div
-                className="flex items-center justify-between gap-2 rounded-md border p-2"
-                key={suggestion.suggestion_id}
-              >
-                <div className="min-w-0 text-xs">
-                  <strong className="block truncate">
-                    {suggestion.caption}
-                  </strong>
-                  <span className="text-muted-foreground">
-                    {suggestion.media_type === "gif" ? "GIF" : "图片"} ·{" "}
-                    {suggestion.start_seconds.toFixed(1)} 秒
-                  </span>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    on_generate_media(suggestion, proposal.document_id)
-                  }
-                  disabled={media_pending_id !== null}
+      {proposal.status === "pending" ? (
+        <CardContent>
+          <pre className="max-h-40 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap">
+            {proposal.diff || "文档内容已重新整理。"}
+          </pre>
+          {proposal.media_suggestions.length > 0 ? (
+            <div className="mt-3 flex flex-col gap-2">
+              {proposal.media_suggestions.map((suggestion) => (
+                <div
+                  className="flex items-center justify-between gap-2 rounded-md border p-2"
+                  key={suggestion.suggestion_id}
                 >
-                  {media_pending_id === suggestion.suggestion_id ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : null}
-                  生成
-                </Button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </CardContent>
+                  <div className="min-w-0 text-xs">
+                    <strong className="block truncate">
+                      {suggestion.caption}
+                    </strong>
+                    <span className="text-muted-foreground">
+                      {suggestion.media_type === "gif" ? "GIF" : "图片"} ·{" "}
+                      {suggestion.start_seconds.toFixed(1)} 秒
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      on_generate_media(suggestion, proposal.document_id)
+                    }
+                    disabled={media_pending_id !== null}
+                  >
+                    {media_pending_id === suggestion.suggestion_id ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : null}
+                    生成
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </CardContent>
+      ) : null}
       <CardFooter className="justify-between">
-        <Badge
-          variant={proposal.status === "stale" ? "destructive" : "secondary"}
-        >
-          {proposal_status_label(proposal.status)}
-        </Badge>
+        <span className="text-xs text-muted-foreground">
+          {proposal.status === "pending" ? "确认后才会写入文档" : "处理完成"}
+        </span>
         {proposal.status === "pending" ? (
           <div className="flex gap-2">
             <Button
@@ -1428,6 +1816,37 @@ function DeleteDocumentDialog({
   );
 }
 
+function DeleteConversationDialog({
+  conversation,
+  on_open_change,
+  on_confirm,
+}: {
+  conversation: SummaryConversation | null;
+  on_open_change: (open: boolean) => void;
+  on_confirm: () => void;
+}) {
+  return (
+    <Dialog open={conversation !== null} onOpenChange={on_open_change}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>删除 Agent 历史</DialogTitle>
+          <DialogDescription>
+            “{conversation?.title}”中的消息和修改建议将永久删除。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline">取消</Button>
+          </DialogClose>
+          <Button variant="destructive" onClick={on_confirm}>
+            删除历史
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SummaryEmpty({
   title,
   description,
@@ -1465,4 +1884,11 @@ function proposal_status_label(status: SummaryEditProposal["status"]): string {
     rejected: "已拒绝",
     stale: "已过期",
   }[status];
+}
+
+function format_summary_time(value: string): string {
+  const time = new Date(value);
+  return Number.isNaN(time.getTime())
+    ? value
+    : SUMMARY_TIME_FORMATTER.format(time);
 }

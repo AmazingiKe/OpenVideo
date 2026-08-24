@@ -8,16 +8,18 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  create_summary_conversation,
   create_summary_export,
   generate_summary_documents,
   get_summary_conversation,
   list_ai_models,
+  list_summary_conversations,
   list_summary_documents,
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
 import type { MediaAsset, SummaryDocument, Transcript } from "@/shared/types";
-import { SummaryWorkspace } from "./SummaryWorkspace";
+import { reorder_document_ids, SummaryWorkspace } from "./SummaryWorkspace";
 
 vi.mock("@/components/MarkdownEditor", () => ({
   MarkdownEditor: ({
@@ -41,12 +43,14 @@ vi.mock("@/shared/api", async (import_original) => {
     ...actual,
     create_summary_agent_run: vi.fn(),
     create_summary_child: vi.fn(),
+    create_summary_conversation: vi.fn(),
     create_summary_export: vi.fn(),
     create_summary_media: vi.fn(),
     delete_summary_document: vi.fn(),
     generate_summary_documents: vi.fn(),
     get_summary_conversation: vi.fn(),
     list_ai_models: vi.fn(),
+    list_summary_conversations: vi.fn(),
     list_summary_documents: vi.fn(),
     reorder_summary_children: vi.fn(),
     resolve_summary_proposal: vi.fn(),
@@ -118,12 +122,23 @@ describe("SummaryWorkspace", () => {
         conversation_id: "conversation-01890f4c7a2b7cc298c4dc0c0c07398f",
         asset_id: ASSET.asset_id,
         root_document_id: DOCUMENT.document_id,
+        title: "默认对话",
         created_at: DOCUMENT.created_at,
         updated_at: DOCUMENT.updated_at,
       },
       messages: [],
       proposals: [],
     });
+    vi.mocked(list_summary_conversations).mockResolvedValue([
+      {
+        conversation_id: "conversation-01890f4c7a2b7cc298c4dc0c0c07398f",
+        asset_id: ASSET.asset_id,
+        root_document_id: DOCUMENT.document_id,
+        title: "默认对话",
+        created_at: DOCUMENT.created_at,
+        updated_at: DOCUMENT.updated_at,
+      },
+    ]);
   });
 
   it("generates the document only after explicit confirmation", async () => {
@@ -263,5 +278,54 @@ describe("SummaryWorkspace", () => {
     expect(
       screen.queryByRole("link", { name: "导出 ZIP" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("creates a separate Agent history for the selected document", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+    vi.mocked(create_summary_conversation).mockResolvedValue({
+      conversation: {
+        conversation_id: "conversation-01890f4c7a2b7cc298c4dc0c0c073990",
+        asset_id: ASSET.asset_id,
+        root_document_id: DOCUMENT.document_id,
+        title: DOCUMENT.title,
+        created_at: DOCUMENT.created_at,
+        updated_at: DOCUMENT.updated_at,
+      },
+      messages: [],
+      proposals: [],
+    });
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Agent" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "新建 Agent 对话" }),
+    );
+
+    await waitFor(() =>
+      expect(create_summary_conversation).toHaveBeenCalledWith(
+        ASSET.asset_id,
+        DOCUMENT.document_id,
+      ),
+    );
+  });
+
+  it("calculates document drop positions without losing identifiers", () => {
+    expect(reorder_document_ids(["a", "b", "c"], "a", "c", "after")).toEqual([
+      "b",
+      "c",
+      "a",
+    ]);
+    expect(reorder_document_ids(["a", "b", "c"], "c", "a", "before")).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
   });
 });

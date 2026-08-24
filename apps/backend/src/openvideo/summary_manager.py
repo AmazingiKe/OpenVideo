@@ -18,6 +18,7 @@ from openvideo.core.summary_models import (
     SummaryAgentRun,
     SummaryAgentRunStage,
     SummaryConversation,
+    SummaryConversationCreate,
     SummaryConversationState,
     SummaryDocument,
     SummaryDocumentCreate,
@@ -59,6 +60,8 @@ from openvideo.tools.summary_media import (
 
 SUMMARY_AGENT_TIMEOUT_SECONDS = 120
 SUMMARY_AGENT_MAX_TOKENS = 12_000
+SUMMARY_CONVERSATION_TITLE_LENGTH = 60
+SUMMARY_CONVERSATION_CONTEXT_LIMIT = 12_000
 SUMMARY_GENERATION_CONTEXT_LIMIT = 30_000
 EXPORT_FILE_NAME_TIME_FORMAT = "%Y%m%d-%H%M%S-%f"
 
@@ -191,7 +194,7 @@ class SummaryManager:
             self._remove_project_files(asset_id, documents)
             raise
         root = documents[0]
-        self._conversation_for(root)
+        self._create_conversation(root, root.title)
         return documents
 
     def create_child(
@@ -333,20 +336,68 @@ class SummaryManager:
             raise SummaryNotFoundError("总结文档不存在")
         self._document_path(document).unlink(missing_ok=True)
 
-    def conversation_state(self, asset_id: str) -> SummaryConversationState:
+    def conversations(self, asset_id: str) -> list[SummaryConversation]:
         documents = self._documents(asset_id)
-        root = next(
-            (document for document in documents if document.parent_document_id is None),
+        if not any(document.parent_document_id is None for document in documents):
+            raise SummaryNotFoundError("请先生成主文档")
+        return self.library.load_summary_conversations(asset_id)
+
+    def create_conversation(
+        self,
+        asset_id: str,
+        request: SummaryConversationCreate,
+    ) -> SummaryConversationState:
+        documents = self._documents(asset_id)
+        document = next(
+            (item for item in documents if item.document_id == request.document_id),
             None,
         )
-        if root is None:
-            raise SummaryNotFoundError("请先生成主文档")
-        conversation = self._conversation_for(root)
+        root = next(
+            (item for item in documents if item.parent_document_id is None),
+            None,
+        )
+        if document is None or root is None:
+            raise SummaryNotFoundError("总结文档不存在")
+        conversation = self._create_conversation(root, document.title)
+        return SummaryConversationState(
+            conversation=conversation,
+            messages=[],
+            proposals=[],
+        )
+
+    def conversation_state(self, conversation_id: str) -> SummaryConversationState:
+        try:
+            conversation = self.library.load_summary_conversation_by_id(conversation_id)
+        except ValueError as error:
+            raise SummaryNotFoundError("总结会话不存在") from error
+        if conversation is None:
+            raise SummaryNotFoundError("总结会话不存在")
         return SummaryConversationState(
             conversation=conversation,
             messages=self.library.load_summary_messages(conversation.conversation_id),
             proposals=self.library.load_summary_proposals(conversation.conversation_id),
         )
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        try:
+            conversation = self.library.load_summary_conversation_by_id(conversation_id)
+        except ValueError as error:
+            raise SummaryNotFoundError("总结会话不存在") from error
+        if conversation is None:
+            raise SummaryNotFoundError("总结会话不存在")
+        if len(self.library.load_summary_conversations(conversation.asset_id)) <= 1:
+            raise SummaryError("至少保留一个 Agent 历史")
+        active_runs = {
+            SummaryAgentRunStage.PENDING,
+            SummaryAgentRunStage.RUNNING,
+        }
+        if any(
+            run.conversation_id == conversation_id and run.stage in active_runs
+            for run in self.library.load_summary_agent_runs()
+        ):
+            raise SummaryError("Agent 正在运行，暂时不能删除该历史")
+        if not self.library.delete_summary_conversation(conversation_id):
+            raise SummaryNotFoundError("总结会话不存在")
 
     def create_agent_run(
         self,
@@ -366,14 +417,26 @@ class SummaryManager:
             raise SummaryRevisionConflictError("文档版本已变化，请重新发送指令")
         if self.settings.ai_model(request.ai_model_id) is None:
             raise SummaryError("所选 AI 模型不存在")
+        instruction = request.instruction.strip()
+        if not instruction:
+            raise SummaryError("Agent 指令不能为空")
+        is_first_message = not self.library.load_summary_messages(conversation_id)
         self.library.save_summary_message(
             SummaryMessage(
                 message_id=f"message-{uuid7().hex}",
                 conversation_id=conversation_id,
                 role=SummaryMessageRole.USER,
-                content=request.instruction,
+                content=instruction,
             )
         )
+        if is_first_message:
+            title = instruction.splitlines()[0]
+            title = title[:SUMMARY_CONVERSATION_TITLE_LENGTH]
+            self.library.update_summary_conversation_title(
+                conversation_id,
+                title,
+                datetime.now(UTC),
+            )
         run = SummaryAgentRun(
             run_id=f"run-{uuid7().hex}",
             conversation_id=conversation_id,
@@ -404,6 +467,20 @@ class SummaryManager:
         documents = self._documents(document.asset_id)
         segments = self.library.load_segments(document.asset_id)
         prompt = self._agent_prompt(request, document, documents, segments)
+        conversation_messages = self.library.load_summary_messages(run.conversation_id)[
+            :-1
+        ]
+        history: list[dict[str, str]] = []
+        history_length = 0
+        for message in reversed(conversation_messages):
+            if (
+                history_length + len(message.content)
+                > SUMMARY_CONVERSATION_CONTEXT_LIMIT
+            ):
+                break
+            history.append({"role": message.role.value, "content": message.content})
+            history_length += len(message.content)
+        history.reverse()
         try:
             response_content = await asyncio.to_thread(
                 complete_text,
@@ -418,6 +495,7 @@ class SummaryManager:
                             "end_seconds、insert_after、caption。不要输出推理过程或代码围栏。"
                         ),
                     },
+                    *history,
                     {"role": "user", "content": prompt},
                 ],
                 SUMMARY_AGENT_TIMEOUT_SECONDS,
@@ -856,14 +934,16 @@ class SummaryManager:
         )
         manifest_path.unlink(missing_ok=True)
 
-    def _conversation_for(self, root: SummaryDocument) -> SummaryConversation:
-        existing = self.library.load_summary_conversation(root.asset_id)
-        if existing is not None:
-            return existing
+    def _create_conversation(
+        self,
+        root: SummaryDocument,
+        title: str,
+    ) -> SummaryConversation:
         conversation = SummaryConversation(
             conversation_id=f"conversation-{uuid7().hex}",
             asset_id=root.asset_id,
             root_document_id=root.document_id,
+            title=title,
         )
         self.library.save_summary_conversation(conversation)
         return conversation

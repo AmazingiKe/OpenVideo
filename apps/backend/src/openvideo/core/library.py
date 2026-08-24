@@ -59,7 +59,7 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 FORMAT_VERSION = 1
-DATABASE_VERSION = 8
+DATABASE_VERSION = 9
 SUMMARY_DATABASE_VERSION = 5
 TRANSCRIPT_METADATA_DATABASE_VERSION = 6
 SUMMARY_FILES_DATABASE_VERSION = 7
@@ -243,6 +243,8 @@ class MediaLibrary:
         if version == SUMMARY_FILES_DATABASE_VERSION:
             self._migrate_transcripts_to_files()
             version = TRANSCRIPT_FILES_DATABASE_VERSION
+        if version == TRANSCRIPT_FILES_DATABASE_VERSION:
+            self._migrate_summary_conversations()
 
     def _migrate_analysis_model(self) -> None:
         connection = self._db()
@@ -427,7 +429,9 @@ class MediaLibrary:
                             "UPDATE summary_media SET relative_path = ? WHERE media_id = ?",
                             (relative_path, media_id),
                         )
-                    connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
+                    connection.execute(
+                        f"PRAGMA user_version = {SUMMARY_FILES_DATABASE_VERSION}"
+                    )
             finally:
                 connection.execute("PRAGMA foreign_keys = ON")
         finally:
@@ -486,6 +490,32 @@ class MediaLibrary:
             connection.execute(
                 f"PRAGMA user_version = {TRANSCRIPT_FILES_DATABASE_VERSION}"
             )
+
+    def _migrate_summary_conversations(self) -> None:
+        connection = self._db()
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            with connection:
+                connection.execute(_SUMMARY_CONVERSATIONS_V9_TABLE)
+                connection.execute(
+                    "INSERT INTO summary_conversations_v9 "
+                    "(conversation_id, asset_id, root_document_id, title, "
+                    "created_at, updated_at) "
+                    "SELECT conversation_id, asset_id, root_document_id, "
+                    "'默认对话', created_at, updated_at FROM summary_conversations"
+                )
+                connection.execute("DROP TABLE summary_conversations")
+                connection.execute(
+                    "ALTER TABLE summary_conversations_v9 "
+                    "RENAME TO summary_conversations"
+                )
+                connection.execute(_SUMMARY_CONVERSATIONS_ASSET_UPDATED_INDEX)
+                connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_key_check").fetchone():
+            raise InvalidLibraryError("总结会话迁移后关联数据校验失败")
 
     def _migrate_asset_storage(self) -> None:
         connection = self._db()
@@ -1108,22 +1138,55 @@ class MediaLibrary:
                 tuple(values[column] for column in columns),
             )
 
-    def load_summary_conversation(self, asset_id: str) -> SummaryConversation | None:
-        row = self._db().execute(
-            "SELECT * FROM summary_conversations WHERE asset_id = ?",
-            (asset_id,),
-        ).fetchone()
-        return SummaryConversation.model_validate(dict(row)) if row else None
+    def load_summary_conversations(self, asset_id: str) -> list[SummaryConversation]:
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_conversations WHERE asset_id = ? "
+                "ORDER BY updated_at DESC, created_at DESC",
+                (asset_id,),
+            )
+            .fetchall()
+        )
+        return [SummaryConversation.model_validate(dict(row)) for row in rows]
 
     def load_summary_conversation_by_id(
         self, conversation_id: str
     ) -> SummaryConversation | None:
         self._validate_identifier(conversation_id, "conversation")
-        row = self._db().execute(
-            "SELECT * FROM summary_conversations WHERE conversation_id = ?",
-            (conversation_id,),
-        ).fetchone()
+        row = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            .fetchone()
+        )
         return SummaryConversation.model_validate(dict(row)) if row else None
+
+    def update_summary_conversation_title(
+        self,
+        conversation_id: str,
+        title: str,
+        updated_at: datetime,
+    ) -> SummaryConversation | None:
+        self._validate_identifier(conversation_id, "conversation")
+        with self._lock, self._db():
+            self._db().execute(
+                "UPDATE summary_conversations SET title = ?, updated_at = ? "
+                "WHERE conversation_id = ?",
+                (title, updated_at.isoformat(), conversation_id),
+            )
+        return self.load_summary_conversation_by_id(conversation_id)
+
+    def delete_summary_conversation(self, conversation_id: str) -> bool:
+        self._validate_identifier(conversation_id, "conversation")
+        with self._lock, self._db():
+            cursor = self._db().execute(
+                "DELETE FROM summary_conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+        return cursor.rowcount > 0
 
     def save_summary_message(self, message: SummaryMessage) -> None:
         self._validate_identifier(message.message_id, "message")
@@ -1135,12 +1198,21 @@ class MediaLibrary:
                 f"VALUES ({', '.join('?' for _ in columns)})",
                 tuple(values[column] for column in columns),
             )
+            self._db().execute(
+                "UPDATE summary_conversations SET updated_at = ? "
+                "WHERE conversation_id = ?",
+                (message.created_at.isoformat(), message.conversation_id),
+            )
 
     def load_summary_messages(self, conversation_id: str) -> list[SummaryMessage]:
-        rows = self._db().execute(
-            "SELECT * FROM summary_messages WHERE conversation_id = ? ORDER BY created_at",
-            (conversation_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_messages WHERE conversation_id = ? ORDER BY created_at",
+                (conversation_id,),
+            )
+            .fetchall()
+        )
         return [SummaryMessage.model_validate(dict(row)) for row in rows]
 
     def save_summary_proposal(self, proposal: SummaryEditProposal) -> None:
@@ -1384,8 +1456,10 @@ ON summary_documents(parent_document_id, position);
 CREATE TABLE summary_conversations (
     conversation_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     root_document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(asset_id)
+    title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE INDEX summary_conversations_asset_updated_index
+ON summary_conversations(asset_id, updated_at DESC);
 CREATE TABLE summary_messages (
     message_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES summary_conversations(conversation_id) ON DELETE CASCADE,
     role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
@@ -1485,4 +1559,22 @@ _SUMMARY_DOCUMENT_INDEXES = (
     "ON summary_documents(asset_id) WHERE parent_document_id IS NULL",
     "CREATE INDEX summary_documents_parent_position_index "
     "ON summary_documents(parent_document_id, position)",
+)
+
+
+_SUMMARY_CONVERSATIONS_V9_TABLE = """
+CREATE TABLE summary_conversations_v9 (
+    conversation_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    root_document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+
+
+_SUMMARY_CONVERSATIONS_ASSET_UPDATED_INDEX = (
+    "CREATE INDEX summary_conversations_asset_updated_index "
+    "ON summary_conversations(asset_id, updated_at DESC)"
 )

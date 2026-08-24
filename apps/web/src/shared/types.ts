@@ -365,6 +365,14 @@ export type SummaryMessage = {
   content: string;
   created_at: string;
 };
+export type SummaryConversation = {
+  conversation_id: string;
+  asset_id: string;
+  root_document_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
 export type SummaryMediaSuggestion = {
   suggestion_id: string;
   media_type: "image" | "gif";
@@ -398,13 +406,7 @@ export type SummaryEditProposal = {
   created_at: string;
 };
 export type SummaryConversationState = {
-  conversation: {
-    conversation_id: string;
-    asset_id: string;
-    root_document_id: string;
-    created_at: string;
-    updated_at: string;
-  };
+  conversation: SummaryConversation;
   messages: SummaryMessage[];
   proposals: SummaryEditProposal[];
 };
