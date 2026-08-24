@@ -5,10 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
   create_download,
+  delete_douyin_download_account,
   get_analysis_page_settings,
   get_health,
+  get_douyin_download_account,
   get_library,
   get_preferences,
+  import_douyin_download_account_from_browser,
   get_markers,
   get_segments,
   get_transcript,
@@ -17,6 +20,8 @@ import {
   list_analysis_strategies,
   list_transcription_models,
   probe_source,
+  save_douyin_download_account,
+  test_douyin_download_account,
 } from "./shared/api";
 import type { MediaAsset } from "./shared/types";
 
@@ -26,11 +31,14 @@ vi.mock("./shared/api", () => ({
   analyze_asset: vi.fn(),
   create_download: vi.fn(),
   create_marker: vi.fn(),
+  delete_douyin_download_account: vi.fn(),
   delete_marker: vi.fn(),
   get_health: vi.fn(),
+  get_douyin_download_account: vi.fn(),
   get_analysis_page_settings: vi.fn(),
   get_library: vi.fn(),
   get_preferences: vi.fn(),
+  import_douyin_download_account_from_browser: vi.fn(),
   get_markers: vi.fn(),
   get_segments: vi.fn(),
   get_transcript: vi.fn(),
@@ -40,8 +48,10 @@ vi.mock("./shared/api", () => ({
   list_transcription_models: vi.fn(),
   media_url: (path: string) => path,
   probe_source: vi.fn(),
+  save_douyin_download_account: vi.fn(),
   select_directory: vi.fn(),
   test_ai_model: vi.fn(),
+  test_douyin_download_account: vi.fn(),
   transcribe_asset: vi.fn(),
   update_analysis_page_settings: vi.fn(),
   update_transcript_segment: vi.fn(),
@@ -93,6 +103,7 @@ describe("App", () => {
     vi.mocked(list_ai_models).mockResolvedValue([]);
     vi.mocked(list_analysis_strategies).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
+    vi.mocked(get_douyin_download_account).mockResolvedValue(null);
   });
 
   it("shows the library setup before mounting workspace providers", async () => {
@@ -282,6 +293,98 @@ describe("App", () => {
     await waitFor(() => expect(probe_source).toHaveBeenCalledWith(source_url));
     expect(await screen.findByRole("checkbox")).toBeChecked();
     expect(screen.getByRole("button", { name: "下载 1 个视频" })).toBeEnabled();
+  });
+
+  it("saves and tests a Douyin download account", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    const saved_account = {
+      account_id: "account-0198d12345677890abcdef1234567890",
+      platform: "douyin" as const,
+      display_name: "抖音账号",
+      status: "untested" as const,
+      last_tested_at: null,
+      updated_at: "2026-08-24T08:30:00Z",
+    };
+    vi.mocked(save_douyin_download_account).mockResolvedValue(saved_account);
+    vi.mocked(test_douyin_download_account).mockResolvedValue({
+      ...saved_account,
+      status: "available",
+      last_tested_at: "2026-08-24T08:31:00Z",
+    });
+    vi.mocked(delete_douyin_download_account).mockResolvedValue();
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "连接账号" }));
+    fireEvent.change(screen.getByLabelText("抖音 Cookie"), {
+      target: { value: "ttwid=device-token; sessionid=login-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存 Cookie" }));
+
+    await waitFor(() =>
+      expect(save_douyin_download_account).toHaveBeenCalledWith(
+        "ttwid=device-token; sessionid=login-token",
+      ),
+    );
+    expect(await screen.findByText("待测试")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "测试账号" }));
+    await waitFor(() =>
+      expect(test_douyin_download_account).toHaveBeenCalledWith(undefined),
+    );
+    expect(await screen.findByText("可用")).toBeInTheDocument();
+  });
+
+  it("imports a logged-in Douyin account from Edge", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    vi.mocked(import_douyin_download_account_from_browser).mockResolvedValue({
+      account_id: "account-0198d12345677890abcdef1234567890",
+      platform: "douyin",
+      display_name: "抖音账号",
+      status: "available",
+      last_tested_at: "2026-08-24T08:31:00Z",
+      updated_at: "2026-08-24T08:31:00Z",
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "连接账号" }));
+    fireEvent.click(screen.getByRole("button", { name: "从浏览器导入" }));
+
+    await waitFor(() =>
+      expect(import_douyin_download_account_from_browser).toHaveBeenCalledWith(
+        "edge",
+        undefined,
+      ),
+    );
+    expect(await screen.findByText("可用")).toBeInTheDocument();
+  });
+
+  it("shows relogin when the saved Douyin account expires", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    vi.mocked(get_douyin_download_account).mockResolvedValue({
+      account_id: "account-0198d12345677890abcdef1234567890",
+      platform: "douyin",
+      display_name: "抖音账号",
+      status: "expired",
+      last_tested_at: "2026-08-24T08:30:00Z",
+      updated_at: "2026-08-24T08:30:00Z",
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("登录状态已过期")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新登录" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "测试账号" })).toBeDisabled();
   });
 
   it("redirects unknown paths to downloads", async () => {

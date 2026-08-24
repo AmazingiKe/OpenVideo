@@ -6,15 +6,20 @@ import {
   create_transcript_correction,
   create_marker,
   create_download,
+  delete_douyin_download_account,
   download_transcription_model,
+  get_douyin_download_account,
   get_transcription_model_download,
   get_analysis_page_settings,
+  import_douyin_download_account_from_browser,
   list_transcription_models,
   media_url,
   probe_source,
+  save_douyin_download_account,
   respond_to_agent_job,
   select_directory,
   test_ai_model,
+  test_douyin_download_account,
   transcribe_asset,
   update_analysis_page_settings,
   update_marker,
@@ -183,6 +188,79 @@ describe("api client", () => {
       body: JSON.stringify({ source_urls: ["https://b23.tv/test"] }),
       signal: undefined,
     });
+  });
+
+  it("manages the saved Douyin download account", async () => {
+    const account = {
+      account_id: "account-0198d12345677890abcdef1234567890",
+      platform: "douyin",
+      display_name: "抖音账号",
+      status: "untested",
+      last_tested_at: null,
+      updated_at: "2026-08-24T08:30:00Z",
+    };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(account), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await get_douyin_download_account();
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/download-accounts/douyin",
+      { signal: undefined },
+    );
+
+    await save_douyin_download_account("sessionid=secret");
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/download-accounts/douyin",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cookie: "sessionid=secret" }),
+        signal: undefined,
+      },
+    );
+
+    await import_douyin_download_account_from_browser(
+      "edge",
+      "https://www.douyin.com/video/123",
+    );
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/download-accounts/douyin/import-browser",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          browser: "edge",
+          source_url: "https://www.douyin.com/video/123",
+        }),
+        signal: undefined,
+      },
+    );
+
+    await test_douyin_download_account("https://www.douyin.com/video/123");
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/download-accounts/douyin/test",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_url: "https://www.douyin.com/video/123",
+        }),
+        signal: undefined,
+      },
+    );
+
+    fetch_mock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await delete_douyin_download_account();
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/download-accounts/douyin",
+      { method: "DELETE", signal: undefined },
+    );
   });
 
   it("probes a source before creating downloads", async () => {

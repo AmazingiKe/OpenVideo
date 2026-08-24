@@ -9,6 +9,8 @@ import type {
   AiModelTestResult,
   AnalysisMode,
   AnalysisPageSettings,
+  DownloadAccount,
+  DownloadCookieBrowser,
   DownloadJob,
   HealthResponse,
   LibraryDescription,
@@ -213,6 +215,60 @@ export function update_analysis_page_settings(
 
 export function get_health(signal?: AbortSignal): Promise<HealthResponse> {
   return request_json("/api/health", { signal });
+}
+
+export function get_douyin_download_account(
+  signal?: AbortSignal,
+): Promise<DownloadAccount | null> {
+  return request_json("/api/download-accounts/douyin", { signal });
+}
+
+export function save_douyin_download_account(
+  cookie: string,
+  signal?: AbortSignal,
+): Promise<DownloadAccount> {
+  return request_json("/api/download-accounts/douyin", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cookie }),
+    signal,
+  });
+}
+
+export function import_douyin_download_account_from_browser(
+  browser: DownloadCookieBrowser,
+  source_url?: string,
+  signal?: AbortSignal,
+): Promise<DownloadAccount> {
+  return request_json("/api/download-accounts/douyin/import-browser", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ browser, source_url: source_url || null }),
+    signal,
+  });
+}
+
+export function test_douyin_download_account(
+  source_url?: string,
+  signal?: AbortSignal,
+): Promise<DownloadAccount> {
+  return request_json("/api/download-accounts/douyin/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_url: source_url || null }),
+    signal,
+  });
+}
+
+export async function delete_douyin_download_account(
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`${api_base_url}/api/download-accounts/douyin`, {
+    method: "DELETE",
+    signal,
+  });
+  if (!response.ok)
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
 }
 
 export function probe_source(

@@ -32,8 +32,16 @@ from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
     require_transcription_model_installed,
 )
+from openvideo.download_accounts import (
+    DownloadAccountExpired,
+    DownloadAccountStore,
+)
 from openvideo.tools.analysis_pipeline import build_segments
-from openvideo.tools.downloader import DownloadFailure, download_video
+from openvideo.tools.downloader import (
+    DownloadFailure,
+    download_video,
+    is_authentication_failure,
+)
 from openvideo.tools.media import probe_media
 from openvideo.tools.sources import SourceMatch
 from openvideo.tools.thumbnails import generate_thumbnail_sprite
@@ -50,9 +58,15 @@ from openvideo.tools.vision import LiteLlmVision
 class DownloadManager:
     """下载任务把长耗时外部进程与短生命周期 HTTP 请求隔离开。"""
 
-    def __init__(self, library: MediaLibrary, settings: Settings) -> None:
+    def __init__(
+        self,
+        library: MediaLibrary,
+        settings: Settings,
+        download_account_store: DownloadAccountStore,
+    ) -> None:
         self.library = library
         self.settings = settings
+        self.download_account_store = download_account_store
         self._jobs: dict[str, DownloadJob] = {
             job.job_id: job for job in library.list_download_jobs()
         }
@@ -124,22 +138,26 @@ class DownloadManager:
             asset.status = MediaAssetStatus.DOWNLOADING
             self.library.save(asset)
             try:
-                downloaded = await asyncio.to_thread(
-                    download_video,
-                    asset.source_url,
-                    asset.source_platform,
-                    self.library.media_directory(asset.asset_id),
-                    self.settings.ffmpeg_path,
-                    self.settings.ffmpeg_bin_dir,
-                    lambda progress, message: self._update_job(
-                        job_id,
-                        DownloadStage.DOWNLOADING,
-                        progress,
-                        message,
-                    ),
-                    lambda message: self._update_stage_message(job_id, message),
-                    staging_directory=self.library.temporary_directory(job_id),
-                )
+                with self.download_account_store.cookie_file(
+                    asset.source_platform
+                ) as cookie_source:
+                    downloaded = await asyncio.to_thread(
+                        download_video,
+                        asset.source_url,
+                        asset.source_platform,
+                        self.library.media_directory(asset.asset_id),
+                        self.settings.ffmpeg_path,
+                        self.settings.ffmpeg_bin_dir,
+                        lambda progress, message: self._update_job(
+                            job_id,
+                            DownloadStage.DOWNLOADING,
+                            progress,
+                            message,
+                        ),
+                        lambda message: self._update_stage_message(job_id, message),
+                        cookie_source=cookie_source,
+                        staging_directory=self.library.temporary_directory(job_id),
+                    )
                 self._update_job(
                     job_id,
                     DownloadStage.PROCESSING,
@@ -199,7 +217,11 @@ class DownloadManager:
                 asset.error_message = None
                 self.library.save(asset)
                 self._update_job(job_id, DownloadStage.COMPLETE, 100, "下载完成")
+            except DownloadAccountExpired as error:
+                self._fail(job_id, str(error))
             except Exception as error:
+                if is_authentication_failure(error):
+                    self.download_account_store.mark_expired(asset.source_platform)
                 self._fail(job_id, str(error) or "视频下载失败")
             finally:
                 with self._lock:

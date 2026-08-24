@@ -6,6 +6,17 @@ type DependencyStatus = {
 
 type SourcePlatform = "bilibili" | "douyin" | "youtube";
 
+export type DownloadAccount = {
+  account_id: string;
+  platform: "douyin";
+  display_name: string;
+  status: "untested" | "available" | "expired";
+  last_tested_at: string | null;
+  updated_at: string;
+};
+
+export type DownloadCookieBrowser = "edge" | "chrome" | "firefox";
+
 export type ProbeEntry = {
   source_video_id: string;
   url: string;

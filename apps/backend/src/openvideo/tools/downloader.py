@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ PROGRESS_PREFIX = "openvideo-progress:"
 PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
 COMMAND_TIMEOUT_SECONDS = 60 * 60 * 6
 MAX_DIAGNOSTIC_LINES = 30
+COOKIE_IMPORT_TIMEOUT_SECONDS = 180
 PLAYLIST_PROBE_LIMIT = 100
 BILIBILI_VIEW_API_URL = "https://api.bilibili.com/x/web-interface/view"
 BILIBILI_VIEW_TIMEOUT_SECONDS = 20
@@ -121,7 +123,7 @@ def download_video(
     staging_directory.mkdir(parents=True)
 
     on_stage("正在读取视频信息")
-    metadata = _read_metadata(source_url, platform, cookie_source)
+    metadata = read_download_metadata(source_url, platform, cookie_source)
     on_stage("正在下载视频和音频")
     temporary_template = staging_directory / "download.%(ext)s"
     command = [
@@ -166,7 +168,7 @@ def download_video(
     )
 
 
-def _read_metadata(
+def read_download_metadata(
     source_url: str,
     platform: SourcePlatform,
     cookie_source: Path | None = None,
@@ -374,7 +376,6 @@ def _platform_arguments(platform: SourcePlatform) -> list[str]:
 
 
 def _cookie_arguments(cookie_source: Path | None) -> list[str]:
-    # 预留位：本版恒为 None，将来登录下载时传入 cookies 文件路径。
     if cookie_source is None:
         return []
     return ["--cookies", str(cookie_source)]
@@ -471,14 +472,88 @@ def _publish_thumbnail(staging_directory: Path, asset_directory: Path) -> Path |
 def _friendly_failure(diagnostic: str) -> str:
     lowered = diagnostic.casefold()
     if "fresh cookies" in lowered:
-        return "平台要求新的会话信息，当前版本不会读取或保存浏览器 Cookie，请稍后重试"
+        return "保存的登录状态已失效，请重新登录"
     if "login" in lowered or "cookie" in lowered:
-        return "该视频可能需要登录，当前版本只支持公开视频免费下载"
+        return "保存的登录状态已失效，请重新登录"
     if "unsupported url" in lowered:
         return "yt-dlp 无法识别该视频地址"
     if "private" in lowered or "permission" in lowered:
         return "该视频不可公开访问"
     return "视频下载失败，请确认地址有效且网络可以访问对应平台"
+
+
+def is_authentication_failure(error: Exception) -> bool:
+    """账号状态只有在下载工具明确要求重新登录时才标记过期，避免把网络故障误判为过期。"""
+    return "登录状态已失效" in str(error)
+
+
+def import_douyin_cookie_from_browser(browser: str, source_url: str) -> str:
+    """浏览器 Cookie 只在临时目录中导出，并过滤为抖音域后交给账号存储层。"""
+    with tempfile.TemporaryDirectory(prefix="openvideo-browser-cookie-") as directory:
+        cookie_path = Path(directory) / "cookies.txt"
+        command = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--ignore-config",
+            "--no-warnings",
+            "--skip-download",
+            "--dump-single-json",
+            "--cookies-from-browser",
+            browser,
+            "--cookies",
+            str(cookie_path),
+            source_url,
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=COOKIE_IMPORT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise DownloadFailure("浏览器 Cookie 导入超时，请关闭浏览器后重试") from error
+        diagnostic = result.stderr or result.stdout
+        if result.returncode != 0:
+            lowered = diagnostic.casefold()
+            if (
+                "could not copy" in lowered
+                or "permission denied" in lowered
+                or "database is locked" in lowered
+            ):
+                raise DownloadFailure("无法读取浏览器 Cookie，请完全关闭该浏览器后重试")
+            raise DownloadFailure(_friendly_failure(diagnostic))
+        if not cookie_path.is_file():
+            raise DownloadFailure("浏览器没有导出可用的 Cookie")
+        cookie_header = _douyin_cookie_header_from_netscape_file(cookie_path)
+        if not cookie_header:
+            raise DownloadFailure("该浏览器中没有找到抖音登录状态")
+        return cookie_header
+
+
+def _douyin_cookie_header_from_netscape_file(cookie_path: Path) -> str:
+    cookies: list[str] = []
+    for raw_line in cookie_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("#HttpOnly_"):
+            line = line.removeprefix("#HttpOnly_")
+        elif not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) != 7:
+            continue
+        domain, _, _, _, _, name, value = fields
+        normalized_domain = domain.lstrip(".").casefold()
+        if normalized_domain != "douyin.com" and not normalized_domain.endswith(
+            ".douyin.com"
+        ):
+            continue
+        cookies.append(f"{name}={value}")
+    return "; ".join(cookies)
 
 
 def _required_text(value: object, message: str) -> str:

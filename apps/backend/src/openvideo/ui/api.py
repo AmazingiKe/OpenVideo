@@ -9,7 +9,7 @@ import os
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 
 from openvideo.agent_manager import AgentError, AgentManager
 from openvideo.application import (
@@ -89,10 +89,20 @@ from openvideo.core.summary_models import (
     SummaryMediaArtifact,
     SummaryMediaCreate,
 )
+from openvideo.download_accounts import (
+    DownloadAccount,
+    DownloadAccountError,
+    DownloadAccountExpired,
+    DownloadAccountStore,
+    DownloadCookieBrowser,
+)
 from openvideo.tools.downloader import (
     DownloadFailure,
     PlaylistProbe,
+    import_douyin_cookie_from_browser,
+    is_authentication_failure,
     probe_source,
+    read_download_metadata,
     yt_dlp_available,
 )
 from openvideo.tools.media import media_tool_status
@@ -116,6 +126,7 @@ MODEL_TEST_SUCCESS_MESSAGE = "模型响应正常"
 MODEL_TEST_TIMEOUT_SECONDS = 30
 SUMMARY_DOCUMENT_EVENT_POLL_SECONDS = 0.5
 SUMMARY_DOCUMENT_EVENT_KEEPALIVE_SECONDS = 15
+DOUYIN_ACCOUNT_TEST_URL = "https://www.douyin.com/video/6961737553342991651"
 
 
 class DependencyStatus(BaseModel):
@@ -131,6 +142,19 @@ class HealthResponse(BaseModel):
 
 class ProbeRequest(BaseModel):
     source_url: str
+
+
+class DownloadAccountConnectRequest(BaseModel):
+    cookie: SecretStr = Field(min_length=1, max_length=16_000)
+
+
+class DownloadAccountTestRequest(BaseModel):
+    source_url: str | None = None
+
+
+class DownloadAccountBrowserImportRequest(BaseModel):
+    browser: DownloadCookieBrowser
+    source_url: str | None = None
 
 
 class ProbeEntry(BaseModel):
@@ -237,6 +261,7 @@ def create_app(
     settings: Settings | None = None,
     preference_store: PreferenceStore | None = None,
     directory_picker: Callable[[], str | None] | None = None,
+    download_account_store: DownloadAccountStore | None = None,
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
@@ -249,6 +274,7 @@ def create_app(
     page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
     directory_picker_lock = asyncio.Lock()
+    account_store = download_account_store or DownloadAccountStore()
 
     async def install_library(opened_library: MediaLibrary) -> None:
         nonlocal \
@@ -259,7 +285,7 @@ def create_app(
             summary_manager, \
             page_settings_store
         library = opened_library
-        manager = DownloadManager(opened_library, resolved_settings)
+        manager = DownloadManager(opened_library, resolved_settings, account_store)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
         agent_manager = AgentManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
@@ -336,6 +362,7 @@ def create_app(
     app.state.transcription_model_manager = transcription_model_manager
     app.state.page_settings_store = page_settings_store
     app.state.settings = resolved_settings
+    app.state.download_account_store = account_store
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
@@ -369,17 +396,136 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(error)) from error
         probe_target = match.playlist_url or match.normalized_url
         try:
-            probe = await asyncio.to_thread(
-                probe_source,
-                probe_target,
-                match.platform,
-                match.source_video_id,
-            )
+            with account_store.cookie_file(match.platform) as cookie_source:
+                probe = await asyncio.to_thread(
+                    probe_source,
+                    probe_target,
+                    match.platform,
+                    match.source_video_id,
+                    cookie_source,
+                )
+                if cookie_source is not None:
+                    account_store.mark_available(match.platform)
+        except DownloadAccountExpired as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+        except DownloadAccountError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
         except DownloadFailure as error:
+            if is_authentication_failure(error):
+                account_store.mark_expired(match.platform)
             raise HTTPException(
                 status_code=502, detail=str(error) or "无法读取视频信息"
             ) from error
         return _probe_response(match.platform, probe)
+
+    @app.get(
+        "/api/download-accounts/douyin",
+        response_model=DownloadAccount | None,
+    )
+    def get_douyin_download_account() -> DownloadAccount | None:
+        try:
+            return account_store.get(SourcePlatform.DOUYIN)
+        except DownloadAccountError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.put(
+        "/api/download-accounts/douyin",
+        response_model=DownloadAccount,
+    )
+    def save_douyin_download_account(
+        request: DownloadAccountConnectRequest,
+    ) -> DownloadAccount:
+        try:
+            return account_store.save_douyin(request.cookie.get_secret_value())
+        except DownloadAccountError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post(
+        "/api/download-accounts/douyin/import-browser",
+        response_model=DownloadAccount,
+    )
+    async def import_douyin_download_account_from_browser(
+        request: DownloadAccountBrowserImportRequest,
+    ) -> DownloadAccount:
+        test_url = DOUYIN_ACCOUNT_TEST_URL
+        if request.source_url:
+            try:
+                match = resolve_source(request.source_url)
+            except UnsupportedSourceError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            if match.platform != SourcePlatform.DOUYIN:
+                raise HTTPException(
+                    status_code=422, detail="请使用抖音视频地址测试账号"
+                )
+            test_url = match.normalized_url
+        try:
+            cookie_header = await asyncio.to_thread(
+                import_douyin_cookie_from_browser,
+                request.browser.value,
+                test_url,
+            )
+            account_store.save_douyin(cookie_header)
+            imported_account = account_store.mark_available(SourcePlatform.DOUYIN)
+            assert imported_account is not None
+            return imported_account
+        except DownloadAccountError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except DownloadFailure as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post(
+        "/api/download-accounts/douyin/test",
+        response_model=DownloadAccount,
+    )
+    async def test_douyin_download_account(
+        request: DownloadAccountTestRequest,
+    ) -> DownloadAccount:
+        account = account_store.get(SourcePlatform.DOUYIN)
+        if account is None:
+            raise HTTPException(status_code=404, detail="尚未连接抖音账号")
+        test_url = DOUYIN_ACCOUNT_TEST_URL
+        if request.source_url:
+            try:
+                match = resolve_source(request.source_url)
+            except UnsupportedSourceError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            if match.platform != SourcePlatform.DOUYIN:
+                raise HTTPException(
+                    status_code=422, detail="请使用抖音视频地址测试账号"
+                )
+            test_url = match.normalized_url
+        try:
+            with account_store.cookie_file(SourcePlatform.DOUYIN) as cookie_source:
+                assert cookie_source is not None
+                await asyncio.to_thread(
+                    read_download_metadata,
+                    test_url,
+                    SourcePlatform.DOUYIN,
+                    cookie_source,
+                )
+            tested_account = account_store.mark_available(SourcePlatform.DOUYIN)
+            assert tested_account is not None
+            return tested_account
+        except DownloadAccountExpired as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+        except DownloadAccountError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except DownloadFailure as error:
+            if is_authentication_failure(error):
+                account_store.mark_expired(SourcePlatform.DOUYIN)
+                raise HTTPException(status_code=401, detail=str(error)) from error
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.delete(
+        "/api/download-accounts/douyin",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_douyin_download_account() -> Response:
+        try:
+            account_store.delete(SourcePlatform.DOUYIN)
+        except DownloadAccountError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post(
         "/api/downloads",

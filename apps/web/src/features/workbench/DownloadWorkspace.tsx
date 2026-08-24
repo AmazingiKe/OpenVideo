@@ -30,8 +30,14 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { DownloadActivity } from "@/features/downloads/DownloadActivity";
+import { DouyinAccountCard } from "@/features/downloads/DouyinAccountCard";
 import { DownloadSelection } from "@/features/downloads/DownloadSelection";
-import type { HealthResponse, ProbeResponse } from "@/shared/types";
+import type {
+  DownloadAccount,
+  DownloadCookieBrowser,
+  HealthResponse,
+  ProbeResponse,
+} from "@/shared/types";
 import type { TaskRecord } from "@/features/workbench/tasks";
 
 type DownloadWorkspaceProps = {
@@ -43,11 +49,18 @@ type DownloadWorkspaceProps = {
   current_source_video_id: string | null;
   is_submitting: boolean;
   error: string | null;
+  douyin_account: DownloadAccount | null;
+  is_account_loading: boolean;
+  account_error: string | null;
   on_source_url_change: (value: string) => void;
   on_submit_probe: (event: FormEvent<HTMLFormElement>) => void;
   on_toggle_url: (url: string) => void;
   on_replace_selection: (urls: string[]) => void;
   on_start_download: () => void;
+  on_save_douyin_account: (cookie: string) => Promise<void>;
+  on_import_douyin_account: (browser: DownloadCookieBrowser) => Promise<void>;
+  on_test_douyin_account: () => Promise<void>;
+  on_disconnect_douyin_account: () => Promise<void>;
 };
 
 const SUPPORTED_PLATFORMS = ["Bilibili", "抖音", "YouTube"];
@@ -61,11 +74,18 @@ export function DownloadWorkspace({
   current_source_video_id,
   is_submitting,
   error,
+  douyin_account,
+  is_account_loading,
+  account_error,
   on_source_url_change,
   on_submit_probe,
   on_toggle_url,
   on_replace_selection,
   on_start_download,
+  on_save_douyin_account,
+  on_import_douyin_account,
+  on_test_douyin_account,
+  on_disconnect_douyin_account,
 }: DownloadWorkspaceProps) {
   const download_tasks = task_records.filter(
     (task) => task.task_type === "download",
@@ -117,6 +137,15 @@ export function DownloadWorkspace({
             {status_label}
           </Badge>
         }
+      />
+      <DouyinAccountCard
+        account={douyin_account}
+        is_loading={is_account_loading}
+        error={account_error}
+        on_save={on_save_douyin_account}
+        on_import_browser={on_import_douyin_account}
+        on_test={on_test_douyin_account}
+        on_disconnect={on_disconnect_douyin_account}
       />
       <Card>
         <CardHeader className="border-b">
