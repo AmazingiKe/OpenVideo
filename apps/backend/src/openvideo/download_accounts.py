@@ -3,21 +3,25 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 from typing import Iterator, Protocol
 from uuid import UUID
 
 import keyring
 from keyring.errors import KeyringError
 from pydantic import BaseModel, Field, ValidationError, field_validator
+from websockets.exceptions import WebSocketException
+from websockets.sync.client import ClientConnection, connect
 
 from openvideo.configuration import OPENVIDEO_CONFIG_DIRECTORY
 from openvideo.core.identifiers import uuid7
@@ -30,10 +34,22 @@ DOWNLOAD_ACCOUNT_KEYRING_SERVICE = "OpenVideo 下载账号"
 COOKIE_PATH = "/"
 MAX_COOKIE_SECRET_BYTES = 12_000
 COOKIE_IMPORT_TIMEOUT_SECONDS = 180
+BROWSER_LOGIN_TIMEOUT_SECONDS = 300
+BROWSER_START_TIMEOUT_SECONDS = 15
+BROWSER_COOKIE_POLL_SECONDS = 1
+BROWSER_LOGIN_SETTLE_SECONDS = 2
+BROWSER_SHUTDOWN_TIMEOUT_SECONDS = 5
+DEVTOOLS_ACTIVE_PORT_FILE_NAME = "DevToolsActivePort"
+OPENVIDEO_BROWSER_LOGIN_DIRECTORY_NAME = "browser-login"
 KEYRING_SECRET_CHUNK_CHARACTERS = 1_000
 KEYRING_SECRET_CHUNK_MARKER = "openvideo-cookie-chunks:"
 COOKIE_NAME_PATTERN = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 DOWNLOAD_ACCOUNT_ID_PATTERN = re.compile(r"^account-[0-9a-f]{32}$")
+PLATFORM_LOGIN_URLS = {
+    SourcePlatform.BILIBILI: "https://passport.bilibili.com/login",
+    SourcePlatform.DOUYIN: "https://www.douyin.com/",
+    SourcePlatform.YOUTUBE: "https://www.youtube.com/",
+}
 
 
 @dataclass(frozen=True)
@@ -174,6 +190,10 @@ class DownloadAccountError(RuntimeError):
 
 
 class DownloadAccountExpired(DownloadAccountError):
+    pass
+
+
+class DownloadAccountLoginCancelled(DownloadAccountError):
     pass
 
 
@@ -519,6 +539,252 @@ def import_cookie_from_browser(
                 f"该浏览器中没有找到{configuration.display_name}登录状态"
             )
         return cookie_header
+
+
+def capture_cookie_from_dedicated_browser(
+    platform: SourcePlatform,
+    cancel_event: Event,
+) -> str:
+    """专用临时浏览器避免读取用户日常配置，也让应用能在浏览器运行时识别登录完成。"""
+    browser_path = _dedicated_login_browser_path()
+    login_directory = (
+        OPENVIDEO_CONFIG_DIRECTORY / OPENVIDEO_BROWSER_LOGIN_DIRECTORY_NAME
+    )
+    login_directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f"{platform.value}-",
+        dir=login_directory,
+        ignore_cleanup_errors=True,
+    ) as directory:
+        profile_directory = Path(directory)
+        process = _start_dedicated_login_browser(
+            browser_path,
+            profile_directory,
+            PLATFORM_LOGIN_URLS[platform],
+        )
+        try:
+            websocket_url = _wait_for_devtools_endpoint(
+                profile_directory,
+                process,
+                cancel_event,
+            )
+            return _wait_for_platform_login_cookie(
+                platform,
+                websocket_url,
+                process,
+                cancel_event,
+            )
+        finally:
+            _stop_dedicated_login_browser(process)
+
+
+def _dedicated_login_browser_path() -> Path:
+    candidates: list[Path] = []
+    for command_name in ("msedge", "google-chrome", "chrome", "chromium"):
+        command_path = shutil.which(command_name)
+        if command_path:
+            candidates.append(Path(command_path))
+    if sys.platform == "win32":
+        windows_locations = (
+            ("PROGRAMFILES(X86)", "Microsoft/Edge/Application/msedge.exe"),
+            ("PROGRAMFILES", "Microsoft/Edge/Application/msedge.exe"),
+            ("LOCALAPPDATA", "Microsoft/Edge/Application/msedge.exe"),
+            ("PROGRAMFILES", "Google/Chrome/Application/chrome.exe"),
+            ("PROGRAMFILES(X86)", "Google/Chrome/Application/chrome.exe"),
+            ("LOCALAPPDATA", "Google/Chrome/Application/chrome.exe"),
+        )
+        for environment_name, relative_path in windows_locations:
+            root = os.getenv(environment_name)
+            if root:
+                candidates.append(Path(root) / relative_path)
+    elif sys.platform == "darwin":
+        candidates.extend(
+            (
+                Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+                Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                Path("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+            )
+        )
+    browser_path = next((path for path in candidates if path.is_file()), None)
+    if browser_path is None:
+        raise DownloadAccountError(
+            "未找到 Microsoft Edge、Google Chrome 或 Chromium，无法打开专用登录窗口"
+        )
+    return browser_path
+
+
+def _start_dedicated_login_browser(
+    browser_path: Path,
+    profile_directory: Path,
+    login_url: str,
+) -> subprocess.Popen[bytes]:
+    command = [
+        str(browser_path),
+        f"--user-data-dir={profile_directory}",
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=0",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-mode",
+        "--disable-sync",
+        f"--app={login_url}",
+    ]
+    try:
+        return subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        raise DownloadAccountError("无法启动专用登录窗口") from error
+
+
+def _wait_for_devtools_endpoint(
+    profile_directory: Path,
+    process: subprocess.Popen[bytes],
+    cancel_event: Event,
+) -> str:
+    active_port_path = profile_directory / DEVTOOLS_ACTIVE_PORT_FILE_NAME
+    deadline = time.monotonic() + BROWSER_START_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        _raise_if_browser_login_stopped(process, cancel_event)
+        try:
+            lines = active_port_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        if len(lines) >= 2 and lines[0].isdigit() and lines[1].startswith("/"):
+            return f"ws://127.0.0.1:{lines[0]}{lines[1]}"
+        cancel_event.wait(0.1)
+    raise DownloadAccountError("专用登录窗口启动超时")
+
+
+def _wait_for_platform_login_cookie(
+    platform: SourcePlatform,
+    websocket_url: str,
+    process: subprocess.Popen[bytes],
+    cancel_event: Event,
+) -> str:
+    deadline = time.monotonic() + BROWSER_LOGIN_TIMEOUT_SECONDS
+    request_id = 0
+    login_detected_at: float | None = None
+    try:
+        with connect(
+            websocket_url,
+            origin=None,
+            proxy=None,
+            open_timeout=BROWSER_START_TIMEOUT_SECONDS,
+            close_timeout=1,
+        ) as websocket:
+            while time.monotonic() < deadline:
+                _raise_if_browser_login_stopped(process, cancel_event)
+                request_id += 1
+                websocket.send(
+                    json.dumps(
+                        {"id": request_id, "method": "Storage.getCookies"},
+                        separators=(",", ":"),
+                    )
+                )
+                response = _receive_devtools_response(websocket, request_id)
+                result = response.get("result")
+                raw_cookies = (
+                    result.get("cookies", []) if isinstance(result, dict) else []
+                )
+                cookie_header = _platform_cookie_header_from_devtools(
+                    platform,
+                    raw_cookies if isinstance(raw_cookies, list) else [],
+                )
+                if cookie_header:
+                    if login_detected_at is None:
+                        login_detected_at = time.monotonic()
+                    elif (
+                        time.monotonic() - login_detected_at
+                        >= BROWSER_LOGIN_SETTLE_SECONDS
+                    ):
+                        return cookie_header
+                else:
+                    login_detected_at = None
+                cancel_event.wait(BROWSER_COOKIE_POLL_SECONDS)
+    except DownloadAccountLoginCancelled:
+        raise
+    except (OSError, TimeoutError, WebSocketException) as error:
+        raise DownloadAccountError("无法读取专用登录窗口的登录状态") from error
+    raise DownloadAccountError("等待网页登录超时，请重新连接账号")
+
+
+def _receive_devtools_response(
+    websocket: ClientConnection,
+    request_id: int,
+) -> dict[str, object]:
+    while True:
+        raw_message = websocket.recv(timeout=BROWSER_START_TIMEOUT_SECONDS)
+        try:
+            message = json.loads(raw_message)
+        except json.JSONDecodeError as error:
+            raise DownloadAccountError(
+                "浏览器返回的登录状态格式无效"
+            ) from error
+        if not isinstance(message, dict):
+            raise DownloadAccountError("浏览器返回的登录状态格式无效")
+        if message.get("id") != request_id:
+            continue
+        if "error" in message:
+            raise DownloadAccountError("浏览器无法提供登录状态")
+        return message
+
+
+def _platform_cookie_header_from_devtools(
+    platform: SourcePlatform,
+    raw_cookies: list[object],
+) -> str:
+    configuration = PLATFORM_ACCOUNT_CONFIGURATIONS[platform]
+    cookies: dict[str, str] = {}
+    for raw_cookie in raw_cookies:
+        if not isinstance(raw_cookie, dict):
+            continue
+        name = raw_cookie.get("name")
+        value = raw_cookie.get("value")
+        domain = raw_cookie.get("domain")
+        if not all(isinstance(item, str) for item in (name, value, domain)):
+            continue
+        normalized_domain = domain.lstrip(".").casefold()
+        domain_matches = any(
+            normalized_domain == allowed_domain
+            or normalized_domain.endswith(f".{allowed_domain}")
+            for allowed_domain in configuration.cookie_domains
+        )
+        if domain_matches and name in configuration.session_cookie_names and value:
+            cookies[name] = value
+    authentication_found = configuration.authentication_cookie_names.intersection(
+        cookies
+    )
+    if not authentication_found:
+        return ""
+    cookie_header = "; ".join(
+        f"{name}={value}" for name, value in sorted(cookies.items())
+    )
+    return _normalized_cookie_secret(platform, cookie_header)
+
+
+def _raise_if_browser_login_stopped(
+    process: subprocess.Popen[bytes],
+    cancel_event: Event,
+) -> None:
+    if cancel_event.is_set():
+        raise DownloadAccountLoginCancelled("账号登录已取消")
+    if process.poll() is not None:
+        raise DownloadAccountError("登录窗口已关闭，尚未检测到有效登录状态")
+
+
+def _stop_dedicated_login_browser(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=BROWSER_SHUTDOWN_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=BROWSER_SHUTDOWN_TIMEOUT_SECONDS)
 
 
 def _normalized_cookie_secret(

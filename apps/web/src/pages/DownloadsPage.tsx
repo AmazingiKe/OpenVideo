@@ -1,10 +1,12 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { use_task_manager } from "@/app/task_manager";
 import { DownloadWorkspace } from "@/features/workbench/DownloadWorkspace";
 import {
+  create_download_account_login_session,
+  delete_download_account_login_session,
   delete_download_account,
   get_download_accounts,
   get_health,
@@ -14,6 +16,7 @@ import {
   test_download_account,
 } from "@/shared/api";
 import { error_message, is_abort_error } from "@/shared/errors";
+import { poll_download_account_login } from "@/shared/poll_download_account_login";
 import type {
   DownloadAccount,
   DownloadCookieBrowser,
@@ -55,6 +58,34 @@ export function DownloadsPage() {
   const [account_errors, set_account_errors] = useState<
     Partial<Record<SourcePlatform, string>>
   >({});
+  const account_login_session_ids = useRef<
+    Partial<Record<SourcePlatform, string>>
+  >({});
+  const account_login_controllers = useRef<
+    Partial<Record<SourcePlatform, AbortController>>
+  >({});
+  const account_login_cancel_requested = useRef<
+    Partial<Record<SourcePlatform, boolean>>
+  >({});
+
+  useEffect(() => {
+    const login_controllers = account_login_controllers.current;
+    const login_session_ids = account_login_session_ids.current;
+    const login_cancel_requested = account_login_cancel_requested.current;
+    return () => {
+      for (const [platform, login_controller] of Object.entries(
+        login_controllers,
+      )) {
+        login_cancel_requested[platform as SourcePlatform] = true;
+        login_controller.abort();
+      }
+      for (const login_id of Object.values(login_session_ids)) {
+        void delete_download_account_login_session(login_id).catch(
+          () => undefined,
+        );
+      }
+    };
+  }, []);
 
   async function submit_source_probe(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -119,6 +150,68 @@ export function DownloadsPage() {
     } finally {
       set_account_loading_platform(null);
     }
+  }
+
+  async function login_platform_account(platform: SourcePlatform) {
+    set_account_loading_platform(platform);
+    clear_account_error(platform);
+    const controller = new AbortController();
+    account_login_controllers.current[platform] = controller;
+    account_login_cancel_requested.current[platform] = false;
+    let login_id: string | null = null;
+    try {
+      const initial_session =
+        await create_download_account_login_session(platform);
+      login_id = initial_session.login_id;
+      account_login_session_ids.current[platform] = login_id;
+      if (account_login_cancel_requested.current[platform]) {
+        await delete_download_account_login_session(login_id);
+        login_id = null;
+        throw new DOMException("请求已取消", "AbortError");
+      }
+      const final_session = await poll_download_account_login(
+        initial_session,
+        controller.signal,
+      );
+      if (final_session.stage !== "complete" || !final_session.account) {
+        throw new Error(final_session.message);
+      }
+      update_download_account(final_session.account);
+    } catch (error) {
+      if (!is_abort_error(error))
+        set_account_error(platform, error_message(error));
+      throw error;
+    } finally {
+      if (login_id) {
+        try {
+          await delete_download_account_login_session(login_id);
+        } catch {
+          // 会话可能已由取消操作清理，账号结果不受清理请求影响。
+        }
+      }
+      delete account_login_session_ids.current[platform];
+      delete account_login_controllers.current[platform];
+      delete account_login_cancel_requested.current[platform];
+      set_account_loading_platform((current) =>
+        current === platform ? null : current,
+      );
+    }
+  }
+
+  async function cancel_platform_account_login(platform: SourcePlatform) {
+    account_login_cancel_requested.current[platform] = true;
+    account_login_controllers.current[platform]?.abort();
+    const login_id = account_login_session_ids.current[platform];
+    if (login_id) {
+      try {
+        await delete_download_account_login_session(login_id);
+      } catch {
+        // 登录任务完成和用户取消可能同时发生，重复清理可以安全忽略。
+      }
+    }
+    set_account_loading_platform((current) =>
+      current === platform ? null : current,
+    );
   }
 
   async function import_platform_account(
@@ -247,6 +340,8 @@ export function DownloadsPage() {
       on_replace_selection={(urls) => set_selected_urls(new Set(urls))}
       on_start_download={() => void start_selected_downloads()}
       on_save_download_account={save_platform_account}
+      on_login_download_account={login_platform_account}
+      on_cancel_download_account_login={cancel_platform_account_login}
       on_import_download_account={import_platform_account}
       on_test_download_account={test_platform_account}
       on_disconnect_download_account={disconnect_platform_account}

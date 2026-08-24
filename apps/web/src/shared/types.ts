@@ -17,6 +17,14 @@ export type DownloadAccount = {
 
 export type DownloadCookieBrowser = "edge" | "chrome" | "firefox";
 
+export type DownloadAccountLoginSession = {
+  login_id: string;
+  platform: SourcePlatform;
+  stage: "waiting" | "complete" | "failed" | "cancelled";
+  message: string;
+  account: DownloadAccount | null;
+};
+
 export type ProbeEntry = {
   source_video_id: string;
   url: string;

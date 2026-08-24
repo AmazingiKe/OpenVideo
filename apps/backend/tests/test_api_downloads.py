@@ -1,8 +1,15 @@
 from fastapi.testclient import TestClient
 import pytest
+import time
+from threading import Event
+from uuid import UUID
 
 from openvideo.core.media_models import SourcePlatform
-from openvideo.download_accounts import DownloadAccountStore, DownloadCookieBrowser
+from openvideo.download_accounts import (
+    DownloadAccountLoginCancelled,
+    DownloadAccountStore,
+    DownloadCookieBrowser,
+)
 from openvideo.settings import Settings
 from openvideo.tools.downloader import (
     DownloadFailure,
@@ -212,3 +219,89 @@ def test_platform_account_can_be_imported_from_a_logged_in_browser(
             source_url,
         )
     ]
+
+
+def test_platform_account_can_login_in_a_dedicated_browser(monkeypatch, tmp_path):
+    capture_calls: list[SourcePlatform] = []
+
+    def capture_login(platform: SourcePlatform, _: object) -> str:
+        capture_calls.append(platform)
+        return "sessionid=dedicated-login-token; ttwid=device-token"
+
+    def read_metadata(*_: object) -> DownloadMetadata:
+        return DownloadMetadata(
+            source_video_id="6961737553342991651",
+            title="示例抖音视频",
+            author_name="示例作者",
+            description=None,
+            duration_seconds=19,
+            width=1080,
+            height=1920,
+            thumbnail_url=None,
+        )
+
+    monkeypatch.setattr(api, "read_download_metadata", read_metadata)
+    account_store = DownloadAccountStore(
+        tmp_path / "config",
+        MemoryDownloadAccountSecretStore(),
+    )
+    app = api.create_app(
+        Settings(library_path=tmp_path / "library"),
+        download_account_store=account_store,
+        download_account_login_capture=capture_login,
+    )
+
+    with TestClient(app) as client:
+        created_response = client.post(
+            "/api/download-accounts/douyin/login-sessions"
+        )
+        login_id = created_response.json()["login_id"]
+        session_response = created_response
+        for _ in range(20):
+            session_response = client.get(
+                f"/api/download-account-login-sessions/{login_id}"
+            )
+            if session_response.json()["stage"] == "complete":
+                break
+            time.sleep(0.01)
+        deleted_response = client.delete(
+            f"/api/download-account-login-sessions/{login_id}"
+        )
+
+    assert created_response.status_code == 202
+    assert UUID(hex=login_id.removeprefix("login-")).version == 7
+    assert session_response.json()["stage"] == "complete"
+    assert session_response.json()["account"]["status"] == "available"
+    assert capture_calls == [SourcePlatform.DOUYIN]
+    assert deleted_response.status_code == 204
+
+
+def test_dedicated_browser_login_can_be_cancelled(tmp_path):
+    capture_started = Event()
+
+    def wait_for_cancellation(_: SourcePlatform, cancel_event: Event) -> str:
+        capture_started.set()
+        cancel_event.wait(timeout=1)
+        raise DownloadAccountLoginCancelled("账号登录已取消")
+
+    app = api.create_app(
+        Settings(library_path=tmp_path / "library"),
+        download_account_store=DownloadAccountStore(
+            tmp_path / "config",
+            MemoryDownloadAccountSecretStore(),
+        ),
+        download_account_login_capture=wait_for_cancellation,
+    )
+
+    with TestClient(app) as client:
+        created_response = client.post(
+            "/api/download-accounts/bilibili/login-sessions"
+        )
+        assert capture_started.wait(timeout=1)
+        deleted_response = client.delete(
+            "/api/download-account-login-sessions/"
+            f"{created_response.json()['login_id']}"
+        )
+
+    assert created_response.status_code == 202
+    assert deleted_response.status_code == 204

@@ -1,15 +1,19 @@
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
+from enum import StrEnum
 from pathlib import Path
+from threading import Event
 from time import perf_counter
+from uuid import UUID
 import asyncio
 import json
 import os
+import re
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, SecretStr, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
 
 from openvideo.agent_manager import AgentError, AgentManager
 from openvideo.application import (
@@ -101,8 +105,10 @@ from openvideo.download_accounts import (
     DownloadAccount,
     DownloadAccountError,
     DownloadAccountExpired,
+    DownloadAccountLoginCancelled,
     DownloadAccountStore,
     DownloadCookieBrowser,
+    capture_cookie_from_dedicated_browser,
     import_cookie_from_browser,
 )
 from openvideo.tools.downloader import (
@@ -139,6 +145,7 @@ DOWNLOAD_ACCOUNT_TEST_URLS = {
     SourcePlatform.DOUYIN: "https://www.douyin.com/video/6961737553342991651",
     SourcePlatform.YOUTUBE: "https://www.youtube.com/watch?v=BaW_jenozKc",
 }
+DOWNLOAD_ACCOUNT_LOGIN_ID_PATTERN = re.compile(r"^login-[0-9a-f]{32}$")
 
 
 class DependencyStatus(BaseModel):
@@ -167,6 +174,31 @@ class DownloadAccountTestRequest(BaseModel):
 class DownloadAccountBrowserImportRequest(BaseModel):
     browser: DownloadCookieBrowser
     source_url: str | None = None
+
+
+class DownloadAccountLoginStage(StrEnum):
+    WAITING = "waiting"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DownloadAccountLoginSession(BaseModel):
+    login_id: str
+    platform: SourcePlatform
+    stage: DownloadAccountLoginStage = DownloadAccountLoginStage.WAITING
+    message: str = "请在专用浏览器窗口完成登录"
+    account: DownloadAccount | None = None
+
+    @field_validator("login_id")
+    @classmethod
+    def validate_login_id(cls, login_id: str) -> str:
+        if not DOWNLOAD_ACCOUNT_LOGIN_ID_PATTERN.fullmatch(login_id):
+            raise ValueError("账号登录会话 ID 格式无效")
+        login_uuid = UUID(hex=login_id.removeprefix("login-"))
+        if login_uuid.version != 7:
+            raise ValueError("账号登录会话 ID 必须使用 UUIDv7")
+        return login_id
 
 
 def _download_account_test_url(
@@ -291,6 +323,8 @@ def create_app(
     preference_store: PreferenceStore | None = None,
     directory_picker: Callable[[], str | None] | None = None,
     download_account_store: DownloadAccountStore | None = None,
+    download_account_login_capture: Callable[[SourcePlatform, Event], str]
+    | None = None,
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
@@ -304,6 +338,67 @@ def create_app(
     pick_directory = directory_picker or select_directory
     directory_picker_lock = asyncio.Lock()
     account_store = download_account_store or DownloadAccountStore()
+    capture_account_login = (
+        download_account_login_capture or capture_cookie_from_dedicated_browser
+    )
+    account_login_sessions: dict[str, DownloadAccountLoginSession] = {}
+    account_login_cancellations: dict[str, Event] = {}
+    account_login_tasks: dict[str, asyncio.Task[None]] = {}
+
+    async def run_download_account_login(
+        login_id: str,
+        platform: SourcePlatform,
+        cancel_event: Event,
+    ) -> None:
+        try:
+            cookie_header = await asyncio.to_thread(
+                capture_account_login,
+                platform,
+                cancel_event,
+            )
+            if cancel_event.is_set():
+                raise DownloadAccountLoginCancelled("账号登录已取消")
+            account_store.save(platform, cookie_header)
+            with account_store.cookie_file(platform) as cookie_source:
+                assert cookie_source is not None
+                await asyncio.to_thread(
+                    read_download_metadata,
+                    DOWNLOAD_ACCOUNT_TEST_URLS[platform],
+                    platform,
+                    cookie_source,
+                )
+            account = account_store.mark_available(platform)
+            assert account is not None
+            account_login_sessions[login_id] = DownloadAccountLoginSession(
+                login_id=login_id,
+                platform=platform,
+                stage=DownloadAccountLoginStage.COMPLETE,
+                message="登录成功",
+                account=account,
+            )
+        except DownloadAccountLoginCancelled as error:
+            account_login_sessions[login_id] = DownloadAccountLoginSession(
+                login_id=login_id,
+                platform=platform,
+                stage=DownloadAccountLoginStage.CANCELLED,
+                message=str(error),
+            )
+        except DownloadFailure as error:
+            if is_authentication_failure(error):
+                account_store.mark_expired(platform)
+            account_login_sessions[login_id] = DownloadAccountLoginSession(
+                login_id=login_id,
+                platform=platform,
+                stage=DownloadAccountLoginStage.FAILED,
+                message=str(error) or "无法验证账号登录状态",
+            )
+        except DownloadAccountError as error:
+            account_login_sessions[login_id] = DownloadAccountLoginSession(
+                login_id=login_id,
+                platform=platform,
+                stage=DownloadAccountLoginStage.FAILED,
+                message=str(error),
+            )
 
     async def install_library(opened_library: MediaLibrary) -> None:
         nonlocal \
@@ -375,6 +470,13 @@ def create_app(
         try:
             yield
         finally:
+            for cancel_event in account_login_cancellations.values():
+                cancel_event.set()
+            if account_login_tasks:
+                await asyncio.gather(
+                    *account_login_tasks.values(),
+                    return_exceptions=True,
+                )
             if agent_manager:
                 await agent_manager.close()
             if summary_manager:
@@ -456,6 +558,73 @@ def create_app(
             return account_store.list_accounts()
         except DownloadAccountError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.post(
+        "/api/download-accounts/{platform}/login-sessions",
+        response_model=DownloadAccountLoginSession,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def create_download_account_login_session(
+        platform: SourcePlatform,
+    ) -> DownloadAccountLoginSession:
+        stale_login_ids = [
+            login_id
+            for login_id, session in account_login_sessions.items()
+            if session.platform == platform
+            and session.stage != DownloadAccountLoginStage.WAITING
+        ]
+        for stale_login_id in stale_login_ids:
+            account_login_sessions.pop(stale_login_id, None)
+            account_login_cancellations.pop(stale_login_id, None)
+            account_login_tasks.pop(stale_login_id, None)
+        active_session = next(
+            (
+                session
+                for session in account_login_sessions.values()
+                if session.platform == platform
+                and session.stage == DownloadAccountLoginStage.WAITING
+            ),
+            None,
+        )
+        if active_session is not None:
+            return active_session.model_copy(deep=True)
+        login_id = f"login-{uuid7().hex}"
+        session = DownloadAccountLoginSession(login_id=login_id, platform=platform)
+        cancel_event = Event()
+        account_login_sessions[login_id] = session
+        account_login_cancellations[login_id] = cancel_event
+        account_login_tasks[login_id] = asyncio.create_task(
+            run_download_account_login(login_id, platform, cancel_event)
+        )
+        return session.model_copy(deep=True)
+
+    @app.get(
+        "/api/download-account-login-sessions/{login_id}",
+        response_model=DownloadAccountLoginSession,
+    )
+    async def get_download_account_login_session(
+        login_id: str,
+    ) -> DownloadAccountLoginSession:
+        session = account_login_sessions.get(login_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="账号登录会话不存在")
+        return session.model_copy(deep=True)
+
+    @app.delete(
+        "/api/download-account-login-sessions/{login_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    async def delete_download_account_login_session(login_id: str) -> Response:
+        session = account_login_sessions.get(login_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="账号登录会话不存在")
+        cancel_event = account_login_cancellations[login_id]
+        cancel_event.set()
+        await account_login_tasks[login_id]
+        account_login_sessions.pop(login_id, None)
+        account_login_cancellations.pop(login_id, None)
+        account_login_tasks.pop(login_id, None)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get(
         "/api/download-accounts/{platform}",

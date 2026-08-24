@@ -5,12 +5,19 @@ import {
   ExternalLink,
   LogIn,
   LogOut,
+  MonitorUp,
   RefreshCw,
   ShieldCheck,
   TriangleAlert,
   UserRoundCheck,
 } from "lucide-react";
 
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -86,6 +93,8 @@ type DownloadAccountsCardProps = {
   loading_platform: SourcePlatform | null;
   errors: Partial<Record<SourcePlatform, string>>;
   on_save: (platform: SourcePlatform, cookie: string) => Promise<void>;
+  on_login: (platform: SourcePlatform) => Promise<void>;
+  on_cancel_login: (platform: SourcePlatform) => Promise<void>;
   on_import_browser: (
     platform: SourcePlatform,
     browser: DownloadCookieBrowser,
@@ -99,12 +108,17 @@ export function DownloadAccountsCard({
   loading_platform,
   errors,
   on_save,
+  on_login,
+  on_cancel_login,
   on_import_browser,
   on_test,
   on_disconnect,
 }: DownloadAccountsCardProps) {
   const [dialog_platform, set_dialog_platform] =
     useState<SourcePlatform | null>(null);
+  const [login_platform, set_login_platform] = useState<SourcePlatform | null>(
+    null,
+  );
   const [cookie, set_cookie] = useState("");
   const [browser, set_browser] = useState<DownloadCookieBrowser>("edge");
   const dialog_presentation = PLATFORM_ACCOUNTS.find(
@@ -113,13 +127,14 @@ export function DownloadAccountsCard({
   const dialog_account = accounts.find(
     ({ platform }) => platform === dialog_platform,
   );
+  const is_login_waiting = login_platform === dialog_platform;
 
   async function submit_cookie(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!dialog_platform) return;
     try {
       await on_save(dialog_platform, cookie);
-      close_dialog();
+      finish_dialog();
     } catch {
       // 父级统一呈现 API 错误，保留输入便于用户修正后重试。
     }
@@ -129,14 +144,35 @@ export function DownloadAccountsCard({
     if (!dialog_platform) return;
     try {
       await on_import_browser(dialog_platform, browser);
-      close_dialog();
+      finish_dialog();
     } catch {
       // 父级统一呈现 API 错误，保留对话框以便切换浏览器重试。
     }
   }
 
-  function close_dialog() {
+  function open_account_login(platform: SourcePlatform) {
+    set_dialog_platform(platform);
+    void start_dedicated_login(platform);
+  }
+
+  async function start_dedicated_login(platform: SourcePlatform) {
+    set_login_platform(platform);
+    try {
+      await on_login(platform);
+      finish_dialog();
+    } catch {
+      set_login_platform(null);
+    }
+  }
+
+  function request_close_dialog() {
+    if (login_platform) void on_cancel_login(login_platform);
+    finish_dialog();
+  }
+
+  function finish_dialog() {
     set_cookie("");
+    set_login_platform(null);
     set_dialog_platform(null);
   }
 
@@ -196,7 +232,7 @@ export function DownloadAccountsCard({
                         ? `上次测试：${format_account_time(account.last_tested_at)}`
                         : account
                           ? "Cookie 已保存，建议先测试可用性。"
-                          : `登录 ${presentation.label} 网页版后导入 Cookie。`}
+                          : `在专用窗口登录 ${presentation.label}，完成后会自动连接。`}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -217,7 +253,7 @@ export function DownloadAccountsCard({
                     ) : null}
                     <Button
                       type="button"
-                      onClick={() => set_dialog_platform(presentation.platform)}
+                      onClick={() => open_account_login(presentation.platform)}
                       disabled={is_loading}
                     >
                       <LogIn data-icon="inline-start" />
@@ -247,7 +283,7 @@ export function DownloadAccountsCard({
                         : "账号操作失败"}
                     </AlertTitle>
                     <AlertDescription>
-                      {error ?? "请重新登录并更新 Cookie 后再次测试。"}
+                      {error ?? "请重新登录后再次测试。"}
                     </AlertDescription>
                   </Alert>
                 ) : null}
@@ -260,7 +296,7 @@ export function DownloadAccountsCard({
       <Dialog
         open={Boolean(dialog_presentation)}
         onOpenChange={(open) => {
-          if (!open) close_dialog();
+          if (!open) request_close_dialog();
         }}
       >
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
@@ -275,148 +311,189 @@ export function DownloadAccountsCard({
                   OpenVideo 不保存账号密码，只把必要 Cookie 保存到系统凭据库。
                 </DialogDescription>
               </DialogHeader>
-              <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-muted-foreground">
-                <li>打开对应平台网页版并完成登录。</li>
-                <li>完全关闭浏览器，避免 Cookie 数据库被占用。</li>
-                <li>选择刚才登录的浏览器并导入登录状态。</li>
-              </ol>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() =>
-                  window.open(
-                    dialog_presentation.login_url,
-                    "_blank",
-                    "noopener,noreferrer",
-                  )
-                }
-              >
-                <ExternalLink data-icon="inline-start" />
-                打开 {dialog_presentation.label} 网页版
-              </Button>
-              {errors[dialog_presentation.platform] ? (
-                <Alert variant="destructive">
-                  <TriangleAlert aria-hidden="true" />
-                  <AlertTitle>无法连接账号</AlertTitle>
-                  <AlertDescription>
-                    {errors[dialog_presentation.platform]}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-              <FieldGroup>
-                <Field data-disabled={Boolean(loading_platform)}>
-                  <FieldLabel
-                    htmlFor={`${dialog_presentation.platform}_browser`}
-                  >
-                    登录浏览器
-                  </FieldLabel>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <Select
-                      value={browser}
-                      onValueChange={(value) =>
-                        set_browser(value as DownloadCookieBrowser)
-                      }
-                      disabled={Boolean(loading_platform)}
-                    >
-                      <SelectTrigger
-                        id={`${dialog_presentation.platform}_browser`}
-                        className="flex-1"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent position="popper">
-                        <SelectGroup>
-                          <SelectItem value="edge">Microsoft Edge</SelectItem>
-                          <SelectItem value="chrome">Google Chrome</SelectItem>
-                          <SelectItem value="firefox">
-                            Mozilla Firefox
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+
+              {is_login_waiting ? (
+                <>
+                  <Alert>
+                    <Spinner aria-hidden="true" />
+                    <AlertTitle>等待完成网页登录</AlertTitle>
+                    <AlertDescription>
+                      请在新打开的专用窗口中完成登录，成功后这里会自动关闭。
+                    </AlertDescription>
+                  </Alert>
+                  <DialogFooter>
                     <Button
                       type="button"
-                      onClick={() => void import_from_browser()}
-                      disabled={Boolean(loading_platform)}
+                      variant="outline"
+                      onClick={request_close_dialog}
                     >
-                      {loading_platform ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : (
-                        <LogIn data-icon="inline-start" />
-                      )}
-                      从浏览器导入
+                      取消登录
                     </Button>
-                  </div>
-                  <FieldDescription>
-                    默认读取最近使用的浏览器配置；浏览器必须已经完全退出。
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-              <div className="flex items-center gap-3" aria-hidden="true">
-                <Separator className="flex-1" />
-                <span className="text-xs text-muted-foreground">
-                  或手动粘贴
-                </span>
-                <Separator className="flex-1" />
-              </div>
-              <form onSubmit={submit_cookie}>
-                <FieldGroup>
-                  <Field
-                    data-invalid={Boolean(errors[dialog_presentation.platform])}
-                    data-disabled={Boolean(loading_platform)}
-                  >
-                    <FieldLabel
-                      htmlFor={`${dialog_presentation.platform}_cookie`}
-                    >
-                      {dialog_presentation.label} Cookie
-                    </FieldLabel>
-                    <Textarea
-                      id={`${dialog_presentation.platform}_cookie`}
-                      value={cookie}
-                      onChange={(event) => set_cookie(event.target.value)}
-                      placeholder={dialog_presentation.cookie_placeholder}
-                      rows={6}
-                      autoComplete="off"
-                      spellCheck={false}
-                      aria-invalid={Boolean(
-                        errors[dialog_presentation.platform],
-                      )}
-                      disabled={Boolean(loading_platform)}
-                    />
-                    <FieldDescription>
-                      Cookie 属于敏感凭据，请勿发送给他人或粘贴到公开页面。
-                    </FieldDescription>
-                  </Field>
-                </FieldGroup>
-                <Alert className="mt-4">
-                  <ShieldCheck aria-hidden="true" />
-                  <AlertTitle>本机安全保存</AlertTitle>
-                  <AlertDescription>
-                    配置文件只记录账号状态，Cookie 本身交给操作系统凭据库。
-                  </AlertDescription>
-                </Alert>
-                <DialogFooter className="mt-4">
+                  </DialogFooter>
+                </>
+              ) : (
+                <>
+                  <Alert>
+                    <MonitorUp aria-hidden="true" />
+                    <AlertTitle>使用隔离的专用登录窗口</AlertTitle>
+                    <AlertDescription>
+                      无需退出日常浏览器，也不需要手动复制
+                      Cookie。窗口关闭后临时数据会自动清理。
+                    </AlertDescription>
+                  </Alert>
+                  {errors[dialog_presentation.platform] ? (
+                    <Alert variant="destructive">
+                      <TriangleAlert aria-hidden="true" />
+                      <AlertTitle>无法连接账号</AlertTitle>
+                      <AlertDescription>
+                        {errors[dialog_presentation.platform]}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
                   <Button
                     type="button"
-                    variant="outline"
-                    onClick={close_dialog}
+                    onClick={() =>
+                      void start_dedicated_login(dialog_presentation.platform)
+                    }
                     disabled={Boolean(loading_platform)}
                   >
-                    取消
+                    <LogIn data-icon="inline-start" />
+                    重新打开专用登录窗口
                   </Button>
-                  <Button
-                    type="submit"
-                    disabled={Boolean(loading_platform) || !cookie.trim()}
-                  >
-                    {loading_platform ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <LogIn data-icon="inline-start" />
-                    )}
-                    保存 Cookie
-                  </Button>
-                </DialogFooter>
-              </form>
+
+                  <Accordion type="single" collapsible>
+                    <AccordionItem value="other_login_methods">
+                      <AccordionTrigger>其他连接方式</AccordionTrigger>
+                      <AccordionContent className="flex flex-col gap-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            window.open(
+                              dialog_presentation.login_url,
+                              "_blank",
+                              "noopener,noreferrer",
+                            )
+                          }
+                        >
+                          <ExternalLink data-icon="inline-start" />
+                          打开 {dialog_presentation.label} 网页版
+                        </Button>
+
+                        <FieldGroup>
+                          <Field data-disabled={Boolean(loading_platform)}>
+                            <FieldLabel
+                              htmlFor={`${dialog_presentation.platform}_browser`}
+                            >
+                              从已有浏览器导入
+                            </FieldLabel>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                              <Select
+                                value={browser}
+                                onValueChange={(value) =>
+                                  set_browser(value as DownloadCookieBrowser)
+                                }
+                                disabled={Boolean(loading_platform)}
+                              >
+                                <SelectTrigger
+                                  id={`${dialog_presentation.platform}_browser`}
+                                  className="flex-1"
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent position="popper">
+                                  <SelectGroup>
+                                    <SelectItem value="edge">
+                                      Microsoft Edge
+                                    </SelectItem>
+                                    <SelectItem value="chrome">
+                                      Google Chrome
+                                    </SelectItem>
+                                    <SelectItem value="firefox">
+                                      Mozilla Firefox
+                                    </SelectItem>
+                                  </SelectGroup>
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                type="button"
+                                onClick={() => void import_from_browser()}
+                                disabled={Boolean(loading_platform)}
+                              >
+                                {loading_platform ? (
+                                  <Spinner data-icon="inline-start" />
+                                ) : (
+                                  <LogIn data-icon="inline-start" />
+                                )}
+                                导入
+                              </Button>
+                            </div>
+                            <FieldDescription>
+                              浏览器必须已经完全退出，否则 Cookie
+                              数据库可能无法读取。
+                            </FieldDescription>
+                          </Field>
+                        </FieldGroup>
+
+                        <Separator />
+
+                        <form onSubmit={submit_cookie}>
+                          <FieldGroup>
+                            <Field
+                              data-invalid={Boolean(
+                                errors[dialog_presentation.platform],
+                              )}
+                              data-disabled={Boolean(loading_platform)}
+                            >
+                              <FieldLabel
+                                htmlFor={`${dialog_presentation.platform}_cookie`}
+                              >
+                                手动粘贴 {dialog_presentation.label} Cookie
+                              </FieldLabel>
+                              <Textarea
+                                id={`${dialog_presentation.platform}_cookie`}
+                                value={cookie}
+                                onChange={(event) =>
+                                  set_cookie(event.target.value)
+                                }
+                                placeholder={
+                                  dialog_presentation.cookie_placeholder
+                                }
+                                rows={6}
+                                autoComplete="off"
+                                spellCheck={false}
+                                aria-invalid={Boolean(
+                                  errors[dialog_presentation.platform],
+                                )}
+                                disabled={Boolean(loading_platform)}
+                              />
+                              <FieldDescription>
+                                Cookie
+                                属于敏感凭据，请勿发送给他人或粘贴到公开页面。
+                              </FieldDescription>
+                            </Field>
+                          </FieldGroup>
+                          <div className="mt-4 flex justify-end">
+                            <Button
+                              type="submit"
+                              disabled={
+                                Boolean(loading_platform) || !cookie.trim()
+                              }
+                            >
+                              {loading_platform ? (
+                                <Spinner data-icon="inline-start" />
+                              ) : (
+                                <ShieldCheck data-icon="inline-start" />
+                              )}
+                              保存 Cookie
+                            </Button>
+                          </div>
+                        </form>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                </>
+              )}
             </>
           ) : null}
         </DialogContent>
@@ -430,9 +507,17 @@ function account_status(
   is_loading: boolean,
 ) {
   if (is_loading)
-    return { label: "处理中", variant: "outline" as const, icon: CircleDashed };
+    return {
+      label: "处理中",
+      variant: "outline" as const,
+      icon: CircleDashed,
+    };
   if (!account)
-    return { label: "未连接", variant: "outline" as const, icon: CircleDashed };
+    return {
+      label: "未连接",
+      variant: "outline" as const,
+      icon: CircleDashed,
+    };
   if (account.status === "available")
     return {
       label: "可用",
@@ -445,7 +530,11 @@ function account_status(
       variant: "destructive" as const,
       icon: TriangleAlert,
     };
-  return { label: "待测试", variant: "outline" as const, icon: CircleDashed };
+  return {
+    label: "待测试",
+    variant: "outline" as const,
+    icon: CircleDashed,
+  };
 }
 
 function format_account_time(value: string): string {

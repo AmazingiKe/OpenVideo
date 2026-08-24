@@ -10,6 +10,7 @@ import type {
   AnalysisMode,
   AnalysisPageSettings,
   DownloadAccount,
+  DownloadAccountLoginSession,
   DownloadCookieBrowser,
   DownloadJob,
   HealthResponse,
@@ -223,6 +224,38 @@ export function get_download_accounts(
   signal?: AbortSignal,
 ): Promise<DownloadAccount[]> {
   return request_json("/api/download-accounts", { signal });
+}
+
+export function create_download_account_login_session(
+  platform: SourcePlatform,
+  signal?: AbortSignal,
+): Promise<DownloadAccountLoginSession> {
+  return request_json(`/api/download-accounts/${platform}/login-sessions`, {
+    method: "POST",
+    signal,
+  });
+}
+
+export function get_download_account_login_session(
+  login_id: string,
+  signal?: AbortSignal,
+): Promise<DownloadAccountLoginSession> {
+  return request_json(
+    `/api/download-account-login-sessions/${encodeURIComponent(login_id)}`,
+    { signal },
+  );
+}
+
+export async function delete_download_account_login_session(
+  login_id: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(
+    `${api_base_url}/api/download-account-login-sessions/${encodeURIComponent(login_id)}`,
+    { method: "DELETE", signal },
+  );
+  if (!response.ok)
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
 }
 
 export function save_download_account(

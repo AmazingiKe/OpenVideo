@@ -10,6 +10,7 @@ from openvideo.download_accounts import (
     DownloadAccountStatus,
     DownloadAccountStore,
     SystemDownloadAccountSecretStore,
+    _platform_cookie_header_from_devtools,
     _platform_cookie_header_from_netscape_file,
 )
 
@@ -134,6 +135,29 @@ def test_browser_cookie_filter_uses_the_selected_platform_domains(tmp_path: Path
         == "SAPISID=youtube-token; SID=google-token"
     )
 
+
+def test_dedicated_browser_cookie_filter_keeps_only_target_platform_fields():
+    raw_cookies = [
+        {"domain": ".bilibili.com", "name": "SESSDATA", "value": "bili-token"},
+        {"domain": ".bilibili.com", "name": "unrelated", "value": "discarded"},
+        {"domain": ".douyin.com", "name": "sessionid", "value": "douyin-token"},
+        {"domain": ".example.com", "name": "SESSDATA", "value": "foreign-token"},
+    ]
+
+    assert (
+        _platform_cookie_header_from_devtools(
+            SourcePlatform.BILIBILI,
+            raw_cookies,
+        )
+        == "SESSDATA=bili-token"
+    )
+    assert (
+        _platform_cookie_header_from_devtools(
+            SourcePlatform.YOUTUBE,
+            raw_cookies,
+        )
+        == ""
+    )
 
 def test_system_secret_store_splits_large_cookie_for_windows_credentials(monkeypatch):
     credentials: dict[tuple[str, str], str] = {}

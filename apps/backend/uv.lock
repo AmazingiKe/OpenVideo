@@ -2310,6 +2310,7 @@ dependencies = [
     { name = "torchaudio", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
     { name = "torchaudio", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
     { name = "yt-dlp" },
 ]
 
@@ -2339,6 +2340,7 @@ requires-dist = [
     { name = "torchaudio", marker = "sys_platform != 'linux' and sys_platform != 'win32'", specifier = "==2.11.0" },
     { name = "torchaudio", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<1" },
+    { name = "websockets", specifier = ">=16,<17" },
     { name = "yt-dlp", specifier = ">=2025.3.31" },
 ]
 

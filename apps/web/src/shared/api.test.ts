@@ -6,9 +6,12 @@ import {
   create_transcript_correction,
   create_marker,
   create_download,
+  create_download_account_login_session,
+  delete_download_account_login_session,
   delete_download_account,
   download_transcription_model,
   get_download_accounts,
+  get_download_account_login_session,
   get_transcription_model_download,
   get_analysis_page_settings,
   import_download_account_from_browser,
@@ -213,6 +216,26 @@ describe("api client", () => {
     expect(fetch_mock).toHaveBeenLastCalledWith("/api/download-accounts", {
       signal: undefined,
     });
+
+    await create_download_account_login_session("douyin");
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/download-accounts/douyin/login-sessions",
+      { method: "POST", signal: undefined },
+    );
+
+    const login_id = "login-0198d12345677890abcdef1234567890";
+    await get_download_account_login_session(login_id);
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      `/api/download-account-login-sessions/${login_id}`,
+      { signal: undefined },
+    );
+
+    fetch_mock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await delete_download_account_login_session(login_id);
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      `/api/download-account-login-sessions/${login_id}`,
+      { method: "DELETE", signal: undefined },
+    );
 
     await save_download_account("douyin", "sessionid=secret");
     expect(fetch_mock).toHaveBeenLastCalledWith(

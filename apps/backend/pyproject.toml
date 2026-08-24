@@ -8,6 +8,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "pydantic>=2.11,<3",
   "uvicorn[standard]>=0.35,<1",
+  "websockets>=16,<17",
   "yt-dlp>=2025.3.31",
   "faster-whisper>=1.1,<2",
   "huggingface-hub>=0.34,<2",

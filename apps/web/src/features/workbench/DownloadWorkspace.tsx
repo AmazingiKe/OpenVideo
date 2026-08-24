@@ -62,6 +62,8 @@ type DownloadWorkspaceProps = {
     platform: SourcePlatform,
     cookie: string,
   ) => Promise<void>;
+  on_login_download_account: (platform: SourcePlatform) => Promise<void>;
+  on_cancel_download_account_login: (platform: SourcePlatform) => Promise<void>;
   on_import_download_account: (
     platform: SourcePlatform,
     browser: DownloadCookieBrowser,
@@ -90,6 +92,8 @@ export function DownloadWorkspace({
   on_replace_selection,
   on_start_download,
   on_save_download_account,
+  on_login_download_account,
+  on_cancel_download_account_login,
   on_import_download_account,
   on_test_download_account,
   on_disconnect_download_account,
@@ -150,6 +154,8 @@ export function DownloadWorkspace({
         loading_platform={account_loading_platform}
         errors={account_errors}
         on_save={on_save_download_account}
+        on_login={on_login_download_account}
+        on_cancel_login={on_cancel_download_account_login}
         on_import_browser={on_import_download_account}
         on_test={on_test_download_account}
         on_disconnect={on_disconnect_download_account}

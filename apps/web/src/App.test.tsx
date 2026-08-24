@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
   create_download,
+  create_download_account_login_session,
+  delete_download_account_login_session,
   delete_download_account,
   get_analysis_page_settings,
   get_health,
@@ -29,18 +31,21 @@ import {
   save_download_account,
   test_download_account,
 } from "./shared/api";
-import type { MediaAsset } from "./shared/types";
+import type { DownloadAccountLoginSession, MediaAsset } from "./shared/types";
 
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 vi.mock("./shared/api", () => ({
   analyze_asset: vi.fn(),
   create_download: vi.fn(),
+  create_download_account_login_session: vi.fn(),
   create_marker: vi.fn(),
   delete_download_account: vi.fn(),
+  delete_download_account_login_session: vi.fn(),
   delete_marker: vi.fn(),
   get_health: vi.fn(),
   get_download_accounts: vi.fn(),
+  get_download_account_login_session: vi.fn(),
   get_analysis_page_settings: vi.fn(),
   get_library: vi.fn(),
   get_preferences: vi.fn(),
@@ -110,7 +115,12 @@ describe("App", () => {
     vi.mocked(list_ai_models).mockResolvedValue([]);
     vi.mocked(list_analysis_strategies).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
+    vi.mocked(list_assets).mockResolvedValue([]);
     vi.mocked(get_download_accounts).mockResolvedValue([]);
+    vi.mocked(create_download_account_login_session).mockRejectedValue(
+      new Error("专用登录窗口不可用"),
+    );
+    vi.mocked(delete_download_account_login_session).mockResolvedValue();
   });
 
   it("shows the library setup before mounting workspace providers", async () => {
@@ -331,7 +341,10 @@ describe("App", () => {
     fireEvent.click(
       within(bilibili_account).getByRole("button", { name: "连接账号" }),
     );
-    fireEvent.change(screen.getByLabelText("Bilibili Cookie"), {
+    fireEvent.click(
+      await screen.findByRole("button", { name: "其他连接方式" }),
+    );
+    fireEvent.change(screen.getByLabelText("手动粘贴 Bilibili Cookie"), {
       target: { value: "SESSDATA=login-token; bili_jct=csrf-token" },
     });
     fireEvent.click(screen.getByRole("button", { name: "保存 Cookie" }));
@@ -351,6 +364,82 @@ describe("App", () => {
       expect(test_download_account).toHaveBeenCalledWith("bilibili", undefined),
     );
     expect(await screen.findByText("可用")).toBeInTheDocument();
+  });
+
+  it("connects a Douyin account through the dedicated login window", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    const account = {
+      account_id: "account-0198d12345677890abcdef1234567890",
+      platform: "douyin" as const,
+      display_name: "抖音账号",
+      status: "available" as const,
+      last_tested_at: "2026-08-24T08:31:00Z",
+      updated_at: "2026-08-24T08:31:00Z",
+    };
+    vi.mocked(create_download_account_login_session).mockResolvedValue({
+      login_id: "login-0198d12345677890abcdef1234567890",
+      platform: "douyin",
+      stage: "complete",
+      message: "登录成功",
+      account,
+    });
+
+    render(<App />);
+
+    const douyin_account = await screen.findByRole("region", { name: "抖音" });
+    fireEvent.click(
+      within(douyin_account).getByRole("button", { name: "连接账号" }),
+    );
+
+    await waitFor(() =>
+      expect(create_download_account_login_session).toHaveBeenCalledWith(
+        "douyin",
+      ),
+    );
+    expect(await screen.findByText("可用")).toBeInTheDocument();
+    expect(delete_download_account_login_session).toHaveBeenCalledWith(
+      "login-0198d12345677890abcdef1234567890",
+    );
+  });
+
+  it("cleans up a dedicated login cancelled before session creation returns", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    let resolve_login!: (session: DownloadAccountLoginSession) => void;
+    vi.mocked(create_download_account_login_session).mockReturnValue(
+      new Promise((resolve) => {
+        resolve_login = resolve;
+      }),
+    );
+
+    render(<App />);
+
+    const bilibili_account = await screen.findByRole("region", {
+      name: "Bilibili",
+    });
+    fireEvent.click(
+      within(bilibili_account).getByRole("button", { name: "连接账号" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "取消登录" }));
+    resolve_login({
+      login_id: "login-0198d12345677890abcdef1234567890",
+      platform: "bilibili",
+      stage: "waiting",
+      message: "请在专用浏览器窗口完成登录",
+      account: null,
+    });
+
+    await waitFor(() =>
+      expect(delete_download_account_login_session).toHaveBeenCalledWith(
+        "login-0198d12345677890abcdef1234567890",
+      ),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("imports a logged-in Douyin account from Edge", async () => {
@@ -373,7 +462,10 @@ describe("App", () => {
     fireEvent.click(
       within(douyin_account).getByRole("button", { name: "连接账号" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "从浏览器导入" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "其他连接方式" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
 
     await waitFor(() =>
       expect(import_download_account_from_browser).toHaveBeenCalledWith(
