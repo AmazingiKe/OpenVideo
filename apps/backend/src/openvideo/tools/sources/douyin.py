@@ -1,5 +1,5 @@
 import re
-from urllib.parse import SplitResult, urlunsplit
+from urllib.parse import SplitResult, parse_qs, urlunsplit
 
 from openvideo.core.models import SourcePlatform
 from openvideo.tools.sources.base import SourceMatch, VideoSource
@@ -9,6 +9,8 @@ DOUYIN_VIDEO_HOSTS = {"douyin.com", "www.douyin.com", "m.douyin.com"}
 DOUYIN_SHORT_LINK_HOSTS = {"v.douyin.com"}
 DOUYIN_VIDEO_ID_PATTERN = re.compile(r"^[0-9]+$")
 DOUYIN_SHORT_CODE_PATTERN = re.compile(r"^[0-9A-Za-z_-]+$")
+DOUYIN_SEARCH_PATH = ("search", "dy")
+DOUYIN_MODAL_VIDEO_ID_PARAMETER = "modal_id"
 
 
 class DouyinSource(VideoSource):
@@ -28,9 +30,18 @@ class DouyinSource(VideoSource):
 
     def _match_video_url(self, parsed_url: SplitResult) -> SourceMatch:
         path_parts = [part for part in parsed_url.path.split("/") if part]
-        if len(path_parts) != 2 or path_parts[0].casefold() != "video":
+        if len(path_parts) == 2 and path_parts[0].casefold() == "video":
+            source_video_id = path_parts[1]
+        elif tuple(part.casefold() for part in path_parts) == DOUYIN_SEARCH_PATH:
+            query_parameters = parse_qs(parsed_url.query)
+            modal_video_ids = query_parameters.get(
+                DOUYIN_MODAL_VIDEO_ID_PARAMETER, []
+            )
+            if len(modal_video_ids) != 1:
+                raise ValueError("未识别到有效的抖音视频 ID")
+            source_video_id = modal_video_ids[0]
+        else:
             raise ValueError("目前只支持公开抖音单视频链接")
-        source_video_id = path_parts[1]
         if not DOUYIN_VIDEO_ID_PATTERN.fullmatch(source_video_id):
             raise ValueError("未识别到有效的抖音视频 ID")
         normalized_url = urlunsplit(

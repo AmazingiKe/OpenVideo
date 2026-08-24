@@ -6,6 +6,15 @@ import { get_health, probe_source } from "@/shared/api";
 import { error_message, is_abort_error } from "@/shared/errors";
 import type { HealthResponse, ProbeEntry, ProbeResponse } from "@/shared/types";
 
+const DOUYIN_VIDEO_HOSTS = new Set([
+  "douyin.com",
+  "www.douyin.com",
+  "m.douyin.com",
+]);
+const DOUYIN_VIDEO_PATH = "video";
+const DOUYIN_SEARCH_PATH = "search/dy";
+const DOUYIN_MODAL_VIDEO_ID_PARAMETER = "modal_id";
+
 export function DownloadsPage() {
   const { task_records, start_downloads } = use_task_manager();
   const [health, set_health] = useState<HealthResponse | null>(null);
@@ -116,8 +125,11 @@ function source_video_id_from_url(source_url: string): string | null {
     if (url.hostname === "youtu.be") return path_parts[0] ?? null;
     if (url.hostname.endsWith("bilibili.com") || url.hostname === "b23.tv")
       return path_parts.at(-1) ?? null;
-    if (url.hostname.endsWith("douyin.com") && path_parts[0] === "video")
-      return path_parts[1] ?? null;
+    if (DOUYIN_VIDEO_HOSTS.has(url.hostname)) {
+      if (path_parts[0] === DOUYIN_VIDEO_PATH) return path_parts[1] ?? null;
+      if (path_parts.join("/") === DOUYIN_SEARCH_PATH)
+        return url.searchParams.get(DOUYIN_MODAL_VIDEO_ID_PARAMETER);
+    }
   } catch {
     return null;
   }

@@ -51,6 +51,13 @@ from openvideo.tools.sources import UnsupportedSourceError, resolve_source
             False,
         ),
         (
+            "https://www.douyin.com/search/dy?modal_id=7676366977263042789",
+            SourcePlatform.DOUYIN,
+            "https://www.douyin.com/video/7676366977263042789",
+            "7676366977263042789",
+            False,
+        ),
+        (
             "https://www.youtube.com/watch?v=vtR7cgYATdk",
             SourcePlatform.YOUTUBE,
             "https://www.youtube.com/watch?v=vtR7cgYATdk",
@@ -108,6 +115,8 @@ def test_resolves_supported_urls(
         "https://www.youtube.com/watch?v=vtR7cgYATdkZZZ",
         "https://www.douyin.com/video/not-a-video-id",
         "https://www.douyin.com/user/123",
+        "https://www.douyin.com/search/dy",
+        "https://www.douyin.com/search/dy?modal_id=not-a-video-id",
         "https://v.douyin.com/a/b",
         "https://b23.tv/a/b",
         "file:///etc/passwd",

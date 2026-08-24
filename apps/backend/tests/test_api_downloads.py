@@ -6,7 +6,10 @@ from openvideo.ui import api
 
 
 def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
-    def probe_douyin(*_: object) -> PlaylistProbe:
+    probe_targets: list[str] = []
+
+    def probe_douyin(source_url: str, *_: object) -> PlaylistProbe:
+        probe_targets.append(source_url)
         return PlaylistProbe(
             is_playlist=False,
             title=None,
@@ -28,10 +31,16 @@ def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
     with TestClient(app) as client:
         response = client.post(
             "/api/downloads/probe",
-            json={"source_url": "https://www.douyin.com/video/6961737553342991651"},
+            json={
+                "source_url": (
+                    "https://www.douyin.com/search/dy"
+                    "?modal_id=6961737553342991651"
+                )
+            },
         )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["platform"] == "douyin"
     assert payload["entries"][0]["url"] == "https://www.douyin.com/video/6961737553342991651"
+    assert probe_targets == ["https://www.douyin.com/video/6961737553342991651"]

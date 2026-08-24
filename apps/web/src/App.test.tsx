@@ -248,6 +248,42 @@ describe("App", () => {
     expect(screen.getByText("Canvas Timeline")).toBeInTheDocument();
   });
 
+  it("selects the Douyin video opened from a search result", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    vi.mocked(probe_source).mockResolvedValue({
+      platform: "douyin",
+      is_playlist: false,
+      title: "抖音搜索结果视频",
+      entries: [
+        {
+          source_video_id: "7676366977263042789",
+          url: "https://www.douyin.com/video/7676366977263042789",
+          title: "抖音搜索结果视频",
+          duration_seconds: 30,
+          uploader: "示例作者",
+        },
+      ],
+      truncated: false,
+      total_count: 1,
+    });
+
+    render(<App />);
+
+    const source_url =
+      "https://www.douyin.com/search/dy?modal_id=7676366977263042789";
+    fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
+      target: { value: source_url },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "检测链接" }));
+
+    await waitFor(() => expect(probe_source).toHaveBeenCalledWith(source_url));
+    expect(await screen.findByRole("checkbox")).toBeChecked();
+    expect(screen.getByRole("button", { name: "下载 1 个视频" })).toBeEnabled();
+  });
+
   it("redirects unknown paths to downloads", async () => {
     window.history.replaceState(null, "", "/missing");
     vi.mocked(get_health).mockResolvedValue({
