@@ -45,6 +45,14 @@ export type LibraryDescription = {
   root_path: string;
   format_version: number;
   created_at: string;
+  index_issues: LibraryIndexIssue[];
+};
+
+export type LibraryIndexIssue = {
+  asset_id: string | null;
+  relative_path: string;
+  code: string;
+  message: string;
 };
 
 export type Preferences = {

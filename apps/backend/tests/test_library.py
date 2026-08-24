@@ -1,344 +1,372 @@
 import json
-import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from openvideo.core.library import MediaLibrary
-from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
-from openvideo.core.summary_models import SummaryConversation
+from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.library import InvalidLibraryError, MediaLibrary
+from openvideo.core.models import (
+    DownloadJob,
+    MediaAsset,
+    MediaAssetStatus,
+    MediaMarker,
+    MediaSegment,
+    SourcePlatform,
+)
+from openvideo.core.summary_files import (
+    atomic_write_text,
+    build_manifest,
+    markdown_digest,
+    write_manifest,
+)
+from openvideo.core.summary_models import (
+    SummaryConversation,
+    SummaryDocument,
+    SummaryEditProposal,
+    SummaryMediaArtifact,
+    SummaryMessage,
+    SummaryMessageRole,
+)
 
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
+SECOND_ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c073990"
+MARKER_ID = "marker-01890f4c7a2b7cc298c4dc0c0c07398f"
+SEGMENT_ID = "segment-01890f4c7a2b7cc298c4dc0c0c07398f"
+DOCUMENT_ID = "document-01890f4c7a2b7cc298c4dc0c0c07398f"
+CONVERSATION_ID = "conversation-01890f4c7a2b7cc298c4dc0c0c07398f"
+MESSAGE_ID = "message-01890f4c7a2b7cc298c4dc0c0c07398f"
+PROPOSAL_ID = "proposal-01890f4c7a2b7cc298c4dc0c0c07398f"
+MEDIA_ID = "media-01890f4c7a2b7cc298c4dc0c0c07398f"
+JOB_ID = "job-01890f4c7a2b7cc298c4dc0c0c07398f"
 
 
-def test_saves_and_recovers_ready_asset(tmp_path: Path):
-    library = MediaLibrary.initialize_directory(tmp_path)
-    asset_directory = library.asset_directory(ASSET_ID)
-    asset_directory.mkdir(parents=True, exist_ok=True)
-    (asset_directory / "playback.mp4").write_bytes(b"video")
-    asset = MediaAsset(
-        asset_id=ASSET_ID,
-        source_url="https://www.bilibili.com/video/BV1xx411c7mD",
-        source_platform=SourcePlatform.BILIBILI,
-        source_video_id="BV1xx411c7mD",
-        title="测试视频",
+def _asset(asset_id: str = ASSET_ID, title: str = "测试视频") -> MediaAsset:
+    return MediaAsset(
+        asset_id=asset_id,
+        source_url=f"https://example.com/{asset_id}",
+        source_platform=SourcePlatform.YOUTUBE,
+        source_video_id=asset_id,
+        title=title,
         status=MediaAssetStatus.READY,
-        playback_path="playback.mp4",
+        playback_path="media/playback.mp4",
     )
+
+
+def _save_asset(library: MediaLibrary, asset: MediaAsset) -> None:
+    media_directory = library.media_directory(asset.asset_id)
+    (media_directory / "playback.mp4").write_bytes(b"video")
     library.save(asset)
-    metadata = json.loads((asset_directory / "meta.json").read_text(encoding="utf-8"))
+
+
+def _save_summary(library: MediaLibrary) -> None:
+    markdown = "# 用户总结\n"
+    document = SummaryDocument(
+        document_id=DOCUMENT_ID,
+        asset_id=ASSET_ID,
+        title="用户总结",
+        markdown=markdown,
+        relative_path="index.md",
+        content_digest=markdown_digest(markdown),
+    )
+    asset_directory = library.asset_directory(ASSET_ID)
+    atomic_write_text(asset_directory / "summary" / "index.md", markdown)
+    write_manifest(asset_directory, build_manifest(ASSET_ID, [document], []))
+    library.create_summary_documents([document])
+    library.save_summary_conversation(
+        SummaryConversation(
+            conversation_id=CONVERSATION_ID,
+            asset_id=ASSET_ID,
+            root_document_id=DOCUMENT_ID,
+            title="修改历史",
+        )
+    )
+    library.save_summary_message(
+        SummaryMessage(
+            message_id=MESSAGE_ID,
+            conversation_id=CONVERSATION_ID,
+            role=SummaryMessageRole.USER,
+            content="请精简正文",
+        )
+    )
+    library.save_summary_proposal(
+        SummaryEditProposal(
+            proposal_id=PROPOSAL_ID,
+            conversation_id=CONVERSATION_ID,
+            document_id=DOCUMENT_ID,
+            base_revision=1,
+            proposed_markdown="# 精简总结\n",
+            explanation="删去重复内容",
+            diff="- 用户总结\n+ 精简总结",
+        )
+    )
+    media_path = asset_directory / "summary" / "assets" / f"{MEDIA_ID}.jpg"
+    media_path.parent.mkdir(parents=True, exist_ok=True)
+    media_path.write_bytes(b"image")
+    library.save_summary_media(
+        SummaryMediaArtifact(
+            media_id=MEDIA_ID,
+            asset_id=ASSET_ID,
+            document_id=DOCUMENT_ID,
+            media_type="image",
+            relative_path=f"summary/assets/{MEDIA_ID}.jpg",
+            caption="关键画面",
+            start_seconds=1,
+        )
+    )
+
+
+def test_saves_complete_asset_metadata_and_recovers_ready_asset(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    asset = _asset()
+    _save_asset(library, asset)
+
+    metadata = json.loads(
+        (library.asset_directory(ASSET_ID) / "meta.json").read_text(encoding="utf-8")
+    )
     assert metadata["asset_id"] == ASSET_ID
-    assert metadata["media_type"] == "video"
-    assert metadata["source"]["platform"] == "bilibili"
-    assert metadata["video"]["video_codec"] is None
+    assert metadata["status"] == "ready"
+    assert metadata["playback_path"] == "media/playback.mp4"
+    assert metadata["source"]["platform"] == "youtube"
 
     library.close()
     recovered = MediaLibrary.open(tmp_path)
     loaded_asset = recovered.get(ASSET_ID)
     assert loaded_asset is not None
-    assert loaded_asset.title == "测试视频"
-    response = recovered.response_for(loaded_asset)
-    assert response.playback_url == f"/api/media/assets/{ASSET_ID}/stream"
-    assert "playback.mp4" not in response.model_dump_json()
-    assert str(tmp_path) not in response.model_dump_json()
+    assert recovered.response_for(loaded_asset).playback_url.endswith("/stream")
     recovered.close()
 
 
-def test_migrates_legacy_asset_id_and_directory(tmp_path: Path):
-    legacy_asset_id = f"asset-{ASSET_ID.replace('-', '')}"
+def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
-    library.save(
-        MediaAsset(
+    _save_asset(library, _asset())
+    marker = MediaMarker(
+        marker_id=MARKER_ID, asset_id=ASSET_ID, time_seconds=2, tags=["重点"]
+    )
+    library.create_marker(marker)
+    library.save_transcript(
+        Transcript(
             asset_id=ASSET_ID,
-            source_url="https://www.youtube.com/watch?v=test",
-            source_platform=SourcePlatform.YOUTUBE,
+            language="zh",
+            segments=[TranscriptSegment(start_seconds=0, end_seconds=3, text="正文")],
         )
     )
+    library.save_segments(
+        ASSET_ID,
+        [
+            MediaSegment(
+                segment_id=SEGMENT_ID,
+                asset_id=ASSET_ID,
+                start_seconds=0,
+                end_seconds=3,
+                title="第一段",
+                marker_ids=[MARKER_ID],
+                tags=["章节"],
+            )
+        ],
+    )
+    _save_summary(library)
+    library.save_download_job(DownloadJob(job_id=JOB_ID, asset_id=ASSET_ID))
     library.close()
 
-    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    connection.execute("ALTER TABLE assets DROP COLUMN media_type")
-    connection.execute(
-        "UPDATE assets SET asset_id = ? WHERE asset_id = ?", (legacy_asset_id, ASSET_ID)
-    )
-    connection.execute("PRAGMA user_version = 1")
-    connection.commit()
-    connection.close()
-    (tmp_path / "assets" / ASSET_ID).rename(tmp_path / "assets" / legacy_asset_id)
+    (tmp_path / "openvideo.sqlite3").unlink()
+    rebuilt = MediaLibrary.open(tmp_path)
 
-    migrated = MediaLibrary.open(tmp_path)
-    assert migrated.get(ASSET_ID) is not None
-    assert not (tmp_path / "assets" / legacy_asset_id).exists()
-    metadata = json.loads(
-        (tmp_path / "assets" / ASSET_ID / "meta.json").read_text(encoding="utf-8")
-    )
-    assert metadata["asset_id"] == ASSET_ID
-    assert metadata["media_type"] == "video"
-    migrated.close()
+    assert rebuilt.get(ASSET_ID).title == "测试视频"
+    assert rebuilt.load_transcript(ASSET_ID).segments[0].text == "正文"
+    assert rebuilt.load_segments(ASSET_ID)[0].marker_ids == [MARKER_ID]
+    assert rebuilt.load_markers(ASSET_ID)[0].tags == ["重点"]
+    assert rebuilt.load_summary_document(DOCUMENT_ID).markdown == "# 用户总结\n"
+    assert rebuilt.load_summary_messages(CONVERSATION_ID)[0].content == "请精简正文"
+    assert rebuilt.load_summary_proposal(PROPOSAL_ID).explanation == "删去重复内容"
+    assert rebuilt.load_summary_media(ASSET_ID)[0].media_id == MEDIA_ID
+    assert rebuilt.list_download_jobs() == []
+    rebuilt.close()
 
 
-def test_source_video_id_deduplication_is_scoped_to_platform(tmp_path: Path):
+def test_schema_mismatch_rebuilds_projection_from_files(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
-    library.save(
-        MediaAsset(
-            asset_id=ASSET_ID,
-            source_url="https://www.bilibili.com/video/BV1xx411c7mD",
-            source_platform=SourcePlatform.BILIBILI,
-            source_video_id="shared-id",
-        )
-    )
-
-    assert library.find_by_source_video_id(SourcePlatform.BILIBILI, "shared-id") is not None
-    assert library.find_by_source_video_id(SourcePlatform.YOUTUBE, "shared-id") is None
-    library.close()
-
-
-def test_migrates_agent_job_schema_from_database_version_three(tmp_path: Path):
-    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset(title="文件标题"))
     library.close()
     connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    connection.execute("DROP TABLE agent_jobs")
-    connection.execute("PRAGMA user_version = 3")
-    connection.commit()
-    connection.close()
-
-    migrated = MediaLibrary.open(tmp_path)
-
-    assert migrated.load_agent_jobs() == []
-    migrated.close()
-
-
-def test_migrates_single_summary_conversation_to_history_list(tmp_path: Path):
-    document_id = "document-01890f4c7a2b7cc298c4dc0c0c07398f"
-    conversation_id = "conversation-01890f4c7a2b7cc298c4dc0c0c07398f"
-    created_at = "2026-01-01T00:00:00+00:00"
-    library = MediaLibrary.initialize_directory(tmp_path)
-    library.save(
-        MediaAsset(
-            asset_id=ASSET_ID,
-            source_url="https://example.com/video",
-            source_platform=SourcePlatform.YOUTUBE,
-        )
-    )
-    library.close()
-    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    connection.execute("PRAGMA foreign_keys = OFF")
-    connection.execute("DROP TABLE summary_conversations")
-    connection.execute(
-        "CREATE TABLE summary_conversations ("
-        "conversation_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL, "
-        "root_document_id TEXT NOT NULL, created_at TEXT NOT NULL, "
-        "updated_at TEXT NOT NULL, UNIQUE(asset_id))"
-    )
-    connection.execute(
-        "INSERT INTO summary_documents VALUES (?, ?, NULL, ?, ?, ?, 0, 1, ?, ?)",
-        (
-            document_id,
-            ASSET_ID,
-            "旧总结",
-            "index.md",
-            "digest",
-            created_at,
-            created_at,
-        ),
-    )
-    connection.execute(
-        "INSERT INTO summary_conversations VALUES (?, ?, ?, ?, ?)",
-        (conversation_id, ASSET_ID, document_id, created_at, created_at),
-    )
-    connection.execute("PRAGMA user_version = 8")
+    connection.execute("UPDATE assets SET title = '数据库伪造标题'")
+    connection.execute("PRAGMA user_version = 9")
     connection.commit()
     connection.close()
 
-    migrated = MediaLibrary.open(tmp_path)
-    conversations = migrated.load_summary_conversations(ASSET_ID)
-
-    assert len(conversations) == 1
-    assert conversations[0].title == "默认对话"
-    migrated.save_summary_conversation(
-        SummaryConversation(
-            conversation_id="conversation-01890f4c7a2b7cc298c4dc0c0c073990",
-            asset_id=ASSET_ID,
-            root_document_id=document_id,
-            title="新对话",
-        )
-    )
-    assert len(migrated.load_summary_conversations(ASSET_ID)) == 2
-    assert migrated._db().execute("PRAGMA user_version").fetchone()[0] == 9
-    migrated.close()
+    rebuilt = MediaLibrary.open(tmp_path)
+    assert rebuilt.get(ASSET_ID).title == "文件标题"
+    rebuilt.close()
 
 
-def test_migrates_database_transcript_to_json_from_version_five(tmp_path: Path):
+def test_corrupt_asset_is_isolated_and_recovers_after_file_is_fixed(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
-    library.save(
-        MediaAsset(
-            asset_id=ASSET_ID,
-            source_url="https://example.com/video",
-            source_platform=SourcePlatform.YOUTUBE,
-        )
-    )
+    _save_asset(library, _asset())
+    _save_asset(library, _asset(SECOND_ASSET_ID, "可用素材"))
     library.close()
-    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    connection.execute(
-        "CREATE TABLE transcripts ("
-        "asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE, "
-        "language TEXT, created_at TEXT NOT NULL)"
-    )
-    connection.execute(
-        "CREATE TABLE transcript_segments ("
-        "asset_id TEXT NOT NULL REFERENCES transcripts(asset_id) ON DELETE CASCADE, "
-        "position INTEGER NOT NULL, start_seconds REAL NOT NULL, "
-        "end_seconds REAL NOT NULL, text TEXT NOT NULL, "
-        "PRIMARY KEY(asset_id, position))"
-    )
-    connection.execute(
-        "INSERT INTO transcripts VALUES (?, ?, ?)",
-        (ASSET_ID, "zh", "2026-01-01T00:00:00+00:00"),
-    )
-    connection.execute(
-        "INSERT INTO transcript_segments VALUES (?, 0, 0, 1, ?)",
-        (ASSET_ID, "旧字幕"),
-    )
-    connection.execute("PRAGMA user_version = 5")
-    connection.commit()
-    connection.close()
+    metadata_path = tmp_path / "assets" / ASSET_ID / "meta.json"
+    valid_content = metadata_path.read_text(encoding="utf-8")
+    metadata_path.write_text("{broken", encoding="utf-8")
 
-    migrated = MediaLibrary.open(tmp_path)
-    transcript = migrated.load_transcript(ASSET_ID)
+    isolated = MediaLibrary.open(tmp_path)
+    assert isolated.get(ASSET_ID) is None
+    assert isolated.get(SECOND_ASSET_ID).title == "可用素材"
+    issue = isolated.description.index_issues[0]
+    assert issue.asset_id == ASSET_ID
+    assert issue.relative_path.endswith("meta.json")
+    assert str(tmp_path) not in issue.relative_path
+    assert metadata_path.read_text(encoding="utf-8") == "{broken"
+    isolated.close()
 
-    assert transcript is not None
-    assert transcript.segments[0].emotion is None
-    assert transcript.segments[0].audio_events == []
-    transcript_path = tmp_path / "assets" / ASSET_ID / "artifacts" / "transcript.json"
-    assert transcript_path.is_file()
-    assert not migrated._db().execute(
-        "SELECT 1 FROM sqlite_master WHERE name = 'transcripts'"
-    ).fetchone()
-    metadata = json.loads(
-        (tmp_path / "assets" / ASSET_ID / "meta.json").read_text(encoding="utf-8")
-    )
-    assert metadata["transcription"] == {
-        "status": "complete",
-        "attempt_count": 1,
-    }
-    migrated.close()
-
-
-def test_migrates_summary_bodies_and_media_from_database_version_six(
-    tmp_path: Path,
-    monkeypatch,
-):
-    document_id = "document-01890f4c7a2b7cc298c4dc0c0c07398f"
-    media_id = "media-01890f4c7a2b7cc298c4dc0c0c07398f"
-    created_at = "2026-01-01T00:00:00+00:00"
-    library = MediaLibrary.initialize_directory(tmp_path)
-    library.save(
-        MediaAsset(
-            asset_id=ASSET_ID,
-            source_url="https://example.com/video",
-            source_platform=SourcePlatform.YOUTUBE,
-        )
-    )
-    library.close()
-    asset_directory = tmp_path / "assets" / ASSET_ID
-    old_media_path = asset_directory / "artifacts" / "summaries" / f"{media_id}.jpg"
-    old_media_path.parent.mkdir(parents=True)
-    old_media_path.write_bytes(b"jpeg-data")
-
-    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    connection.execute("PRAGMA foreign_keys = OFF")
-    connection.execute("DROP TABLE summary_documents")
-    connection.execute(
-        """
-        CREATE TABLE summary_documents (
-            document_id TEXT PRIMARY KEY,
-            asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-            parent_document_id TEXT REFERENCES summary_documents(document_id) ON DELETE CASCADE,
-            title TEXT NOT NULL,
-            markdown TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            revision INTEGER NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        "INSERT INTO summary_documents VALUES (?, ?, NULL, ?, ?, 0, 3, ?, ?)",
-        (document_id, ASSET_ID, "旧总结", "# 旧正文\n", created_at, created_at),
-    )
-    connection.execute(
-        "INSERT INTO summary_media VALUES (?, ?, ?, 'image', ?, ?, 1, NULL, ?)",
-        (
-            media_id,
-            ASSET_ID,
-            document_id,
-            f"artifacts/summaries/{media_id}.jpg",
-            "画面",
-            created_at,
-        ),
-    )
-    connection.execute("PRAGMA user_version = 6")
-    connection.commit()
-    connection.close()
-
-    original_copy = shutil.copy2
-
-    def interrupt_copy(*_args, **_kwargs):
-        raise OSError("模拟迁移中断")
-
-    monkeypatch.setattr("openvideo.core.library.shutil.copy2", interrupt_copy)
-    with pytest.raises(OSError, match="模拟迁移中断"):
-        MediaLibrary.open(tmp_path)
-    assert old_media_path.is_file()
-    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    interrupted_columns = {
-        row[1] for row in connection.execute("PRAGMA table_info(summary_documents)")
-    }
-    connection.close()
-    assert "markdown" in interrupted_columns
-
-    monkeypatch.setattr("openvideo.core.library.shutil.copy2", original_copy)
-    migrated = MediaLibrary.open(tmp_path)
-    document = migrated.load_summary_document(document_id)
-    media = migrated.load_summary_media(ASSET_ID)[0]
-    migrated.close()
-    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    columns = {
-        row[1]
-        for row in connection.execute("PRAGMA table_info(summary_documents)")
-    }
-    connection.close()
-
-    assert document is not None
-    assert document.markdown == "# 旧正文\n"
-    assert document.revision == 3
-    assert document.relative_path == "index.md"
-    assert "markdown" not in columns
-    assert media.relative_path == f"summary/assets/{media_id}.jpg"
-    assert (asset_directory / media.relative_path).read_bytes() == b"jpeg-data"
-    assert not old_media_path.exists()
-    assert (asset_directory / "summary" / "manifest.json").is_file()
-    assert (tmp_path / "openvideo.sqlite3.v6.backup").is_file()
-
-
-def test_marks_interrupted_asset_as_failed(tmp_path: Path):
-    library = MediaLibrary.initialize_directory(tmp_path)
-    library.save(
-        MediaAsset(
-            asset_id=ASSET_ID,
-            source_url="https://b23.tv/AbC123",
-            source_platform=SourcePlatform.BILIBILI,
-            status=MediaAssetStatus.DOWNLOADING,
-        )
-    )
-
-    library.close()
+    metadata_path.write_text(valid_content, encoding="utf-8")
     recovered = MediaLibrary.open(tmp_path)
-    asset = recovered.get(ASSET_ID)
-    assert asset is not None
-    assert asset.status == MediaAssetStatus.FAILED
-    assert asset.error_message
+    assert recovered.get(ASSET_ID) is not None
+    assert recovered.description.index_issues == []
+    recovered.close()
+
+
+def test_only_changed_asset_gets_new_index_timestamp(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+    _save_asset(library, _asset(SECOND_ASSET_ID, "第二个素材"))
+    before = dict(library._db().execute("SELECT asset_id, indexed_at FROM index_states"))
+    library.close()
+    metadata_path = tmp_path / "assets" / ASSET_ID / "meta.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["title"] = "外部标题"
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+
+    reopened = MediaLibrary.open(tmp_path)
+    after = dict(reopened._db().execute("SELECT asset_id, indexed_at FROM index_states"))
+    assert reopened.get(ASSET_ID).title == "外部标题"
+    assert after[SECOND_ASSET_ID] == before[SECOND_ASSET_ID]
+    assert after[ASSET_ID] != before[ASSET_ID]
+    reopened.close()
+
+
+def test_business_file_survives_projection_update_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+
+    def fail_projection(*_args, **_kwargs):
+        raise sqlite3.OperationalError("模拟索引写入失败")
+
+    monkeypatch.setattr("openvideo.core.library.synchronize_asset", fail_projection)
+    with pytest.raises(sqlite3.OperationalError, match="模拟索引写入失败"):
+        library.save_segments(
+            ASSET_ID,
+            [
+                MediaSegment(
+                    segment_id=SEGMENT_ID,
+                    asset_id=ASSET_ID,
+                    start_seconds=0,
+                    end_seconds=1,
+                )
+            ],
+        )
+    timeline_path = tmp_path / "assets" / ASSET_ID / "artifacts" / "timeline.json"
+    assert timeline_path.is_file()
+    monkeypatch.undo()
+    library.close()
+
+    repaired = MediaLibrary.open(tmp_path)
+    assert repaired.load_segments(ASSET_ID)[0].segment_id == SEGMENT_ID
+    repaired.close()
+
+
+def test_path_traversal_and_invalid_asset_directory_are_reported(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+    library.close()
+    metadata_path = tmp_path / "assets" / ASSET_ID / "meta.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["playback_path"] = "../outside.mp4"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    (tmp_path / "assets" / "not-a-uuid").mkdir()
+
+    opened = MediaLibrary.open(tmp_path)
+    assert opened.get(ASSET_ID) is None
+    assert {issue.code for issue in opened.description.index_issues} == {
+        "invalid_asset_id",
+        "unsafe_path",
+    }
+    opened.close()
+
+
+def test_cross_asset_timeline_reference_is_isolated(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+    library.save_segments(
+        ASSET_ID,
+        [
+            MediaSegment(
+                segment_id=SEGMENT_ID,
+                asset_id=ASSET_ID,
+                start_seconds=0,
+                end_seconds=1,
+            )
+        ],
+    )
+    library.close()
+    timeline_path = tmp_path / "assets" / ASSET_ID / "artifacts" / "timeline.json"
+    timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+    timeline["segments"][0]["asset_id"] = SECOND_ASSET_ID
+    timeline_path.write_text(json.dumps(timeline), encoding="utf-8")
+
+    opened = MediaLibrary.open(tmp_path)
+    assert opened.get(ASSET_ID) is None
+    assert opened.description.index_issues[0].code == "cross_asset_reference"
+    opened.close()
+
+
+def test_symbolic_link_reference_is_rejected(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+    library.close()
+    outside_path = tmp_path / "outside.mp4"
+    outside_path.write_bytes(b"outside")
+    link_path = tmp_path / "assets" / ASSET_ID / "media" / "linked.mp4"
+    try:
+        link_path.symlink_to(outside_path)
+    except OSError:
+        pytest.skip("当前 Windows 环境不允许创建测试符号链接")
+    metadata_path = tmp_path / "assets" / ASSET_ID / "meta.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["playback_path"] = "media/linked.mp4"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    opened = MediaLibrary.open(tmp_path)
+    assert opened.get(ASSET_ID) is None
+    assert opened.description.index_issues[0].code == "unsafe_path"
+    opened.close()
+
+
+def test_v1_library_is_rejected_without_migration(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    library.close()
+    manifest_path = tmp_path / "library.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["format_version"] = 1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(InvalidLibraryError, match="格式版本 1 不受支持"):
+        MediaLibrary.open(tmp_path)
+
+
+def test_marks_interrupted_asset_as_failed_in_authoritative_metadata(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    asset = _asset()
+    asset.status = MediaAssetStatus.DOWNLOADING
+    _save_asset(library, asset)
+    library.close()
+
+    recovered = MediaLibrary.open(tmp_path)
+    assert recovered.get(ASSET_ID).status == MediaAssetStatus.FAILED
+    metadata = json.loads(
+        (tmp_path / "assets" / ASSET_ID / "meta.json").read_text(encoding="utf-8")
+    )
+    assert metadata["status"] == "failed"
     recovered.close()

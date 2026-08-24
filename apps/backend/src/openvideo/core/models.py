@@ -118,6 +118,15 @@ class VideoMetadata(BaseModel):
     audio_codec: str | None = None
 
 
+class AssetStoryboardMetadata(BaseModel):
+    sprite_path: str
+    tile_width: int
+    tile_height: int
+    interval_seconds: float
+    columns: int
+    total_tiles: int
+
+
 class AssetTranscriptionMetadata(BaseModel):
     """资源清单只保留任务摘要，详细参数与错误仍由转录产物独立记录。"""
 
@@ -134,6 +143,12 @@ class AssetMetadata(BaseModel):
     transcription: AssetTranscriptionMetadata = Field(
         default_factory=AssetTranscriptionMetadata
     )
+    status: MediaAssetStatus
+    error_message: str | None = None
+    playback_path: str | None = None
+    thumbnail_path: str | None = None
+    remote_thumbnail_url: HttpUrl | None = None
+    storyboard: AssetStoryboardMetadata | None = None
     created_at: datetime
     updated_at: datetime
 

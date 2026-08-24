@@ -363,10 +363,11 @@ def test_summary_files_are_source_of_truth_and_stale_save_conflicts(tmp_path: Pa
         assert manifest_path.stat().st_mtime_ns == before_manifest_mtime
 
         markdown_path.write_text("# 外部修改\n", encoding="utf-8")
-        refreshed = client.get(
+    with TestClient(create_app(Settings(library_path=tmp_path))) as reopened:
+        refreshed = reopened.get(
             f"/api/media/assets/{ASSET_ID}/summary-documents"
         ).json()[0]
-        conflict = client.patch(
+        conflict = reopened.patch(
             f"/api/summary-documents/{document['document_id']}",
             json={"expected_revision": document["revision"], "markdown": "# 旧草稿\n"},
         )
@@ -375,6 +376,7 @@ def test_summary_files_are_source_of_truth_and_stale_save_conflicts(tmp_path: Pa
     assert refreshed["revision"] == document["revision"] + 1
     assert conflict.status_code == 409
     assert markdown_path.read_text(encoding="utf-8") == "# 外部修改\n"
+    assert manifest_path.stat().st_mtime_ns == before_manifest_mtime
 
 
 def test_summary_manifest_contains_paths_and_no_markdown_body(tmp_path: Path):

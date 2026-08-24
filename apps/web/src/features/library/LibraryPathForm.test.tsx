@@ -20,7 +20,8 @@ const library = {
   library_id: "library-0123456789abcdef0123456789abcdef",
   name: "课程",
   root_path: "D:\\课程.openvideo-library",
-  format_version: 1,
+  format_version: 2,
+  index_issues: [],
   created_at: "2026-01-01T00:00:00Z",
 };
 

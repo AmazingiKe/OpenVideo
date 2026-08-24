@@ -43,9 +43,7 @@ from openvideo.core.summary_files import (
     atomic_write_text,
     build_manifest,
     document_relative_path,
-    load_manifest,
     markdown_digest,
-    read_markdown,
     resolve_summary_path,
     write_manifest,
 )
@@ -188,11 +186,7 @@ class SummaryManager:
         documents = [root, *children]
         documents = [self._prepare_document(document) for document in documents]
         self._write_new_project(asset_id, documents)
-        try:
-            self.library.create_summary_documents(documents)
-        except Exception:
-            self._remove_project_files(asset_id, documents)
-            raise
+        self.library.create_summary_documents(documents)
         root = documents[0]
         self._create_conversation(root, root.title)
         return documents
@@ -227,12 +221,7 @@ class SummaryManager:
         except Exception:
             self._document_path(document).unlink(missing_ok=True)
             raise
-        try:
-            self.library.create_summary_documents([document])
-        except Exception:
-            self._document_path(document).unlink(missing_ok=True)
-            self._write_manifest(root.asset_id, documents[:-1])
-            raise
+        self.library.create_summary_documents([document])
         return document
 
     def update_document(
@@ -264,28 +253,18 @@ class SummaryManager:
             updated_document if item.document_id == document_id else item
             for item in current_documents
         ]
-        original_markdown = document.markdown
-        try:
-            if request.markdown is not None:
-                self._write_document(updated_document)
-            self._write_manifest(document.asset_id, documents)
-            updated = self.library.update_summary_document(
-                document_id,
-                request.expected_revision,
-                title=request.title,
-                relative_path=updated_document.relative_path,
-                content_digest=updated_document.content_digest,
-                position=request.position,
-            )
-        except Exception:
-            if request.markdown is not None:
-                atomic_write_text(self._document_path(document), original_markdown)
-            self._write_manifest(document.asset_id, current_documents)
-            raise
+        if request.markdown is not None:
+            self._write_document(updated_document)
+        self._write_manifest(document.asset_id, documents)
+        updated = self.library.update_summary_document(
+            document_id,
+            request.expected_revision,
+            title=request.title,
+            relative_path=updated_document.relative_path,
+            content_digest=updated_document.content_digest,
+            position=request.position,
+        )
         if updated is None:
-            if request.markdown is not None:
-                atomic_write_text(self._document_path(document), original_markdown)
-            self._write_manifest(document.asset_id, current_documents)
             raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
         return updated
 
@@ -332,7 +311,6 @@ class SummaryManager:
         ]
         self._write_manifest(document.asset_id, remaining)
         if not self.library.delete_summary_document(document_id):
-            self._write_manifest(document.asset_id, [*remaining, document])
             raise SummaryNotFoundError("总结文档不存在")
         self._document_path(document).unlink(missing_ok=True)
 
@@ -797,87 +775,7 @@ class SummaryManager:
         )
 
     def _documents(self, asset_id: str) -> list[SummaryDocument]:
-        documents = self.library.load_summary_documents(asset_id)
-        if not documents:
-            return []
-        asset_directory = self.library.asset_directory(asset_id)
-        try:
-            manifest = load_manifest(asset_directory)
-            if manifest.asset_id != asset_id:
-                raise ValueError("总结 manifest 不属于当前素材")
-            manifest_documents = {
-                document.document_id: document for document in manifest.documents
-            }
-            if set(manifest_documents) != {
-                document.document_id for document in documents
-            }:
-                raise ValueError("总结 manifest 文档索引不完整")
-        except (OSError, ValueError):
-            self._write_manifest(asset_id, documents)
-            manifest = load_manifest(asset_directory)
-            manifest_documents = {
-                document.document_id: document for document in manifest.documents
-            }
-
-        indexed_media = self.library.load_summary_media(asset_id)
-        if [item.model_dump(mode="json") for item in indexed_media] != [
-            item.model_dump(mode="json") for item in manifest.media
-        ]:
-            self.library.replace_summary_media_index(asset_id, manifest.media)
-
-        changed = False
-        synchronized: list[SummaryDocument] = []
-        now = datetime.now(UTC)
-        for document in documents:
-            manifest_document = manifest_documents[document.document_id]
-            expected_path = document_relative_path(document)
-            if manifest_document.relative_path != expected_path:
-                raise SummaryError("总结 manifest 包含无效文档路径")
-            markdown = read_markdown(asset_directory, manifest_document.relative_path)
-            digest = markdown_digest(markdown)
-            external_change = digest != manifest_document.content_digest
-            revision = (
-                max(document.revision, manifest_document.revision) + 1
-                if external_change
-                else manifest_document.revision
-            )
-            updated_at = now if external_change else manifest_document.updated_at
-            synchronized_document = document.model_copy(
-                update={
-                    "parent_document_id": manifest_document.parent_document_id,
-                    "title": manifest_document.title,
-                    "markdown": markdown,
-                    "relative_path": manifest_document.relative_path,
-                    "content_digest": digest,
-                    "position": manifest_document.position,
-                    "revision": revision,
-                    "updated_at": updated_at,
-                }
-            )
-            database_changed = any(
-                (
-                    document.parent_document_id
-                    != synchronized_document.parent_document_id,
-                    document.title != synchronized_document.title,
-                    document.relative_path != synchronized_document.relative_path,
-                    document.content_digest != synchronized_document.content_digest,
-                    document.position != synchronized_document.position,
-                    document.revision != synchronized_document.revision,
-                    document.updated_at != synchronized_document.updated_at,
-                )
-            )
-            if database_changed:
-                synchronized_document = self.library.refresh_summary_document_index(
-                    synchronized_document
-                )
-                synchronized_document = synchronized_document.model_copy(
-                    update={"markdown": markdown}
-                )
-            changed = changed or external_change or database_changed
-            synchronized.append(synchronized_document)
-        if changed:
-            self._write_manifest(asset_id, synchronized)
-        return synchronized
+        return self.library.load_summary_documents(asset_id)
 
     def _prepare_document(self, document: SummaryDocument) -> SummaryDocument:
         relative_path = document_relative_path(document)

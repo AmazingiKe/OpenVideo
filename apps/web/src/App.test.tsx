@@ -82,7 +82,8 @@ describe("App", () => {
       library_id: "library-0123456789abcdef0123456789abcdef",
       name: "测试资料库",
       root_path: "D:\\OpenVideo",
-      format_version: 1,
+      format_version: 2,
+      index_issues: [],
       created_at: "2026-01-01T00:00:00Z",
     });
     vi.mocked(get_preferences).mockResolvedValue({

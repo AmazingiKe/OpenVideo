@@ -39,4 +39,4 @@ faster-whisper 是当前可执行的本地语音转写引擎。没有平台字�
 
 资料库不属于应用运行目录。首次启动时必须由用户创建或打开一个外部资料库；应用只在用户配置中保存上次使用的路径，不会在 OpenVideo 目录内隐式创建资料库。
 
-后台 Agent 的任务记录保存在资料库主数据库 `openvideo.sqlite3`，LangGraph 检查点保存在资料库根目录的 `agent_checkpoints.sqlite3`。两者属于可随资料库迁移的业务数据，不是应用配置。
+后台任务记录保存在资料库主数据库 `openvideo.sqlite3`，LangGraph 检查点保存在资料库根目录的 `agent_checkpoints.sqlite3`。两者都属于可丢弃运行状态，不是用户成果或应用配置；删除后不会影响业务文件恢复。
