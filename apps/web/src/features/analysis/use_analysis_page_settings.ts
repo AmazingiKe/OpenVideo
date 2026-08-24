@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
   get_analysis_page_settings,
   update_analysis_page_settings,
@@ -18,28 +20,15 @@ export const DEFAULT_ANALYSIS_PAGE_SETTINGS: AnalysisPageSettings = {
 };
 
 export function use_analysis_page_settings() {
-  const [settings, set_settings] = useState<AnalysisPageSettings>(
-    DEFAULT_ANALYSIS_PAGE_SETTINGS,
-  );
-  const [is_ready, set_is_ready] = useState(false);
-  const [settings_error, set_settings_error] = useState<string | null>(null);
+  const query_client = useQueryClient();
+  const settings_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.analysis_page_settings,
+    queryFn: ({ signal }) => get_analysis_page_settings(signal),
+  });
+  const settings = settings_query.data ?? DEFAULT_ANALYSIS_PAGE_SETTINGS;
+  const [save_error, set_save_error] = useState<string | null>(null);
   const should_save_ref = useRef(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void get_analysis_page_settings(controller.signal)
-      .then((loaded_settings) => {
-        set_settings(loaded_settings);
-        set_settings_error(null);
-      })
-      .catch((error: unknown) => {
-        if (!is_abort_error(error)) set_settings_error(error_message(error));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) set_is_ready(true);
-      });
-    return () => controller.abort();
-  }, []);
+  const is_ready = !settings_query.isPending;
 
   useEffect(() => {
     if (!is_ready || !should_save_ref.current) return;
@@ -47,24 +36,39 @@ export function use_analysis_page_settings() {
     const timeout = window.setTimeout(() => {
       should_save_ref.current = false;
       void update_analysis_page_settings(settings, controller.signal)
-        .then(() => set_settings_error(null))
+        .then((saved_settings) => {
+          query_client.setQueryData(
+            RESOURCE_QUERY_KEYS.analysis_page_settings,
+            saved_settings,
+          );
+          set_save_error(null);
+        })
         .catch((error: unknown) => {
-          if (!is_abort_error(error)) set_settings_error(error_message(error));
+          if (!is_abort_error(error)) set_save_error(error_message(error));
         });
     }, SETTINGS_SAVE_DELAY_MS);
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [is_ready, settings]);
+  }, [is_ready, query_client, settings]);
 
   const update_settings = useCallback(
     (patch: Partial<AnalysisPageSettings>) => {
       should_save_ref.current = true;
-      set_settings((current) => ({ ...current, ...patch }));
+      query_client.setQueryData<AnalysisPageSettings>(
+        RESOURCE_QUERY_KEYS.analysis_page_settings,
+        (current) => ({
+          ...(current ?? DEFAULT_ANALYSIS_PAGE_SETTINGS),
+          ...patch,
+        }),
+      );
     },
-    [],
+    [query_client],
   );
 
+  const settings_error =
+    save_error ??
+    (settings_query.error ? error_message(settings_query.error) : null);
   return { settings, settings_error, is_ready, update_settings };
 }

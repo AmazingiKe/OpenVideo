@@ -21,6 +21,7 @@
     "@milkdown/crepe": "^7.22.1",
     "@milkdown/kit": "^7.22.1",
     "@milkdown/react": "^7.22.1",
+    "@tanstack/react-query": "^5.102.0",
     "@techsquidtv/canvas-timeline": "0.1.0",
     "@vidstack/react": "^1.15.6",
     "@vitejs/plugin-react": "latest",

@@ -25,6 +25,9 @@ importers:
       '@milkdown/react':
         specifier: ^7.22.1
         version: 7.22.1(@codemirror/language@6.12.4)(@codemirror/state@6.7.1)(@codemirror/view@6.43.9)(prosemirror-model@1.25.11)(prosemirror-state@1.4.4)(prosemirror-view@1.42.2)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@7.2.0)(typescript@6.0.3)
+      '@tanstack/react-query':
+        specifier: ^5.102.0
+        version: 5.102.0(react@19.2.8)
       '@techsquidtv/canvas-timeline':
         specifier: 0.1.0
         version: 0.1.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -2425,6 +2428,14 @@ packages:
     resolution: {integrity: sha512-yYU8cogLeSh/ms2jh8Fj7jaba/EWa7Ja6GoUqYZaraEuCI5YS6ms6ObZgjjedm+jm6XZjdNRWBpPP6Z86oOxcw==}
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
+
+  '@tanstack/query-core@5.102.0':
+    resolution: {integrity: sha512-tvBzr11Q7StuMCEsIJdqX8TAWt6WZIzfw/yrSAjObZDerwTTPeCxeLXN2R8ZSn4ZxFpQV819Xn8QmoO+vtnDvw==}
+
+  '@tanstack/react-query@5.102.0':
+    resolution: {integrity: sha512-0GyVyEcGt9M7jHPCua16hNVtstUXE2R4HsnNubFYcDs7DJaLzh1dSiXsADDU/cNn/SqrLfa0vRKyjUmbx4rZLA==}
+    peerDependencies:
+      react: ^18 || ^19
 
   '@techsquidtv/canvas-timeline-core@0.1.0':
     resolution: {integrity: sha512-vFjNtv9PHc1aRJkXLzslSjacMMkiHR5zevijk+kOFHOeunSTrAQtY9TpTlK3ZDoyT/qLi6q+ZLNkQCmVkdkcxQ==}
@@ -7803,6 +7814,13 @@ snapshots:
       '@tailwindcss/oxide': 4.3.3
       tailwindcss: 4.3.3
       vite: 8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+
+  '@tanstack/query-core@5.102.0': {}
+
+  '@tanstack/react-query@5.102.0(react@19.2.8)':
+    dependencies:
+      '@tanstack/query-core': 5.102.0
+      react: 19.2.8
 
   '@techsquidtv/canvas-timeline-core@0.1.0':
     dependencies:

@@ -9,6 +9,7 @@ import {
   DEFAULT_ANALYSIS_PAGE_SETTINGS,
   use_analysis_page_settings,
 } from "./use_analysis_page_settings";
+import { ApplicationQueryProvider } from "@/app/query_cache";
 
 vi.mock("@/shared/api", () => ({
   get_analysis_page_settings: vi.fn(),
@@ -28,8 +29,10 @@ describe("use_analysis_page_settings", () => {
 
   it("loads settings and merges updates into one delayed save", async () => {
     vi.useFakeTimers();
-    const { result } = renderHook(() => use_analysis_page_settings());
-    await act(async () => Promise.resolve());
+    const { result } = renderHook(() => use_analysis_page_settings(), {
+      wrapper: ApplicationQueryProvider,
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.is_ready).toBe(true);
 
     act(() => {
@@ -56,7 +59,9 @@ describe("use_analysis_page_settings", () => {
       new Error("设置读取失败"),
     );
 
-    const { result } = renderHook(() => use_analysis_page_settings());
+    const { result } = renderHook(() => use_analysis_page_settings(), {
+      wrapper: ApplicationQueryProvider,
+    });
 
     await waitFor(() => expect(result.current.is_ready).toBe(true));
     expect(result.current.settings).toEqual(DEFAULT_ANALYSIS_PAGE_SETTINGS);
@@ -68,8 +73,10 @@ describe("use_analysis_page_settings", () => {
     vi.mocked(update_analysis_page_settings).mockRejectedValue(
       new Error("设置保存失败"),
     );
-    const { result } = renderHook(() => use_analysis_page_settings());
-    await act(async () => Promise.resolve());
+    const { result } = renderHook(() => use_analysis_page_settings(), {
+      wrapper: ApplicationQueryProvider,
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(0));
 
     act(() =>
       result.current.update_settings({ asset_library_collapsed: true }),

@@ -1,5 +1,7 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { use_task_manager } from "@/app/task_manager";
 import { DownloadWorkspace } from "@/features/workbench/DownloadWorkspace";
 import {
@@ -31,36 +33,28 @@ const DOUYIN_SEARCH_PATH = "search/dy";
 const DOUYIN_MODAL_VIDEO_ID_PARAMETER = "modal_id";
 
 export function DownloadsPage() {
+  const query_client = useQueryClient();
   const { task_records, start_downloads } = use_task_manager();
-  const [health, set_health] = useState<HealthResponse | null>(null);
+  const health_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.download_health,
+    queryFn: ({ signal }) => get_health(signal),
+  });
+  const download_accounts_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.download_accounts,
+    queryFn: ({ signal }) => get_download_accounts(signal),
+  });
+  const health: HealthResponse | null = health_query.data ?? null;
+  const download_accounts = download_accounts_query.data ?? [];
   const [source_url, set_source_url] = useState("");
   const [probe_result, set_probe_result] = useState<ProbeResponse | null>(null);
   const [selected_urls, set_selected_urls] = useState<Set<string>>(new Set());
   const [is_submitting, set_is_submitting] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
-  const [download_accounts, set_download_accounts] = useState<
-    DownloadAccount[]
-  >([]);
   const [account_loading_platform, set_account_loading_platform] =
     useState<SourcePlatform | null>(null);
   const [account_errors, set_account_errors] = useState<
     Partial<Record<SourcePlatform, string>>
   >({});
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void get_health(controller.signal)
-      .then(set_health)
-      .catch((error: unknown) => {
-        if (!is_abort_error(error)) set_page_error(error_message(error));
-      });
-    void get_download_accounts(controller.signal)
-      .then(set_download_accounts)
-      .catch((error: unknown) => {
-        if (!is_abort_error(error)) set_page_error(error_message(error));
-      });
-    return () => controller.abort();
-  }, []);
 
   async function submit_source_probe(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,8 +167,10 @@ export function DownloadsPage() {
     clear_account_error(platform);
     try {
       await delete_download_account(platform);
-      set_download_accounts((current) =>
-        current.filter((account) => account.platform !== platform),
+      query_client.setQueryData<DownloadAccount[]>(
+        RESOURCE_QUERY_KEYS.download_accounts,
+        (current) =>
+          (current ?? []).filter((account) => account.platform !== platform),
       );
     } catch (error) {
       if (!is_abort_error(error))
@@ -186,19 +182,25 @@ export function DownloadsPage() {
 
   async function refresh_download_accounts() {
     try {
-      set_download_accounts(await get_download_accounts());
+      query_client.setQueryData(
+        RESOURCE_QUERY_KEYS.download_accounts,
+        await get_download_accounts(),
+      );
     } catch (error) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     }
   }
 
   function update_download_account(updated_account: DownloadAccount) {
-    set_download_accounts((current) => [
-      ...current.filter(
-        (account) => account.platform !== updated_account.platform,
-      ),
-      updated_account,
-    ]);
+    query_client.setQueryData<DownloadAccount[]>(
+      RESOURCE_QUERY_KEYS.download_accounts,
+      (current) => [
+        ...(current ?? []).filter(
+          (account) => account.platform !== updated_account.platform,
+        ),
+        updated_account,
+      ],
+    );
   }
 
   function set_account_error(platform: SourcePlatform, message: string) {
@@ -231,7 +233,11 @@ export function DownloadsPage() {
       selected_urls={selected_urls}
       current_source_video_id={source_video_id_from_url(source_url)}
       is_submitting={is_submitting}
-      error={page_error}
+      error={
+        page_error ??
+        resource_error(health_query.error) ??
+        resource_error(download_accounts_query.error)
+      }
       download_accounts={download_accounts}
       account_loading_platform={account_loading_platform}
       account_errors={account_errors}
@@ -246,6 +252,10 @@ export function DownloadsPage() {
       on_disconnect_download_account={disconnect_platform_account}
     />
   );
+}
+
+function resource_error(error: Error | null): string | null {
+  return error ? error_message(error) : null;
 }
 
 function source_platform_from_url(source_url: string): SourcePlatform | null {

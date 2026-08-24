@@ -1,33 +1,39 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
   create_marker,
   delete_marker,
   get_markers,
   update_marker,
-} from "../../shared/api";
-import type { MediaMarker } from "../../shared/types";
+} from "@/shared/api";
+import { error_message } from "@/shared/errors";
+import type { MediaMarker } from "@/shared/types";
 
 const MARKER_TIME_PRECISION = 10;
 
 export function use_asset_markers(asset_id: string) {
-  const [markers, set_markers] = useState<MediaMarker[]>([]);
-  const [marker_error, set_marker_error] = useState<string | null>(null);
+  const query_client = useQueryClient();
+  const marker_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.asset_markers(asset_id || null),
+    queryFn: async ({ signal }) =>
+      sort_markers(await get_markers(asset_id, signal)),
+    enabled: Boolean(asset_id),
+  });
+  const markers = marker_query.data ?? [];
+  const [mutation_error, set_mutation_error] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!asset_id) {
-      set_markers([]);
-      return;
-    }
-    const controller = new AbortController();
-    set_marker_error(null);
-    get_markers(asset_id, controller.signal)
-      .then((loaded_markers) => set_markers(sort_markers(loaded_markers)))
-      .catch((error: unknown) => {
-        if (!is_abort_error(error)) set_marker_error(error_message(error));
-      });
-    return () => controller.abort();
-  }, [asset_id]);
+  const update_cached_markers = useCallback(
+    (update: (current: MediaMarker[]) => MediaMarker[]) => {
+      if (!asset_id) return;
+      query_client.setQueryData<MediaMarker[]>(
+        RESOURCE_QUERY_KEYS.asset_markers(asset_id),
+        (current) => update(current ?? []),
+      );
+    },
+    [asset_id, query_client],
+  );
 
   const add_marker = useCallback(
     async (time_seconds: number) => {
@@ -38,13 +44,13 @@ export function use_asset_markers(asset_id: string) {
         MARKER_TIME_PRECISION;
       try {
         const marker = await create_marker(asset_id, rounded_time, []);
-        set_markers((current) => sort_markers([...current, marker]));
-        set_marker_error(null);
+        update_cached_markers((current) => sort_markers([...current, marker]));
+        set_mutation_error(null);
       } catch (error) {
-        set_marker_error(error_message(error));
+        set_mutation_error(error_message(error));
       }
     },
-    [asset_id],
+    [asset_id, update_cached_markers],
   );
 
   const update_marker_tags = useCallback(
@@ -56,17 +62,17 @@ export function use_asset_markers(asset_id: string) {
           marker_id,
           normalize_tags(tags),
         );
-        set_markers((current) =>
+        update_cached_markers((current) =>
           current.map((item) =>
             item.marker_id === marker.marker_id ? marker : item,
           ),
         );
-        set_marker_error(null);
+        set_mutation_error(null);
       } catch (error) {
-        set_marker_error(error_message(error));
+        set_mutation_error(error_message(error));
       }
     },
-    [asset_id],
+    [asset_id, update_cached_markers],
   );
 
   const remove_marker = useCallback(
@@ -74,20 +80,22 @@ export function use_asset_markers(asset_id: string) {
       if (!asset_id) return;
       try {
         await delete_marker(asset_id, marker_id);
-        set_markers((current) =>
+        update_cached_markers((current) =>
           current.filter((marker) => marker.marker_id !== marker_id),
         );
-        set_marker_error(null);
+        set_mutation_error(null);
       } catch (error) {
-        set_marker_error(error_message(error));
+        set_mutation_error(error_message(error));
       }
     },
-    [asset_id],
+    [asset_id, update_cached_markers],
   );
 
   return {
     markers,
-    marker_error,
+    marker_error:
+      mutation_error ??
+      (marker_query.error ? error_message(marker_query.error) : null),
     add_marker,
     update_marker_tags,
     remove_marker,
@@ -113,12 +121,4 @@ function normalize_tags(tags: string[]): string[] {
       ? [...normalized_tags, normalized_tag]
       : normalized_tags;
   }, []);
-}
-
-function error_message(error: unknown): string {
-  return error instanceof Error ? error.message : "标记操作失败";
-}
-
-function is_abort_error(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }

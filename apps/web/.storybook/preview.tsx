@@ -1,11 +1,14 @@
 import type { Decorator, Preview } from "@storybook/react-vite";
 
+import { ApplicationQueryProvider } from "../src/app/query_cache";
 import "../src/styles.css";
 
 const with_design_surface: Decorator = (Story) => (
-  <div className="min-h-screen bg-background text-foreground">
-    <Story />
-  </div>
+  <ApplicationQueryProvider>
+    <div className="min-h-screen bg-background text-foreground">
+      <Story />
+    </div>
+  </ApplicationQueryProvider>
 );
 
 const preview: Preview = {

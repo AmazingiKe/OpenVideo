@@ -1,8 +1,6 @@
-import { Suspense } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 
 import { Topbar } from "@/app/Topbar";
-import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 export function AppShell() {
@@ -20,21 +18,8 @@ export function AppShell() {
             : "overflow-auto bg-muted/20",
         )}
       >
-        <Suspense fallback={<RouteLoading />}>
-          <Outlet />
-        </Suspense>
+        <Outlet />
       </main>
-    </div>
-  );
-}
-
-function RouteLoading() {
-  return (
-    <div className="grid min-h-full place-items-center" role="status">
-      <span className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Spinner />
-        正在加载页面
-      </span>
     </div>
   );
 }

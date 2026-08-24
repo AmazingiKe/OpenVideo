@@ -30,7 +30,13 @@ const TRANSCRIPT: Transcript = {
   asset_id: ASSET.asset_id,
   language: "zh",
   segments: [
-    { start_seconds: 0, end_seconds: 8, text: "镜头会组织观众注意力。" },
+    {
+      start_seconds: 0,
+      end_seconds: 8,
+      text: "镜头会组织观众注意力。",
+      emotion: null,
+      audio_events: [],
+    },
   ],
   created_at: "2026-01-01T00:00:00Z",
 };

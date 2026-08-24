@@ -428,6 +428,27 @@ describe("App", () => {
     );
   });
 
+  it("preserves workspace input while switching modules", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    vi.mocked(list_assets).mockResolvedValue([]);
+    render(<App />);
+
+    const source_input = await screen.findByLabelText("视频或播放列表地址");
+    fireEvent.change(source_input, {
+      target: { value: "https://example.com/preserved-video" },
+    });
+    fireEvent.click(screen.getByRole("link", { name: "分析" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/analysis"));
+    fireEvent.click(screen.getByRole("link", { name: "下载" }));
+
+    expect(await screen.findByLabelText("视频或播放列表地址")).toHaveValue(
+      "https://example.com/preserved-video",
+    );
+  });
+
   it("does not load media data on the settings page", async () => {
     window.history.replaceState(null, "", "/settings");
     vi.mocked(list_assets).mockClear();

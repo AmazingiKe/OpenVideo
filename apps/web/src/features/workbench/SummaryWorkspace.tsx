@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowUp,
@@ -29,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
   MarkdownEditor,
   type MarkdownSelection,
@@ -118,7 +120,6 @@ import {
   delete_summary_conversation,
   generate_summary_documents,
   get_summary_conversation,
-  list_ai_models,
   list_summary_conversations,
   list_summary_documents,
   reorder_summary_children,
@@ -127,8 +128,9 @@ import {
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
-import { error_message, is_abort_error } from "@/shared/errors";
+import { error_message } from "@/shared/errors";
 import { use_compact_summary_layout } from "@/features/summary/use_compact_summary_layout";
+import { use_ai_models } from "@/features/analysis/use_analysis_resources";
 import type {
   AiModelSummary,
   MediaAsset,
@@ -160,23 +162,65 @@ type SummaryWorkspaceProps = {
   on_error?: (message: string | null) => void;
 };
 
+type SummaryProject = {
+  documents: SummaryDocument[];
+  conversations: SummaryConversation[];
+  conversation: SummaryConversationState | null;
+};
+
+const EMPTY_SUMMARY_PROJECT: SummaryProject = {
+  documents: [],
+  conversations: [],
+  conversation: null,
+};
+
+async function load_summary_project(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryProject> {
+  const documents = await list_summary_documents(asset_id, signal);
+  if (documents.length === 0) return EMPTY_SUMMARY_PROJECT;
+  const conversations = await list_summary_conversations(asset_id, signal);
+  const active_conversation = conversations[0];
+  const conversation = active_conversation
+    ? await get_summary_conversation(
+        active_conversation.conversation_id,
+        signal,
+      )
+    : null;
+  return { documents, conversations, conversation };
+}
+
 export function SummaryWorkspace({
   selected_asset,
   segments,
   transcript,
   on_error,
 }: SummaryWorkspaceProps) {
-  const [documents, set_documents] = useState<SummaryDocument[]>([]);
+  const query_client = useQueryClient();
+  const selected_asset_id = selected_asset?.asset_id ?? null;
+  const project_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.summary_project(selected_asset_id),
+    queryFn: ({ signal }) => load_summary_project(selected_asset_id!, signal),
+    enabled: selected_asset_id !== null,
+  });
+  const initial_project = project_query.data ?? EMPTY_SUMMARY_PROJECT;
+  const { models, error: models_error } = use_ai_models();
+  const [documents, set_documents] = useState<SummaryDocument[]>(
+    initial_project.documents,
+  );
   const [selected_document_id, set_selected_document_id] = useState<
     string | null
-  >(null);
-  const [models, set_models] = useState<AiModelSummary[]>([]);
+  >(
+    initial_project.documents.find(
+      (document) => document.parent_document_id === null,
+    )?.document_id ?? null,
+  );
   const [conversations, set_conversations] = useState<SummaryConversation[]>(
-    [],
+    initial_project.conversations,
   );
   const [conversation, set_conversation] =
-    useState<SummaryConversationState | null>(null);
-  const [is_loading, set_is_loading] = useState(false);
+    useState<SummaryConversationState | null>(initial_project.conversation);
   const [is_generating, set_is_generating] = useState(false);
   const [detail, set_detail] = useState<SummaryDetail>("standard");
   const [create_subdocuments, set_create_subdocuments] = useState(false);
@@ -221,6 +265,8 @@ export function SummaryWorkspace({
   const draft_markdown_ref = useRef("");
   const draft_title_ref = useRef("");
   const dirty_ref = useRef(false);
+  const project_loaded_ref = useRef(project_query.data !== undefined);
+  const project_state_ref = useRef<SummaryProject>(initial_project);
 
   const selected_document = useMemo(
     () =>
@@ -292,43 +338,60 @@ export function SummaryWorkspace({
   );
 
   useEffect(() => {
-    const controller = new AbortController();
-    void list_ai_models(controller.signal)
-      .then((loaded_models) => {
-        set_models(loaded_models);
-        set_generation_model_id(
-          (current) => current ?? loaded_models[0]?.model_id ?? null,
-        );
-        set_agent_model_id(
-          (current) => current ?? loaded_models[0]?.model_id ?? null,
-        );
-      })
-      .catch((error: unknown) => {
-        if (!is_abort_error(error)) on_error?.(error_message(error));
-      });
-    return () => controller.abort();
-  }, [on_error]);
+    set_generation_model_id(
+      (current) => current ?? models[0]?.model_id ?? null,
+    );
+    set_agent_model_id((current) => current ?? models[0]?.model_id ?? null);
+  }, [models]);
 
   useEffect(() => {
-    active_asset_id_ref.current = selected_asset?.asset_id ?? null;
+    const resource_error =
+      models_error ??
+      (project_query.error ? error_message(project_query.error) : null);
+    if (resource_error) on_error?.(resource_error);
+  }, [models_error, on_error, project_query.error]);
+
+  useEffect(() => {
+    active_asset_id_ref.current = selected_asset_id;
     set_export_relative_path(null);
     set_export_pending(false);
-    if (!selected_asset) {
+    if (!selected_asset_id) {
       set_documents([]);
       set_selected_document_id(null);
       set_conversations([]);
       set_conversation(null);
-      return;
     }
-    const controller = new AbortController();
-    set_is_loading(true);
-    void load_documents(selected_asset.asset_id, controller.signal)
-      .catch((error: unknown) => {
-        if (!is_abort_error(error)) on_error?.(error_message(error));
-      })
-      .finally(() => set_is_loading(false));
-    return () => controller.abort();
-  }, [load_documents, on_error, selected_asset]);
+  }, [selected_asset_id]);
+
+  useEffect(() => {
+    const project = project_query.data;
+    if (!project) return;
+    project_loaded_ref.current = true;
+    set_documents(project.documents);
+    set_selected_document_id((current) =>
+      project.documents.some((document) => document.document_id === current)
+        ? current
+        : (project.documents.find(
+            (document) => document.parent_document_id === null,
+          )?.document_id ?? null),
+    );
+    set_conversations(project.conversations);
+    set_conversation(project.conversation);
+  }, [project_query.data]);
+
+  useEffect(() => {
+    project_state_ref.current = { documents, conversations, conversation };
+  }, [conversation, conversations, documents]);
+
+  useEffect(() => {
+    return () => {
+      if (!selected_asset_id || !project_loaded_ref.current) return;
+      query_client.setQueryData<SummaryProject>(
+        RESOURCE_QUERY_KEYS.summary_project(selected_asset_id),
+        project_state_ref.current,
+      );
+    };
+  }, [query_client, selected_asset_id]);
 
   useEffect(() => {
     if (!selected_asset) return;
@@ -717,7 +780,7 @@ export function SummaryWorkspace({
       />
     );
   }
-  if (is_loading) {
+  if (project_query.isPending && documents.length === 0) {
     return (
       <div
         className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"

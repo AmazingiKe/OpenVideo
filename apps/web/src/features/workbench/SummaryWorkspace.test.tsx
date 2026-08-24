@@ -1,10 +1,11 @@
 import {
   act,
   fireEvent,
-  render,
+  render as testing_render,
   screen,
   waitFor,
 } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -18,8 +19,13 @@ import {
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
+import { ApplicationQueryProvider } from "@/app/query_cache";
 import type { MediaAsset, SummaryDocument, Transcript } from "@/shared/types";
 import { reorder_document_ids, SummaryWorkspace } from "./SummaryWorkspace";
+
+function render(element: ReactElement) {
+  return testing_render(element, { wrapper: ApplicationQueryProvider });
+}
 
 vi.mock("@/components/MarkdownEditor", () => ({
   MarkdownEditor: ({
@@ -86,7 +92,15 @@ const ASSET: MediaAsset = {
 const TRANSCRIPT: Transcript = {
   asset_id: ASSET.asset_id,
   language: "zh",
-  segments: [{ start_seconds: 0, end_seconds: 5, text: "第一段" }],
+  segments: [
+    {
+      start_seconds: 0,
+      end_seconds: 5,
+      text: "第一段",
+      emotion: null,
+      audio_events: [],
+    },
+  ],
   created_at: "2026-01-01T00:00:00Z",
 };
 

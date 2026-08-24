@@ -4,6 +4,10 @@ import type { PanelImperativeHandle } from "react-resizable-panels";
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { use_task_manager } from "@/app/task_manager";
 import { use_asset_analysis } from "@/features/analysis/use_asset_analysis";
+import {
+  use_ai_models,
+  use_analysis_resources,
+} from "@/features/analysis/use_analysis_resources";
 import { use_analysis_page_settings } from "@/features/analysis/use_analysis_page_settings";
 import { use_compact_analysis_layout } from "@/features/analysis/use_compact_analysis_layout";
 import { type PlayerHandle } from "@/features/player/Player";
@@ -22,19 +26,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { FloatingError } from "@/components/FloatingError";
 import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
-import {
-  get_preferences,
-  list_analysis_strategies,
-  list_ai_models,
-  list_transcription_models,
-} from "@/shared/api";
 import type {
   AnalysisMode,
   AnalysisStrategy,
-  AnalysisStrategyPresetDescriptor,
-  AiModelSummary,
   TranscriptCorrectionScope,
-  TranscriptionModelDescriptor,
   TranscriptionOptions,
 } from "@/shared/types";
 
@@ -42,13 +37,8 @@ import type {
 const PANEL_TOGGLE_TRANSITION_MS = 280;
 
 export function AnalysisPage() {
-  const {
-    assets,
-    selected_asset,
-    selected_asset_id,
-    refresh_assets,
-    select_asset,
-  } = use_asset_catalog();
+  const { assets, selected_asset, selected_asset_id, select_asset } =
+    use_asset_catalog();
   const {
     start_analysis,
     start_transcription,
@@ -67,20 +57,19 @@ export function AnalysisPage() {
   } = use_asset_analysis(selected_asset_id);
   const { settings, settings_error, is_ready, update_settings } =
     use_analysis_page_settings();
+  const { models: ai_models, error: ai_models_error } = use_ai_models();
+  const {
+    transcription_models: loaded_transcription_models,
+    default_transcription,
+    analysis_strategies,
+    error: analysis_resources_error,
+  } = use_analysis_resources();
   const [current_time, set_current_time] = useState(0);
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
   const [page_error, set_page_error] = useState<string | null>(null);
-  const [ai_models, set_ai_models] = useState<AiModelSummary[]>([]);
-  const [analysis_strategies, set_analysis_strategies] = useState<
-    AnalysisStrategyPresetDescriptor[]
-  >([]);
-  const [transcription_models, set_transcription_models] = useState<
-    TranscriptionModelDescriptor[]
-  >([]);
-  const [default_transcription, set_default_transcription] =
-    useState<TranscriptionOptions | null>(null);
-  const [model_error, set_model_error] = useState<string | null>(null);
+  const [transcription_model_overrides, set_transcription_model_overrides] =
+    useState<Record<string, (typeof loaded_transcription_models)[number]>>({});
   const [is_panel_size_transitioning, set_is_panel_size_transitioning] =
     useState(false);
   const panel_transition_timeout_ref = useRef<number | null>(null);
@@ -94,37 +83,9 @@ export function AnalysisPage() {
 
   useEffect(() => {
     mounted_ref.current = true;
-    const controller = new AbortController();
-    void refresh_assets(controller.signal).catch((error: unknown) => {
-      if (!is_abort_error(error)) set_page_error(error_message(error));
-    });
     return () => {
       mounted_ref.current = false;
-      controller.abort();
     };
-  }, [refresh_assets]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    Promise.all([
-      list_ai_models(controller.signal),
-      list_transcription_models(controller.signal),
-      get_preferences(controller.signal),
-      list_analysis_strategies(controller.signal),
-    ])
-      .then(
-        ([models, loaded_transcription_models, preferences, strategies]) => {
-          set_ai_models(models);
-          set_transcription_models(loaded_transcription_models);
-          set_default_transcription(preferences.default_transcription);
-          set_analysis_strategies(strategies);
-          set_model_error(null);
-        },
-      )
-      .catch((error: unknown) => {
-        if (!is_abort_error(error)) set_model_error(error_message(error));
-      });
-    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -306,6 +267,10 @@ export function AnalysisPage() {
         ? "all"
         : "selection"
       : null;
+  const transcription_models = loaded_transcription_models.map(
+    (model) =>
+      transcription_model_overrides[`${model.engine}:${model.model}`] ?? model,
+  );
   const asset_library = (
     <AssetLibrary
       assets={assets}
@@ -336,14 +301,10 @@ export function AnalysisPage() {
       transcription_models={transcription_models}
       default_transcription={default_transcription}
       on_transcription_model_change={(updated_model) =>
-        set_transcription_models((current) =>
-          current.map((model) =>
-            model.engine === updated_model.engine &&
-            model.model === updated_model.model
-              ? updated_model
-              : model,
-          ),
-        )
+        set_transcription_model_overrides((current) => ({
+          ...current,
+          [`${updated_model.engine}:${updated_model.model}`]: updated_model,
+        }))
       }
       is_analyzing={is_analyzing}
       ai_models={ai_models}
@@ -371,7 +332,12 @@ export function AnalysisPage() {
     />
   );
 
-  const error = page_error ?? model_error ?? settings_error ?? analysis_error;
+  const error =
+    page_error ??
+    ai_models_error ??
+    analysis_resources_error ??
+    settings_error ??
+    analysis_error;
   return (
     <>
       <div

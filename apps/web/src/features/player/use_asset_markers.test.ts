@@ -1,17 +1,18 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { use_asset_markers } from "./use_asset_markers";
+import { ApplicationQueryProvider } from "@/app/query_cache";
 import {
   create_marker,
   delete_marker,
   get_markers,
   update_marker,
-} from "../../shared/api";
+} from "@/shared/api";
+import { use_asset_markers } from "./use_asset_markers";
 
 const ASSET_ID = "asset-test";
 
-vi.mock("../../shared/api", () => ({
+vi.mock("@/shared/api", () => ({
   create_marker: vi.fn(),
   delete_marker: vi.fn(),
   get_markers: vi.fn(),
@@ -38,7 +39,9 @@ describe("use_asset_markers", () => {
       time_seconds: 12.9,
       tags: [],
     });
-    const { result } = renderHook(() => use_asset_markers(ASSET_ID));
+    const { result } = renderHook(() => use_asset_markers(ASSET_ID), {
+      wrapper: ApplicationQueryProvider,
+    });
     await waitFor(() => expect(result.current.markers).toHaveLength(1));
 
     await act(async () => result.current.add_marker(12.9));
@@ -64,7 +67,9 @@ describe("use_asset_markers", () => {
       time_seconds: 12,
       tags: ["关键帧"],
     });
-    const { result } = renderHook(() => use_asset_markers(ASSET_ID));
+    const { result } = renderHook(() => use_asset_markers(ASSET_ID), {
+      wrapper: ApplicationQueryProvider,
+    });
     await waitFor(() => expect(result.current.markers).toHaveLength(1));
 
     await act(async () =>
@@ -93,7 +98,10 @@ describe("use_asset_markers", () => {
       ]);
     const { result, rerender } = renderHook(
       ({ asset_id }) => use_asset_markers(asset_id),
-      { initialProps: { asset_id: "asset-a" } },
+      {
+        initialProps: { asset_id: "asset-a" },
+        wrapper: ApplicationQueryProvider,
+      },
     );
 
     rerender({ asset_id: "asset-b" });

@@ -3,6 +3,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AssetCatalogProvider } from "@/app/asset_catalog";
+import { ApplicationQueryProvider } from "@/app/query_cache";
 import { TaskManagerProvider, use_task_manager } from "@/app/task_manager";
 import { create_download, get_download, list_assets } from "@/shared/api";
 import type { DownloadJob } from "@/shared/types";
@@ -34,14 +35,16 @@ describe("TaskManagerProvider", () => {
 
     render(
       <MemoryRouter initialEntries={["/start"]}>
-        <AssetCatalogProvider>
-          <TaskManagerProvider>
-            <Routes>
-              <Route path="/start" element={<TaskStarter />} />
-              <Route path="/other" element={<TaskStatus />} />
-            </Routes>
-          </TaskManagerProvider>
-        </AssetCatalogProvider>
+        <ApplicationQueryProvider>
+          <AssetCatalogProvider>
+            <TaskManagerProvider>
+              <Routes>
+                <Route path="/start" element={<TaskStarter />} />
+                <Route path="/other" element={<TaskStatus />} />
+              </Routes>
+            </TaskManagerProvider>
+          </AssetCatalogProvider>
+        </ApplicationQueryProvider>
       </MemoryRouter>,
     );
 

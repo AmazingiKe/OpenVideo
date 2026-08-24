@@ -137,7 +137,13 @@ const TRANSCRIPT: Transcript = {
   asset_id: ASSET_ID,
   language: "zh",
   segments: [
-    { start_seconds: 38, end_seconds: 48, text: "摄影机开始向人物缓慢推进。" },
+    {
+      start_seconds: 38,
+      end_seconds: 48,
+      text: "摄影机开始向人物缓慢推进。",
+      emotion: null,
+      audio_events: [],
+    },
   ],
   created_at: CREATED_AT,
 };
