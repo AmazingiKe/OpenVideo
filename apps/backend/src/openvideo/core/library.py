@@ -47,7 +47,8 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 FORMAT_VERSION = 1
-DATABASE_VERSION = 5
+SUMMARY_DATABASE_VERSION = 5
+DATABASE_VERSION = 6
 MANIFEST_FILE_NAME = "library.json"
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 AGENT_CHECKPOINT_DATABASE_FILE_NAME = "agent_checkpoints.sqlite3"
@@ -212,6 +213,9 @@ class MediaLibrary:
             version = 4
         if version == 4:
             self._migrate_summaries()
+            version = SUMMARY_DATABASE_VERSION
+        if version == SUMMARY_DATABASE_VERSION:
+            self._migrate_transcript_metadata()
 
     def _migrate_analysis_model(self) -> None:
         connection = self._db()
@@ -248,6 +252,24 @@ class MediaLibrary:
                     (default_strategy,),
                 )
             connection.executescript(_SUMMARY_SCHEMA)
+            connection.execute(f"PRAGMA user_version = {SUMMARY_DATABASE_VERSION}")
+
+    def _migrate_transcript_metadata(self) -> None:
+        connection = self._db()
+        with connection:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(transcript_segments)")
+            }
+            if "emotion" not in columns:
+                connection.execute(
+                    "ALTER TABLE transcript_segments ADD COLUMN emotion TEXT"
+                )
+            if "audio_events" not in columns:
+                connection.execute(
+                    "ALTER TABLE transcript_segments "
+                    "ADD COLUMN audio_events TEXT NOT NULL DEFAULT '[]'"
+                )
             connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
 
     def _migrate_asset_storage(self) -> None:
@@ -516,8 +538,20 @@ class MediaLibrary:
                 (transcript.asset_id, transcript.language, transcript.created_at.isoformat()),
             )
             self._db().executemany(
-                "INSERT INTO transcript_segments(asset_id, position, start_seconds, end_seconds, text) VALUES (?, ?, ?, ?, ?)",
-                [(transcript.asset_id, index, segment.start_seconds, segment.end_seconds, segment.text) for index, segment in enumerate(transcript.segments)],
+                "INSERT INTO transcript_segments(asset_id, position, start_seconds, end_seconds, text, emotion, audio_events) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        transcript.asset_id,
+                        index,
+                        segment.start_seconds,
+                        segment.end_seconds,
+                        segment.text,
+                        segment.emotion,
+                        json.dumps(segment.audio_events, ensure_ascii=False),
+                    )
+                    for index, segment in enumerate(transcript.segments)
+                ],
             )
 
     def save_transcription_metadata(self, metadata: TranscriptionMetadata) -> None:
@@ -545,14 +579,23 @@ class MediaLibrary:
         if not row:
             return None
         segments = self._db().execute(
-            "SELECT start_seconds, end_seconds, text FROM transcript_segments WHERE asset_id = ? ORDER BY position",
+            "SELECT start_seconds, end_seconds, text, emotion, audio_events "
+            "FROM transcript_segments WHERE asset_id = ? ORDER BY position",
             (asset_id,),
         ).fetchall()
         return Transcript(
             asset_id=asset_id,
             language=row["language"],
             created_at=row["created_at"],
-            segments=[TranscriptSegment.model_validate(dict(segment)) for segment in segments],
+            segments=[
+                TranscriptSegment.model_validate(
+                    {
+                        **dict(segment),
+                        "audio_events": json.loads(segment["audio_events"] or "[]"),
+                    }
+                )
+                for segment in segments
+            ],
         )
 
     def save_segments(self, asset_id: str, segments: list[MediaSegment]) -> None:
@@ -1005,7 +1048,8 @@ CREATE TABLE agent_jobs (
 CREATE TABLE transcripts (asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE, language TEXT, created_at TEXT NOT NULL);
 CREATE TABLE transcript_segments (
     asset_id TEXT NOT NULL REFERENCES transcripts(asset_id) ON DELETE CASCADE, position INTEGER NOT NULL,
-    start_seconds REAL NOT NULL, end_seconds REAL NOT NULL, text TEXT NOT NULL, PRIMARY KEY(asset_id, position)
+    start_seconds REAL NOT NULL, end_seconds REAL NOT NULL, text TEXT NOT NULL,
+    emotion TEXT, audio_events TEXT NOT NULL DEFAULT '[]', PRIMARY KEY(asset_id, position)
 );
 CREATE TABLE timeline_segments (
     segment_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,

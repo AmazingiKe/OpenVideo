@@ -241,6 +241,29 @@ export type TranscriptSegment = {
   start_seconds: number;
   end_seconds: number;
   text: string;
+  emotion:
+    | "happy"
+    | "sad"
+    | "angry"
+    | "neutral"
+    | "fearful"
+    | "disgusted"
+    | "surprised"
+    | "unknown"
+    | null;
+  audio_events: (
+    | "bgm"
+    | "speech"
+    | "applause"
+    | "laughter"
+    | "cry"
+    | "sneeze"
+    | "breath"
+    | "cough"
+    | "singing"
+    | "speech_noise"
+    | "unknown"
+  )[];
 };
 
 export type Transcript = {

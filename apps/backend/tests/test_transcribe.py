@@ -1,11 +1,16 @@
 import json
+import sys
+import wave
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from openvideo.core.analysis_models import (
     TRANSCRIPTION_MODEL_CATALOG,
     Transcript,
+    TranscriptAudioEvent,
+    TranscriptEmotion,
     TranscriptSegment,
     TranscriptionEngine,
     TranscriptionMetadata,
@@ -14,8 +19,19 @@ from openvideo.core.analysis_models import (
 from openvideo.core.library import MediaLibrary
 from openvideo.core.models import MediaAsset, SourcePlatform
 from openvideo.tools.transcribe import (
+    QWEN_MAX_CHUNK_SECONDS,
+    Qwen3AsrTranscriber,
+    SenseVoiceTranscriber,
+    TimedText,
     TranscriptionFailure,
+    _aggregate_qwen_segments,
+    _load_qwen_audio_chunks,
     _parse_json3_subtitles,
+    _qwen_language_name,
+    _qwen_result_language_codes,
+    _resolve_sensevoice_device,
+    _runtime_transcription_failure,
+    _sensevoice_transcript,
     create_transcriber,
     extract_audio,
     resolve_whisper_model_source,
@@ -73,7 +89,13 @@ def test_library_roundtrips_transcript(tmp_path: Path):
         asset_id=TRANSCRIPT_ASSET_ID,
         language="zh",
         segments=[
-            TranscriptSegment(start_seconds=0.0, end_seconds=2.5, text="第一句"),
+            TranscriptSegment(
+                start_seconds=0.0,
+                end_seconds=2.5,
+                text="第一句",
+                emotion=TranscriptEmotion.HAPPY,
+                audio_events=[TranscriptAudioEvent.SPEECH, TranscriptAudioEvent.BGM],
+            ),
             TranscriptSegment(start_seconds=2.5, end_seconds=5.0, text="第二句"),
         ],
     )
@@ -84,6 +106,13 @@ def test_library_roundtrips_transcript(tmp_path: Path):
     assert recovered is not None
     assert recovered.language == "zh"
     assert [segment.text for segment in recovered.segments] == ["第一句", "第二句"]
+    assert recovered.segments[0].emotion == TranscriptEmotion.HAPPY
+    assert recovered.segments[0].audio_events == [
+        TranscriptAudioEvent.SPEECH,
+        TranscriptAudioEvent.BGM,
+    ]
+    assert recovered.segments[1].emotion is None
+    assert recovered.segments[1].audio_events == []
     library.close()
 
 
@@ -141,22 +170,312 @@ def test_rejects_unsupported_model_name(tmp_path: Path):
         resolve_whisper_model_source("../outside", tmp_path)
 
 
-def test_catalog_exposes_whisper_and_future_engine_adapters():
+def test_catalog_exposes_all_runtime_adapters():
     status_by_model = {
         descriptor.model: descriptor.integration_status
         for descriptor in TRANSCRIPTION_MODEL_CATALOG
     }
 
     assert status_by_model["large-v3-turbo"] == "available"
-    assert status_by_model["qwen3-asr-1.7b"] == "adapter_required"
-    assert status_by_model["sensevoice-small"] == "adapter_required"
+    assert status_by_model["qwen3-asr-1.7b"] == "available"
+    assert status_by_model["sensevoice-small"] == "available"
 
 
-def test_factory_rejects_engine_without_runtime_adapter(tmp_path: Path):
-    options = TranscriptionOptions(
-        engine=TranscriptionEngine.QWEN3_ASR,
-        model="qwen3-asr-1.7b",
+def test_factory_creates_qwen_and_sensevoice_adapters(tmp_path: Path):
+    qwen = create_transcriber(
+        TranscriptionOptions(
+            engine=TranscriptionEngine.QWEN3_ASR,
+            model="qwen3-asr-1.7b",
+            device="cuda",
+            compute_type="float16",
+        ),
+        tmp_path,
+    )
+    sensevoice = create_transcriber(
+        TranscriptionOptions(
+            engine=TranscriptionEngine.SENSEVOICE,
+            model="sensevoice-small",
+            device="auto",
+            compute_type="auto",
+        ),
+        tmp_path,
     )
 
-    with pytest.raises(TranscriptionFailure, match="运行适配器尚未安装"):
-        create_transcriber(options, tmp_path)
+    assert isinstance(qwen, Qwen3AsrTranscriber)
+    assert isinstance(sensevoice, SenseVoiceTranscriber)
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [("zh", "Chinese"), ("yue", "Cantonese"), ("es", "Spanish")],
+)
+def test_maps_qwen_alignment_languages(code: str, name: str):
+    assert _qwen_language_name(code) == name
+    assert _qwen_result_language_codes(name) == [code]
+
+
+def test_rejects_unsupported_qwen_alignment_language():
+    with pytest.raises(TranscriptionFailure, match="仅支持"):
+        _qwen_language_name("ar")
+    with pytest.raises(TranscriptionFailure, match="Arabic"):
+        _qwen_result_language_codes("Arabic")
+
+
+def test_qwen_audio_is_split_at_240_seconds(tmp_path: Path):
+    audio_path = tmp_path / "long.wav"
+    with wave.open(str(audio_path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(b"\0\0" * 16_000 * (QWEN_MAX_CHUNK_SECONDS + 1))
+
+    chunks = list(_load_qwen_audio_chunks(audio_path))
+
+    assert len(chunks) == 2
+    assert len(chunks[0][0]) == 16_000 * QWEN_MAX_CHUNK_SECONDS
+    assert chunks[1][2] == QWEN_MAX_CHUNK_SECONDS
+
+
+def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
+    audio_path = tmp_path / "audio.wav"
+    with wave.open(str(audio_path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(b"\0\0" * 32_000)
+    chunks = [
+        (object(), 16_000, 0.0),
+        (object(), 16_000, 240.0),
+    ]
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe._load_qwen_audio_chunks",
+        lambda _: iter(chunks),
+    )
+
+    class FakeModel:
+        def transcribe(self, **_):
+            return [
+                SimpleNamespace(
+                    language="Chinese",
+                    text="一句。",
+                    time_stamps=SimpleNamespace(
+                        items=[
+                            SimpleNamespace(
+                                text="一句。",
+                                start_time=0.5,
+                                end_time=1.0,
+                            )
+                        ]
+                    ),
+                )
+            ]
+
+    transcriber = Qwen3AsrTranscriber(
+        "qwen3-asr-0.6b",
+        tmp_path,
+        "zh",
+        "cuda",
+        "float16",
+    )
+    transcriber._model = FakeModel()
+
+    transcript = transcriber.transcribe(audio_path, TRANSCRIPT_ASSET_ID)
+
+    assert [segment.start_seconds for segment in transcript.segments] == [0.5, 240.5]
+
+
+def test_qwen_aggregates_by_punctuation_and_maximum_duration():
+    items = [
+        TimedText("第一句。", 0, 2),
+        TimedText("较长", 2, 10),
+        TimedText("内容", 10, 18),
+    ]
+
+    segments = _aggregate_qwen_segments(items, "zh")
+
+    assert [segment.text for segment in segments] == ["第一句。", "较长", "内容"]
+    assert all(
+        segment.end_seconds - segment.start_seconds <= 15 for segment in segments
+    )
+
+
+def test_qwen_rejects_empty_timestamp_result(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe._load_qwen_audio_chunks",
+        lambda _: iter([(object(), 16_000, 0.0)]),
+    )
+    transcriber = Qwen3AsrTranscriber(
+        "qwen3-asr-0.6b", tmp_path, "zh", "cuda", "float16"
+    )
+    transcriber._model = SimpleNamespace(
+        transcribe=lambda **_: [
+            SimpleNamespace(language="Chinese", text="", time_stamps=None)
+        ]
+    )
+
+    with pytest.raises(TranscriptionFailure, match="没有识别到"):
+        transcriber.transcribe(tmp_path / "audio.wav", TRANSCRIPT_ASSET_ID)
+
+
+def test_parses_sensevoice_sentence_labels_and_timestamps():
+    transcript = _sensevoice_transcript(
+        [
+            {
+                "text": "<|zh|><|NEUTRAL|><|Speech|>总文本",
+                "sentence_info": [
+                    {
+                        "start": 1000,
+                        "end": 2500,
+                        "text": "<|zh|><|HAPPY|><|Speech|><|Laughter|>你好",
+                    },
+                    {
+                        "start": 2500,
+                        "end": 4000,
+                        "text": "<|yue|><|EVENT_UNK|>世界",
+                    },
+                ],
+            }
+        ],
+        TRANSCRIPT_ASSET_ID,
+    )
+
+    assert transcript.language == "zh,yue"
+    assert transcript.segments[0].text == "你好"
+    assert transcript.segments[0].emotion == TranscriptEmotion.HAPPY
+    assert transcript.segments[0].audio_events == [
+        TranscriptAudioEvent.SPEECH,
+        TranscriptAudioEvent.LAUGHTER,
+    ]
+    assert transcript.segments[1].audio_events == [TranscriptAudioEvent.UNKNOWN]
+
+
+def test_sensevoice_requires_sentence_timestamps():
+    with pytest.raises(TranscriptionFailure, match="分段时间戳"):
+        _sensevoice_transcript([{"text": "你好"}], TRANSCRIPT_ASSET_ID)
+
+
+def test_sensevoice_device_resolution_and_oom_translation():
+    assert _resolve_sensevoice_device("auto", False) == "cpu"
+    assert _resolve_sensevoice_device("auto", True) == "cuda:0"
+    with pytest.raises(TranscriptionFailure, match="CUDA"):
+        _resolve_sensevoice_device("cuda", False)
+
+    error = _runtime_transcription_failure("Qwen3-ASR", RuntimeError("CUDA out of memory"))
+    assert str(error) == "Qwen3-ASR 显存不足，请改用更小的模型"
+
+
+def test_engine_specific_device_and_precision_validation():
+    with pytest.raises(ValueError, match="仅支持 CUDA"):
+        TranscriptionOptions(
+            engine=TranscriptionEngine.QWEN3_ASR,
+            model="qwen3-asr-0.6b",
+            device="cpu",
+            compute_type="auto",
+        )
+    with pytest.raises(ValueError, match="不支持 int8"):
+        TranscriptionOptions(
+            engine=TranscriptionEngine.QWEN3_ASR,
+            model="qwen3-asr-0.6b",
+            device="cuda",
+            compute_type="int8",
+        )
+    with pytest.raises(ValueError, match="仅支持自动选择"):
+        TranscriptionOptions(
+            engine=TranscriptionEngine.SENSEVOICE,
+            model="sensevoice-small",
+            device="cuda",
+            compute_type="float16",
+        )
+
+
+@pytest.mark.parametrize(
+    ("transcriber", "missing_module", "message"),
+    [
+        (
+            Qwen3AsrTranscriber(
+                "qwen3-asr-0.6b",
+                Path("models"),
+                "zh",
+                "cuda",
+                "float16",
+            ),
+            "qwen_asr",
+            "缺少 Qwen3-ASR 运行依赖",
+        ),
+        (
+            SenseVoiceTranscriber(
+                "sensevoice-small",
+                Path("models"),
+                "zh",
+                "auto",
+            ),
+            "funasr",
+            "缺少 SenseVoice 运行依赖",
+        ),
+    ],
+)
+def test_missing_runtime_dependencies_are_reported_in_chinese(
+    tmp_path: Path,
+    monkeypatch,
+    transcriber,
+    missing_module: str,
+    message: str,
+):
+    transcriber.models_root_directory = tmp_path
+    engine_directory = tmp_path / transcriber.engine.value
+    (engine_directory / transcriber.model).mkdir(parents=True)
+    companion_name = (
+        "forced-aligner-0.6b"
+        if transcriber.engine == TranscriptionEngine.QWEN3_ASR
+        else "fsmn-vad"
+    )
+    (engine_directory / companion_name).mkdir()
+    monkeypatch.setitem(sys.modules, missing_module, None)
+
+    with pytest.raises(TranscriptionFailure, match=message):
+        transcriber._load_model()
+
+
+def test_qwen_auto_device_fails_when_cuda_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+):
+    engine_directory = tmp_path / "qwen3-asr"
+    (engine_directory / "qwen3-asr-0.6b").mkdir(parents=True)
+    (engine_directory / "forced-aligner-0.6b").mkdir()
+    torch_module = ModuleType("torch")
+    torch_module.cuda = SimpleNamespace(is_available=lambda: False)
+    qwen_module = ModuleType("qwen_asr")
+    qwen_module.Qwen3ASRModel = object
+    monkeypatch.setitem(sys.modules, "torch", torch_module)
+    monkeypatch.setitem(sys.modules, "qwen_asr", qwen_module)
+    transcriber = Qwen3AsrTranscriber(
+        "qwen3-asr-0.6b",
+        tmp_path,
+        "zh",
+        "auto",
+        "auto",
+    )
+
+    with pytest.raises(TranscriptionFailure, match="需要可用的 NVIDIA CUDA"):
+        transcriber._load_model()
+
+
+def test_transcriber_close_releases_model_and_cuda_cache(tmp_path: Path):
+    emptied: list[bool] = []
+    torch_module = SimpleNamespace(
+        cuda=SimpleNamespace(
+            is_available=lambda: True,
+            empty_cache=lambda: emptied.append(True),
+        )
+    )
+    transcriber = Qwen3AsrTranscriber(
+        "qwen3-asr-0.6b", tmp_path, "zh", "cuda", "float16"
+    )
+    transcriber._model = object()
+    transcriber._torch = torch_module
+
+    transcriber.close()
+
+    assert transcriber._model is None
+    assert emptied == [True]

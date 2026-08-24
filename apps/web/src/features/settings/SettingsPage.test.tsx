@@ -3,6 +3,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -77,13 +78,13 @@ beforeEach(() => {
       engine: "qwen3-asr",
       model: "qwen3-asr-1.7b",
       name: "Qwen3-ASR 1.7B",
-      description: "中文高精度扩展方案。",
+      description: "中文高精度方案，使用 ForcedAligner 生成准确时间戳，仅支持 CUDA。",
       accuracy: "最高",
       speed: "较慢",
       languages: ["中文"],
       repository: "Qwen/Qwen3-ASR-1.7B",
       recommended: false,
-      integration_status: "adapter_required",
+      integration_status: "available",
       installation_status: "not_installed",
       download_job: null,
     },
@@ -125,16 +126,18 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("模型目录")).toHaveValue("");
   });
 
-  it("saves editable settings through the preferences API", async () => {
+  it("auto-saves editable settings through the preferences API", async () => {
     render(<SettingsPage />);
     const models_directory = await screen.findByLabelText("模型目录");
     fireEvent.change(models_directory, { target: { value: "D:\\Models" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(update_preferences).toHaveBeenCalledWith(
-      expect.objectContaining({
-        models_directory: "D:\\Models",
-        default_transcription: preferences.default_transcription,
-      }),
+    await waitFor(() =>
+      expect(update_preferences).toHaveBeenCalledWith(
+        expect.objectContaining({
+          models_directory: "D:\\Models",
+          default_transcription: preferences.default_transcription,
+        }),
+        expect.any(AbortSignal),
+      ),
     );
   });
 
@@ -146,11 +149,11 @@ describe("SettingsPage", () => {
       name: "本地转录模型列表",
     });
     expect(within(model_list).getAllByRole("listitem")).toHaveLength(3);
-    expect(screen.getByText("待接入")).toBeInTheDocument();
+    expect(screen.queryByText("待接入")).not.toBeInTheDocument();
     expect(screen.getAllByText("Whisper Small")).not.toHaveLength(0);
   });
 
-  it("adds a LiteLLM model configuration before saving", async () => {
+  it("adds a LiteLLM model configuration and auto-saves it", async () => {
     render(<SettingsPage />);
     await screen.findByText("尚未配置 AI 模型");
     fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
@@ -172,18 +175,20 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
     expect(within(model_list).getByText("图片")).toBeInTheDocument();
     expect(within(model_list).getByText("音频")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
-    expect(update_preferences).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ai_models: [
-          expect.objectContaining({
-            model_id: expect.stringMatching(/^model-[0-9a-f]{32}$/),
-            litellm_model: "anthropic/claude-sonnet-4-5",
-            input_modalities: ["text", "image", "audio"],
-          }),
-        ],
-      }),
+    await waitFor(() =>
+      expect(update_preferences).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ai_models: [
+            expect.objectContaining({
+              model_id: expect.stringMatching(/^model-[0-9a-f]{32}$/),
+              litellm_model: "anthropic/claude-sonnet-4-5",
+              input_modalities: ["text", "image", "audio"],
+            }),
+          ],
+        }),
+        expect.any(AbortSignal),
+      ),
     );
   });
 

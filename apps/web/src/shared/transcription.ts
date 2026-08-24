@@ -34,7 +34,7 @@ const QWEN3_ASR_PROFILE: TranscriptionRuntimeProfile = {
 
 const SENSEVOICE_PROFILE: TranscriptionRuntimeProfile = {
   devices: ["auto", "cpu", "cuda"],
-  compute_types: ["auto", "float16"],
+  compute_types: ["auto"],
   recommended_device: "auto",
   recommended_compute_type: "auto",
 };

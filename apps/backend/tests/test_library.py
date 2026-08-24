@@ -2,6 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.library import MediaLibrary
 from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
 
@@ -103,6 +104,38 @@ def test_migrates_agent_job_schema_from_database_version_three(tmp_path: Path):
     migrated = MediaLibrary.open(tmp_path)
 
     assert migrated.load_agent_jobs() == []
+    migrated.close()
+
+
+def test_migrates_transcript_metadata_from_database_version_five(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    library.save(
+        MediaAsset(
+            asset_id=ASSET_ID,
+            source_url="https://example.com/video",
+            source_platform=SourcePlatform.YOUTUBE,
+        )
+    )
+    library.save_transcript(
+        Transcript(
+            asset_id=ASSET_ID,
+            segments=[TranscriptSegment(start_seconds=0, end_seconds=1, text="旧字幕")],
+        )
+    )
+    library.close()
+    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
+    connection.execute("ALTER TABLE transcript_segments DROP COLUMN audio_events")
+    connection.execute("ALTER TABLE transcript_segments DROP COLUMN emotion")
+    connection.execute("PRAGMA user_version = 5")
+    connection.commit()
+    connection.close()
+
+    migrated = MediaLibrary.open(tmp_path)
+    transcript = migrated.load_transcript(ASSET_ID)
+
+    assert transcript is not None
+    assert transcript.segments[0].emotion is None
+    assert transcript.segments[0].audio_events == []
     migrated.close()
 
 

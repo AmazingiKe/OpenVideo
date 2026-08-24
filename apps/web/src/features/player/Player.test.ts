@@ -4,8 +4,20 @@ import { active_subtitle_text } from "./Player";
 
 describe("active_subtitle_text", () => {
   const segments = [
-    { start_seconds: 1, end_seconds: 3, text: " 第一段字幕 " },
-    { start_seconds: 3, end_seconds: 5, text: "第二段字幕" },
+    {
+      start_seconds: 1,
+      end_seconds: 3,
+      text: " 第一段字幕 ",
+      emotion: null,
+      audio_events: [],
+    },
+    {
+      start_seconds: 3,
+      end_seconds: 5,
+      text: "第二段字幕",
+      emotion: null,
+      audio_events: [],
+    },
   ];
 
   it("shows the transcript segment that covers the current playback time", () => {

@@ -147,7 +147,15 @@ describe("App", () => {
       asset_id: ASSET_ID,
       language: "zh",
       created_at: "2026-01-01T00:00:00Z",
-      segments: [{ start_seconds: 5, end_seconds: 8, text: "可回跳的转写。" }],
+      segments: [
+        {
+          start_seconds: 5,
+          end_seconds: 8,
+          text: "可回跳的转写。",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
     });
     vi.mocked(probe_source).mockResolvedValue({
       platform: "bilibili",

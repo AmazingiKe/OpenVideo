@@ -8,7 +8,12 @@ from openvideo.core.ai_models import (
     AiModelConfiguration,
     InputModality,
 )
-from openvideo.core.analysis_models import Transcript, TranscriptSegment
+from openvideo.core.analysis_models import (
+    Transcript,
+    TranscriptAudioEvent,
+    TranscriptEmotion,
+    TranscriptSegment,
+)
 from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
 from openvideo.core.library import MediaLibrary
 from openvideo.settings import Settings
@@ -79,7 +84,15 @@ def test_transcript_segment_update_is_persisted(tmp_path: Path):
             Transcript(
                 asset_id=ASSET_ID,
                 language="zh",
-                segments=[TranscriptSegment(start_seconds=1, end_seconds=3, text="错误文字")],
+                segments=[
+                    TranscriptSegment(
+                        start_seconds=1,
+                        end_seconds=3,
+                        text="错误文字",
+                        emotion=TranscriptEmotion.HAPPY,
+                        audio_events=[TranscriptAudioEvent.LAUGHTER],
+                    )
+                ],
             )
         )
         response = client.patch(
@@ -90,6 +103,8 @@ def test_transcript_segment_update_is_persisted(tmp_path: Path):
 
     assert response.status_code == 200
     assert response.json()["segments"][0]["text"] == "修正后的文字"
+    assert response.json()["segments"][0]["emotion"] == "happy"
+    assert response.json()["segments"][0]["audio_events"] == ["laughter"]
     assert reloaded.json()["segments"][0]["text"] == "修正后的文字"
 
 
@@ -217,7 +232,7 @@ def test_transcription_requires_downloaded_model(tmp_path: Path):
     assert response.json()["detail"] == "Whisper Small 尚未安装，请先下载模型"
 
 
-def test_transcription_rejects_model_without_runtime_adapter(tmp_path: Path):
+def test_transcription_requires_qwen_main_and_companion_models(tmp_path: Path):
     with create_client(tmp_path) as client:
         response = client.post(
             f"/api/media/assets/{ASSET_ID}/transcribe",
@@ -231,7 +246,7 @@ def test_transcription_rejects_model_without_runtime_adapter(tmp_path: Path):
         )
 
     assert response.status_code == 409
-    assert "运行适配器尚未安装" in response.json()["detail"]
+    assert response.json()["detail"] == "Qwen3-ASR 1.7B 尚未安装，请先下载模型"
 
 
 def test_segments_returns_empty_when_missing(tmp_path: Path):

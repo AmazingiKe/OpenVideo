@@ -50,6 +50,17 @@ describe("transcription runtime profiles", () => {
     expect(profile.compute_types).toEqual(["auto", "float16"]);
   });
 
+  it("uses automatic precision for SenseVoice on CPU or CUDA", () => {
+    const profile = transcription_runtime_profile({
+      ...MODEL,
+      engine: "sensevoice",
+      model: "sensevoice-small",
+    });
+
+    expect(profile.devices).toEqual(["auto", "cpu", "cuda"]);
+    expect(profile.compute_types).toEqual(["auto"]);
+  });
+
   it("only allows installed models with an available adapter to be selected", () => {
     expect(transcription_model_is_selectable(MODEL)).toBe(true);
     expect(

@@ -169,6 +169,31 @@ class TranscriptionComputeType(StrEnum):
     FLOAT16 = "float16"
 
 
+class TranscriptEmotion(StrEnum):
+    HAPPY = "happy"
+    SAD = "sad"
+    ANGRY = "angry"
+    NEUTRAL = "neutral"
+    FEARFUL = "fearful"
+    DISGUSTED = "disgusted"
+    SURPRISED = "surprised"
+    UNKNOWN = "unknown"
+
+
+class TranscriptAudioEvent(StrEnum):
+    BGM = "bgm"
+    SPEECH = "speech"
+    APPLAUSE = "applause"
+    LAUGHTER = "laughter"
+    CRY = "cry"
+    SNEEZE = "sneeze"
+    BREATH = "breath"
+    COUGH = "cough"
+    SINGING = "singing"
+    SPEECH_NOISE = "speech_noise"
+    UNKNOWN = "unknown"
+
+
 class TranscriptionIntegrationStatus(StrEnum):
     AVAILABLE = "available"
     ADAPTER_REQUIRED = "adapter_required"
@@ -310,34 +335,34 @@ TRANSCRIPTION_MODEL_CATALOG = (
         engine=TranscriptionEngine.QWEN3_ASR,
         model="qwen3-asr-0.6b",
         name="Qwen3-ASR 0.6B",
-        description="面向中文、方言和复杂音频的轻量扩展方案。",
+        description="轻量高精度方案，使用 ForcedAligner 生成准确时间戳，仅支持 CUDA。",
         accuracy="高",
         speed="较快",
         languages=["中文", "22 种中文方言", "多语言"],
         repository="Qwen/Qwen3-ASR-0.6B",
-        integration_status=TranscriptionIntegrationStatus.ADAPTER_REQUIRED,
+        integration_status=TranscriptionIntegrationStatus.AVAILABLE,
     ),
     TranscriptionModelDescriptor(
         engine=TranscriptionEngine.QWEN3_ASR,
         model="qwen3-asr-1.7b",
         name="Qwen3-ASR 1.7B",
-        description="中文高精度扩展方案，时间戳需配合 ForcedAligner。",
+        description="中文高精度方案，使用 ForcedAligner 生成准确时间戳，仅支持 CUDA。",
         accuracy="最高",
         speed="较慢",
         languages=["中文", "22 种中文方言", "多语言"],
         repository="Qwen/Qwen3-ASR-1.7B",
-        integration_status=TranscriptionIntegrationStatus.ADAPTER_REQUIRED,
+        integration_status=TranscriptionIntegrationStatus.AVAILABLE,
     ),
     TranscriptionModelDescriptor(
         engine=TranscriptionEngine.SENSEVOICE,
         model="sensevoice-small",
         name="SenseVoice Small",
-        description="低延迟中文转录，并可扩展声音事件与情绪识别。",
+        description="低延迟多语言转录，同时保存声音事件与情绪标签，支持 CPU 回退。",
         accuracy="高",
         speed="很快",
         languages=["中文", "粤语", "英语", "日语", "韩语"],
         repository="FunAudioLLM/SenseVoiceSmall",
-        integration_status=TranscriptionIntegrationStatus.ADAPTER_REQUIRED,
+        integration_status=TranscriptionIntegrationStatus.AVAILABLE,
     ),
 )
 
@@ -367,7 +392,15 @@ class TranscriptionOptions(BaseModel):
     def validate_model_engine(self) -> "TranscriptionOptions":
         if find_transcription_model(self.engine, self.model) is None:
             raise ValueError("转录模型与引擎不匹配")
-        if (
+        if self.engine == TranscriptionEngine.QWEN3_ASR:
+            if self.device == TranscriptionDevice.CPU:
+                raise ValueError("Qwen3-ASR 仅支持 CUDA 设备")
+            if self.compute_type == TranscriptionComputeType.INT8:
+                raise ValueError("Qwen3-ASR 不支持 int8 计算精度")
+        elif self.engine == TranscriptionEngine.SENSEVOICE:
+            if self.compute_type != TranscriptionComputeType.AUTO:
+                raise ValueError("SenseVoice 计算精度仅支持自动选择")
+        elif (
             self.device != TranscriptionDevice.CUDA
             and self.compute_type == TranscriptionComputeType.FLOAT16
         ):
@@ -394,6 +427,8 @@ class TranscriptSegment(BaseModel):
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(ge=0)
     text: str
+    emotion: TranscriptEmotion | None = None
+    audio_events: list[TranscriptAudioEvent] = Field(default_factory=list)
 
 
 class Transcript(BaseModel):

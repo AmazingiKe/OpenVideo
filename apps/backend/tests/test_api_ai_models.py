@@ -122,7 +122,7 @@ def test_transcription_catalog_exposes_available_and_extension_models(tmp_path: 
         "faster-whisper-large-v3-turbo"
     )
     assert models["qwen3-asr-1.7b"]["engine"] == "qwen3-asr"
-    assert models["sensevoice-small"]["integration_status"] == "adapter_required"
+    assert models["sensevoice-small"]["integration_status"] == "available"
 
 
 def test_preferences_patch_persists_default_transcription(tmp_path: Path):
