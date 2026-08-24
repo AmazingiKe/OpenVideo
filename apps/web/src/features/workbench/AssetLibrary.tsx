@@ -42,7 +42,7 @@ export function AssetLibrary({
         <CollapsiblePanelRail
           icon={LibraryBig}
           label="视频库"
-          expand_direction="right"
+          edge="left"
           on_expand={() => on_collapsed_change?.(false)}
         />
       </aside>
@@ -59,7 +59,6 @@ export function AssetLibrary({
         icon={LibraryBig}
         title="已下载视频"
         accessory={<Badge variant="secondary">{ready_assets.length}</Badge>}
-        collapse_direction="left"
         collapse_label="收起视频库"
         on_collapse={
           on_collapsed_change ? () => on_collapsed_change(true) : undefined

@@ -188,7 +188,7 @@ export function AnalysisToolPanel({
         <CollapsiblePanelRail
           icon={Wrench}
           label="工具"
-          expand_direction="left"
+          edge="right"
           on_expand={() => on_collapsed_change?.(false)}
         />
       </aside>
@@ -224,7 +224,6 @@ export function AnalysisToolPanel({
       <WorkbenchPanelHeader
         icon={Wrench}
         title="分析工具"
-        collapse_direction="right"
         collapse_label="收起工具面板"
         on_collapse={
           on_collapsed_change ? () => on_collapsed_change(true) : undefined

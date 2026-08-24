@@ -156,6 +156,19 @@
   }
 }
 
+/* 图标切换面板收起/展开时才挂载该类启用宽度过渡；拖拽分隔条时不挂载，保证跟手。 */
+.panel-size-transition [data-panel] {
+  transition:
+    flex-basis 220ms cubic-bezier(0.4, 0, 0.2, 1),
+    flex-grow 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-size-transition [data-panel] {
+    transition: none;
+  }
+}
+
 /* 时间线沿用 Canvas Timeline，仅在工作区范围内统一布局与视觉样式。 */
 .media_timeline { position: relative; display: flex; min-width: 0; grid-column: 1 / -1; grid-row: 2; flex-direction: column; overflow: hidden; border-top: 1px solid var(--line); background: var(--surface-secondary); }
 .media_timeline_header { display: flex; min-width: 0; min-height: 38px; align-items: center; justify-content: space-between; gap: 16px; padding: 0 14px; border-bottom: 1px solid var(--line-subtle); }

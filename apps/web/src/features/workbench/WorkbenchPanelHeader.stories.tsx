@@ -11,7 +11,6 @@ const meta = {
     icon: LibraryBig,
     title: "已下载视频",
     accessory: <Badge variant="secondary">12</Badge>,
-    collapse_direction: "left",
     collapse_label: "收起视频库",
     on_collapse: () => undefined,
   },

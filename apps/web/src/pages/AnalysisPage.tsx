@@ -10,6 +10,7 @@ import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
 import { AssetLibrary } from "@/features/workbench/AssetLibrary";
 import { AnalysisToolPanel } from "@/features/workbench/AnalysisToolPanel";
+import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
 import { MediaTimeline } from "@/features/workbench/MediaTimeline";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import {
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/resizable";
 import { Spinner } from "@/components/ui/spinner";
 import { FloatingError } from "@/components/FloatingError";
+import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
 import {
   get_preferences,
@@ -32,6 +34,9 @@ import type {
   TranscriptionModelDescriptor,
   TranscriptionOptions,
 } from "@/shared/types";
+
+// 比样式表里 220ms 的面板过渡多留一拍，确保过渡结束前过渡类不被移除
+const PANEL_TOGGLE_TRANSITION_MS = 280;
 
 export function AnalysisPage() {
   const {
@@ -70,6 +75,9 @@ export function AnalysisPage() {
   const [default_transcription, set_default_transcription] =
     useState<TranscriptionOptions | null>(null);
   const [model_error, set_model_error] = useState<string | null>(null);
+  const [is_panel_size_transitioning, set_is_panel_size_transitioning] =
+    useState(false);
+  const panel_transition_timeout_ref = useRef<number | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
   const asset_library_panel_ref = useRef<PanelImperativeHandle>(null);
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
@@ -113,6 +121,26 @@ export function AnalysisPage() {
     set_current_time(0);
     set_selected_transcript_indices([]);
   }, [selected_asset_id]);
+
+  useEffect(
+    () => () => {
+      if (panel_transition_timeout_ref.current !== null) {
+        window.clearTimeout(panel_transition_timeout_ref.current);
+      }
+    },
+    [],
+  );
+
+  function animate_panel_size_change() {
+    set_is_panel_size_transitioning(true);
+    if (panel_transition_timeout_ref.current !== null) {
+      window.clearTimeout(panel_transition_timeout_ref.current);
+    }
+    panel_transition_timeout_ref.current = window.setTimeout(() => {
+      panel_transition_timeout_ref.current = null;
+      set_is_panel_size_transitioning(false);
+    }, PANEL_TOGGLE_TRANSITION_MS);
+  }
 
   useEffect(() => {
     if (!selected_asset_id) return;
@@ -210,6 +238,7 @@ export function AnalysisPage() {
   }
 
   function set_asset_library_collapsed(collapsed: boolean) {
+    animate_panel_size_change();
     if (collapsed) asset_library_panel_ref.current?.collapse();
     else
       asset_library_panel_ref.current?.resize(
@@ -219,6 +248,7 @@ export function AnalysisPage() {
   }
 
   function set_tool_panel_collapsed(collapsed: boolean) {
+    animate_panel_size_change();
     if (collapsed) tool_panel_ref.current?.collapse();
     else tool_panel_ref.current?.resize(`${settings.tool_panel_size_percent}%`);
     update_settings({ tool_panel_collapsed: collapsed });
@@ -326,7 +356,12 @@ export function AnalysisPage() {
   const error = page_error ?? model_error ?? settings_error ?? analysis_error;
   return (
     <>
-      <div className="min-h-0 min-w-0 overflow-hidden max-[979px]:overflow-auto">
+      <div
+        className={cn(
+          "min-h-0 min-w-0 overflow-hidden max-[979px]:overflow-auto",
+          is_panel_size_transitioning && "panel-size-transition",
+        )}
+      >
         {!is_ready ? (
           <div
             className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"
@@ -354,12 +389,12 @@ export function AnalysisPage() {
               panelRef={asset_library_panel_ref}
               defaultSize={
                 settings.asset_library_collapsed
-                  ? "48px"
+                  ? `${PANEL_RAIL_WIDTH_PX}px`
                   : `${settings.asset_library_size_percent}%`
               }
               minSize="10%"
               maxSize="28%"
-              collapsedSize="48px"
+              collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
               collapsible
             >
               {asset_library}
@@ -382,12 +417,12 @@ export function AnalysisPage() {
               panelRef={tool_panel_ref}
               defaultSize={
                 settings.tool_panel_collapsed
-                  ? "48px"
+                  ? `${PANEL_RAIL_WIDTH_PX}px`
                   : `${settings.tool_panel_size_percent}%`
               }
               minSize="14%"
               maxSize="32%"
-              collapsedSize="48px"
+              collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
               collapsible
             >
               {tool_panel}
