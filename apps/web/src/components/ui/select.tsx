@@ -49,7 +49,10 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDownIcon className="text-muted-foreground" />
+        <ChevronDownIcon
+          data-slot="select-trigger-icon"
+          className="text-muted-foreground transition-transform duration-200 ease-out"
+        />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   );
