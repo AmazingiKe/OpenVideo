@@ -13,7 +13,7 @@ import {
   get_download_accounts,
   get_download_account_login_session,
   get_transcription_model_download,
-  get_analysis_page_settings,
+  get_markers_page_settings,
   import_download_account_from_browser,
   list_transcription_models,
   media_url,
@@ -24,7 +24,7 @@ import {
   test_ai_model,
   test_download_account,
   transcribe_asset,
-  update_analysis_page_settings,
+  update_markers_page_settings,
   update_marker,
 } from "./api";
 
@@ -108,7 +108,7 @@ describe("api client", () => {
     });
   });
 
-  it("loads and saves analysis page settings", async () => {
+  it("loads and saves markers page settings", async () => {
     const settings = {
       asset_library_size_percent: 14,
       asset_library_collapsed: false,
@@ -125,18 +125,18 @@ describe("api client", () => {
       ),
     );
 
-    await expect(get_analysis_page_settings()).resolves.toEqual(settings);
-    await expect(update_analysis_page_settings(settings)).resolves.toEqual(
+    await expect(get_markers_page_settings()).resolves.toEqual(settings);
+    await expect(update_markers_page_settings(settings)).resolves.toEqual(
       settings,
     );
     expect(fetch_mock).toHaveBeenNthCalledWith(
       1,
-      "/api/page-settings/analysis",
+      "/api/page-settings/markers",
       { signal: undefined },
     );
     expect(fetch_mock).toHaveBeenNthCalledWith(
       2,
-      "/api/page-settings/analysis",
+      "/api/page-settings/markers",
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },

@@ -8,7 +8,7 @@ import type {
   AiModelSummary,
   AiModelTestResult,
   AnalysisMode,
-  AnalysisPageSettings,
+  MarkersPageSettings,
   DownloadAccount,
   DownloadAccountLoginSession,
   DownloadCookieBrowser,
@@ -198,17 +198,17 @@ export function update_preferences(
   });
 }
 
-export function get_analysis_page_settings(
+export function get_markers_page_settings(
   signal?: AbortSignal,
-): Promise<AnalysisPageSettings> {
-  return request_json("/api/page-settings/analysis", { signal });
+): Promise<MarkersPageSettings> {
+  return request_json("/api/page-settings/markers", { signal });
 }
 
-export function update_analysis_page_settings(
-  settings: AnalysisPageSettings,
+export function update_markers_page_settings(
+  settings: MarkersPageSettings,
   signal?: AbortSignal,
-): Promise<AnalysisPageSettings> {
-  return request_json("/api/page-settings/analysis", {
+): Promise<MarkersPageSettings> {
+  return request_json("/api/page-settings/markers", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),

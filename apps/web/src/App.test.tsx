@@ -14,7 +14,7 @@ import {
   create_download_account_login_session,
   delete_download_account_login_session,
   delete_download_account,
-  get_analysis_page_settings,
+  get_markers_page_settings,
   get_health,
   get_download_accounts,
   get_library,
@@ -46,7 +46,7 @@ vi.mock("./shared/api", () => ({
   get_health: vi.fn(),
   get_download_accounts: vi.fn(),
   get_download_account_login_session: vi.fn(),
-  get_analysis_page_settings: vi.fn(),
+  get_markers_page_settings: vi.fn(),
   get_library: vi.fn(),
   get_preferences: vi.fn(),
   import_download_account_from_browser: vi.fn(),
@@ -64,7 +64,7 @@ vi.mock("./shared/api", () => ({
   test_ai_model: vi.fn(),
   test_download_account: vi.fn(),
   transcribe_asset: vi.fn(),
-  update_analysis_page_settings: vi.fn(),
+  update_markers_page_settings: vi.fn(),
   update_transcript_segment: vi.fn(),
   update_marker: vi.fn(),
   update_preferences: vi.fn(),
@@ -105,7 +105,7 @@ describe("App", () => {
       managed_fields: [],
       library_path_managed: false,
     });
-    vi.mocked(get_analysis_page_settings).mockResolvedValue({
+    vi.mocked(get_markers_page_settings).mockResolvedValue({
       asset_library_size_percent: 14,
       asset_library_collapsed: false,
       tool_panel_size_percent: 16,
@@ -266,7 +266,7 @@ describe("App", () => {
     expect(screen.queryByText("下载中的视频")).not.toBeInTheDocument();
     expect(screen.queryByText("失败的视频")).not.toBeInTheDocument();
 
-    expect(window.location.pathname).toBe("/analysis");
+    expect(window.location.pathname).toBe("/markers");
     expect(download_module).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("link", { name: "标记" })).toHaveAttribute(
       "aria-current",
@@ -534,7 +534,7 @@ describe("App", () => {
       target: { value: "https://example.com/preserved-video" },
     });
     fireEvent.click(screen.getByRole("link", { name: "标记" }));
-    await waitFor(() => expect(window.location.pathname).toBe("/analysis"));
+    await waitFor(() => expect(window.location.pathname).toBe("/markers"));
     fireEvent.click(screen.getByRole("link", { name: "下载" }));
 
     expect(await screen.findByLabelText("视频或播放列表地址")).toHaveValue(
@@ -542,7 +542,7 @@ describe("App", () => {
     );
   });
 
-  it("unmounts the analysis player while another workspace is active", async () => {
+  it("unmounts the markers player while another workspace is active", async () => {
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
       dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },

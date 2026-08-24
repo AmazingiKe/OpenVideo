@@ -69,7 +69,7 @@ from openvideo.core.media_models import (
 )
 from openvideo.core.page_settings import (
     LEGACY_PAGE_SETTINGS_FILE_NAME,
-    AnalysisPageSettings,
+    MarkersPageSettings,
     PageSettingsStore,
 )
 from openvideo.preferences import PreferenceStore
@@ -1021,20 +1021,20 @@ def create_app(
         )
 
     @app.get(
-        "/api/page-settings/analysis",
-        response_model=AnalysisPageSettings,
+        "/api/page-settings/markers",
+        response_model=MarkersPageSettings,
     )
-    def get_analysis_page_settings() -> AnalysisPageSettings:
-        return require_page_settings_store().load_analysis()
+    def get_markers_page_settings() -> MarkersPageSettings:
+        return require_page_settings_store().load_markers()
 
     @app.put(
-        "/api/page-settings/analysis",
-        response_model=AnalysisPageSettings,
+        "/api/page-settings/markers",
+        response_model=MarkersPageSettings,
     )
-    def update_analysis_page_settings(
-        request: AnalysisPageSettings,
-    ) -> AnalysisPageSettings:
-        return require_page_settings_store().save_analysis(request)
+    def update_markers_page_settings(
+        request: MarkersPageSettings,
+    ) -> MarkersPageSettings:
+        return require_page_settings_store().save_markers(request)
 
     @app.post(
         "/api/media/assets/{asset_id}/transcribe",

@@ -7,7 +7,7 @@ import { Topbar } from "@/app/Topbar";
 describe("Topbar", () => {
   it("marks the current workspace link", () => {
     render(
-      <MemoryRouter initialEntries={["/analysis"]}>
+      <MemoryRouter initialEntries={["/markers"]}>
         <Topbar />
       </MemoryRouter>,
     );

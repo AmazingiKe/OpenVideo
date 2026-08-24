@@ -6,7 +6,7 @@ import pytest
 
 from openvideo.core import page_settings
 from openvideo.core.page_settings import (
-    AnalysisPageSettings,
+    MarkersPageSettings,
     PageSettingsDocument,
     PageSettingsStore,
 )
@@ -15,16 +15,16 @@ from openvideo.core.page_settings import (
 LIBRARY_ID = "library-01890f4c7a2b7cc298c4dc0c0c07398f"
 
 
-def test_missing_settings_use_analysis_defaults(tmp_path: Path):
-    settings = PageSettingsStore(tmp_path, LIBRARY_ID).load_analysis()
+def test_missing_settings_use_markers_defaults(tmp_path: Path):
+    settings = PageSettingsStore(tmp_path, LIBRARY_ID).load_markers()
 
-    assert settings == AnalysisPageSettings()
+    assert settings == MarkersPageSettings()
     assert settings.open_tool_sections == ["video_information"]
 
 
-def test_analysis_settings_round_trip_and_use_versioned_document(tmp_path: Path):
+def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
     store = PageSettingsStore(tmp_path, LIBRARY_ID)
-    expected = AnalysisPageSettings(
+    expected = MarkersPageSettings(
         asset_library_size_percent=22,
         asset_library_collapsed=True,
         tool_panel_size_percent=24,
@@ -32,14 +32,14 @@ def test_analysis_settings_round_trip_and_use_versioned_document(tmp_path: Path)
         open_tool_sections=["transcription", "transcript_correction", "analysis"],
     )
 
-    store.save_analysis(expected)
+    store.save_markers(expected)
 
-    assert PageSettingsStore(tmp_path, LIBRARY_ID).load_analysis() == expected
+    assert PageSettingsStore(tmp_path, LIBRARY_ID).load_markers() == expected
     document = json.loads(store.path.read_text(encoding="utf-8"))
-    assert document == {"version": 1, "analysis": expected.model_dump()}
+    assert document == {"version": 2, "markers": expected.model_dump()}
 
 
-def test_analysis_settings_are_published_with_atomic_replace(
+def test_markers_settings_are_published_with_atomic_replace(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -53,7 +53,7 @@ def test_analysis_settings_are_published_with_atomic_replace(
     monkeypatch.setattr(page_settings.os, "replace", record_replace)
 
     store = PageSettingsStore(tmp_path, LIBRARY_ID)
-    store.save_analysis(AnalysisPageSettings())
+    store.save_markers(MarkersPageSettings())
 
     assert calls == [
         (store.path.with_name(f".{store.path.name}.tmp"), store.path)
@@ -65,13 +65,13 @@ def test_corrupted_settings_fall_back_to_defaults(tmp_path: Path):
     store = PageSettingsStore(tmp_path, LIBRARY_ID)
     store.path.write_text("{not-json", encoding="utf-8")
 
-    assert store.load_analysis() == AnalysisPageSettings()
+    assert store.load_markers() == MarkersPageSettings()
 
     store.path.write_text(
-        '{"version": 99, "analysis": {}}',
+        '{"version": 99, "markers": {}}',
         encoding="utf-8",
     )
-    assert store.load_analysis() == AnalysisPageSettings()
+    assert store.load_markers() == MarkersPageSettings()
 
 
 def test_failed_atomic_publish_preserves_existing_settings(
@@ -79,8 +79,8 @@ def test_failed_atomic_publish_preserves_existing_settings(
     monkeypatch,
 ):
     store = PageSettingsStore(tmp_path, LIBRARY_ID)
-    existing = AnalysisPageSettings(asset_library_size_percent=18)
-    store.save_analysis(existing)
+    existing = MarkersPageSettings(asset_library_size_percent=18)
+    store.save_markers(existing)
 
     def fail_replace(source: Path, destination: Path) -> None:
         raise OSError(f"无法替换 {source} 到 {destination}")
@@ -88,11 +88,11 @@ def test_failed_atomic_publish_preserves_existing_settings(
     monkeypatch.setattr(page_settings.os, "replace", fail_replace)
 
     with pytest.raises(OSError):
-        store.save_analysis(
-            AnalysisPageSettings(asset_library_size_percent=24)
+        store.save_markers(
+            MarkersPageSettings(asset_library_size_percent=24)
         )
 
-    assert store.load_analysis() == existing
+    assert store.load_markers() == existing
     assert not store.path.with_name(f".{store.path.name}.tmp").exists()
 
 
@@ -103,7 +103,7 @@ def test_library_page_settings_are_moved_to_central_directory(tmp_path: Path):
     legacy_path = library_path / "page_setting.json"
     legacy_path.write_text(
         PageSettingsDocument(
-            analysis=AnalysisPageSettings(asset_library_collapsed=True)
+            markers=MarkersPageSettings(asset_library_collapsed=True)
         ).model_dump_json(),
         encoding="utf-8",
     )
@@ -112,5 +112,5 @@ def test_library_page_settings_are_moved_to_central_directory(tmp_path: Path):
 
     assert store.path.parent == config_directory
     assert store.path.is_file()
-    assert store.load_analysis().asset_library_collapsed is True
+    assert store.load_markers().asset_library_collapsed is True
     assert not legacy_path.exists()

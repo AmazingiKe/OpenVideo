@@ -138,7 +138,7 @@ export type AgentJob = {
   updated_at: string;
 };
 
-export type AnalysisPageSettings = {
+export type MarkersPageSettings = {
   asset_library_size_percent: number;
   asset_library_collapsed: boolean;
   tool_panel_size_percent: number;

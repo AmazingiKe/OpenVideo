@@ -1312,7 +1312,7 @@ class SummaryManager:
             lines.append("")
         lines.extend(("## 内容提要", ""))
         if not segments:
-            lines.append("尚无时间轴分析结果，可在分析页完成内容分析后再补充。")
+            lines.append("尚无时间轴分析结果，可在标记页完成内容分析后再补充。")
         for segment in segments:
             timestamp = _timestamp(segment.start_seconds)
             summary = (

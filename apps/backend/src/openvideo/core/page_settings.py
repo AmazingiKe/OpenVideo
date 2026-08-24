@@ -12,7 +12,7 @@ from openvideo.configuration import migrate_configuration_file
 
 LEGACY_PAGE_SETTINGS_FILE_NAME = "page_setting.json"
 PAGE_SETTINGS_FILE_NAME_TEMPLATE = "page-settings-{library_id}.json"
-PAGE_SETTINGS_VERSION = 1
+PAGE_SETTINGS_VERSION = 2
 
 ToolSection = Literal[
     "video_information",
@@ -22,8 +22,8 @@ ToolSection = Literal[
 ]
 
 
-class AnalysisPageSettings(BaseModel):
-    """保存资料库内分析工作台的用户布局，不把设备无关状态写入全局偏好。"""
+class MarkersPageSettings(BaseModel):
+    """保存资料库内标记工作台的用户布局，不把设备无关状态写入全局偏好。"""
 
     asset_library_size_percent: float = Field(default=14, ge=10, le=28)
     asset_library_collapsed: bool = False
@@ -45,7 +45,7 @@ class PageSettingsDocument(BaseModel):
     """版本字段为后续页面设置迁移保留明确入口。"""
 
     version: Literal[PAGE_SETTINGS_VERSION] = PAGE_SETTINGS_VERSION
-    analysis: AnalysisPageSettings = Field(default_factory=AnalysisPageSettings)
+    markers: MarkersPageSettings = Field(default_factory=MarkersPageSettings)
 
 
 class PageSettingsStore:
@@ -64,18 +64,18 @@ class PageSettingsStore:
             # TODO(删除)：在 1.0 版本停止支持资料库内页面配置后删除迁移。
             migrate_configuration_file(legacy_path, self.path)
 
-    def load_analysis(self) -> AnalysisPageSettings:
+    def load_markers(self) -> MarkersPageSettings:
         with self._lock:
             try:
                 document = PageSettingsDocument.model_validate_json(
                     self.path.read_text(encoding="utf-8")
                 )
             except (OSError, ValueError):
-                return AnalysisPageSettings()
-            return document.analysis
+                return MarkersPageSettings()
+            return document.markers
 
-    def save_analysis(self, settings: AnalysisPageSettings) -> AnalysisPageSettings:
-        document = PageSettingsDocument(analysis=settings)
+    def save_markers(self, settings: MarkersPageSettings) -> MarkersPageSettings:
+        document = PageSettingsDocument(markers=settings)
         temporary_path = self.path.with_name(f".{self.path.name}.tmp")
         with self._lock:
             try:

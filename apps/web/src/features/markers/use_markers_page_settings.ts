@@ -3,15 +3,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
-  get_analysis_page_settings,
-  update_analysis_page_settings,
+  get_markers_page_settings,
+  update_markers_page_settings,
 } from "@/shared/api";
 import { error_message, is_abort_error } from "@/shared/errors";
-import type { AnalysisPageSettings } from "@/shared/types";
+import type { MarkersPageSettings } from "@/shared/types";
 
 const SETTINGS_SAVE_DELAY_MS = 300;
 
-export const DEFAULT_ANALYSIS_PAGE_SETTINGS: AnalysisPageSettings = {
+export const DEFAULT_MARKERS_PAGE_SETTINGS: MarkersPageSettings = {
   asset_library_size_percent: 14,
   asset_library_collapsed: false,
   tool_panel_size_percent: 16,
@@ -19,13 +19,13 @@ export const DEFAULT_ANALYSIS_PAGE_SETTINGS: AnalysisPageSettings = {
   open_tool_sections: ["video_information"],
 };
 
-export function use_analysis_page_settings() {
+export function use_markers_page_settings() {
   const query_client = useQueryClient();
   const settings_query = useQuery({
-    queryKey: RESOURCE_QUERY_KEYS.analysis_page_settings,
-    queryFn: ({ signal }) => get_analysis_page_settings(signal),
+    queryKey: RESOURCE_QUERY_KEYS.markers_page_settings,
+    queryFn: ({ signal }) => get_markers_page_settings(signal),
   });
-  const settings = settings_query.data ?? DEFAULT_ANALYSIS_PAGE_SETTINGS;
+  const settings = settings_query.data ?? DEFAULT_MARKERS_PAGE_SETTINGS;
   const [save_error, set_save_error] = useState<string | null>(null);
   const should_save_ref = useRef(false);
   const is_ready = !settings_query.isPending;
@@ -35,10 +35,10 @@ export function use_analysis_page_settings() {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => {
       should_save_ref.current = false;
-      void update_analysis_page_settings(settings, controller.signal)
+      void update_markers_page_settings(settings, controller.signal)
         .then((saved_settings) => {
           query_client.setQueryData(
-            RESOURCE_QUERY_KEYS.analysis_page_settings,
+            RESOURCE_QUERY_KEYS.markers_page_settings,
             saved_settings,
           );
           set_save_error(null);
@@ -54,12 +54,12 @@ export function use_analysis_page_settings() {
   }, [is_ready, query_client, settings]);
 
   const update_settings = useCallback(
-    (patch: Partial<AnalysisPageSettings>) => {
+    (patch: Partial<MarkersPageSettings>) => {
       should_save_ref.current = true;
-      query_client.setQueryData<AnalysisPageSettings>(
-        RESOURCE_QUERY_KEYS.analysis_page_settings,
+      query_client.setQueryData<MarkersPageSettings>(
+        RESOURCE_QUERY_KEYS.markers_page_settings,
         (current) => ({
-          ...(current ?? DEFAULT_ANALYSIS_PAGE_SETTINGS),
+          ...(current ?? DEFAULT_MARKERS_PAGE_SETTINGS),
           ...patch,
         }),
       );

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 const COMPACT_LAYOUT_QUERY = "(max-width: 979px)";
 
-export function use_compact_analysis_layout(): boolean {
+export function use_compact_markers_layout(): boolean {
   const [matches, set_matches] = useState(
     () => window.matchMedia?.(COMPACT_LAYOUT_QUERY).matches ?? false,
   );

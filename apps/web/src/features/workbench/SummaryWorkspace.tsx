@@ -797,7 +797,7 @@ export function SummaryWorkspace({
     return (
       <SummaryEmpty
         title="尚未选择素材"
-        description="请先在分析页选择一个已下载的视频。"
+        description="请先在标记页选择一个已下载的视频。"
       />
     );
   }

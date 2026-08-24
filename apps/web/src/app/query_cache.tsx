@@ -14,7 +14,7 @@ export const RESOURCE_QUERY_KEYS = {
     ["asset_analysis", asset_id] as const,
   asset_markers: (asset_id: string | null) =>
     ["asset_markers", asset_id] as const,
-  analysis_page_settings: ["analysis_page_settings"] as const,
+  markers_page_settings: ["markers_page_settings"] as const,
   ai_models: ["ai_models"] as const,
   analysis_resources: ["analysis_resources"] as const,
   download_health: ["download_health"] as const,

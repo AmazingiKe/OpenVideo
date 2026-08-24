@@ -8,8 +8,8 @@ import {
   use_ai_models,
   use_analysis_resources,
 } from "@/features/analysis/use_analysis_resources";
-import { use_analysis_page_settings } from "@/features/analysis/use_analysis_page_settings";
-import { use_compact_analysis_layout } from "@/features/analysis/use_compact_analysis_layout";
+import { use_compact_markers_layout } from "@/features/markers/use_compact_markers_layout";
+import { use_markers_page_settings } from "@/features/markers/use_markers_page_settings";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
 import { AssetLibrary } from "@/features/workbench/AssetLibrary";
@@ -36,7 +36,7 @@ import type {
 // 比样式表里 220ms 的面板过渡多留一拍，确保过渡结束前过渡类不被移除
 const PANEL_TOGGLE_TRANSITION_MS = 280;
 
-export function AnalysisPage() {
+export function MarkersPage() {
   const { assets, selected_asset, selected_asset_id, select_asset } =
     use_asset_catalog();
   const {
@@ -56,7 +56,7 @@ export function AnalysisPage() {
     save_transcript_segment,
   } = use_asset_analysis(selected_asset_id);
   const { settings, settings_error, is_ready, update_settings } =
-    use_analysis_page_settings();
+    use_markers_page_settings();
   const { models: ai_models, error: ai_models_error } = use_ai_models();
   const {
     transcription_models: loaded_transcription_models,
@@ -77,7 +77,7 @@ export function AnalysisPage() {
   const asset_library_panel_ref = useRef<PanelImperativeHandle>(null);
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
-  const is_compact_layout = use_compact_analysis_layout();
+  const is_compact_layout = use_compact_markers_layout();
   const { markers, marker_error, add_marker, update_marker_tags } =
     use_asset_markers(selected_asset_id ?? "");
 
@@ -362,7 +362,7 @@ export function AnalysisPage() {
           </div>
         ) : (
           <ResizablePanelGroup
-            id="analysis-workspace"
+            id="markers-workspace"
             orientation="horizontal"
             onLayoutChanged={(layout, metadata) => {
               if (metadata.isUserInteraction) save_desktop_layout(layout);
