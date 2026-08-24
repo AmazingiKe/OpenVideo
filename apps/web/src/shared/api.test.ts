@@ -310,7 +310,7 @@ describe("api client", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          force: false,
+          force: true,
           engine: "faster-whisper",
           model: "small",
           language: "zh",

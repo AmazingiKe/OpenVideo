@@ -292,7 +292,7 @@ export function transcribe_asset(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ force: false, ...options }),
+      body: JSON.stringify({ force: true, ...options }),
       signal,
     },
   );

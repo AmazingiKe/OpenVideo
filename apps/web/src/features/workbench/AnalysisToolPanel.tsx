@@ -326,12 +326,7 @@ export function AnalysisToolPanel({
               </div>
               <FieldGroup>
                 <Field
-                  data-disabled={
-                    is_transcribing ||
-                    is_analyzing ||
-                    has_transcript ||
-                    undefined
-                  }
+                  data-disabled={is_transcribing || is_analyzing || undefined}
                 >
                   <FieldLabel htmlFor="transcription_model">模型</FieldLabel>
                   <Select
@@ -352,10 +347,7 @@ export function AnalysisToolPanel({
                       });
                     }}
                     disabled={
-                      !transcription_options ||
-                      is_transcribing ||
-                      is_analyzing ||
-                      has_transcript
+                      !transcription_options || is_transcribing || is_analyzing
                     }
                   >
                     <SelectTrigger id="transcription_model" className="w-full">
@@ -393,9 +385,7 @@ export function AnalysisToolPanel({
                       on_start_transcription(transcription_options);
                     }
                   }}
-                  disabled={
-                    !asset || is_transcribing || is_analyzing || has_transcript
-                  }
+                  disabled={!asset || is_transcribing || is_analyzing}
                 />
               ) : (
                 <Button
@@ -409,8 +399,7 @@ export function AnalysisToolPanel({
                     !asset ||
                     !transcription_options ||
                     is_transcribing ||
-                    is_analyzing ||
-                    has_transcript
+                    is_analyzing
                   }
                 >
                   {is_transcribing ? (
@@ -419,12 +408,14 @@ export function AnalysisToolPanel({
                   {is_transcribing
                     ? "转录中…"
                     : has_transcript
-                      ? "转录已完成"
+                      ? "重新转录"
                       : "生成转录"}
                 </Button>
               )}
               <FieldDescription>
-                转录生成可编辑文字，完成后可继续内容分析。
+                {has_transcript
+                  ? "重新转录会在成功后替换当前文字；失败时保留现有结果。"
+                  : "转录生成可编辑文字，完成后可继续内容分析。"}
               </FieldDescription>
             </div>
           </AccordionContent>

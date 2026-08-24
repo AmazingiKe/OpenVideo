@@ -18,6 +18,7 @@ from openvideo.core.analysis_models import (
     Transcript,
     TranscriptSegment,
     TranscriptionMetadata,
+    TranscriptionStatus,
 )
 from openvideo.core.identifiers import is_uuid7, uuid7
 from openvideo.core.summary_models import (
@@ -40,6 +41,7 @@ from openvideo.core.summary_files import (
 from openvideo.core.models import (
     AssetMetadata,
     AssetSourceMetadata,
+    AssetTranscriptionMetadata,
     DownloadJob,
     DownloadStage,
     MediaAsset,
@@ -57,15 +59,18 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
 FORMAT_VERSION = 1
-DATABASE_VERSION = 7
+DATABASE_VERSION = 8
 SUMMARY_DATABASE_VERSION = 5
 TRANSCRIPT_METADATA_DATABASE_VERSION = 6
+SUMMARY_FILES_DATABASE_VERSION = 7
+TRANSCRIPT_FILES_DATABASE_VERSION = 8
 MANIFEST_FILE_NAME = "library.json"
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 AGENT_CHECKPOINT_DATABASE_FILE_NAME = "agent_checkpoints.sqlite3"
 LOCK_FILE_NAME = ".openvideo.lock"
 ASSET_METADATA_FILE_NAME = "meta.json"
 TRANSCRIPTION_METADATA_FILE_NAME = "transcription.json"
+TRANSCRIPT_FILE_NAME = "transcript.json"
 ARTIFACTS_DIRECTORY_NAME = "artifacts"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
@@ -97,7 +102,7 @@ class LibraryDescription(LibraryManifest):
 
 
 class MediaLibrary:
-    """一个打开会话独占一个可整体移动的资料库，并以 SQLite 作为业务数据源。"""
+    """一个打开会话独占一个可整体移动的资料库，并用 SQLite 管理事务型索引。"""
 
     def __init__(self, root_path: Path, manifest: LibraryManifest) -> None:
         self.library_path = root_path.resolve()
@@ -234,6 +239,10 @@ class MediaLibrary:
             version = TRANSCRIPT_METADATA_DATABASE_VERSION
         if version == TRANSCRIPT_METADATA_DATABASE_VERSION:
             self._migrate_summary_files()
+            version = SUMMARY_FILES_DATABASE_VERSION
+        if version == SUMMARY_FILES_DATABASE_VERSION:
+            self._migrate_transcripts_to_files()
+            version = TRANSCRIPT_FILES_DATABASE_VERSION
 
     def _migrate_analysis_model(self) -> None:
         connection = self._db()
@@ -275,6 +284,11 @@ class MediaLibrary:
     def _migrate_transcript_metadata(self) -> None:
         connection = self._db()
         with connection:
+            if not self._table_exists("transcript_segments"):
+                connection.execute(
+                    f"PRAGMA user_version = {TRANSCRIPT_METADATA_DATABASE_VERSION}"
+                )
+                return
             columns = {
                 row[1]
                 for row in connection.execute("PRAGMA table_info(transcript_segments)")
@@ -424,6 +438,55 @@ class MediaLibrary:
             old_path = self.asset_directory(row["asset_id"]) / row["relative_path"]
             old_path.unlink(missing_ok=True)
 
+    def _migrate_transcripts_to_files(self) -> None:
+        connection = self._db()
+        backup_path = self.library_path / f"{DATABASE_FILE_NAME}.v7.backup"
+        if not backup_path.exists():
+            temporary_backup = backup_path.with_suffix(".backup.tmp")
+            backup_connection = sqlite3.connect(temporary_backup)
+            try:
+                connection.backup(backup_connection)
+            finally:
+                backup_connection.close()
+            os.replace(temporary_backup, backup_path)
+        if not self._table_exists("transcripts"):
+            with connection:
+                connection.execute(
+                    f"PRAGMA user_version = {TRANSCRIPT_FILES_DATABASE_VERSION}"
+                )
+            return
+        rows = connection.execute(
+            "SELECT * FROM transcripts ORDER BY asset_id"
+        ).fetchall()
+        for row in rows:
+            segment_rows = connection.execute(
+                "SELECT start_seconds, end_seconds, text, emotion, audio_events "
+                "FROM transcript_segments WHERE asset_id = ? ORDER BY position",
+                (row["asset_id"],),
+            ).fetchall()
+            transcript = Transcript(
+                asset_id=row["asset_id"],
+                language=row["language"],
+                created_at=row["created_at"],
+                segments=[
+                    TranscriptSegment.model_validate(
+                        {
+                            **dict(segment),
+                            "audio_events": json.loads(segment["audio_events"] or "[]"),
+                        }
+                    )
+                    for segment in segment_rows
+                ],
+            )
+            self.save_transcript(transcript)
+
+        with connection:
+            connection.execute("DROP TABLE transcript_segments")
+            connection.execute("DROP TABLE transcripts")
+            connection.execute(
+                f"PRAGMA user_version = {TRANSCRIPT_FILES_DATABASE_VERSION}"
+            )
+
     def _migrate_asset_storage(self) -> None:
         connection = self._db()
         legacy_asset_ids = [
@@ -456,6 +519,8 @@ class MediaLibrary:
                 if asset_id is None:
                     continue
                 for table_name, column_name in _ASSET_REFERENCE_COLUMNS:
+                    if not self._table_exists(table_name):
+                        continue
                     connection.execute(
                         f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
                         (asset_id, legacy_asset_id),
@@ -592,6 +657,19 @@ class MediaLibrary:
                 video_codec=asset.video_codec,
                 audio_codec=asset.audio_codec,
             )
+        transcription_metadata = self.load_transcription_metadata(asset.asset_id)
+        if transcription_metadata is not None:
+            transcription = AssetTranscriptionMetadata(
+                status=transcription_metadata.status,
+                attempt_count=transcription_metadata.attempt_count,
+            )
+        elif self._transcript_path(asset.asset_id).is_file():
+            transcription = AssetTranscriptionMetadata(
+                status=TranscriptionStatus.COMPLETE,
+                attempt_count=1,
+            )
+        else:
+            transcription = AssetTranscriptionMetadata()
         metadata = AssetMetadata(
             asset_id=asset.asset_id,
             media_type=asset.media_type,
@@ -604,6 +682,7 @@ class MediaLibrary:
                 description=asset.description,
             ),
             video=video_metadata,
+            transcription=transcription,
             created_at=asset.created_at,
             updated_at=asset.updated_at,
         )
@@ -682,29 +761,19 @@ class MediaLibrary:
         )
 
     def save_transcript(self, transcript: Transcript) -> None:
-        with self._lock, self._db():
-            self._db().execute("DELETE FROM transcript_segments WHERE asset_id = ?", (transcript.asset_id,))
-            self._db().execute(
-                "INSERT INTO transcripts(asset_id, language, created_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(asset_id) DO UPDATE SET language=excluded.language, created_at=excluded.created_at",
-                (transcript.asset_id, transcript.language, transcript.created_at.isoformat()),
+        self._validate_asset_id(transcript.asset_id)
+        asset = self.get(transcript.asset_id)
+        if asset is None:
+            raise ValueError("转录对应的资源不存在")
+        output_path = self._transcript_path(transcript.asset_id)
+        temporary_path = output_path.with_suffix(".tmp")
+        with self._lock:
+            temporary_path.write_text(
+                transcript.model_dump_json(indent=2),
+                encoding="utf-8",
             )
-            self._db().executemany(
-                "INSERT INTO transcript_segments(asset_id, position, start_seconds, end_seconds, text, emotion, audio_events) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        transcript.asset_id,
-                        index,
-                        segment.start_seconds,
-                        segment.end_seconds,
-                        segment.text,
-                        segment.emotion,
-                        json.dumps(segment.audio_events, ensure_ascii=False),
-                    )
-                    for index, segment in enumerate(transcript.segments)
-                ],
-            )
+            os.replace(temporary_path, output_path)
+            self._write_asset_metadata(asset)
 
     def save_transcription_metadata(self, metadata: TranscriptionMetadata) -> None:
         """转写来源需要脱离任务进程保存，便于失败诊断与结果追溯。"""
@@ -713,8 +782,15 @@ class MediaLibrary:
             / TRANSCRIPTION_METADATA_FILE_NAME
         )
         temporary_path = output_path.with_suffix(".tmp")
-        temporary_path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
-        os.replace(temporary_path, output_path)
+        with self._lock:
+            temporary_path.write_text(
+                metadata.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            os.replace(temporary_path, output_path)
+            asset = self.get(metadata.asset_id)
+            if asset is not None:
+                self._write_asset_metadata(asset)
 
     def load_transcription_metadata(self, asset_id: str) -> TranscriptionMetadata | None:
         input_path = self.artifacts_directory(asset_id) / TRANSCRIPTION_METADATA_FILE_NAME
@@ -727,28 +803,19 @@ class MediaLibrary:
             return None
 
     def load_transcript(self, asset_id: str) -> Transcript | None:
-        row = self._db().execute("SELECT * FROM transcripts WHERE asset_id = ?", (asset_id,)).fetchone()
-        if not row:
+        input_path = self._transcript_path(asset_id)
+        if not input_path.is_file():
             return None
-        segments = self._db().execute(
-            "SELECT start_seconds, end_seconds, text, emotion, audio_events "
-            "FROM transcript_segments WHERE asset_id = ? ORDER BY position",
-            (asset_id,),
-        ).fetchall()
-        return Transcript(
-            asset_id=asset_id,
-            language=row["language"],
-            created_at=row["created_at"],
-            segments=[
-                TranscriptSegment.model_validate(
-                    {
-                        **dict(segment),
-                        "audio_events": json.loads(segment["audio_events"] or "[]"),
-                    }
-                )
-                for segment in segments
-            ],
-        )
+        try:
+            transcript = Transcript.model_validate_json(
+                input_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        return transcript if transcript.asset_id == asset_id else None
+
+    def _transcript_path(self, asset_id: str) -> Path:
+        return self.artifacts_directory(asset_id) / TRANSCRIPT_FILE_NAME
 
     def save_segments(self, asset_id: str, segments: list[MediaSegment]) -> None:
         if any(segment.asset_id != asset_id for segment in segments):
@@ -1194,6 +1261,12 @@ class MediaLibrary:
             raise RuntimeError("资料库未打开")
         return self._connection
 
+    def _table_exists(self, table_name: str) -> bool:
+        return self._db().execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone() is not None
+
     @staticmethod
     def _validate_identifier(identifier: str, prefix: str) -> None:
         expected_prefix = f"{prefix}-"
@@ -1274,12 +1347,6 @@ CREATE TABLE agent_jobs (
     progress_percent REAL NOT NULL, message TEXT NOT NULL, ai_model_id TEXT NOT NULL,
     segment_indices TEXT, transcript_checksum TEXT NOT NULL, question TEXT,
     error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE transcripts (asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE, language TEXT, created_at TEXT NOT NULL);
-CREATE TABLE transcript_segments (
-    asset_id TEXT NOT NULL REFERENCES transcripts(asset_id) ON DELETE CASCADE, position INTEGER NOT NULL,
-    start_seconds REAL NOT NULL, end_seconds REAL NOT NULL, text TEXT NOT NULL,
-    emotion TEXT, audio_events TEXT NOT NULL DEFAULT '[]', PRIMARY KEY(asset_id, position)
 );
 CREATE TABLE timeline_segments (
     segment_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,

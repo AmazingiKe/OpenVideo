@@ -169,6 +169,14 @@ class TranscriptionComputeType(StrEnum):
     FLOAT16 = "float16"
 
 
+class TranscriptionStatus(StrEnum):
+    NOT_STARTED = "not_started"
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
 class TranscriptEmotion(StrEnum):
     HAPPY = "happy"
     SAD = "sad"
@@ -411,7 +419,8 @@ class TranscriptionOptions(BaseModel):
 class TranscriptionMetadata(BaseModel):
     job_id: str
     asset_id: str
-    status: str
+    status: TranscriptionStatus
+    attempt_count: int = Field(default=1, ge=1)
     engine: TranscriptionEngine = TranscriptionEngine.FASTER_WHISPER
     output_source: str | None = None
     options: TranscriptionOptions

@@ -14,6 +14,7 @@ from openvideo.core.analysis_models import (
     Transcript,
     TranscriptionMetadata,
     TranscriptionOptions,
+    TranscriptionStatus,
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -352,7 +353,8 @@ class AnalysisManager:
         active_job = self._active_job_for(asset_id)
         if active_job:
             return active_job
-        if self.library.load_transcript(asset_id) is not None and not force:
+        existing_transcript = self.library.load_transcript(asset_id)
+        if existing_transcript is not None and not force:
             return AnalysisJob(
                 job_id=f"job-{uuid7().hex}",
                 asset_id=asset_id,
@@ -376,7 +378,11 @@ class AnalysisManager:
             TranscriptionMetadata(
                 job_id=job.job_id,
                 asset_id=asset_id,
-                status="pending",
+                status=TranscriptionStatus.PENDING,
+                attempt_count=self._next_transcription_attempt_count(
+                    asset_id,
+                    existing_transcript is not None,
+                ),
                 engine=options.engine,
                 options=options,
             )
@@ -454,6 +460,12 @@ class AnalysisManager:
                 job_id,
                 self.settings.default_transcription,
             )
+            saved_metadata = self.library.load_transcription_metadata(asset.asset_id)
+            attempt_count = (
+                saved_metadata.attempt_count
+                if saved_metadata and saved_metadata.job_id == job_id
+                else 1
+            )
             try:
                 playback = self.library.resolve_asset_file(asset, asset.playback_path)
                 if not playback:
@@ -464,12 +476,24 @@ class AnalysisManager:
                     or job.operation == AnalysisOperation.TRANSCRIPTION
                 )
                 if should_transcribe:
+                    saved_metadata = self.library.load_transcription_metadata(
+                        asset.asset_id
+                    )
+                    attempt_count = (
+                        saved_metadata.attempt_count
+                        if saved_metadata and saved_metadata.job_id == job_id
+                        else self._next_transcription_attempt_count(
+                            asset.asset_id,
+                            transcript is not None,
+                        )
+                    )
                     transcription_started_at = datetime.now(UTC)
                     self.library.save_transcription_metadata(
                         TranscriptionMetadata(
                             job_id=job_id,
                             asset_id=asset.asset_id,
-                            status="running",
+                            status=TranscriptionStatus.RUNNING,
+                            attempt_count=attempt_count,
                             engine=transcription_options.engine,
                             options=transcription_options,
                             started_at=transcription_started_at,
@@ -500,7 +524,8 @@ class AnalysisManager:
                         TranscriptionMetadata(
                             job_id=job_id,
                             asset_id=asset.asset_id,
-                            status="complete",
+                            status=TranscriptionStatus.COMPLETE,
+                            attempt_count=attempt_count,
                             engine=transcription_options.engine,
                             output_source=transcription_result.output_source,
                             options=transcription_options,
@@ -572,7 +597,8 @@ class AnalysisManager:
                         TranscriptionMetadata(
                             job_id=job_id,
                             asset_id=asset.asset_id,
-                            status="failed",
+                            status=TranscriptionStatus.FAILED,
+                            attempt_count=attempt_count,
                             engine=transcription_options.engine,
                             options=transcription_options,
                             started_at=transcription_started_at,
@@ -697,6 +723,16 @@ class AnalysisManager:
             job_id = self._active_job_id_by_asset_id.get(asset_id)
             job = self._jobs.get(job_id) if job_id else None
             return job.model_copy(deep=True) if job else None
+
+    def _next_transcription_attempt_count(
+        self,
+        asset_id: str,
+        has_transcript: bool,
+    ) -> int:
+        metadata = self.library.load_transcription_metadata(asset_id)
+        if metadata is not None:
+            return metadata.attempt_count + 1
+        return 2 if has_transcript else 1
 
     @staticmethod
     def _completed_job(

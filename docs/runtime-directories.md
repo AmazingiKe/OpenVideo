@@ -31,7 +31,9 @@ faster-whisper 是当前可执行的本地语音转写引擎。没有平台字�
 
 设置页选择模型根目录，应用会在其中管理 `faster-whisper/` 等不同模型的子目录。环境变量 `OPENVIDEO_MODELS_DIRECTORY` 可用于固定模型根目录。
 
-每次转写都会在资源的 `artifacts/transcription.json` 保存来源、引擎、参数、开始与完成时间、耗时、状态和失败信息。
+转录正文保存在资源的 `artifacts/transcript.json`。每次重新转录成功后会原子替换正文；失败时保留上一份可用结果。
+
+最近一次任务的来源、引擎、参数、开始与完成时间、耗时、状态、累计次数和失败信息保存在 `artifacts/transcription.json`。资源根目录的 `meta.json` 同时保留状态与累计次数摘要，便于不打开数据库也能判断资源是否转录过。
 
 ## 资料库
 

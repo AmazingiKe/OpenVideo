@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from openvideo.core.analysis_models import Transcript, TranscriptSegment
 from openvideo.core.library import MediaLibrary
 from openvideo.core.models import MediaAsset, MediaAssetStatus, SourcePlatform
 
@@ -110,7 +109,7 @@ def test_migrates_agent_job_schema_from_database_version_three(tmp_path: Path):
     migrated.close()
 
 
-def test_migrates_transcript_metadata_from_database_version_five(tmp_path: Path):
+def test_migrates_database_transcript_to_json_from_version_five(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     library.save(
         MediaAsset(
@@ -119,16 +118,28 @@ def test_migrates_transcript_metadata_from_database_version_five(tmp_path: Path)
             source_platform=SourcePlatform.YOUTUBE,
         )
     )
-    library.save_transcript(
-        Transcript(
-            asset_id=ASSET_ID,
-            segments=[TranscriptSegment(start_seconds=0, end_seconds=1, text="旧字幕")],
-        )
-    )
     library.close()
     connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    connection.execute("ALTER TABLE transcript_segments DROP COLUMN audio_events")
-    connection.execute("ALTER TABLE transcript_segments DROP COLUMN emotion")
+    connection.execute(
+        "CREATE TABLE transcripts ("
+        "asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE, "
+        "language TEXT, created_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE TABLE transcript_segments ("
+        "asset_id TEXT NOT NULL REFERENCES transcripts(asset_id) ON DELETE CASCADE, "
+        "position INTEGER NOT NULL, start_seconds REAL NOT NULL, "
+        "end_seconds REAL NOT NULL, text TEXT NOT NULL, "
+        "PRIMARY KEY(asset_id, position))"
+    )
+    connection.execute(
+        "INSERT INTO transcripts VALUES (?, ?, ?)",
+        (ASSET_ID, "zh", "2026-01-01T00:00:00+00:00"),
+    )
+    connection.execute(
+        "INSERT INTO transcript_segments VALUES (?, 0, 0, 1, ?)",
+        (ASSET_ID, "旧字幕"),
+    )
     connection.execute("PRAGMA user_version = 5")
     connection.commit()
     connection.close()
@@ -139,6 +150,18 @@ def test_migrates_transcript_metadata_from_database_version_five(tmp_path: Path)
     assert transcript is not None
     assert transcript.segments[0].emotion is None
     assert transcript.segments[0].audio_events == []
+    transcript_path = tmp_path / "assets" / ASSET_ID / "artifacts" / "transcript.json"
+    assert transcript_path.is_file()
+    assert not migrated._db().execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'transcripts'"
+    ).fetchone()
+    metadata = json.loads(
+        (tmp_path / "assets" / ASSET_ID / "meta.json").read_text(encoding="utf-8")
+    )
+    assert metadata["transcription"] == {
+        "status": "complete",
+        "attempt_count": 1,
+    }
     migrated.close()
 
 

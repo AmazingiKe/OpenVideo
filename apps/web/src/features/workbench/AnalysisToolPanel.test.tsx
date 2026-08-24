@@ -209,6 +209,22 @@ describe("AnalysisToolPanel", () => {
     expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
   });
 
+  it("allows an existing transcript to be regenerated with another model", () => {
+    const start_transcription = vi.fn();
+    render_panel(["transcription"], {
+      start_transcription,
+      has_transcript: true,
+    });
+
+    expect(screen.getByRole("combobox", { name: "模型" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "重新转录" }));
+
+    expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
+    expect(
+      screen.getByText("重新转录会在成功后替换当前文字；失败时保留现有结果。"),
+    ).toBeInTheDocument();
+  });
+
   it("offers download and use when the selected model is not installed", () => {
     render_panel(["transcription"], {
       has_transcript: false,

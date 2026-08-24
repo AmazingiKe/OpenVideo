@@ -3,6 +3,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, HttpUrl
 
+from openvideo.core.analysis_models import TranscriptionStatus
+
 
 class SourcePlatform(StrEnum):
     BILIBILI = "bilibili"
@@ -116,12 +118,22 @@ class VideoMetadata(BaseModel):
     audio_codec: str | None = None
 
 
+class AssetTranscriptionMetadata(BaseModel):
+    """资源清单只保留任务摘要，详细参数与错误仍由转录产物独立记录。"""
+
+    status: TranscriptionStatus = TranscriptionStatus.NOT_STARTED
+    attempt_count: int = Field(default=0, ge=0)
+
+
 class AssetMetadata(BaseModel):
     asset_id: str
     media_type: MediaType
     title: str
     source: AssetSourceMetadata
     video: VideoMetadata | None = None
+    transcription: AssetTranscriptionMetadata = Field(
+        default_factory=AssetTranscriptionMetadata
+    )
     created_at: datetime
     updated_at: datetime
 

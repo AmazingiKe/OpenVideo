@@ -102,8 +102,12 @@ def test_library_roundtrips_transcript(tmp_path: Path):
 
     library.save_transcript(transcript)
     recovered = library.load_transcript(TRANSCRIPT_ASSET_ID)
+    transcript_path = (
+        tmp_path / "assets" / TRANSCRIPT_ASSET_ID / "artifacts" / "transcript.json"
+    )
 
     assert recovered is not None
+    assert json.loads(transcript_path.read_text(encoding="utf-8"))["language"] == "zh"
     assert recovered.language == "zh"
     assert [segment.text for segment in recovered.segments] == ["第一句", "第二句"]
     assert recovered.segments[0].emotion == TranscriptEmotion.HAPPY
@@ -125,11 +129,19 @@ def test_library_load_transcript_returns_none_when_missing(tmp_path: Path):
 
 def test_transcription_metadata_records_source_duration_and_failure(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
+    library.save(
+        MediaAsset(
+            asset_id=TRANSCRIPT_ASSET_ID,
+            source_url="https://example.com/video",
+            source_platform=SourcePlatform.YOUTUBE,
+        )
+    )
     library.save_transcription_metadata(
         TranscriptionMetadata(
             job_id="job-0123456789abcdef0123456789abcdef",
             asset_id=TRANSCRIPT_ASSET_ID,
             status="failed",
+            attempt_count=3,
             output_source="faster-whisper",
             options=TranscriptionOptions(
                 model="small",
@@ -147,6 +159,16 @@ def test_transcription_metadata_records_source_duration_and_failure(tmp_path: Pa
     assert metadata.output_source == "faster-whisper"
     assert metadata.duration_seconds == 12.5
     assert metadata.error_message == "模型加载失败"
+    assert metadata.attempt_count == 3
+    asset_metadata = json.loads(
+        (tmp_path / "assets" / TRANSCRIPT_ASSET_ID / "meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert asset_metadata["transcription"] == {
+        "status": "failed",
+        "attempt_count": 3,
+    }
     library.close()
 
 

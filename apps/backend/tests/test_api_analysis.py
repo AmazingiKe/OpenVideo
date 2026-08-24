@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+from time import monotonic, sleep
 
 from fastapi.testclient import TestClient
 
@@ -14,9 +16,10 @@ from openvideo.core.analysis_models import (
     TranscriptEmotion,
     TranscriptSegment,
 )
-from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
 from openvideo.core.library import MediaLibrary
+from openvideo.core.models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
 from openvideo.settings import Settings
+from openvideo.tools.transcribe import TranscriptionResult
 from openvideo.ui.api import create_app
 
 import openvideo.application as application_module
@@ -211,7 +214,10 @@ def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         application_module,
         "transcribe_media",
-        lambda *args, **kwargs: Transcript(asset_id=ASSET_ID),
+        lambda *args, **kwargs: TranscriptionResult(
+            transcript=Transcript(asset_id=ASSET_ID),
+            output_source="faster-whisper",
+        ),
     )
     with create_client(tmp_path) as client:
         model_directory = tmp_path / "models" / "faster-whisper" / "small"
@@ -222,6 +228,101 @@ def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
     assert response.status_code == 202
     assert response.json()["operation"] == "transcription"
     assert response.json()["job_id"].startswith("job-")
+
+
+def test_transcription_can_replace_existing_result_multiple_times(
+    tmp_path: Path,
+    monkeypatch,
+):
+    generated_texts = iter(("第二版", "第三版"))
+
+    def transcribe_again(*args, **kwargs):
+        return TranscriptionResult(
+            transcript=Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(
+                        start_seconds=0,
+                        end_seconds=1,
+                        text=next(generated_texts),
+                    )
+                ],
+            ),
+            output_source="faster-whisper",
+        )
+
+    monkeypatch.setattr(application_module, "transcribe_media", transcribe_again)
+    with create_client(tmp_path) as client:
+        model_directory = tmp_path / "models" / "faster-whisper" / "small"
+        model_directory.mkdir(parents=True)
+        (model_directory / "model.bin").write_bytes(b"model")
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(start_seconds=0, end_seconds=1, text="第一版")
+                ],
+            )
+        )
+
+        for expected_text in ("第二版", "第三版"):
+            created = client.post(
+                f"/api/media/assets/{ASSET_ID}/transcribe",
+                json={"force": True},
+            ).json()
+            job = wait_for_analysis_job(client, created["job_id"])
+            assert job["stage"] == "complete"
+            assert client.get(
+                f"/api/media/assets/{ASSET_ID}/transcript"
+            ).json()["segments"][0]["text"] == expected_text
+
+        metadata = client.app.state.library.load_transcription_metadata(ASSET_ID)
+        assert metadata is not None
+        assert metadata.status == "complete"
+        assert metadata.attempt_count == 3
+        asset_metadata = json.loads(
+            (tmp_path / "assets" / ASSET_ID / "meta.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert asset_metadata["transcription"] == {
+            "status": "complete",
+            "attempt_count": 3,
+        }
+
+
+def test_failed_retranscription_preserves_existing_result(tmp_path: Path, monkeypatch):
+    def fail_transcription(*args, **kwargs):
+        raise RuntimeError("模型损坏")
+
+    monkeypatch.setattr(application_module, "transcribe_media", fail_transcription)
+    with create_client(tmp_path) as client:
+        model_directory = tmp_path / "models" / "faster-whisper" / "small"
+        model_directory.mkdir(parents=True)
+        (model_directory / "model.bin").write_bytes(b"model")
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(start_seconds=0, end_seconds=1, text="保留版本")
+                ],
+            )
+        )
+
+        created = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcribe",
+            json={"force": True},
+        ).json()
+        job = wait_for_analysis_job(client, created["job_id"])
+
+        assert job["stage"] == "failed"
+        assert client.get(f"/api/media/assets/{ASSET_ID}/transcript").json()[
+            "segments"
+        ][0]["text"] == "保留版本"
+        metadata = client.app.state.library.load_transcription_metadata(ASSET_ID)
+        assert metadata is not None
+        assert metadata.status == "failed"
+        assert metadata.attempt_count == 2
 
 
 def test_transcription_requires_downloaded_model(tmp_path: Path):
@@ -304,3 +405,13 @@ def test_segments_and_frame_roundtrip(tmp_path: Path):
     assert segments[0]["visual_description"] == "画面描述"
     assert frame_response.status_code == 200
     assert frame_response.content == b"jpeg-bytes"
+
+
+def wait_for_analysis_job(client: TestClient, job_id: str) -> dict[str, object]:
+    deadline = monotonic() + 3
+    while monotonic() < deadline:
+        job = client.get(f"/api/analysis/{job_id}").json()
+        if job["stage"] in {"complete", "failed"}:
+            return job
+        sleep(0.01)
+    raise AssertionError("分析任务未在测试时限内结束")
