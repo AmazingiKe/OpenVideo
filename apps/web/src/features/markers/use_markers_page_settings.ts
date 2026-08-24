@@ -13,7 +13,9 @@ const SETTINGS_SAVE_DELAY_MS = 300;
 
 export const DEFAULT_MARKERS_PAGE_SETTINGS: MarkersPageSettings = {
   asset_library_size_percent: 14,
+  agent_panel_size_percent: 24,
   asset_library_collapsed: false,
+  left_panel_tab: "video",
   tool_panel_size_percent: 16,
   tool_panel_collapsed: false,
   open_tool_sections: ["video_information"],

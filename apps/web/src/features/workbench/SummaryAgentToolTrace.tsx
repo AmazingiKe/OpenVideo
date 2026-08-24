@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 
-export type SummaryAgentToolTraceData = {
+export type AgentToolTraceData = {
   call_id: string;
   name: string;
   arguments: Record<string, unknown>;
@@ -28,12 +28,17 @@ const TOOL_PRESENTATION = {
     label: "创建修改建议",
     icon: FilePenLine,
   },
+  search_transcript: { label: "搜索转录", icon: Search },
+  search_analysis: { label: "搜索分析事件", icon: Search },
+  read_markers: { label: "读取标记", icon: BookOpenText },
+  inspect_frames: { label: "检查画面", icon: Search },
+  propose_marker_changes: { label: "创建标记建议", icon: FilePenLine },
 } as const;
 
-export function SummaryAgentToolTrace({
+export function AgentToolTrace({
   trace,
 }: {
-  trace: SummaryAgentToolTraceData;
+  trace: AgentToolTraceData;
 }) {
   const presentation =
     TOOL_PRESENTATION[trace.name as keyof typeof TOOL_PRESENTATION];

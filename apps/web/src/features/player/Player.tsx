@@ -37,7 +37,7 @@ export type PlayerHandle = {
 };
 
 type TimelineMarker = {
-  time_seconds: number;
+  start_seconds: number;
   label: string;
 };
 
@@ -149,7 +149,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   }, []);
 
   const plyr_markers = markers.map((marker) => ({
-    time: marker.time_seconds,
+    time: marker.start_seconds,
     label: marker.label,
   }));
 

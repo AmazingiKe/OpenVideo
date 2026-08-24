@@ -16,6 +16,12 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
 
 from openvideo.agent_manager import AgentError, AgentManager
+from openvideo.marker_agent_manager import (
+    MarkerAgentError,
+    MarkerAgentManager,
+    MarkerAgentNotFoundError,
+    MarkerProposalConflictError,
+)
 from openvideo.application import (
     AnalysisError,
     AnalysisManager,
@@ -85,12 +91,9 @@ from openvideo.settings import (
 )
 from openvideo.core.summary_models import (
     SummaryAgentMessageRequest,
-    SummaryAgentRun,
     SummaryAgentSession,
     SummaryAgentSessionState,
-    SummaryConversation,
     SummaryAgentSessionCreate,
-    SummaryConversationState,
     SummaryDocument,
     SummaryDocumentCreate,
     SummaryDocumentReorder,
@@ -110,6 +113,12 @@ from openvideo.download_accounts import (
     DownloadCookieBrowser,
     capture_cookie_from_dedicated_browser,
     import_cookie_from_browser,
+)
+from openvideo.core.marker_agent_models import (
+    MarkerAgentMessageRequest,
+    MarkerAgentSession,
+    MarkerAgentSessionState,
+    MarkerProposal,
 )
 from openvideo.tools.downloader import (
     DownloadFailure,
@@ -239,12 +248,17 @@ class BatchDownloadRequest(BaseModel):
 
 
 class MarkerCreateRequest(BaseModel):
-    time_seconds: float = Field(ge=0)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+    title: str = Field(default="", max_length=200)
     tags: list[str] = Field(default_factory=list)
 
 
 class MarkerUpdateRequest(BaseModel):
-    tags: list[str]
+    start_seconds: float = Field(ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+    title: str = Field(default="", max_length=200)
+    tags: list[str] = Field(default_factory=list)
 
 
 class TranscriptSegmentUpdateRequest(BaseModel):
@@ -333,6 +347,7 @@ def create_app(
     analysis_manager: AnalysisManager | None = None
     agent_manager: AgentManager | None = None
     summary_manager: SummaryManager | None = None
+    marker_agent_manager: MarkerAgentManager | None = None
     transcription_model_manager = TranscriptionModelManager(resolved_settings)
     page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
@@ -407,12 +422,14 @@ def create_app(
             analysis_manager, \
             agent_manager, \
             summary_manager, \
+            marker_agent_manager, \
             page_settings_store
         library = opened_library
         manager = DownloadManager(opened_library, resolved_settings, account_store)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
         agent_manager = AgentManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
+        marker_agent_manager = MarkerAgentManager(opened_library, resolved_settings)
         page_settings_store = PageSettingsStore(
             preference_store.path.parent,
             opened_library.manifest.library_id,
@@ -425,6 +442,7 @@ def create_app(
         app.state.analysis_manager = analysis_manager
         app.state.agent_manager = agent_manager
         app.state.summary_manager = summary_manager
+        app.state.marker_agent_manager = marker_agent_manager
         app.state.page_settings_store = page_settings_store
 
     def require_library() -> MediaLibrary:
@@ -481,6 +499,8 @@ def create_app(
                 await agent_manager.close()
             if summary_manager:
                 await summary_manager.close()
+            if marker_agent_manager:
+                await marker_agent_manager.close()
             if library:
                 library.close()
 
@@ -490,6 +510,7 @@ def create_app(
     app.state.analysis_manager = analysis_manager
     app.state.agent_manager = agent_manager
     app.state.summary_manager = summary_manager
+    app.state.marker_agent_manager = marker_agent_manager
     app.state.transcription_model_manager = transcription_model_manager
     app.state.page_settings_store = page_settings_store
     app.state.settings = resolved_settings
@@ -839,7 +860,11 @@ def create_app(
                 409, "library_managed_by_environment", "资料库由环境变量固定，无法切换"
             )
         _ensure_switch_allowed(
-            manager, analysis_manager, agent_manager, summary_manager
+            manager,
+            analysis_manager,
+            agent_manager,
+            summary_manager,
+            marker_agent_manager,
         )
         requested_path = _absolute_library_path(request.path)
         try:
@@ -853,6 +878,10 @@ def create_app(
             _library_error(422, error_code, str(error))
         if agent_manager:
             await agent_manager.close()
+        if summary_manager:
+            await summary_manager.close()
+        if marker_agent_manager:
+            await marker_agent_manager.close()
         if library:
             library.close()
         await install_library(opened)
@@ -869,7 +898,11 @@ def create_app(
         if library and target == library.library_path:
             return library.description
         _ensure_switch_allowed(
-            manager, analysis_manager, agent_manager, summary_manager
+            manager,
+            analysis_manager,
+            agent_manager,
+            summary_manager,
+            marker_agent_manager,
         )
         try:
             opened = MediaLibrary.open(target)
@@ -880,6 +913,10 @@ def create_app(
             _library_error(422, error_code, str(error))
         if agent_manager:
             await agent_manager.close()
+        if summary_manager:
+            await summary_manager.close()
+        if marker_agent_manager:
+            await marker_agent_manager.close()
         if library:
             library.close()
         await install_library(opened)
@@ -888,27 +925,46 @@ def create_app(
 
     @app.delete("/api/library", status_code=204)
     async def close_library() -> Response:
-        nonlocal library, manager, analysis_manager, agent_manager, page_settings_store
+        nonlocal \
+            library, \
+            manager, \
+            analysis_manager, \
+            agent_manager, \
+            summary_manager, \
+            marker_agent_manager, \
+            page_settings_store
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
             _library_error(
                 409, "library_managed_by_environment", "资料库由环境变量固定，无法关闭"
             )
         _ensure_switch_allowed(
-            manager, analysis_manager, agent_manager, summary_manager
+            manager,
+            analysis_manager,
+            agent_manager,
+            summary_manager,
+            marker_agent_manager,
         )
         if agent_manager:
             await agent_manager.close()
+        if summary_manager:
+            await summary_manager.close()
+        if marker_agent_manager:
+            await marker_agent_manager.close()
         if library:
             library.close()
         library = None
         manager = None
         analysis_manager = None
         agent_manager = None
+        summary_manager = None
+        marker_agent_manager = None
         page_settings_store = None
         app.state.library = None
         app.state.download_manager = None
         app.state.analysis_manager = None
         app.state.agent_manager = None
+        app.state.summary_manager = None
+        app.state.marker_agent_manager = None
         app.state.page_settings_store = None
         save_current_path(None)
         return Response(status_code=204)
@@ -1196,11 +1252,16 @@ def create_app(
         status_code=status.HTTP_201_CREATED,
     )
     def create_marker(asset_id: str, request: MarkerCreateRequest) -> MediaMarker:
-        _ready_asset(library, asset_id)
+        asset = _ready_asset(library, asset_id)
+        _validate_marker_bounds(
+            request.start_seconds, request.end_seconds, asset.duration_seconds
+        )
         marker = MediaMarker(
             marker_id=f"marker-{uuid7().hex}",
             asset_id=asset_id,
-            time_seconds=request.time_seconds,
+            start_seconds=request.start_seconds,
+            end_seconds=request.end_seconds,
+            title=request.title,
             tags=request.tags,
         )
         return library.create_marker(marker)
@@ -1214,9 +1275,19 @@ def create_app(
         marker_id: str,
         request: MarkerUpdateRequest,
     ) -> MediaMarker:
-        _ready_asset(library, asset_id)
+        asset = _ready_asset(library, asset_id)
+        _validate_marker_bounds(
+            request.start_seconds, request.end_seconds, asset.duration_seconds
+        )
         try:
-            marker = library.update_marker_tags(asset_id, marker_id, request.tags)
+            marker = library.update_marker(
+                asset_id,
+                marker_id,
+                start_seconds=request.start_seconds,
+                end_seconds=request.end_seconds,
+                title=request.title,
+                tags=request.tags,
+            )
         except ValueError as error:
             raise HTTPException(status_code=404, detail="标记不存在") from error
         if marker is None:
@@ -1412,6 +1483,65 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    @app.get(
+        "/api/media/assets/{asset_id}/marker-agent-sessions",
+        response_model=list[MarkerAgentSession],
+    )
+    def list_marker_agent_sessions(asset_id: str) -> list[MarkerAgentSession]:
+        try:
+            return marker_agent_manager.sessions(asset_id)
+        except MarkerAgentNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
+        "/api/media/assets/{asset_id}/marker-agent-sessions",
+        response_model=MarkerAgentSessionState,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_marker_agent_session(asset_id: str) -> MarkerAgentSessionState:
+        try:
+            return marker_agent_manager.create_session(asset_id)
+        except MarkerAgentNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get(
+        "/api/marker-agent-sessions/{session_id}",
+        response_model=MarkerAgentSessionState,
+    )
+    def get_marker_agent_session(session_id: str) -> MarkerAgentSessionState:
+        try:
+            return marker_agent_manager.session_state(session_id)
+        except MarkerAgentNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.delete(
+        "/api/marker-agent-sessions/{session_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_marker_agent_session(session_id: str) -> Response:
+        try:
+            marker_agent_manager.delete_session(session_id)
+        except MarkerAgentNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except MarkerAgentError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post(
+        "/api/marker-agent-sessions/{session_id}/messages",
+        response_model=AgentRun,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def create_marker_agent_message(
+        session_id: str, request: MarkerAgentMessageRequest
+    ) -> AgentRun:
+        try:
+            return marker_agent_manager.create_message(session_id, request)
+        except MarkerAgentNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except MarkerAgentError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     @app.post(
         "/api/summary-agent-sessions/{session_id}/messages",
         response_model=AgentRun,
@@ -1468,7 +1598,8 @@ def create_app(
                     result = event.payload.get("result")
                     if (
                         event.event_type == AgentEventType.TOOL_RESULT
-                        and event.payload.get("name") == "propose_summary_change"
+                        and event.payload.get("name")
+                        in {"propose_summary_change", "propose_marker_changes"}
                         and isinstance(result, dict)
                         and result.get("ok") is True
                     ):
@@ -1510,8 +1641,38 @@ def create_app(
     @app.post("/api/agent-runs/{run_id}/cancel", response_model=AgentRun)
     def cancel_agent_run(run_id: str) -> AgentRun:
         try:
+            run = summary_manager.generic_agent_run(run_id)
+            session = library.load_agent_session(run.session_id)
+            if session and session.agent_type == "marker":
+                return marker_agent_manager.cancel_agent_run(run_id)
             return summary_manager.cancel_agent_run(run_id)
         except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except MarkerAgentNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
+        "/api/marker-proposals/{proposal_id}/accept",
+        response_model=MarkerProposal,
+    )
+    def accept_marker_proposal(proposal_id: str) -> MarkerProposal:
+        try:
+            return marker_agent_manager.accept_proposal(proposal_id)
+        except MarkerProposalConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except MarkerAgentNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except MarkerAgentError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post(
+        "/api/marker-proposals/{proposal_id}/reject",
+        response_model=MarkerProposal,
+    )
+    def reject_marker_proposal(proposal_id: str) -> MarkerProposal:
+        try:
+            return marker_agent_manager.reject_proposal(proposal_id)
+        except MarkerAgentNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post(
@@ -1715,12 +1876,14 @@ def _ensure_switch_allowed(
     analysis_manager: AnalysisManager | None,
     agent_manager: AgentManager | None,
     summary_manager: SummaryManager | None,
+    marker_agent_manager: MarkerAgentManager | None,
 ) -> None:
     if (
         (manager and manager.has_active_jobs())
         or (analysis_manager and analysis_manager.has_active_jobs())
         or (agent_manager and agent_manager.has_active_jobs())
         or (summary_manager and summary_manager.has_active_jobs())
+        or (marker_agent_manager and marker_agent_manager.has_active_jobs())
     ):
         _library_error(
             409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库"
@@ -1761,6 +1924,26 @@ def _ready_asset(library: MediaLibrary, asset_id: str):
     if not asset or asset.status != MediaAssetStatus.READY:
         raise HTTPException(status_code=404, detail="媒体资源不存在")
     return asset
+
+
+def _validate_marker_bounds(
+    start_seconds: float,
+    end_seconds: float | None,
+    duration_seconds: float | None,
+) -> None:
+    if end_seconds is not None and end_seconds <= start_seconds:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="范围标记的结束时间必须晚于开始时间",
+        )
+    if duration_seconds is not None and (
+        start_seconds > duration_seconds
+        or (end_seconds is not None and end_seconds > duration_seconds)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="标记时间必须位于视频时长内",
+        )
 
 
 def _read_file_range(file_path: Path, start: int, length: int) -> Iterator[bytes]:

@@ -17,7 +17,12 @@ import type {
   LibraryDescription,
   MediaAsset,
   MediaMarker,
+  MediaMarkerInput,
   MediaSegment,
+  MarkerAgentSession,
+  MarkerAgentSessionState,
+  MarkerProposal,
+  MarkerRetrievalMode,
   ProbeResponse,
   Transcript,
   TranscriptionOptions,
@@ -35,23 +40,10 @@ import type {
   SourcePlatform,
   SummaryMediaSuggestion,
 } from "./types";
+import { DEFAULT_ANALYSIS_STRATEGY } from "./analysis";
 
 const api_base_url = import.meta.env.VITE_API_BASE_URL ?? "";
 const SUMMARY_DOCUMENTS_EVENT = "documents";
-
-const DEFAULT_ANALYSIS_STRATEGY: AnalysisStrategy = {
-  preset: "course_notes",
-  weights: {
-    core_concepts: 90,
-    formula_derivation: 65,
-    case_demonstration: 60,
-    questions_conclusions: 80,
-    visual_content: 55,
-    user_markers: 100,
-  },
-  depth: "balanced",
-  marker_context_seconds: 30,
-};
 
 export class ApiError extends Error {
   constructor(
@@ -510,8 +502,7 @@ export function get_markers(
 
 export function create_marker(
   asset_id: string,
-  time_seconds: number,
-  tags: string[],
+  marker: MediaMarkerInput,
   signal?: AbortSignal,
 ): Promise<MediaMarker> {
   return request_json(
@@ -519,7 +510,7 @@ export function create_marker(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ time_seconds, tags }),
+      body: JSON.stringify(marker),
       signal,
     },
   );
@@ -528,7 +519,7 @@ export function create_marker(
 export function update_marker(
   asset_id: string,
   marker_id: string,
-  tags: string[],
+  update: MediaMarkerInput,
   signal?: AbortSignal,
 ): Promise<MediaMarker> {
   return request_json(
@@ -536,7 +527,7 @@ export function update_marker(
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags }),
+      body: JSON.stringify(update),
       signal,
     },
   );
@@ -742,7 +733,7 @@ export function create_summary_agent_message(
   );
 }
 
-export type SummaryAgentEvent =
+export type AgentRunEvent<TProposal> =
   | {
       event: "status";
       data: AgentStreamData & { stage: string; message?: string };
@@ -763,7 +754,7 @@ export type SummaryAgentEvent =
     }
   | {
       event: "proposal";
-      data: AgentStreamData & { proposal: SummaryEditProposal };
+      data: AgentStreamData & { proposal: TProposal };
     }
   | { event: "complete"; data: AgentStreamData & { run_id: string } }
   | {
@@ -782,9 +773,9 @@ type AgentToolTrace = {
   arguments: Record<string, unknown>;
 };
 
-export async function stream_summary_agent_run(
+export async function stream_agent_run<TProposal>(
   run_id: string,
-  on_event: (event: SummaryAgentEvent) => void,
+  on_event: (event: AgentRunEvent<TProposal>) => void,
   signal?: AbortSignal,
   last_event_id?: string,
 ): Promise<void> {
@@ -813,11 +804,85 @@ export async function stream_summary_agent_run(
         on_event({
           event: event_name,
           data: JSON.parse(data),
-        } as SummaryAgentEvent);
+        } as AgentRunEvent<TProposal>);
       }
     }
     if (done) break;
   }
+}
+
+export function list_marker_agent_sessions(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<MarkerAgentSession[]> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/marker-agent-sessions`,
+    { signal },
+  );
+}
+
+export function create_marker_agent_session(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<MarkerAgentSessionState> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/marker-agent-sessions`,
+    { method: "POST", signal },
+  );
+}
+
+export function get_marker_agent_session(
+  session_id: string,
+  signal?: AbortSignal,
+): Promise<MarkerAgentSessionState> {
+  return request_json(
+    `/api/marker-agent-sessions/${encodeURIComponent(session_id)}`,
+    { signal },
+  );
+}
+
+export async function delete_marker_agent_session(
+  session_id: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(
+    `${api_base_url}/api/marker-agent-sessions/${encodeURIComponent(session_id)}`,
+    { method: "DELETE", signal },
+  );
+  if (!response.ok) {
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
+  }
+}
+
+export function create_marker_agent_message(
+  session_id: string,
+  request: {
+    content: string;
+    ai_model_id: string;
+    retrieval_mode: MarkerRetrievalMode;
+  },
+  signal?: AbortSignal,
+): Promise<AgentRun> {
+  return request_json(
+    `/api/marker-agent-sessions/${encodeURIComponent(session_id)}/messages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal,
+    },
+  );
+}
+
+export function resolve_marker_proposal(
+  proposal_id: string,
+  action: "accept" | "reject",
+  signal?: AbortSignal,
+): Promise<MarkerProposal> {
+  return request_json(
+    `/api/marker-proposals/${encodeURIComponent(proposal_id)}/${action}`,
+    { method: "POST", signal },
+  );
 }
 
 export function cancel_agent_run(

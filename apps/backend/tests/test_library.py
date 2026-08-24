@@ -150,7 +150,12 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     _save_asset(library, _asset())
     marker = MediaMarker(
-        marker_id=MARKER_ID, asset_id=ASSET_ID, time_seconds=2, tags=["重点"]
+        marker_id=MARKER_ID,
+        asset_id=ASSET_ID,
+        start_seconds=2,
+        end_seconds=4,
+        title="重点片段",
+        tags=["重点"],
     )
     library.create_marker(marker)
     library.save_transcript(
@@ -185,6 +190,8 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     assert rebuilt.load_transcript(ASSET_ID).segments[0].text == "正文"
     assert rebuilt.load_segments(ASSET_ID)[0].marker_ids == [MARKER_ID]
     assert rebuilt.load_markers(ASSET_ID)[0].tags == ["重点"]
+    assert rebuilt.load_markers(ASSET_ID)[0].end_seconds == 4
+    assert rebuilt.load_markers(ASSET_ID)[0].title == "重点片段"
     assert rebuilt.load_summary_document(DOCUMENT_ID).markdown == "# 用户总结\n"
     session_id = f"session-{CONVERSATION_ID.removeprefix('conversation-')}"
     assert rebuilt.load_agent_events(session_id)[0].payload["content"] == "请精简正文"
@@ -205,6 +212,49 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
         "summary_agent_runs",
     } & tables
     assert rebuilt._db().execute("PRAGMA foreign_key_check").fetchall() == []
+    marker_columns = {
+        row[1] for row in rebuilt._db().execute("PRAGMA table_info(markers)")
+    }
+    assert {
+        "start_seconds",
+        "end_seconds",
+        "title",
+    } <= marker_columns
+    rebuilt.close()
+
+
+def test_old_marker_file_without_ranges_loads_as_inherited(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+    marker_path = library.asset_directory(ASSET_ID) / "markers.json"
+    library.close()
+    marker_path.write_text(
+        json.dumps(
+            {
+                "format_version": 1,
+                "asset_id": ASSET_ID,
+                "markers": [
+                    {
+                        "marker_id": MARKER_ID,
+                        "asset_id": ASSET_ID,
+                        "time_seconds": 2,
+                        "tags": ["重点"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rebuilt = MediaLibrary.open(tmp_path)
+    marker = rebuilt.load_markers(ASSET_ID)[0]
+
+    assert marker.start_seconds == 2
+    assert marker.end_seconds is None
+    assert marker.title == ""
+    migrated = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert migrated["format_version"] == 2
+    assert "time_seconds" not in migrated["markers"][0]
     rebuilt.close()
 
 

@@ -29,14 +29,18 @@ describe("use_asset_markers", () => {
       {
         marker_id: "marker-existing",
         asset_id: ASSET_ID,
-        time_seconds: 8,
+        start_seconds: 8,
+        end_seconds: null,
+        title: "",
         tags: [],
       },
     ]);
     vi.mocked(create_marker).mockResolvedValueOnce({
       marker_id: "marker-new",
       asset_id: ASSET_ID,
-      time_seconds: 12.9,
+      start_seconds: 12.9,
+      end_seconds: null,
+      title: "",
       tags: [],
     });
     const { result } = renderHook(() => use_asset_markers(ASSET_ID), {
@@ -46,10 +50,15 @@ describe("use_asset_markers", () => {
 
     await act(async () => result.current.add_marker(12.9));
 
-    expect(create_marker).toHaveBeenCalledWith(ASSET_ID, 12.9, []);
-    expect(result.current.markers.map((marker) => marker.time_seconds)).toEqual(
-      [8, 12.9],
-    );
+    expect(create_marker).toHaveBeenCalledWith(ASSET_ID, {
+      start_seconds: 12.9,
+      end_seconds: null,
+      title: "",
+      tags: [],
+    });
+    expect(
+      result.current.markers.map((marker) => marker.start_seconds),
+    ).toEqual([8, 12.9]);
   });
 
   it("updates tags and deletes markers through the media API", async () => {
@@ -57,14 +66,18 @@ describe("use_asset_markers", () => {
       {
         marker_id: "marker-a",
         asset_id: ASSET_ID,
-        time_seconds: 12,
+        start_seconds: 12,
+        end_seconds: null,
+        title: "重点",
         tags: ["重点"],
       },
     ]);
     vi.mocked(update_marker).mockResolvedValueOnce({
       marker_id: "marker-a",
       asset_id: ASSET_ID,
-      time_seconds: 12,
+      start_seconds: 12,
+      end_seconds: 27,
+      title: "重点",
       tags: ["关键帧"],
     });
     const { result } = renderHook(() => use_asset_markers(ASSET_ID), {
@@ -73,11 +86,19 @@ describe("use_asset_markers", () => {
     await waitFor(() => expect(result.current.markers).toHaveLength(1));
 
     await act(async () =>
-      result.current.update_marker_tags("marker-a", ["关键帧"]),
+      result.current.update_marker("marker-a", {
+        start_seconds: 12,
+        end_seconds: 27,
+        title: "重点",
+        tags: ["关键帧"],
+      }),
     );
-    expect(update_marker).toHaveBeenCalledWith(ASSET_ID, "marker-a", [
-      "关键帧",
-    ]);
+    expect(update_marker).toHaveBeenCalledWith(ASSET_ID, "marker-a", {
+      start_seconds: 12,
+      end_seconds: 27,
+      title: "重点",
+      tags: ["关键帧"],
+    });
     expect(result.current.markers[0].tags).toEqual(["关键帧"]);
 
     await act(async () => result.current.remove_marker("marker-a"));
@@ -92,7 +113,9 @@ describe("use_asset_markers", () => {
         {
           marker_id: "marker-b",
           asset_id: "asset-b",
-          time_seconds: 8,
+          start_seconds: 8,
+          end_seconds: null,
+          title: "",
           tags: [],
         },
       ]);
@@ -108,7 +131,7 @@ describe("use_asset_markers", () => {
 
     return waitFor(() =>
       expect(
-        result.current.markers.map((marker) => marker.time_seconds),
+        result.current.markers.map((marker) => marker.start_seconds),
       ).toEqual([8]),
     );
   });

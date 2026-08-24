@@ -129,10 +129,15 @@ def _extract_event_frames(
     settings: Settings,
 ) -> list[Path]:
     duration = max(moment.end_seconds - moment.start_seconds, 0.1)
-    time_points = [
-        moment.start_seconds + duration * position
-        for position in FRAME_POSITIONS
+    contextual_time_points = [
+        moment.start_seconds + duration * position for position in FRAME_POSITIONS
     ]
+    marker_time_points = [
+        influence.anchor_seconds
+        for influence in moment.marker_influences
+        if moment.start_seconds <= influence.anchor_seconds <= moment.end_seconds
+    ]
+    time_points = list(dict.fromkeys((*contextual_time_points, *marker_time_points)))
     try:
         return extract_frames(
             media_path,
@@ -184,11 +189,24 @@ def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
             reverse=True,
         )[:3]
         emphasis = "、".join(topic for _, topic in weighted_topics)
+    marker_context = ""
+    if moment.marker_influences:
+        marker_lines = [
+            (
+                f"标记 {influence.anchor_seconds:.1f} 秒，"
+                f"有效向前 {influence.range_before_seconds:.1f} 秒、"
+                f"向后 {influence.range_after_seconds:.1f} 秒，"
+                f"本事件权重 {influence.event_weight:.2f}"
+            )
+            for influence in moment.marker_influences
+        ]
+        marker_context = "\n标记范围权重：" + "；".join(marker_lines)
     return (
         "你正在分析同一视频片段按时间排列的多张画面。"
         f"分析目标：{focus}。策略优先关注：{emphasis or '核心内容'}。"
         "请结合转写和画面，用中文输出一段可复习的详细笔记；"
         "区分视频明确表达的内容与合理推断，不得补造事实。"
+        f"{marker_context}"
         f"\n转写：{transcript or '该片段没有可用转写，请只依据画面。'}"
     )
 

@@ -124,7 +124,7 @@ import {
   list_summary_documents,
   reorder_summary_children,
   resolve_summary_proposal,
-  stream_summary_agent_run,
+  stream_agent_run,
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
@@ -145,8 +145,8 @@ import type {
   Transcript,
 } from "@/shared/types";
 import {
-  SummaryAgentToolTrace,
-  type SummaryAgentToolTraceData,
+  AgentToolTrace,
+  type AgentToolTraceData,
 } from "./SummaryAgentToolTrace";
 
 const AUTO_SAVE_DELAY_MS = 1_000;
@@ -675,7 +675,7 @@ export function SummaryWorkspace({
           selection,
         },
       );
-      await stream_summary_agent_run(run.run_id, (event) => {
+      await stream_agent_run<SummaryEditProposal>(run.run_id, (event) => {
         if (event.event === "status")
           set_agent_stage(status_label(event.data.stage));
         if (
@@ -1512,7 +1512,7 @@ type AgentDisplayMessage = {
 
 type AgentTimelineItem =
   | { type: "message"; created_at: string; message: AgentDisplayMessage }
-  | { type: "tool"; created_at: string; trace: SummaryAgentToolTraceData };
+  | { type: "tool"; created_at: string; trace: AgentToolTraceData };
 
 function optimistic_agent_event(
   session_id: string,
@@ -1565,7 +1565,7 @@ function agent_event_timeline(events: AgentEvent[]): AgentTimelineItem[] {
   const streaming_messages = new Map<string, AgentDisplayMessage>();
   const tool_traces = new Map<
     string,
-    { created_at: string; trace: SummaryAgentToolTraceData }
+    { created_at: string; trace: AgentToolTraceData }
   >();
   const timeline: AgentTimelineItem[] = [];
 
@@ -1824,7 +1824,7 @@ function SummaryAgentPanel({
               </div>
             </Message>
           ) : item.type === "tool" ? (
-            <SummaryAgentToolTrace
+            <AgentToolTrace
               key={item.trace.call_id}
               trace={item.trace}
             />

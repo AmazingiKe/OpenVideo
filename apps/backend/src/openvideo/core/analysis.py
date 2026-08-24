@@ -20,6 +20,17 @@ SPEECH_GAP_SECONDS = 8.0
 
 
 @dataclass(frozen=True)
+class MarkerInfluence:
+    """记录事件受单个标记影响的实际范围，让排序和 AI 提示共享同一依据。"""
+
+    marker_id: str
+    anchor_seconds: float
+    range_before_seconds: float
+    range_after_seconds: float
+    event_weight: float
+
+
+@dataclass(frozen=True)
 class TimelineMoment:
     """时间轴事件保留生成笔记所需的证据范围与用户意图。"""
 
@@ -31,6 +42,8 @@ class TimelineMoment:
     content_type: str = "core_concepts"
     priority: float = 0
     detailed: bool = True
+    marker_weight: float = 0
+    marker_influences: tuple[MarkerInfluence, ...] = ()
 
 
 def select_timeline_moments(
@@ -43,23 +56,19 @@ def select_timeline_moments(
 ) -> list[TimelineMoment]:
     """全片按内容边界建事件；标记模式只保留用户主动关注的上下文。"""
     resolved_strategy = strategy or AnalysisStrategy()
+    moments = _full_timeline_moments(transcript.segments, scene_boundaries or [])
+    moments = _attach_markers(
+        moments,
+        markers,
+        duration_seconds,
+        resolved_strategy,
+    )
     if mode == AnalysisMode.MARKERS:
         moments = _marker_moments(
-            transcript.segments,
-            markers,
-            duration_seconds,
-            scene_boundaries or [],
-            resolved_strategy.marker_context_seconds,
-        )
-    else:
-        moments = _full_timeline_moments(transcript.segments, scene_boundaries or [])
-        moments = _attach_markers(
             moments,
-            transcript.segments,
             markers,
             duration_seconds,
-            scene_boundaries or [],
-            resolved_strategy.marker_context_seconds,
+            resolved_strategy,
         )
     return prioritize_timeline_moments(moments, resolved_strategy)
 
@@ -99,8 +108,7 @@ def _score_moment(moment: TimelineMoment, strategy: AnalysisStrategy) -> Timelin
     if weights is None:
         raise ValueError("分析策略权重尚未解析")
     score = float(getattr(weights, content_type))
-    if moment.marker_ids:
-        score += weights.user_markers
+    score += weights.user_markers * moment.marker_weight
     if moment.tags:
         score += min(len(moment.tags) * 5, 20)
     return TimelineMoment(
@@ -163,127 +171,165 @@ def _starts_new_event(
 
 
 def _marker_moments(
-    transcript_segments: list[TranscriptSegment],
+    moments: list[TimelineMoment],
     markers: list[MediaMarker],
     duration_seconds: float | None,
-    scene_boundaries: list[float],
-    marker_context_seconds: float,
+    strategy: AnalysisStrategy,
 ) -> list[TimelineMoment]:
-    moments = [
-        _moment_around_marker(
-            transcript_segments,
-            marker,
-            duration_seconds,
-            scene_boundaries,
-            marker_context_seconds,
-        )
-        for marker in sorted(markers, key=lambda item: item.time_seconds)
-    ]
-    merged: list[TimelineMoment] = []
-    for moment in moments:
-        if merged and moment.start_seconds <= merged[-1].end_seconds:
-            merged[-1] = _merge_marker_moments(merged[-1], moment)
-        else:
-            merged.append(moment)
-    return merged
+    selected = [moment for moment in moments if moment.marker_influences]
+    represented_marker_ids = {
+        influence.marker_id
+        for moment in selected
+        for influence in moment.marker_influences
+    }
+    selected.extend(
+        _fallback_marker_moment(marker, duration_seconds, strategy)
+        for marker in markers
+        if marker.marker_id not in represented_marker_ids
+    )
+    return sorted(selected, key=lambda moment: moment.start_seconds)
 
 
-def _moment_around_marker(
-    transcript_segments: list[TranscriptSegment],
+def _fallback_marker_moment(
     marker: MediaMarker,
     duration_seconds: float | None,
-    scene_boundaries: list[float],
-    marker_context_seconds: float,
+    strategy: AnalysisStrategy,
 ) -> TimelineMoment:
-    requested_start = max(0.0, marker.time_seconds - marker_context_seconds)
-    requested_end = marker.time_seconds + marker_context_seconds
-    if duration_seconds is not None:
-        requested_end = min(requested_end, duration_seconds)
-    previous_boundaries = [
-        boundary
-        for boundary in scene_boundaries
-        if requested_start <= boundary <= marker.time_seconds
-    ]
-    next_boundaries = [
-        boundary
-        for boundary in scene_boundaries
-        if marker.time_seconds < boundary <= requested_end
-    ]
-    if previous_boundaries:
-        requested_start = max(previous_boundaries)
-    if next_boundaries:
-        requested_end = min(next_boundaries)
-    selected = [
-        segment
-        for segment in transcript_segments
-        if segment.end_seconds >= requested_start and segment.start_seconds <= requested_end
-    ]
-    if not selected:
-        return TimelineMoment(
-            start_seconds=requested_start,
-            end_seconds=max(requested_end, requested_start + 0.1),
-            transcript_text="",
-            marker_ids=(marker.marker_id,),
-            tags=tuple(dict.fromkeys(marker.tags)),
-        )
+    range_start, range_end, before_seconds, after_seconds = _resolved_marker_range(
+        marker, strategy, duration_seconds
+    )
+    if range_end <= range_start:
+        range_start = max(0.0, marker.start_seconds - 0.1)
+        range_end = max(marker.start_seconds, range_start + 0.1)
+    influence = MarkerInfluence(
+        marker_id=marker.marker_id,
+        anchor_seconds=marker.start_seconds,
+        range_before_seconds=before_seconds,
+        range_after_seconds=after_seconds,
+        event_weight=1,
+    )
     return TimelineMoment(
-        start_seconds=selected[0].start_seconds,
-        end_seconds=selected[-1].end_seconds,
-        transcript_text=_merge_text(selected),
+        start_seconds=range_start,
+        end_seconds=range_end,
+        transcript_text="",
         marker_ids=(marker.marker_id,),
         tags=tuple(dict.fromkeys(marker.tags)),
-    )
-
-
-def _merge_marker_moments(left: TimelineMoment, right: TimelineMoment) -> TimelineMoment:
-    texts = [text for text in (left.transcript_text, right.transcript_text) if text]
-    return TimelineMoment(
-        start_seconds=min(left.start_seconds, right.start_seconds),
-        end_seconds=max(left.end_seconds, right.end_seconds),
-        transcript_text=" ".join(dict.fromkeys(texts)),
-        marker_ids=tuple(dict.fromkeys((*left.marker_ids, *right.marker_ids))),
-        tags=tuple(dict.fromkeys((*left.tags, *right.tags))),
+        marker_weight=1,
+        marker_influences=(influence,),
     )
 
 
 def _attach_markers(
     moments: list[TimelineMoment],
-    transcript_segments: list[TranscriptSegment],
     markers: list[MediaMarker],
     duration_seconds: float | None,
-    scene_boundaries: list[float],
-    marker_context_seconds: float,
+    strategy: AnalysisStrategy,
 ) -> list[TimelineMoment]:
-    resolved = list(moments)
-    for marker in markers:
-        matching_index = next(
-            (
-                index
-                for index, moment in enumerate(resolved)
-                if moment.start_seconds <= marker.time_seconds <= moment.end_seconds
-            ),
-            None,
-        )
-        if matching_index is None:
-            resolved.append(
-                _moment_around_marker(
-                    transcript_segments,
-                    marker,
-                    duration_seconds,
-                    scene_boundaries,
-                    marker_context_seconds,
+    resolved: list[TimelineMoment] = []
+    for moment in moments:
+        influences = tuple(
+            influence
+            for marker in markers
+            if (
+                influence := _marker_influence_for_moment(
+                    moment, marker, strategy, duration_seconds
                 )
             )
-            continue
-        moment = resolved[matching_index]
-        resolved[matching_index] = TimelineMoment(
-            **{
-                **moment.__dict__,
-                "marker_ids": tuple(dict.fromkeys((*moment.marker_ids, marker.marker_id))),
-                "tags": tuple(dict.fromkeys((*moment.tags, *marker.tags))),
-            }
+            is not None
         )
-    return sorted(resolved, key=lambda moment: moment.start_seconds)
+        marker_ids = tuple(influence.marker_id for influence in influences)
+        influencing_ids = set(marker_ids)
+        tags = tuple(
+            dict.fromkeys(
+                tag
+                for marker in markers
+                if marker.marker_id in influencing_ids
+                for tag in marker.tags
+            )
+        )
+        resolved.append(
+            TimelineMoment(
+                **{
+                    **moment.__dict__,
+                    "marker_ids": marker_ids,
+                    "tags": tags,
+                    "marker_weight": max(
+                        (influence.event_weight for influence in influences),
+                        default=0,
+                    ),
+                    "marker_influences": influences,
+                }
+            )
+        )
+    return resolved
+
+
+def _marker_influence_for_moment(
+    moment: TimelineMoment,
+    marker: MediaMarker,
+    strategy: AnalysisStrategy,
+    duration_seconds: float | None,
+) -> MarkerInfluence | None:
+    range_start, range_end, before_seconds, after_seconds = _resolved_marker_range(
+        marker, strategy, duration_seconds
+    )
+    anchor_seconds = (
+        marker.start_seconds
+        if marker.end_seconds is None
+        else (marker.start_seconds + marker.end_seconds) / 2
+    )
+    contains_marker = moment.start_seconds <= anchor_seconds <= moment.end_seconds
+    overlaps_range = moment.end_seconds > range_start and moment.start_seconds < range_end
+    if not contains_marker and not overlaps_range:
+        return None
+    if contains_marker:
+        event_weight = 1.0
+    elif moment.end_seconds < anchor_seconds:
+        event_weight = max(
+            0.0,
+            1 - (anchor_seconds - moment.end_seconds) / max(before_seconds, 0.1),
+        )
+    else:
+        event_weight = max(
+            0.0,
+            1 - (moment.start_seconds - anchor_seconds) / max(after_seconds, 0.1),
+        )
+    if event_weight <= 0:
+        return None
+    return MarkerInfluence(
+        marker_id=marker.marker_id,
+        anchor_seconds=anchor_seconds,
+        range_before_seconds=before_seconds,
+        range_after_seconds=after_seconds,
+        event_weight=event_weight,
+    )
+
+
+def _resolved_marker_range(
+    marker: MediaMarker,
+    strategy: AnalysisStrategy,
+    duration_seconds: float | None,
+) -> tuple[float, float, float, float]:
+    if marker.end_seconds is not None:
+        anchor_seconds = (marker.start_seconds + marker.end_seconds) / 2
+        return (
+            marker.start_seconds,
+            marker.end_seconds,
+            anchor_seconds - marker.start_seconds,
+            marker.end_seconds - anchor_seconds,
+        )
+    requested_before = strategy.marker_range_before_seconds
+    requested_after = strategy.marker_range_after_seconds
+    range_start = max(0.0, marker.start_seconds - requested_before)
+    range_end = marker.start_seconds + requested_after
+    if duration_seconds is not None:
+        range_end = min(range_end, duration_seconds)
+    return (
+        range_start,
+        range_end,
+        marker.start_seconds - range_start,
+        max(0.0, range_end - marker.start_seconds),
+    )
 
 
 def _moment_from_segments(segments: list[TranscriptSegment]) -> TimelineMoment:

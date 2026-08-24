@@ -4,6 +4,8 @@ import {
   analyze_asset,
   ApiError,
   create_transcript_correction,
+  create_marker_agent_message,
+  create_marker_agent_session,
   create_marker,
   create_download,
   create_download_account_login_session,
@@ -15,9 +17,11 @@ import {
   get_transcription_model_download,
   get_markers_page_settings,
   import_download_account_from_browser,
+  list_marker_agent_sessions,
   list_transcription_models,
   media_url,
   probe_source,
+  resolve_marker_proposal,
   save_download_account,
   respond_to_agent_job,
   select_directory,
@@ -111,9 +115,11 @@ describe("api client", () => {
   it("loads and saves markers page settings", async () => {
     const settings = {
       asset_library_size_percent: 14,
+      agent_panel_size_percent: 24,
       asset_library_collapsed: false,
       tool_panel_size_percent: 16,
       tool_panel_collapsed: false,
+      left_panel_tab: "video" as const,
       open_tool_sections: ["video_information" as const],
     };
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
@@ -376,7 +382,8 @@ describe("api client", () => {
               user_markers: 100,
             },
             depth: "balanced",
-            marker_context_seconds: 30,
+            marker_range_before_seconds: 10,
+            marker_range_after_seconds: 20,
           },
           force: true,
         }),
@@ -486,7 +493,9 @@ describe("api client", () => {
     const marker = {
       marker_id: "marker-0123456789abcdef0123456789abcdef",
       asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
-      time_seconds: 12.5,
+      start_seconds: 12.5,
+      end_seconds: null,
+      title: "重点",
       tags: ["重点"],
     };
     const fetch_mock = vi
@@ -501,10 +510,20 @@ describe("api client", () => {
       );
 
     await expect(
-      create_marker(marker.asset_id, marker.time_seconds, marker.tags),
+      create_marker(marker.asset_id, {
+        start_seconds: marker.start_seconds,
+        end_seconds: marker.end_seconds,
+        title: marker.title,
+        tags: marker.tags,
+      }),
     ).resolves.toEqual(marker);
     await expect(
-      update_marker(marker.asset_id, marker.marker_id, ["关键帧"]),
+      update_marker(marker.asset_id, marker.marker_id, {
+        start_seconds: marker.start_seconds,
+        end_seconds: 27.5,
+        title: "关键帧",
+        tags: ["关键帧"],
+      }),
     ).resolves.toEqual({
       ...marker,
       tags: ["关键帧"],
@@ -515,7 +534,12 @@ describe("api client", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ time_seconds: 12.5, tags: ["重点"] }),
+        body: JSON.stringify({
+          start_seconds: 12.5,
+          end_seconds: null,
+          title: "重点",
+          tags: ["重点"],
+        }),
         signal: undefined,
       },
     );
@@ -525,9 +549,73 @@ describe("api client", () => {
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: ["关键帧"] }),
+        body: JSON.stringify({
+          start_seconds: 12.5,
+          end_seconds: 27.5,
+          title: "关键帧",
+          tags: ["关键帧"],
+        }),
         signal: undefined,
       },
+    );
+  });
+
+  it("creates marker Agent sessions, messages, and batch resolutions", async () => {
+    const asset_id = "asset-01890f4c7a2b7cc298c4dc0c0c07398f";
+    const session_id = "session-01890f4c7a2b7cc298c4dc0c0c07398f";
+    const proposal_id = "proposal-01890f4c7a2b7cc298c4dc0c0c07398f";
+    const session = {
+      session: { session_id, agent_type: "marker", title: "标记" },
+      asset_id,
+      events: [],
+      proposals: [],
+    };
+    const run = { run_id: "run-01890f4c7a2b7cc298c4dc0c0c07398f" };
+    const proposal = { proposal_id, status: "accepted" };
+    const fetch_mock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify([session])))
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(run)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(proposal)));
+
+    await list_marker_agent_sessions(asset_id);
+    await create_marker_agent_session(asset_id);
+    await create_marker_agent_message(session_id, {
+      content: "只看字幕，找出结论",
+      ai_model_id: "model-01890f4c7a2b7cc298c4dc0c0c07398f",
+      retrieval_mode: "transcript",
+    });
+    await resolve_marker_proposal(proposal_id, "accept");
+
+    expect(fetch_mock).toHaveBeenNthCalledWith(
+      1,
+      `/api/media/assets/${asset_id}/marker-agent-sessions`,
+      { signal: undefined },
+    );
+    expect(fetch_mock).toHaveBeenNthCalledWith(
+      2,
+      `/api/media/assets/${asset_id}/marker-agent-sessions`,
+      { method: "POST", signal: undefined },
+    );
+    expect(fetch_mock).toHaveBeenNthCalledWith(
+      3,
+      `/api/marker-agent-sessions/${session_id}/messages`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: "只看字幕，找出结论",
+          ai_model_id: "model-01890f4c7a2b7cc298c4dc0c0c07398f",
+          retrieval_mode: "transcript",
+        }),
+        signal: undefined,
+      },
+    );
+    expect(fetch_mock).toHaveBeenNthCalledWith(
+      4,
+      `/api/marker-proposals/${proposal_id}/accept`,
+      { method: "POST", signal: undefined },
     );
   });
 });

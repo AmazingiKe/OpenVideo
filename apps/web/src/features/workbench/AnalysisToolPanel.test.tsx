@@ -1,7 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisToolPanel } from "./AnalysisToolPanel";
+import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
   AnalysisMode,
   AnalysisToolSection,
@@ -17,13 +19,17 @@ const MARKERS: MediaMarker[] = [
   {
     marker_id: "marker-0123456789abcdef0123456789abcdef",
     asset_id: ASSET_ID,
-    time_seconds: 30,
+    start_seconds: 30,
+    end_seconds: null,
+    title: "公式",
     tags: ["公式"],
   },
   {
     marker_id: "marker-1123456789abcdef0123456789abcdef",
     asset_id: ASSET_ID,
-    time_seconds: 90,
+    start_seconds: 90,
+    end_seconds: null,
+    title: "疑问",
     tags: ["疑问"],
   },
 ];
@@ -156,6 +162,8 @@ describe("AnalysisToolPanel", () => {
         on_transcription_model_change={vi.fn()}
         is_analyzing={false}
         ai_models={AI_MODELS}
+        analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
+        set_analysis_strategy={vi.fn()}
         on_start_analysis={vi.fn()}
         selected_transcript_count={0}
         active_correction_scope={null}
@@ -256,30 +264,38 @@ function render_panel(
     transcription_models?: TranscriptionModelDescriptor[];
   } = {},
 ) {
-  return render(
-    <AnalysisToolPanel
-      asset={create_asset()}
-      markers={MARKERS}
-      has_transcript={options.has_transcript ?? true}
-      is_transcribing={false}
-      on_start_transcription={options.start_transcription ?? vi.fn()}
-      transcription_models={
-        options.transcription_models ?? TRANSCRIPTION_MODELS
-      }
-      default_transcription={DEFAULT_TRANSCRIPTION}
-      on_transcription_model_change={vi.fn()}
-      is_analyzing={false}
-      ai_models={AI_MODELS}
-      on_start_analysis={options.start_analysis ?? vi.fn()}
-      selected_transcript_count={options.selected_transcript_count ?? 0}
-      active_correction_scope={null}
-      correction_agent_job={null}
-      on_start_correction_agent={options.start_correction_agent ?? vi.fn()}
-      on_agent_response={vi.fn()}
-      open_sections={open_sections}
-      on_open_sections_change={options.change_sections ?? vi.fn()}
-    />,
-  );
+  function AnalysisToolPanelHarness() {
+    const [analysis_strategy, set_analysis_strategy] = useState(
+      structuredClone(DEFAULT_ANALYSIS_STRATEGY),
+    );
+    return (
+      <AnalysisToolPanel
+        asset={create_asset()}
+        markers={MARKERS}
+        has_transcript={options.has_transcript ?? true}
+        is_transcribing={false}
+        on_start_transcription={options.start_transcription ?? vi.fn()}
+        transcription_models={
+          options.transcription_models ?? TRANSCRIPTION_MODELS
+        }
+        default_transcription={DEFAULT_TRANSCRIPTION}
+        on_transcription_model_change={vi.fn()}
+        is_analyzing={false}
+        ai_models={AI_MODELS}
+        analysis_strategy={analysis_strategy}
+        set_analysis_strategy={set_analysis_strategy}
+        on_start_analysis={options.start_analysis ?? vi.fn()}
+        selected_transcript_count={options.selected_transcript_count ?? 0}
+        active_correction_scope={null}
+        correction_agent_job={null}
+        on_start_correction_agent={options.start_correction_agent ?? vi.fn()}
+        on_agent_response={vi.fn()}
+        open_sections={open_sections}
+        on_open_sections_change={options.change_sections ?? vi.fn()}
+      />
+    );
+  }
+  return render(<AnalysisToolPanelHarness />);
 }
 
 function create_asset(): MediaAsset {

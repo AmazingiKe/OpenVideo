@@ -50,6 +50,7 @@ from openvideo.core.media_models import (
     ThumbnailStoryboardResponse,
     ThumbnailStoryboardTile,
 )
+from openvideo.core.marker_agent_models import MarkerProposal
 from openvideo.core.transcription_models import Transcript, TranscriptionMetadata
 from openvideo.core.summary_files import load_manifest, read_markdown, write_manifest
 from openvideo.core.summary_models import (
@@ -215,40 +216,52 @@ class MediaLibrary:
 
     def get(self, asset_id: str) -> MediaAsset | None:
         self._validate_asset_id(asset_id)
-        row = self._db().execute(
-            "SELECT * FROM assets WHERE asset_id = ?", (asset_id,)
-        ).fetchone()
+        row = (
+            self._db()
+            .execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,))
+            .fetchone()
+        )
         return MediaAsset.model_validate(dict(row)) if row else None
 
     def list(self) -> list[MediaAsset]:
-        rows = self._db().execute(
-            "SELECT * FROM assets ORDER BY created_at DESC"
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute("SELECT * FROM assets ORDER BY created_at DESC")
+            .fetchall()
+        )
         return [MediaAsset.model_validate(dict(row)) for row in rows]
 
     def find_by_source_video_id(
         self, platform: SourcePlatform, source_video_id: str
     ) -> MediaAsset | None:
-        row = self._db().execute(
-            "SELECT * FROM assets WHERE source_platform = ? "
-            "AND source_video_id = ? COLLATE NOCASE",
-            (platform.value, source_video_id),
-        ).fetchone()
+        row = (
+            self._db()
+            .execute(
+                "SELECT * FROM assets WHERE source_platform = ? "
+                "AND source_video_id = ? COLLATE NOCASE",
+                (platform.value, source_video_id),
+            )
+            .fetchone()
+        )
         return MediaAsset.model_validate(dict(row)) if row else None
 
     def save_download_job(self, job: DownloadJob) -> None:
         self._upsert_runtime_model("download_jobs", job.model_dump(mode="json"))
 
     def get_download_job(self, job_id: str) -> DownloadJob | None:
-        row = self._db().execute(
-            "SELECT * FROM download_jobs WHERE job_id = ?", (job_id,)
-        ).fetchone()
+        row = (
+            self._db()
+            .execute("SELECT * FROM download_jobs WHERE job_id = ?", (job_id,))
+            .fetchone()
+        )
         return DownloadJob.model_validate(dict(row)) if row else None
 
     def list_download_jobs(self) -> list[DownloadJob]:
-        rows = self._db().execute(
-            "SELECT * FROM download_jobs ORDER BY created_at DESC"
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute("SELECT * FROM download_jobs ORDER BY created_at DESC")
+            .fetchall()
+        )
         return [DownloadJob.model_validate(dict(row)) for row in rows]
 
     def asset_directory(self, asset_id: str) -> Path:
@@ -359,7 +372,9 @@ class MediaLibrary:
         return self._load_optional_model(input_path, TranscriptionMetadata, asset_id)
 
     def load_transcript(self, asset_id: str) -> Transcript | None:
-        return self._load_optional_model(self._transcript_path(asset_id), Transcript, asset_id)
+        return self._load_optional_model(
+            self._transcript_path(asset_id), Transcript, asset_id
+        )
 
     def save_segments(self, asset_id: str, segments: list[MediaSegment]) -> None:
         self._validate_asset_id(asset_id)
@@ -372,10 +387,14 @@ class MediaLibrary:
             synchronize_asset(self._db(), self.assets_path, asset_id)
 
     def load_segments(self, asset_id: str) -> list[MediaSegment]:
-        rows = self._db().execute(
-            "SELECT * FROM timeline_segments WHERE asset_id = ? ORDER BY position",
-            (asset_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM timeline_segments WHERE asset_id = ? ORDER BY position",
+                (asset_id,),
+            )
+            .fetchall()
+        )
         segments: list[MediaSegment] = []
         for row in rows:
             segment_id = row["segment_id"]
@@ -383,13 +402,21 @@ class MediaLibrary:
             values.pop("position")
             values.update(
                 key_frame_paths=self._relation_values(
-                    "segment_frames", "relative_path", "segment_id", segment_id, "position"
+                    "segment_frames",
+                    "relative_path",
+                    "segment_id",
+                    segment_id,
+                    "position",
                 ),
                 tags=self._relation_values(
                     "segment_tags", "tag_name", "segment_id", segment_id, "tag_name"
                 ),
                 marker_ids=self._relation_values(
-                    "segment_markers", "marker_id", "segment_id", segment_id, "marker_id"
+                    "segment_markers",
+                    "marker_id",
+                    "segment_id",
+                    segment_id,
+                    "marker_id",
                 ),
             )
             segments.append(MediaSegment.model_validate(values))
@@ -411,7 +438,10 @@ class MediaLibrary:
             )
             self._db().executemany(
                 "INSERT INTO analysis_job_capabilities(job_id, capability) VALUES (?, ?)",
-                [(job.job_id, value.value) for value in dict.fromkeys(job.capabilities)],
+                [
+                    (job.job_id, value.value)
+                    for value in dict.fromkeys(job.capabilities)
+                ],
             )
 
     @property
@@ -424,46 +454,70 @@ class MediaLibrary:
 
     def load_agent_job(self, job_id: str) -> AgentJob | None:
         self._validate_identifier(job_id, "agent")
-        row = self._db().execute(
-            "SELECT * FROM agent_jobs WHERE job_id = ?", (job_id,)
-        ).fetchone()
+        row = (
+            self._db()
+            .execute("SELECT * FROM agent_jobs WHERE job_id = ?", (job_id,))
+            .fetchone()
+        )
         return _agent_job_from_row(row) if row else None
 
     def load_agent_jobs(self, asset_id: str | None = None) -> list[AgentJob]:
         if asset_id is None:
-            rows = self._db().execute(
-                "SELECT * FROM agent_jobs ORDER BY created_at DESC"
-            ).fetchall()
+            rows = (
+                self._db()
+                .execute("SELECT * FROM agent_jobs ORDER BY created_at DESC")
+                .fetchall()
+            )
         else:
             self._validate_asset_id(asset_id)
-            rows = self._db().execute(
-                "SELECT * FROM agent_jobs WHERE asset_id = ? ORDER BY created_at DESC",
-                (asset_id,),
-            ).fetchall()
+            rows = (
+                self._db()
+                .execute(
+                    "SELECT * FROM agent_jobs WHERE asset_id = ? ORDER BY created_at DESC",
+                    (asset_id,),
+                )
+                .fetchall()
+            )
         return [_agent_job_from_row(row) for row in rows]
 
     def load_analysis_jobs(self) -> list[AnalysisJob]:
-        rows = self._db().execute("SELECT * FROM analysis_jobs ORDER BY created_at").fetchall()
+        rows = (
+            self._db()
+            .execute("SELECT * FROM analysis_jobs ORDER BY created_at")
+            .fetchall()
+        )
         jobs: list[AnalysisJob] = []
         for row in rows:
             values = dict(row)
             values["strategy"] = json.loads(values["strategy"])
             values["marker_ids"] = self._relation_values(
-                "analysis_job_markers", "marker_id", "job_id", row["job_id"], "marker_id"
+                "analysis_job_markers",
+                "marker_id",
+                "job_id",
+                row["job_id"],
+                "marker_id",
             )
             values["capabilities"] = self._relation_values(
-                "analysis_job_capabilities", "capability", "job_id", row["job_id"], "capability"
+                "analysis_job_capabilities",
+                "capability",
+                "job_id",
+                row["job_id"],
+                "capability",
             )
             jobs.append(AnalysisJob.model_validate(values))
         return jobs
 
     def load_markers(self, asset_id: str) -> list[MediaMarker]:
         self._validate_asset_id(asset_id)
-        rows = self._db().execute(
-            "SELECT marker_id, asset_id, time_seconds FROM markers "
-            "WHERE asset_id = ? ORDER BY time_seconds",
-            (asset_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT marker_id, asset_id, start_seconds, end_seconds, title FROM markers "
+                "WHERE asset_id = ? ORDER BY start_seconds",
+                (asset_id,),
+            )
+            .fetchall()
+        )
         return [
             MediaMarker(
                 **dict(row),
@@ -485,20 +539,74 @@ class MediaLibrary:
         self._write_markers(marker.asset_id, markers)
         return marker.model_copy(deep=True)
 
-    def update_marker_tags(
-        self, asset_id: str, marker_id: str, tags: list[str]
+    def update_marker(
+        self,
+        asset_id: str,
+        marker_id: str,
+        *,
+        start_seconds: float,
+        end_seconds: float | None,
+        title: str,
+        tags: list[str],
     ) -> MediaMarker | None:
         self._validate_identifier(marker_id, "marker")
         markers = self.load_markers(asset_id)
         marker = next((item for item in markers if item.marker_id == marker_id), None)
         if marker is None:
             return None
-        updated = marker.model_copy(update={"tags": list(dict.fromkeys(tags))})
+        updated = MediaMarker.model_validate(
+            {
+                **marker.model_dump(),
+                "start_seconds": start_seconds,
+                "end_seconds": end_seconds,
+                "title": title,
+                "tags": tags,
+            }
+        )
         self._write_markers(
             asset_id,
             [updated if item.marker_id == marker_id else item for item in markers],
         )
         return updated
+
+    def replace_markers_and_segments(
+        self,
+        asset_id: str,
+        markers: list[MediaMarker],
+        segments: list[MediaSegment],
+    ) -> None:
+        """审批批次同时改写标记和事件引用，任一步失败都恢复原业务文件。"""
+        self._validate_asset_id(asset_id)
+        if any(marker.asset_id != asset_id for marker in markers):
+            raise ValueError("标记不属于同一个媒体素材")
+        if any(segment.asset_id != asset_id for segment in segments):
+            raise ValueError("时间轴事件不属于同一个媒体素材")
+        original_markers = self.load_markers(asset_id)
+        original_segments = self.load_segments(asset_id)
+        marker_path = self.asset_directory(asset_id) / MARKERS_FILE_NAME
+        timeline_path = self.artifacts_directory(asset_id) / TIMELINE_FILE_NAME
+        with self._lock:
+            try:
+                atomic_write_model(
+                    marker_path,
+                    MarkersFile(asset_id=asset_id, markers=markers),
+                )
+                atomic_write_model(
+                    timeline_path,
+                    TimelineFile(asset_id=asset_id, segments=segments),
+                )
+                synchronize_asset(self._db(), self.assets_path, asset_id)
+            except Exception:
+                atomic_write_model(
+                    marker_path,
+                    MarkersFile(asset_id=asset_id, markers=original_markers),
+                )
+                atomic_write_model(
+                    timeline_path,
+                    TimelineFile(asset_id=asset_id, segments=original_segments),
+                )
+                synchronize_asset(self._db(), self.assets_path, asset_id)
+                raise
 
     def delete_marker(self, asset_id: str, marker_id: str) -> bool:
         self._validate_identifier(marker_id, "marker")
@@ -524,25 +632,35 @@ class MediaLibrary:
             self._validate_identifier(document.document_id, "document")
         asset_id = next(iter(asset_ids))
         synchronize_asset(self._db(), self.assets_path, asset_id)
-        loaded = {item.document_id: item for item in self.load_summary_documents(asset_id)}
+        loaded = {
+            item.document_id: item for item in self.load_summary_documents(asset_id)
+        }
         if any(document.document_id not in loaded for document in documents):
             raise ValueError("总结 manifest 未包含全部新文档")
         return [loaded[document.document_id] for document in documents]
 
     def load_summary_document(self, document_id: str) -> SummaryDocument | None:
         self._validate_identifier(document_id, "document")
-        row = self._db().execute(
-            "SELECT * FROM summary_documents WHERE document_id = ?", (document_id,)
-        ).fetchone()
+        row = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_documents WHERE document_id = ?", (document_id,)
+            )
+            .fetchone()
+        )
         return self._summary_document_from_row(row) if row else None
 
     def load_summary_documents(self, asset_id: str) -> list[SummaryDocument]:
         self._validate_asset_id(asset_id)
-        rows = self._db().execute(
-            "SELECT * FROM summary_documents WHERE asset_id = ? "
-            "ORDER BY parent_document_id IS NOT NULL, position, created_at",
-            (asset_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_documents WHERE asset_id = ? "
+                "ORDER BY parent_document_id IS NOT NULL, position, created_at",
+                (asset_id,),
+            )
+            .fetchall()
+        )
         return [self._summary_document_from_row(row) for row in rows]
 
     def update_summary_document(
@@ -597,21 +715,29 @@ class MediaLibrary:
             synchronize_asset(self._db(), self.assets_path, conversation.asset_id)
 
     def load_summary_conversations(self, asset_id: str) -> list[SummaryConversation]:
-        rows = self._db().execute(
-            "SELECT * FROM summary_conversations WHERE asset_id = ? "
-            "ORDER BY updated_at DESC, created_at DESC",
-            (asset_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_conversations WHERE asset_id = ? "
+                "ORDER BY updated_at DESC, created_at DESC",
+                (asset_id,),
+            )
+            .fetchall()
+        )
         return [SummaryConversation.model_validate(dict(row)) for row in rows]
 
     def load_summary_conversation_by_id(
         self, conversation_id: str
     ) -> SummaryConversation | None:
         self._validate_identifier(conversation_id, "conversation")
-        row = self._db().execute(
-            "SELECT * FROM summary_conversations WHERE conversation_id = ?",
-            (conversation_id,),
-        ).fetchone()
+        row = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            .fetchone()
+        )
         return SummaryConversation.model_validate(dict(row)) if row else None
 
     def update_summary_conversation_title(
@@ -621,8 +747,12 @@ class MediaLibrary:
         if conversation is None:
             return None
         record = self._load_conversation_file(conversation)
-        updated = conversation.model_copy(update={"title": title, "updated_at": updated_at})
-        self._write_conversation_file(record.model_copy(update={"conversation": updated}))
+        updated = conversation.model_copy(
+            update={"title": title, "updated_at": updated_at}
+        )
+        self._write_conversation_file(
+            record.model_copy(update={"conversation": updated})
+        )
         return updated
 
     def delete_summary_conversation(self, conversation_id: str) -> bool:
@@ -658,10 +788,14 @@ class MediaLibrary:
         )
 
     def load_summary_messages(self, conversation_id: str) -> list[SummaryMessage]:
-        rows = self._db().execute(
-            "SELECT * FROM summary_messages WHERE conversation_id = ? ORDER BY created_at",
-            (conversation_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_messages WHERE conversation_id = ? ORDER BY created_at",
+                (conversation_id,),
+            )
+            .fetchall()
+        )
         return [SummaryMessage.model_validate(dict(row)) for row in rows]
 
     def save_summary_proposal(self, proposal: SummaryEditProposal) -> None:
@@ -674,17 +808,23 @@ class MediaLibrary:
             proposal if item.proposal_id == proposal.proposal_id else item
             for item in record.proposals
         ]
-        if not any(item.proposal_id == proposal.proposal_id for item in record.proposals):
+        if not any(
+            item.proposal_id == proposal.proposal_id for item in record.proposals
+        ):
             proposals.append(proposal)
-        self._write_conversation_file(record.model_copy(update={"proposals": proposals}))
+        self._write_conversation_file(
+            record.model_copy(update={"proposals": proposals})
+        )
 
-    def load_summary_proposal(
-        self, proposal_id: str
-    ) -> SummaryEditProposal | None:
+    def load_summary_proposal(self, proposal_id: str) -> SummaryEditProposal | None:
         self._validate_identifier(proposal_id, "proposal")
-        row = self._db().execute(
-            "SELECT * FROM summary_proposals WHERE proposal_id = ?", (proposal_id,)
-        ).fetchone()
+        row = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_proposals WHERE proposal_id = ?", (proposal_id,)
+            )
+            .fetchone()
+        )
         if row is None:
             return None
         values = dict(row)
@@ -692,14 +832,16 @@ class MediaLibrary:
         values["media_suggestions"] = json.loads(values["media_suggestions"])
         return SummaryEditProposal.model_validate(values)
 
-    def load_summary_proposals(
-        self, conversation_id: str
-    ) -> list[SummaryEditProposal]:
-        rows = self._db().execute(
-            "SELECT proposal_id FROM summary_proposals WHERE conversation_id = ? "
-            "ORDER BY created_at",
-            (conversation_id,),
-        ).fetchall()
+    def load_summary_proposals(self, conversation_id: str) -> list[SummaryEditProposal]:
+        rows = (
+            self._db()
+            .execute(
+                "SELECT proposal_id FROM summary_proposals WHERE conversation_id = ? "
+                "ORDER BY created_at",
+                (conversation_id,),
+            )
+            .fetchall()
+        )
         return [
             proposal
             for row in rows
@@ -712,15 +854,19 @@ class MediaLibrary:
 
     def load_summary_agent_run(self, run_id: str) -> SummaryAgentRun | None:
         self._validate_identifier(run_id, "run")
-        row = self._db().execute(
-            "SELECT * FROM summary_agent_runs WHERE run_id = ?", (run_id,)
-        ).fetchone()
+        row = (
+            self._db()
+            .execute("SELECT * FROM summary_agent_runs WHERE run_id = ?", (run_id,))
+            .fetchone()
+        )
         return SummaryAgentRun.model_validate(dict(row)) if row else None
 
     def load_summary_agent_runs(self) -> list[SummaryAgentRun]:
-        rows = self._db().execute(
-            "SELECT * FROM summary_agent_runs ORDER BY created_at"
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute("SELECT * FROM summary_agent_runs ORDER BY created_at")
+            .fetchall()
+        )
         return [SummaryAgentRun.model_validate(dict(row)) for row in rows]
 
     def save_agent_session(self, session: AgentSession) -> None:
@@ -729,9 +875,11 @@ class MediaLibrary:
 
     def load_agent_session(self, session_id: str) -> AgentSession | None:
         self._validate_identifier(session_id, "session")
-        row = self._db().execute(
-            "SELECT * FROM agent_sessions WHERE session_id = ?", (session_id,)
-        ).fetchone()
+        row = (
+            self._db()
+            .execute("SELECT * FROM agent_sessions WHERE session_id = ?", (session_id,))
+            .fetchone()
+        )
         return AgentSession.model_validate(dict(row)) if row else None
 
     def save_summary_agent_session(
@@ -748,25 +896,69 @@ class MediaLibrary:
 
     def load_summary_agent_sessions(self, asset_id: str) -> list[AgentSession]:
         self._validate_asset_id(asset_id)
-        rows = self._db().execute(
-            "SELECT sessions.* FROM agent_sessions AS sessions "
-            "JOIN summary_agent_sessions AS summary "
-            "ON summary.session_id = sessions.session_id "
-            "WHERE summary.asset_id = ? ORDER BY sessions.updated_at DESC",
-            (asset_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT sessions.* FROM agent_sessions AS sessions "
+                "JOIN summary_agent_sessions AS summary "
+                "ON summary.session_id = sessions.session_id "
+                "WHERE summary.asset_id = ? ORDER BY sessions.updated_at DESC",
+                (asset_id,),
+            )
+            .fetchall()
+        )
         return [AgentSession.model_validate(dict(row)) for row in rows]
 
     def load_summary_agent_session_binding(
         self, session_id: str
     ) -> tuple[str, str] | None:
         self._validate_identifier(session_id, "session")
-        row = self._db().execute(
-            "SELECT asset_id, root_document_id FROM summary_agent_sessions "
-            "WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
+        row = (
+            self._db()
+            .execute(
+                "SELECT asset_id, root_document_id FROM summary_agent_sessions "
+                "WHERE session_id = ?",
+                (session_id,),
+            )
+            .fetchone()
+        )
         return (row["asset_id"], row["root_document_id"]) if row else None
+
+    def save_marker_agent_session(self, session: AgentSession, asset_id: str) -> None:
+        self.save_agent_session(session)
+        with self._lock, self._db():
+            self._db().execute(
+                "INSERT INTO marker_agent_sessions(session_id, asset_id) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET asset_id=excluded.asset_id",
+                (session.session_id, asset_id),
+            )
+
+    def load_marker_agent_sessions(self, asset_id: str) -> list[AgentSession]:
+        self._validate_asset_id(asset_id)
+        rows = (
+            self._db()
+            .execute(
+                "SELECT sessions.* FROM agent_sessions AS sessions "
+                "JOIN marker_agent_sessions AS marker_agent "
+                "ON marker_agent.session_id = sessions.session_id "
+                "WHERE marker_agent.asset_id = ? ORDER BY sessions.updated_at DESC",
+                (asset_id,),
+            )
+            .fetchall()
+        )
+        return [AgentSession.model_validate(dict(row)) for row in rows]
+
+    def load_marker_agent_session_binding(self, session_id: str) -> str | None:
+        self._validate_identifier(session_id, "session")
+        row = (
+            self._db()
+            .execute(
+                "SELECT asset_id FROM marker_agent_sessions WHERE session_id = ?",
+                (session_id,),
+            )
+            .fetchone()
+        )
+        return row["asset_id"] if row else None
 
     def delete_agent_session(self, session_id: str) -> bool:
         self._validate_identifier(session_id, "session")
@@ -782,15 +974,19 @@ class MediaLibrary:
 
     def load_agent_run(self, run_id: str) -> AgentRun | None:
         self._validate_identifier(run_id, "run")
-        row = self._db().execute(
-            "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
-        ).fetchone()
+        row = (
+            self._db()
+            .execute("SELECT * FROM agent_runs WHERE run_id = ?", (run_id,))
+            .fetchone()
+        )
         return AgentRun.model_validate(dict(row)) if row else None
 
     def load_agent_runs(self) -> list[AgentRun]:
-        rows = self._db().execute(
-            "SELECT * FROM agent_runs ORDER BY created_at"
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute("SELECT * FROM agent_runs ORDER BY created_at")
+            .fetchall()
+        )
         return [AgentRun.model_validate(dict(row)) for row in rows]
 
     def append_agent_event(
@@ -804,11 +1000,15 @@ class MediaLibrary:
         if run_id is not None:
             self._validate_identifier(run_id, "run")
         with self._lock, self._db():
-            sequence = self._db().execute(
-                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_events "
-                "WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()[0]
+            sequence = (
+                self._db()
+                .execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_events "
+                    "WHERE session_id = ?",
+                    (session_id,),
+                )
+                .fetchone()[0]
+            )
             event = AgentEvent(
                 event_id=f"event-{uuid7().hex}",
                 session_id=session_id,
@@ -835,11 +1035,15 @@ class MediaLibrary:
         self, session_id: str, *, after_sequence: int = 0
     ) -> list[AgentEvent]:
         self._validate_identifier(session_id, "session")
-        rows = self._db().execute(
-            "SELECT * FROM agent_events WHERE session_id = ? AND sequence > ? "
-            "ORDER BY sequence",
-            (session_id, after_sequence),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM agent_events WHERE session_id = ? AND sequence > ? "
+                "ORDER BY sequence",
+                (session_id, after_sequence),
+            )
+            .fetchall()
+        )
         events: list[AgentEvent] = []
         for row in rows:
             values = dict(row)
@@ -850,9 +1054,11 @@ class MediaLibrary:
     def interrupt_agent_runs(self) -> None:
         now = datetime.now(UTC)
         active_stages = (AgentRunStage.PENDING.value, AgentRunStage.RUNNING.value)
-        rows = self._db().execute(
-            "SELECT * FROM agent_runs WHERE stage IN (?, ?)", active_stages
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute("SELECT * FROM agent_runs WHERE stage IN (?, ?)", active_stages)
+            .fetchall()
+        )
         for row in rows:
             run = AgentRun.model_validate(dict(row)).model_copy(
                 update={
@@ -885,16 +1091,18 @@ class MediaLibrary:
         self, proposal_id: str
     ) -> SummaryEditProposal | None:
         self._validate_identifier(proposal_id, "proposal")
-        row = self._db().execute(
-            "SELECT * FROM summary_agent_proposals WHERE proposal_id = ?",
-            (proposal_id,),
-        ).fetchone()
+        row = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_agent_proposals WHERE proposal_id = ?",
+                (proposal_id,),
+            )
+            .fetchone()
+        )
         if row is None:
             return None
         values = dict(row)
-        values["suggested_subdocuments"] = json.loads(
-            values["suggested_subdocuments"]
-        )
+        values["suggested_subdocuments"] = json.loads(values["suggested_subdocuments"])
         values["media_suggestions"] = json.loads(values["media_suggestions"])
         return SummaryEditProposal.model_validate(values)
 
@@ -902,18 +1110,60 @@ class MediaLibrary:
         self, session_id: str
     ) -> list[SummaryEditProposal]:
         self._validate_identifier(session_id, "session")
-        rows = self._db().execute(
-            "SELECT proposal_id FROM summary_agent_proposals "
-            "WHERE session_id = ? ORDER BY created_at",
-            (session_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT proposal_id FROM summary_agent_proposals "
+                "WHERE session_id = ? ORDER BY created_at",
+                (session_id,),
+            )
+            .fetchall()
+        )
         return [
             proposal
             for row in rows
-            if (
-                proposal := self.load_agent_summary_proposal(row["proposal_id"])
-            )
+            if (proposal := self.load_agent_summary_proposal(row["proposal_id"]))
             is not None
+        ]
+
+    def save_marker_proposal(self, proposal: MarkerProposal) -> None:
+        self._validate_identifier(proposal.proposal_id, "proposal")
+        self._validate_identifier(proposal.session_id, "session")
+        values = proposal.model_dump(mode="json")
+        values["changes"] = json.dumps(values["changes"], ensure_ascii=False)
+        self._upsert_runtime_model("marker_agent_proposals", values)
+
+    def load_marker_proposal(self, proposal_id: str) -> MarkerProposal | None:
+        self._validate_identifier(proposal_id, "proposal")
+        row = (
+            self._db()
+            .execute(
+                "SELECT * FROM marker_agent_proposals WHERE proposal_id = ?",
+                (proposal_id,),
+            )
+            .fetchone()
+        )
+        if row is None:
+            return None
+        values = dict(row)
+        values["changes"] = json.loads(values["changes"])
+        return MarkerProposal.model_validate(values)
+
+    def load_marker_proposals(self, session_id: str) -> list[MarkerProposal]:
+        self._validate_identifier(session_id, "session")
+        rows = (
+            self._db()
+            .execute(
+                "SELECT proposal_id FROM marker_agent_proposals "
+                "WHERE session_id = ? ORDER BY created_at",
+                (session_id,),
+            )
+            .fetchall()
+        )
+        return [
+            proposal
+            for row in rows
+            if (proposal := self.load_marker_proposal(row["proposal_id"])) is not None
         ]
 
     def save_summary_media(self, media: SummaryMediaArtifact) -> None:
@@ -929,10 +1179,14 @@ class MediaLibrary:
         synchronize_asset(self._db(), self.assets_path, media.asset_id)
 
     def load_summary_media(self, asset_id: str) -> list[SummaryMediaArtifact]:
-        rows = self._db().execute(
-            "SELECT * FROM summary_media WHERE asset_id = ? ORDER BY created_at",
-            (asset_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_media WHERE asset_id = ? ORDER BY created_at",
+                (asset_id,),
+            )
+            .fetchall()
+        )
         return [SummaryMediaArtifact.model_validate(dict(row)) for row in rows]
 
     def _write_asset_metadata(self, asset: MediaAsset) -> None:
@@ -948,7 +1202,9 @@ class MediaLibrary:
     def _write_markers(self, asset_id: str, markers: list[MediaMarker]) -> None:
         output = MarkersFile(asset_id=asset_id, markers=markers)
         with self._lock:
-            atomic_write_model(self.asset_directory(asset_id) / MARKERS_FILE_NAME, output)
+            atomic_write_model(
+                self.asset_directory(asset_id) / MARKERS_FILE_NAME, output
+            )
             synchronize_asset(self._db(), self.assets_path, asset_id)
 
     def _write_conversation_file(self, record: SummaryConversationFile) -> None:
@@ -980,9 +1236,7 @@ class MediaLibrary:
         )
         return SummaryDocument.model_validate({**values, "markdown": markdown})
 
-    def _storyboard_for(
-        self, asset: MediaAsset
-    ) -> ThumbnailStoryboardResponse | None:
+    def _storyboard_for(self, asset: MediaAsset) -> ThumbnailStoryboardResponse | None:
         if not self.resolve_asset_file(asset, asset.thumbnail_sprite_path):
             return None
         values = (
@@ -1090,11 +1344,15 @@ class MediaLibrary:
         owner_id: str,
         order_column: str,
     ) -> list[str]:
-        rows = self._db().execute(
-            f"SELECT {value_column} FROM {table_name} WHERE {owner_column} = ? "
-            f"ORDER BY {order_column}",
-            (owner_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                f"SELECT {value_column} FROM {table_name} WHERE {owner_column} = ? "
+                f"ORDER BY {order_column}",
+                (owner_id,),
+            )
+            .fetchall()
+        )
         return [row[0] for row in rows]
 
     def _db(self) -> sqlite3.Connection:

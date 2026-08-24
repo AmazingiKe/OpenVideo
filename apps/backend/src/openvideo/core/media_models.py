@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 from openvideo.core.transcription_models import TranscriptionStatus
 
@@ -160,9 +160,27 @@ class MediaSegment(BaseModel):
 
 
 class MediaMarker(BaseModel):
-    """手工标记将用户关注的时间点与媒体资产一同保存，供不同界面复用。"""
+    """点与范围共享同一契约，便于时间轴、Agent 和分析流程交换标记。"""
 
     marker_id: str
     asset_id: str
-    time_seconds: float = Field(ge=0)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+    title: str = Field(default="", max_length=200)
     tags: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, title: str) -> str:
+        return title.strip()
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, tags: list[str]) -> list[str]:
+        return list(dict.fromkeys(tag.strip() for tag in tags if tag.strip()))
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "MediaMarker":
+        if self.end_seconds is not None and self.end_seconds <= self.start_seconds:
+            raise ValueError("范围标记的结束时间必须晚于开始时间")
+        return self

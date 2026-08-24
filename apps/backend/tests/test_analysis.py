@@ -1,3 +1,5 @@
+import pytest
+
 from openvideo.core.analysis import select_timeline_moments
 from openvideo.core.analysis_models import (
     AnalysisDepth,
@@ -24,7 +26,10 @@ def test_full_timeline_splits_on_long_speech_gap():
 
     moments = select_timeline_moments(transcript, AnalysisMode.FULL, [], 30)
 
-    assert [(moment.start_seconds, moment.end_seconds) for moment in moments] == [(0, 5), (20, 25)]
+    assert [(moment.start_seconds, moment.end_seconds) for moment in moments] == [
+        (0, 5),
+        (20, 25),
+    ]
 
 
 def test_marker_timeline_snaps_to_transcript_and_preserves_tags():
@@ -38,7 +43,7 @@ def test_marker_timeline_snaps_to_transcript_and_preserves_tags():
     marker = MediaMarker(
         marker_id="marker-0123456789abcdef0123456789abcdef",
         asset_id=ASSET_ID,
-        time_seconds=30,
+        start_seconds=30,
         tags=["公式"],
     )
 
@@ -48,40 +53,41 @@ def test_marker_timeline_snaps_to_transcript_and_preserves_tags():
     assert moments[0].start_seconds == 10
     assert moments[0].end_seconds == 40
     assert moments[0].tags == ("公式",)
+    assert "公式定义" in moments[0].transcript_text
     assert "推导过程" in moments[0].transcript_text
 
 
-def test_overlapping_marker_windows_merge_into_one_event():
+def test_marker_mode_keeps_overlapping_fallback_ranges_separate():
     transcript = Transcript(asset_id=ASSET_ID)
     markers = [
         MediaMarker(
             marker_id="marker-0123456789abcdef0123456789abcdef",
             asset_id=ASSET_ID,
-            time_seconds=30,
+            start_seconds=30,
             tags=["重点"],
         ),
         MediaMarker(
             marker_id="marker-1123456789abcdef0123456789abcdef",
             asset_id=ASSET_ID,
-            time_seconds=50,
+            start_seconds=50,
             tags=["疑问"],
         ),
     ]
 
     moments = select_timeline_moments(transcript, AnalysisMode.MARKERS, markers, 120)
 
-    assert len(moments) == 1
-    assert moments[0].start_seconds == 0
-    assert moments[0].end_seconds == 80
-    assert moments[0].tags == ("重点", "疑问")
+    assert [(moment.start_seconds, moment.end_seconds) for moment in moments] == [
+        (20, 50),
+        (40, 70),
+    ]
 
 
-def test_marker_window_snaps_to_nearby_scene_boundaries():
+def test_scene_boundaries_do_not_change_marker_weight_range():
     transcript = Transcript(asset_id=ASSET_ID)
     marker = MediaMarker(
         marker_id="marker-0123456789abcdef0123456789abcdef",
         asset_id=ASSET_ID,
-        time_seconds=60,
+        start_seconds=60,
         tags=["案例"],
     )
 
@@ -93,8 +99,8 @@ def test_marker_window_snaps_to_nearby_scene_boundaries():
         scene_boundaries=[45, 72],
     )
 
-    assert moments[0].start_seconds == 45
-    assert moments[0].end_seconds == 72
+    assert moments[0].start_seconds == 50
+    assert moments[0].end_seconds == 80
 
 
 def test_full_timeline_returns_empty_for_no_transcript():
@@ -118,7 +124,7 @@ def test_quick_strategy_keeps_marked_moment_in_detailed_analysis():
     marker = MediaMarker(
         marker_id="marker-0123456789abcdef0123456789abcdef",
         asset_id=ASSET_ID,
-        time_seconds=82,
+        start_seconds=82,
     )
     strategy = AnalysisStrategy(
         preset=AnalysisStrategyPreset.CUSTOM,
@@ -145,14 +151,17 @@ def test_quick_strategy_keeps_marked_moment_in_detailed_analysis():
     assert next(moment for moment in moments if moment.marker_ids).detailed is True
 
 
-def test_strategy_controls_marker_context_window():
+def test_strategy_controls_asymmetric_marker_range():
     transcript = Transcript(asset_id=ASSET_ID, segments=[])
     marker = MediaMarker(
         marker_id="marker-0123456789abcdef0123456789abcdef",
         asset_id=ASSET_ID,
-        time_seconds=50,
+        start_seconds=50,
     )
-    strategy = AnalysisStrategy(marker_context_seconds=10)
+    strategy = AnalysisStrategy(
+        marker_range_before_seconds=15,
+        marker_range_after_seconds=25,
+    )
 
     moment = select_timeline_moments(
         transcript,
@@ -162,5 +171,127 @@ def test_strategy_controls_marker_context_window():
         strategy=strategy,
     )[0]
 
-    assert moment.start_seconds == 40
-    assert moment.end_seconds == 60
+    assert moment.start_seconds == 35
+    assert moment.end_seconds == 75
+
+
+def test_range_marker_uses_its_exact_bounds():
+    transcript = Transcript(asset_id=ASSET_ID)
+    marker = MediaMarker(
+        marker_id="marker-0123456789abcdef0123456789abcdef",
+        asset_id=ASSET_ID,
+        start_seconds=5,
+        end_seconds=15,
+    )
+
+    moment = select_timeline_moments(
+        transcript,
+        AnalysisMode.MARKERS,
+        [marker],
+        15,
+    )[0]
+
+    assert (moment.start_seconds, moment.end_seconds) == (5, 15)
+    assert moment.marker_influences[0].range_before_seconds == 5
+    assert moment.marker_influences[0].range_after_seconds == 5
+
+
+def test_marker_weight_decays_asymmetrically_and_marker_event_is_one():
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[
+            TranscriptSegment(start_seconds=10, end_seconds=11, text="前侧"),
+            TranscriptSegment(start_seconds=20, end_seconds=21, text="标记点"),
+            TranscriptSegment(start_seconds=30, end_seconds=31, text="后侧"),
+        ],
+    )
+    marker = MediaMarker(
+        marker_id="marker-0123456789abcdef0123456789abcdef",
+        asset_id=ASSET_ID,
+        start_seconds=20,
+    )
+
+    moments = select_timeline_moments(transcript, AnalysisMode.FULL, [marker], 60)
+
+    assert [moment.marker_weight for moment in moments] == pytest.approx([0.1, 1, 0.5])
+
+
+def test_overlapping_marker_ranges_use_highest_weight_without_accumulating():
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[TranscriptSegment(start_seconds=20, end_seconds=21, text="重叠")],
+    )
+    markers = [
+        MediaMarker(
+            marker_id="marker-0123456789abcdef0123456789abcdef",
+            asset_id=ASSET_ID,
+            start_seconds=10,
+        ),
+        MediaMarker(
+            marker_id="marker-1123456789abcdef0123456789abcdef",
+            asset_id=ASSET_ID,
+            start_seconds=30,
+        ),
+    ]
+
+    moment = select_timeline_moments(
+        transcript,
+        AnalysisMode.FULL,
+        markers,
+        60,
+        strategy=AnalysisStrategy(
+            marker_range_before_seconds=20,
+            marker_range_after_seconds=20,
+        ),
+    )[0]
+
+    assert [item.event_weight for item in moment.marker_influences] == pytest.approx(
+        [0.5, 0.55]
+    )
+    assert moment.marker_weight == pytest.approx(0.55)
+
+
+def test_full_mode_preserves_unweighted_events_and_marker_mode_filters_them():
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[
+            TranscriptSegment(start_seconds=0, end_seconds=1, text="片头"),
+            TranscriptSegment(start_seconds=20, end_seconds=21, text="重点"),
+            TranscriptSegment(start_seconds=40, end_seconds=41, text="片尾"),
+        ],
+    )
+    marker = MediaMarker(
+        marker_id="marker-0123456789abcdef0123456789abcdef",
+        asset_id=ASSET_ID,
+        start_seconds=20,
+    )
+
+    full_moments = select_timeline_moments(
+        transcript,
+        AnalysisMode.FULL,
+        [marker],
+        60,
+        strategy=AnalysisStrategy(
+            marker_range_before_seconds=0,
+            marker_range_after_seconds=0,
+        ),
+    )
+    marker_moments = select_timeline_moments(
+        transcript,
+        AnalysisMode.MARKERS,
+        [marker],
+        60,
+        strategy=AnalysisStrategy(
+            marker_range_before_seconds=0,
+            marker_range_after_seconds=0,
+        ),
+    )
+
+    assert len(full_moments) == 3
+    assert [moment.transcript_text for moment in marker_moments] == ["重点"]
+
+
+@pytest.mark.parametrize("value", [-5, 3, 125])
+def test_marker_ranges_validate_boundaries_and_five_second_steps(value: int):
+    with pytest.raises(ValueError):
+        AnalysisStrategy(marker_range_before_seconds=value)

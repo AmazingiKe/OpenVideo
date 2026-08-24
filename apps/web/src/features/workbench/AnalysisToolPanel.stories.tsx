@@ -1,7 +1,9 @@
+import { type ComponentProps, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 
 import { AnalysisToolPanel } from "./AnalysisToolPanel";
+import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
   AnalysisStrategyPresetDescriptor,
   MediaAsset,
@@ -24,7 +26,8 @@ const ANALYSIS_STRATEGIES: AnalysisStrategyPresetDescriptor[] = [
         user_markers: 100,
       },
       depth: "balanced",
-      marker_context_seconds: 30,
+      marker_range_before_seconds: 10,
+      marker_range_after_seconds: 20,
     },
   },
 ];
@@ -69,6 +72,21 @@ const ASSET: MediaAsset = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
+function ControlledAnalysisToolPanel(
+  props: ComponentProps<typeof AnalysisToolPanel>,
+) {
+  const [analysis_strategy, set_analysis_strategy] = useState(
+    structuredClone(props.analysis_strategy),
+  );
+  return (
+    <AnalysisToolPanel
+      {...props}
+      analysis_strategy={analysis_strategy}
+      set_analysis_strategy={set_analysis_strategy}
+    />
+  );
+}
+
 const meta = {
   title: "Analysis/AnalysisToolPanel",
   component: AnalysisToolPanel,
@@ -90,6 +108,8 @@ const meta = {
     is_analyzing: false,
     ai_models: [],
     analysis_strategies: ANALYSIS_STRATEGIES,
+    analysis_strategy: DEFAULT_ANALYSIS_STRATEGY,
+    set_analysis_strategy: () => undefined,
     on_start_analysis: () => undefined,
     selected_transcript_count: 0,
     active_correction_scope: null,
@@ -100,6 +120,7 @@ const meta = {
     on_open_sections_change: () => undefined,
     on_collapsed_change: () => undefined,
   },
+  render: (args) => <ControlledAnalysisToolPanel {...args} />,
   decorators: [
     (StoryComponent) => (
       <div className="dark h-[640px] w-[320px] overflow-hidden bg-background text-foreground">

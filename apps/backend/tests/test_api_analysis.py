@@ -17,7 +17,12 @@ from openvideo.core.transcription_models import (
     TranscriptSegment,
 )
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaSegment, SourcePlatform
+from openvideo.core.media_models import (
+    MediaAsset,
+    MediaAssetStatus,
+    MediaSegment,
+    SourcePlatform,
+)
 from openvideo.settings import Settings
 from openvideo.tools.transcribe import TranscriptionResult
 from openvideo.ui.api import create_app
@@ -71,7 +76,9 @@ def create_client(tmp_path: Path) -> TestClient:
 
 def test_analyze_returns_404_for_missing_asset(tmp_path: Path):
     with create_client(tmp_path) as client:
-        response = client.post("/api/media/assets/01890f4c-7a2b-7cc2-98c4-dc0c0c073990/analyze")
+        response = client.post(
+            "/api/media/assets/01890f4c-7a2b-7cc2-98c4-dc0c0c073990/analyze"
+        )
     assert response.status_code == 404
 
 
@@ -116,7 +123,9 @@ def test_transcript_segment_update_rejects_blank_text(tmp_path: Path):
         client.app.state.library.save_transcript(
             Transcript(
                 asset_id=ASSET_ID,
-                segments=[TranscriptSegment(start_seconds=1, end_seconds=3, text="原文字")],
+                segments=[
+                    TranscriptSegment(start_seconds=1, end_seconds=3, text="原文字")
+                ],
             )
         )
         response = client.patch(
@@ -191,11 +200,20 @@ def test_marker_analysis_records_selected_marker_scope(tmp_path: Path):
         client.app.state.library.save_transcript(Transcript(asset_id=ASSET_ID))
         marker = client.post(
             f"/api/media/assets/{ASSET_ID}/markers",
-            json={"time_seconds": 12.5, "tags": ["公式"]},
+            json={
+                "start_seconds": 12.5,
+                "end_seconds": None,
+                "title": "公式",
+                "tags": ["公式"],
+            },
         ).json()
         response = client.post(
             f"/api/media/assets/{ASSET_ID}/analyze",
-            json={"mode": "markers", "marker_ids": [marker["marker_id"]], "force": True},
+            json={
+                "mode": "markers",
+                "marker_ids": [marker["marker_id"]],
+                "force": True,
+            },
         )
 
     assert response.status_code == 202
@@ -273,18 +291,19 @@ def test_transcription_can_replace_existing_result_multiple_times(
             ).json()
             job = wait_for_analysis_job(client, created["job_id"])
             assert job["stage"] == "complete"
-            assert client.get(
-                f"/api/media/assets/{ASSET_ID}/transcript"
-            ).json()["segments"][0]["text"] == expected_text
+            assert (
+                client.get(f"/api/media/assets/{ASSET_ID}/transcript").json()[
+                    "segments"
+                ][0]["text"]
+                == expected_text
+            )
 
         metadata = client.app.state.library.load_transcription_metadata(ASSET_ID)
         assert metadata is not None
         assert metadata.status == "complete"
         assert metadata.attempt_count == 3
         asset_metadata = json.loads(
-            (tmp_path / "assets" / ASSET_ID / "meta.json").read_text(
-                encoding="utf-8"
-            )
+            (tmp_path / "assets" / ASSET_ID / "meta.json").read_text(encoding="utf-8")
         )
         assert asset_metadata["transcription"] == {
             "status": "complete",
@@ -317,9 +336,12 @@ def test_failed_retranscription_preserves_existing_result(tmp_path: Path, monkey
         job = wait_for_analysis_job(client, created["job_id"])
 
         assert job["stage"] == "failed"
-        assert client.get(f"/api/media/assets/{ASSET_ID}/transcript").json()[
-            "segments"
-        ][0]["text"] == "保留版本"
+        assert (
+            client.get(f"/api/media/assets/{ASSET_ID}/transcript").json()["segments"][
+                0
+            ]["text"]
+            == "保留版本"
+        )
         metadata = client.app.state.library.load_transcription_metadata(ASSET_ID)
         assert metadata is not None
         assert metadata.status == "failed"
@@ -389,7 +411,7 @@ def test_segments_and_frame_roundtrip(tmp_path: Path):
                 key_frame_paths=["artifacts/frames/frame.jpg"],
                 visual_description="画面描述",
             )
-        ]
+        ],
     )
     library.close()
     app = create_app(Settings(library_path=tmp_path))

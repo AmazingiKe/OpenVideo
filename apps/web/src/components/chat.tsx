@@ -6,7 +6,7 @@ import {
   type HTMLAttributes,
   type ReactNode,
 } from "react";
-import { ArrowDown, Send } from "lucide-react";
+import { ArrowDown, Send, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -127,14 +127,18 @@ export function MessageComposer({
   value,
   on_change,
   on_submit,
+  on_cancel,
   disabled = false,
   pending = false,
+  placeholder = "描述希望如何修改文档…",
 }: {
   value: string;
   on_change: (value: string) => void;
   on_submit: () => void;
+  on_cancel?: () => void;
   disabled?: boolean;
   pending?: boolean;
+  placeholder?: string;
 }) {
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -152,19 +156,20 @@ export function MessageComposer({
             if (value.trim() && !disabled && !pending) on_submit();
           }
         }}
-        placeholder="描述希望如何修改文档…"
+        placeholder={placeholder}
         aria-label="Agent 指令"
         rows={2}
         disabled={disabled || pending}
         className="max-h-32 min-h-16 resize-none"
       />
       <Button
-        type="submit"
+        type={pending && on_cancel ? "button" : "submit"}
         size="icon"
-        disabled={disabled || pending || !value.trim()}
-        aria-label="发送指令"
+        disabled={disabled || (pending ? !on_cancel : !value.trim())}
+        aria-label={pending && on_cancel ? "停止 Agent" : "发送指令"}
+        onClick={pending && on_cancel ? on_cancel : undefined}
       >
-        {pending ? <Spinner /> : <Send />}
+        {pending ? on_cancel ? <Square /> : <Spinner /> : <Send />}
       </Button>
     </form>
   );

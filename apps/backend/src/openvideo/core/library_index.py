@@ -18,13 +18,15 @@ from openvideo.core.library_files import (
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 10
+DATABASE_VERSION = 12
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
     "agent_runs",
     "summary_agent_sessions",
     "summary_agent_proposals",
+    "marker_agent_sessions",
+    "marker_agent_proposals",
 }
 LEGACY_AGENT_TABLES = {
     "summary_conversations",
@@ -136,8 +138,15 @@ def replace_asset_projection(
     connection.execute("DELETE FROM markers WHERE asset_id = ?", (asset.asset_id,))
     for marker in bundle.markers:
         connection.execute(
-            "INSERT INTO markers(marker_id, asset_id, time_seconds) VALUES (?, ?, ?)",
-            (marker.marker_id, marker.asset_id, marker.time_seconds),
+            "INSERT INTO markers(marker_id, asset_id, start_seconds, end_seconds, title) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                marker.marker_id,
+                marker.asset_id,
+                marker.start_seconds,
+                marker.end_seconds,
+                marker.title,
+            ),
         )
         _replace_tags(connection, "marker_tags", "marker_id", marker.marker_id, marker.tags)
     for position, segment in enumerate(bundle.segments):
@@ -454,7 +463,7 @@ CREATE TABLE timeline_segments (
 );
 CREATE TABLE markers (
     marker_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    time_seconds REAL NOT NULL
+    start_seconds REAL NOT NULL, end_seconds REAL, title TEXT NOT NULL
 );
 CREATE TABLE tags (name TEXT PRIMARY KEY);
 CREATE TABLE marker_tags (marker_id TEXT NOT NULL REFERENCES markers(marker_id) ON DELETE CASCADE, tag_name TEXT NOT NULL REFERENCES tags(name), PRIMARY KEY(marker_id, tag_name));
@@ -479,6 +488,10 @@ CREATE TABLE summary_agent_sessions (
     asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     root_document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE
 );
+CREATE TABLE marker_agent_sessions (
+    session_id TEXT PRIMARY KEY REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE
+);
 CREATE TABLE agent_runs (
     run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
     stage TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -496,6 +509,11 @@ CREATE TABLE summary_agent_proposals (
     diff TEXT NOT NULL, suggested_subdocuments TEXT NOT NULL, media_suggestions TEXT NOT NULL,
     status TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE marker_agent_proposals (
+    proposal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    changes TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
+);
 CREATE TABLE summary_media (
     media_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
@@ -511,7 +529,7 @@ CREATE TABLE index_issues (
     code TEXT NOT NULL, message TEXT NOT NULL
 );
 CREATE INDEX assets_created_at_index ON assets(created_at DESC);
-CREATE INDEX markers_asset_time_index ON markers(asset_id, time_seconds);
+CREATE INDEX markers_asset_time_index ON markers(asset_id, start_seconds);
 CREATE INDEX agent_jobs_asset_created_index ON agent_jobs(asset_id, created_at DESC);
 CREATE UNIQUE INDEX summary_documents_root_asset_index ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);

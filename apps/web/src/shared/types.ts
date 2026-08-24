@@ -140,7 +140,9 @@ export type AgentJob = {
 
 export type MarkersPageSettings = {
   asset_library_size_percent: number;
+  agent_panel_size_percent: number;
   asset_library_collapsed: boolean;
+  left_panel_tab: "video" | "agent";
   tool_panel_size_percent: number;
   tool_panel_collapsed: boolean;
   open_tool_sections: AnalysisToolSection[];
@@ -195,7 +197,8 @@ export type AnalysisStrategy = {
   preset: AnalysisStrategyPreset;
   weights: AnalysisWeights;
   depth: AnalysisDepth;
-  marker_context_seconds: number;
+  marker_range_before_seconds: number;
+  marker_range_after_seconds: number;
 };
 export type AnalysisStrategyPresetDescriptor = {
   preset: Exclude<AnalysisStrategyPreset, "custom">;
@@ -320,9 +323,16 @@ export type MediaSegment = {
 export type MediaMarker = {
   marker_id: string;
   asset_id: string;
-  time_seconds: number;
+  start_seconds: number;
+  end_seconds: number | null;
+  title: string;
   tags: string[];
 };
+
+export type MediaMarkerInput = Pick<
+  MediaMarker,
+  "start_seconds" | "end_seconds" | "title" | "tags"
+>;
 
 type ThumbnailStoryboard = {
   url: string;
@@ -402,6 +412,31 @@ export type AgentEvent = {
   event_type: AgentEventType;
   payload: Record<string, unknown>;
   created_at: string;
+};
+export type MarkerRetrievalMode = "transcript" | "auto" | "vision";
+export type MarkerProposalOperation = "create" | "update" | "delete" | "merge";
+export type MarkerProposalChange = {
+  operation: MarkerProposalOperation;
+  before: MediaMarker[];
+  after: MediaMarker | null;
+  reason: string;
+  evidence: string[];
+};
+export type MarkerProposal = {
+  proposal_id: string;
+  session_id: string;
+  asset_id: string;
+  changes: MarkerProposalChange[];
+  status: "pending" | "accepted" | "rejected" | "stale";
+  created_at: string;
+};
+export type MarkerAgentSession = {
+  session: AgentSession;
+  asset_id: string;
+};
+export type MarkerAgentSessionState = MarkerAgentSession & {
+  events: AgentEvent[];
+  proposals: MarkerProposal[];
 };
 export type SummaryAgentSession = {
   session: AgentSession;

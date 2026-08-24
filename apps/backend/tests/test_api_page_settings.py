@@ -27,17 +27,21 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
         assert defaults.status_code == 200
         assert defaults.json() == {
             "asset_library_size_percent": 14.0,
+            "agent_panel_size_percent": 24.0,
             "asset_library_collapsed": False,
             "tool_panel_size_percent": 16.0,
             "tool_panel_collapsed": False,
+            "left_panel_tab": "video",
             "open_tool_sections": ["video_information"],
         }
 
         payload = {
             "asset_library_size_percent": 18,
+            "agent_panel_size_percent": 28,
             "asset_library_collapsed": True,
             "tool_panel_size_percent": 26,
             "tool_panel_collapsed": False,
+            "left_panel_tab": "agent",
             "open_tool_sections": ["transcription", "analysis"],
         }
         saved = client.put("/api/page-settings/markers", json=payload)

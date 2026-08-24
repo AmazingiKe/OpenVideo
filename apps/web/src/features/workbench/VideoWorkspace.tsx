@@ -120,8 +120,8 @@ export function VideoWorkspace({
               src={media_url(asset.playback_url)}
               subtitles={transcript?.segments ?? []}
               markers={markers.map((marker) => ({
-                time_seconds: marker.time_seconds,
-                label: format_time(marker.time_seconds),
+                start_seconds: marker.start_seconds,
+                label: marker.title || format_time(marker.start_seconds),
               }))}
               thumbnails={player_storyboard(asset)}
               on_time_change={(seconds) => {

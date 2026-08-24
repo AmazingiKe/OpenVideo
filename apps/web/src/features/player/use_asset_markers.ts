@@ -6,10 +6,10 @@ import {
   create_marker,
   delete_marker,
   get_markers,
-  update_marker,
 } from "@/shared/api";
+import * as media_api from "@/shared/api";
 import { error_message } from "@/shared/errors";
-import type { MediaMarker } from "@/shared/types";
+import type { MediaMarker, MediaMarkerInput } from "@/shared/types";
 
 const MARKER_TIME_PRECISION = 10;
 
@@ -36,14 +36,24 @@ export function use_asset_markers(asset_id: string) {
   );
 
   const add_marker = useCallback(
-    async (time_seconds: number) => {
-      if (!asset_id || !Number.isFinite(time_seconds) || time_seconds < 0)
+    async (start_seconds: number, end_seconds: number | null = null) => {
+      if (!asset_id || !Number.isFinite(start_seconds) || start_seconds < 0)
         return;
-      const rounded_time =
-        Math.round(time_seconds * MARKER_TIME_PRECISION) /
+      const rounded_start =
+        Math.round(start_seconds * MARKER_TIME_PRECISION) /
         MARKER_TIME_PRECISION;
+      const rounded_end =
+        end_seconds === null
+          ? null
+          : Math.round(end_seconds * MARKER_TIME_PRECISION) /
+            MARKER_TIME_PRECISION;
       try {
-        const marker = await create_marker(asset_id, rounded_time, []);
+        const marker = await create_marker(asset_id, {
+          start_seconds: rounded_start,
+          end_seconds: rounded_end,
+          title: "",
+          tags: [],
+        });
         update_cached_markers((current) => sort_markers([...current, marker]));
         set_mutation_error(null);
       } catch (error) {
@@ -53,14 +63,14 @@ export function use_asset_markers(asset_id: string) {
     [asset_id, update_cached_markers],
   );
 
-  const update_marker_tags = useCallback(
-    async (marker_id: string, tags: string[]) => {
+  const update_marker = useCallback(
+    async (marker_id: string, update: MediaMarkerInput) => {
       if (!asset_id) return;
       try {
-        const marker = await update_marker(
+        const marker = await media_api.update_marker(
           asset_id,
           marker_id,
-          normalize_tags(tags),
+          { ...update, tags: normalize_tags(update.tags) },
         );
         update_cached_markers((current) =>
           current.map((item) =>
@@ -70,6 +80,7 @@ export function use_asset_markers(asset_id: string) {
         set_mutation_error(null);
       } catch (error) {
         set_mutation_error(error_message(error));
+        throw error;
       }
     },
     [asset_id, update_cached_markers],
@@ -97,14 +108,17 @@ export function use_asset_markers(asset_id: string) {
       mutation_error ??
       (marker_query.error ? error_message(marker_query.error) : null),
     add_marker,
-    update_marker_tags,
+    update_marker,
     remove_marker,
+    reload_markers: async () => {
+      await marker_query.refetch();
+    },
   };
 }
 
 function sort_markers(markers: MediaMarker[]): MediaMarker[] {
   return [...markers].sort(
-    (left, right) => left.time_seconds - right.time_seconds,
+    (left, right) => left.start_seconds - right.start_seconds,
   );
 }
 

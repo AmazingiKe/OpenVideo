@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from openvideo.core.identifiers import is_uuid7
 from openvideo.core.media_models import (
@@ -47,6 +48,7 @@ TIMELINE_FILE_NAME = "timeline.json"
 MARKERS_FILE_NAME = "markers.json"
 CONVERSATIONS_DIRECTORY_NAME = "conversations"
 DOMAIN_FILE_FORMAT_VERSION = 1
+MARKERS_FILE_FORMAT_VERSION = 2
 
 
 class IndexIssue(BaseModel):
@@ -69,9 +71,49 @@ class TimelineFile(BaseModel):
 
 
 class MarkersFile(BaseModel):
-    format_version: int = DOMAIN_FILE_FORMAT_VERSION
+    format_version: int = MARKERS_FILE_FORMAT_VERSION
     asset_id: str
     markers: list[MediaMarker] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_v1_markers(cls, values: object) -> object:
+        # TODO(删除)：在 1.0 停止支持 v1 资料库后删除。
+        if not isinstance(values, dict):
+            return values
+        raw_markers = values.get("markers", [])
+        has_legacy_fields = any(
+            isinstance(marker, dict) and "time_seconds" in marker
+            for marker in raw_markers
+        )
+        if values.get("format_version") != 1 and not has_legacy_fields:
+            return values
+        migrated = dict(values)
+        migrated["format_version"] = MARKERS_FILE_FORMAT_VERSION
+        migrated_markers: list[dict[str, object]] = []
+        for raw_marker in raw_markers:
+            marker = dict(raw_marker)
+            marker["start_seconds"] = marker.pop("time_seconds")
+            marker["end_seconds"] = None
+            marker["title"] = ""
+            marker.pop("marker_range_before_seconds", None)
+            marker.pop("marker_range_after_seconds", None)
+            migrated_markers.append(marker)
+        migrated["markers"] = migrated_markers
+        return migrated
+
+
+def migrate_markers_file(path: Path) -> None:
+    """把 v1 点标记一次性写成 v2，避免兼容字段继续进入业务代码。"""
+    if not path.is_file():
+        return
+    try:
+        values = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(values, dict) or values.get("format_version", 1) != 1:
+        return
+    atomic_write_model(path, MarkersFile.model_validate(values))
 
 
 class SummaryConversationFile(BaseModel):
@@ -235,7 +277,13 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
         metadata_path, AssetMetadata, asset_id, tracked_paths, assets_root.parent
     )
     if metadata.asset_id != asset_id:
-        _raise_issue(asset_id, metadata_path, assets_root.parent, "cross_asset_reference", "meta.json 的素材标识与目录不一致")
+        _raise_issue(
+            asset_id,
+            metadata_path,
+            assets_root.parent,
+            "cross_asset_reference",
+            "meta.json 的素材标识与目录不一致",
+        )
     asset = asset_from_metadata(metadata)
     for relative_path in (
         asset.playback_path,
@@ -243,7 +291,9 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
         asset.thumbnail_sprite_path,
     ):
         if relative_path:
-            _validate_asset_reference(asset_directory, relative_path, asset_id, assets_root.parent)
+            _validate_asset_reference(
+                asset_directory, relative_path, asset_id, assets_root.parent
+            )
 
     transcript_path = asset_directory / ARTIFACTS_DIRECTORY_NAME / TRANSCRIPT_FILE_NAME
     transcription_path = (
@@ -265,29 +315,69 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
         timeline_path, TimelineFile, asset_id, tracked_paths, assets_root.parent
     )
     segments = timeline.segments if timeline else []
-    if timeline and (timeline.format_version != DOMAIN_FILE_FORMAT_VERSION or timeline.asset_id != asset_id):
-        _raise_issue(asset_id, timeline_path, assets_root.parent, "invalid_timeline", "时间轴文件版本或素材标识无效")
+    if timeline and (
+        timeline.format_version != DOMAIN_FILE_FORMAT_VERSION
+        or timeline.asset_id != asset_id
+    ):
+        _raise_issue(
+            asset_id,
+            timeline_path,
+            assets_root.parent,
+            "invalid_timeline",
+            "时间轴文件版本或素材标识无效",
+        )
     for segment in segments:
         if segment.asset_id != asset_id:
-            _raise_issue(asset_id, timeline_path, assets_root.parent, "cross_asset_reference", "时间轴包含其他素材的片段")
+            _raise_issue(
+                asset_id,
+                timeline_path,
+                assets_root.parent,
+                "cross_asset_reference",
+                "时间轴包含其他素材的片段",
+            )
         for relative_path in segment.key_frame_paths:
-            _validate_asset_reference(asset_directory, relative_path, asset_id, assets_root.parent)
+            _validate_asset_reference(
+                asset_directory, relative_path, asset_id, assets_root.parent
+            )
 
     markers_path = asset_directory / MARKERS_FILE_NAME
+    migrate_markers_file(markers_path)
     markers_file = _read_optional_model(
         markers_path, MarkersFile, asset_id, tracked_paths, assets_root.parent
     )
     markers = markers_file.markers if markers_file else []
     if markers_file and (
-        markers_file.format_version != DOMAIN_FILE_FORMAT_VERSION
+        markers_file.format_version != MARKERS_FILE_FORMAT_VERSION
         or markers_file.asset_id != asset_id
     ):
-        _raise_issue(asset_id, markers_path, assets_root.parent, "invalid_markers", "标记文件版本或素材标识无效")
+        _raise_issue(
+            asset_id,
+            markers_path,
+            assets_root.parent,
+            "invalid_markers",
+            "标记文件版本或素材标识无效",
+        )
     if any(marker.asset_id != asset_id for marker in markers):
-        _raise_issue(asset_id, markers_path, assets_root.parent, "cross_asset_reference", "标记文件包含其他素材的标记")
+        _raise_issue(
+            asset_id,
+            markers_path,
+            assets_root.parent,
+            "cross_asset_reference",
+            "标记文件包含其他素材的标记",
+        )
     marker_ids = {marker.marker_id for marker in markers}
-    if any(marker_id not in marker_ids for segment in segments for marker_id in segment.marker_ids):
-        _raise_issue(asset_id, timeline_path, assets_root.parent, "missing_marker", "时间轴引用了不存在的素材标记")
+    if any(
+        marker_id not in marker_ids
+        for segment in segments
+        for marker_id in segment.marker_ids
+    ):
+        _raise_issue(
+            asset_id,
+            timeline_path,
+            assets_root.parent,
+            "missing_marker",
+            "时间轴引用了不存在的素材标记",
+        )
 
     documents, media = _load_summary(
         asset_directory, asset_id, assets_root.parent, tracked_paths
@@ -297,7 +387,11 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
         asset_id,
         {document.document_id for document in documents},
         next(
-            (document.document_id for document in documents if document.parent_document_id is None),
+            (
+                document.document_id
+                for document in documents
+                if document.parent_document_id is None
+            ),
             None,
         ),
         assets_root.parent,
@@ -330,7 +424,9 @@ def _load_summary(
     library_root: Path,
     tracked_paths: list[Path],
 ) -> tuple[list[SummaryDocument], list[SummaryMediaArtifact]]:
-    manifest_path = asset_directory / SUMMARY_DIRECTORY_NAME / SUMMARY_MANIFEST_FILE_NAME
+    manifest_path = (
+        asset_directory / SUMMARY_DIRECTORY_NAME / SUMMARY_MANIFEST_FILE_NAME
+    )
     if not manifest_path.exists():
         tracked_paths.append(manifest_path)
         return [], []
@@ -346,22 +442,52 @@ def _load_summary(
             "总结 manifest 无效或无法读取",
         )
     if manifest.asset_id != asset_id:
-        _raise_issue(asset_id, manifest_path, library_root, "cross_asset_reference", "总结 manifest 不属于当前素材")
+        _raise_issue(
+            asset_id,
+            manifest_path,
+            library_root,
+            "cross_asset_reference",
+            "总结 manifest 不属于当前素材",
+        )
     document_ids = {item.document_id for item in manifest.documents}
-    if len(document_ids) != len(manifest.documents) or manifest.root_document_id not in document_ids:
-        _raise_issue(asset_id, manifest_path, library_root, "invalid_summary_manifest", "总结文档标识重复或缺少主文档")
+    if (
+        len(document_ids) != len(manifest.documents)
+        or manifest.root_document_id not in document_ids
+    ):
+        _raise_issue(
+            asset_id,
+            manifest_path,
+            library_root,
+            "invalid_summary_manifest",
+            "总结文档标识重复或缺少主文档",
+        )
     documents: list[SummaryDocument] = []
     for item in manifest.documents:
-        if item.parent_document_id is not None and item.parent_document_id != manifest.root_document_id:
-            _raise_issue(asset_id, manifest_path, library_root, "cross_asset_reference", "总结子文档引用了无效主文档")
-        expected_path = document_relative_path(
-            SummaryDocument(
-                **item.model_dump(), asset_id=asset_id, markdown=""
+        if (
+            item.parent_document_id is not None
+            and item.parent_document_id != manifest.root_document_id
+        ):
+            _raise_issue(
+                asset_id,
+                manifest_path,
+                library_root,
+                "cross_asset_reference",
+                "总结子文档引用了无效主文档",
             )
+        expected_path = document_relative_path(
+            SummaryDocument(**item.model_dump(), asset_id=asset_id, markdown="")
         )
         if item.relative_path != expected_path:
-            _raise_issue(asset_id, manifest_path, library_root, "unsafe_path", "总结文档路径不符合固定契约")
-        markdown_path = asset_directory / SUMMARY_DIRECTORY_NAME / Path(item.relative_path)
+            _raise_issue(
+                asset_id,
+                manifest_path,
+                library_root,
+                "unsafe_path",
+                "总结文档路径不符合固定契约",
+            )
+        markdown_path = (
+            asset_directory / SUMMARY_DIRECTORY_NAME / Path(item.relative_path)
+        )
         tracked_paths.append(markdown_path)
         try:
             markdown = read_markdown(asset_directory, item.relative_path)
@@ -386,10 +512,18 @@ def _load_summary(
         )
     for artifact in manifest.media:
         if artifact.asset_id != asset_id or artifact.document_id not in document_ids:
-            _raise_issue(asset_id, manifest_path, library_root, "cross_asset_reference", "总结媒体引用了其他素材或文档")
+            _raise_issue(
+                asset_id,
+                manifest_path,
+                library_root,
+                "cross_asset_reference",
+                "总结媒体引用了其他素材或文档",
+            )
         prefix = f"{SUMMARY_DIRECTORY_NAME}/"
         if not artifact.relative_path.startswith(prefix):
-            _raise_issue(asset_id, manifest_path, library_root, "unsafe_path", "总结媒体路径无效")
+            _raise_issue(
+                asset_id, manifest_path, library_root, "unsafe_path", "总结媒体路径无效"
+            )
         _validate_asset_reference(
             asset_directory,
             artifact.relative_path,
@@ -412,11 +546,23 @@ def _load_conversations(
     if not directory.exists():
         return []
     if directory.is_symlink() or not directory.is_dir():
-        _raise_issue(asset_id, directory, library_root, "unsafe_path", "总结对话目录不能是符号链接")
+        _raise_issue(
+            asset_id,
+            directory,
+            library_root,
+            "unsafe_path",
+            "总结对话目录不能是符号链接",
+        )
     conversations: list[SummaryConversationFile] = []
     for path in sorted(directory.iterdir(), key=lambda item: item.name):
         if path.is_symlink() or not path.is_file() or path.suffix != ".json":
-            _raise_issue(asset_id, path, library_root, "invalid_conversation_file", "总结对话目录只允许 JSON 文件")
+            _raise_issue(
+                asset_id,
+                path,
+                library_root,
+                "invalid_conversation_file",
+                "总结对话目录只允许 JSON 文件",
+            )
         record = _read_model(
             path, SummaryConversationFile, asset_id, tracked_paths, library_root
         )
@@ -427,16 +573,37 @@ def _load_conversations(
             or conversation.asset_id != asset_id
             or conversation.root_document_id != root_document_id
         ):
-            _raise_issue(asset_id, path, library_root, "cross_asset_reference", "总结对话元数据与当前素材不一致")
-        if any(message.conversation_id != conversation.conversation_id for message in record.messages):
-            _raise_issue(asset_id, path, library_root, "cross_asset_reference", "总结消息属于其他对话")
+            _raise_issue(
+                asset_id,
+                path,
+                library_root,
+                "cross_asset_reference",
+                "总结对话元数据与当前素材不一致",
+            )
+        if any(
+            message.conversation_id != conversation.conversation_id
+            for message in record.messages
+        ):
+            _raise_issue(
+                asset_id,
+                path,
+                library_root,
+                "cross_asset_reference",
+                "总结消息属于其他对话",
+            )
         if any(
             proposal.session_id
             != f"session-{conversation.conversation_id.removeprefix('conversation-')}"
             or proposal.document_id not in document_ids
             for proposal in record.proposals
         ):
-            _raise_issue(asset_id, path, library_root, "cross_asset_reference", "总结建议引用了其他对话或文档")
+            _raise_issue(
+                asset_id,
+                path,
+                library_root,
+                "cross_asset_reference",
+                "总结建议引用了其他对话或文档",
+            )
         conversations.append(record)
     return conversations
 
@@ -484,7 +651,9 @@ def _read_model(
     if tracked_paths is not None:
         tracked_paths.append(path)
     if path.is_symlink() or not path.is_file():
-        _raise_issue(asset_id, path, library_root, "unsafe_path", "业务文件不能是符号链接")
+        _raise_issue(
+            asset_id, path, library_root, "unsafe_path", "业务文件不能是符号链接"
+        )
     try:
         return model_type.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -507,24 +676,45 @@ def _validate_asset_reference(
 ) -> None:
     relative = PurePosixPath(relative_path)
     if relative.is_absolute() or not relative.parts or ".." in relative.parts:
-        _raise_issue(asset_id, asset_directory / relative_path, library_root, "unsafe_path", "素材相对路径无效")
+        _raise_issue(
+            asset_id,
+            asset_directory / relative_path,
+            library_root,
+            "unsafe_path",
+            "素材相对路径无效",
+        )
     resolved_root = asset_directory.resolve()
     candidate = resolved_root.joinpath(*relative.parts)
     if not candidate.resolve().is_relative_to(resolved_root):
-        _raise_issue(asset_id, candidate, library_root, "unsafe_path", "素材路径超出当前素材目录")
+        _raise_issue(
+            asset_id, candidate, library_root, "unsafe_path", "素材路径超出当前素材目录"
+        )
     current = resolved_root
     for part in relative.parts:
         current /= part
         if current.exists() and current.is_symlink():
-            _raise_issue(asset_id, current, library_root, "unsafe_path", "素材路径不能经过符号链接")
+            _raise_issue(
+                asset_id,
+                current,
+                library_root,
+                "unsafe_path",
+                "素材路径不能经过符号链接",
+            )
     if require_file and not candidate.is_file():
-        _raise_issue(asset_id, candidate, library_root, "missing_file", "业务文件引用的媒体不存在")
+        _raise_issue(
+            asset_id,
+            candidate,
+            library_root,
+            "missing_file",
+            "业务文件引用的媒体不存在",
+        )
 
 
 def _business_digest(asset_directory: Path, tracked_paths: list[Path]) -> str:
     digest = hashlib.sha256()
     unique_paths = sorted(
-        set(tracked_paths), key=lambda path: path.relative_to(asset_directory).as_posix()
+        set(tracked_paths),
+        key=lambda path: path.relative_to(asset_directory).as_posix(),
     )
     for path in unique_paths:
         relative_path = path.relative_to(asset_directory).as_posix()

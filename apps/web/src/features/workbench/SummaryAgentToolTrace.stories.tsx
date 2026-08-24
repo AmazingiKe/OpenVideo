@@ -1,10 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-import { SummaryAgentToolTrace } from "./SummaryAgentToolTrace";
+import { AgentToolTrace } from "./SummaryAgentToolTrace";
 
 const meta = {
-  title: "Workbench/SummaryAgentToolTrace",
-  component: SummaryAgentToolTrace,
+  title: "Workbench/AgentToolTrace",
+  component: AgentToolTrace,
   args: {
     trace: {
       call_id: "call-1",
@@ -16,7 +16,7 @@ const meta = {
       },
     },
   },
-} satisfies Meta<typeof SummaryAgentToolTrace>;
+} satisfies Meta<typeof AgentToolTrace>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;

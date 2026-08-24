@@ -17,6 +17,7 @@ import {
   Flag,
   LockKeyhole,
   ScanSearch,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -32,20 +33,34 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverAnchor,
   PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
 } from "@/components/ui/popover";
+import { Spinner } from "@/components/ui/spinner";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { format_time } from "@/shared/format";
-import type { MediaMarker, MediaSegment, Transcript } from "@/shared/types";
+import type {
+  MediaMarker,
+  MediaMarkerInput,
+  MediaSegment,
+  Transcript,
+} from "@/shared/types";
 
 const MINIMUM_DURATION_SECONDS = 1;
 const MINIMUM_CLIP_DURATION_SECONDS = 0.05;
@@ -61,6 +76,9 @@ const MARKER_EDITOR_COLLISION_PADDING = 8;
 const MARKER_TRACK_ID = "timeline-marker-track";
 const TRANSCRIPT_TRACK_ID = "timeline-transcript-track";
 const EVENT_TRACK_ID = "timeline-event-track";
+const TIMELINE_RULER_HEIGHT = 32;
+const RANGE_DRAG_MINIMUM_PIXELS = 4;
+const EMPTY_MARKERS: MediaMarker[] = [];
 
 type TimelineTrackPresentation = {
   code: string;
@@ -80,16 +98,24 @@ type MediaTimelineProps = {
   transcript: Transcript | null;
   segments: MediaSegment[];
   markers: MediaMarker[];
+  candidate_markers?: MediaMarker[];
   marker_error: string | null;
   on_seek: (seconds: number) => void;
   on_selected_transcript_indices_change: (segment_indices: number[]) => void;
-  on_add_marker: (seconds: number) => Promise<void>;
-  on_update_marker_tags: (marker_id: string, tags: string[]) => Promise<void>;
+  on_add_marker: (
+    start_seconds: number,
+    end_seconds?: number | null,
+  ) => Promise<void>;
+  on_update_marker: (
+    marker_id: string,
+    update: MediaMarkerInput,
+  ) => Promise<void>;
+  on_delete_marker: (marker_id: string) => Promise<void>;
   on_update_transcript: (segment_index: number, text: string) => Promise<void>;
 };
 
 type TimelineClipMetadata = {
-  kind: "marker" | "transcript" | "event";
+  kind: "marker" | "candidate" | "transcript" | "event";
   source_id?: string;
   source_index?: number;
 };
@@ -130,7 +156,15 @@ type TimelineSurfaceProps = {
   duration: number;
   engine: TimelineEngine;
   on_seek: (seconds: number) => void;
-  on_add_marker: (seconds: number) => Promise<void>;
+  on_add_marker: (
+    start_seconds: number,
+    end_seconds?: number | null,
+  ) => Promise<void>;
+  on_update_marker_bounds: (
+    marker_id: string,
+    start_seconds: number,
+    end_seconds: number | null,
+  ) => void;
   on_select_marker: (
     marker_id: string,
     pointer_position: TimelinePointerPosition,
@@ -145,6 +179,7 @@ function TimelineSurface({
   engine,
   on_seek,
   on_add_marker,
+  on_update_marker_bounds,
   on_select_marker,
   on_select_transcript,
   on_edit_transcript,
@@ -152,6 +187,10 @@ function TimelineSurface({
   const { state } = useTimeline();
   const syncing_playhead_ref = useRef(false);
   const pointer_position_ref = useRef<TimelinePointerPosition>({ x: 0, y: 0 });
+  const range_drag_ref = useRef<{ x: number; start_seconds: number } | null>(
+    null,
+  );
+  const resized_clip_ref = useRef<Clip | null>(null);
 
   useEffect(() => {
     const bounded_time = Math.min(Math.max(current_time, 0), duration);
@@ -189,6 +228,36 @@ function TimelineSurface({
     [engine, on_seek, on_select_marker, on_select_transcript],
   );
 
+  useEffect(() => {
+    const commit_bounds = (clip: Clip) => {
+      const metadata = clip.metadata as TimelineClipMetadata | undefined;
+      if (metadata?.kind !== "marker" || !metadata.source_id) return;
+      const start_seconds = toSeconds(clip.timelineStart);
+      const rendered_end = toSeconds(clip.timelineEnd);
+      const end_seconds =
+        rendered_end - start_seconds <= MINIMUM_CLIP_DURATION_SECONDS
+          ? null
+          : rendered_end;
+      on_update_marker_bounds(metadata.source_id, start_seconds, end_seconds);
+    };
+    const unsubscribe_move = engine.on("clip:move", ({ clip, phase }) => {
+      if (phase === "commit") commit_bounds(clip);
+    });
+    const unsubscribe_resize = engine.on("clip:resize", ({ clip }) => {
+      resized_clip_ref.current = clip;
+    });
+    const unsubscribe_settled = engine.on("state:settled", () => {
+      if (!resized_clip_ref.current) return;
+      commit_bounds(resized_clip_ref.current);
+      resized_clip_ref.current = null;
+    });
+    return () => {
+      unsubscribe_move();
+      unsubscribe_resize();
+      unsubscribe_settled();
+    };
+  }, [engine, on_update_marker_bounds]);
+
   function add_marker_at_pointer(event: MouseEvent<HTMLDivElement>) {
     event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -218,6 +287,57 @@ function TimelineSurface({
       x: event.clientX,
       y: event.clientY,
     };
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const local_y = event.clientY - bounds.top;
+    if (
+      event.button === 0 &&
+      local_y >= TIMELINE_RULER_HEIGHT &&
+      local_y <= TIMELINE_RULER_HEIGHT + TRACK_HEIGHT
+    ) {
+      range_drag_ref.current = {
+        x: event.clientX,
+        start_seconds: bounded_pointer_time(
+          event.clientX,
+          bounds,
+          engine,
+          duration,
+        ),
+      };
+    }
+  }
+
+  function create_range_at_pointer(event: PointerEvent<HTMLDivElement>) {
+    const drag = range_drag_ref.current;
+    range_drag_ref.current = null;
+    if (!drag || Math.abs(event.clientX - drag.x) < RANGE_DRAG_MINIMUM_PIXELS) {
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const finish = bounded_pointer_time(
+      event.clientX,
+      bounds,
+      engine,
+      duration,
+    );
+    const start_seconds = Math.min(drag.start_seconds, finish);
+    const end_seconds = Math.max(drag.start_seconds, finish);
+    if (end_seconds - start_seconds >= MINIMUM_CLIP_DURATION_SECONDS) {
+      void on_add_marker(start_seconds, end_seconds);
+    }
+  }
+
+  function create_point_at_pointer(event: MouseEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const local_y = event.clientY - bounds.top;
+    if (
+      local_y < TIMELINE_RULER_HEIGHT ||
+      local_y > TIMELINE_RULER_HEIGHT + TRACK_HEIGHT
+    ) {
+      return;
+    }
+    void on_add_marker(
+      bounded_pointer_time(event.clientX, bounds, engine, duration),
+    );
   }
 
   return (
@@ -286,7 +406,9 @@ function TimelineSurface({
             className="timeline-fill"
             aria-label="时间线画布；拖动平移，Alt 加滚轮缩放，方向键定位"
             onContextMenu={add_marker_at_pointer}
+            onDoubleClick={create_point_at_pointer}
             onPointerDownCapture={remember_pointer_position}
+            onPointerUpCapture={create_range_at_pointer}
             onWheelCapture={zoom_with_alt}
           >
             <CanvasRenderer />
@@ -323,11 +445,13 @@ export function MediaTimeline({
   transcript,
   segments,
   markers,
+  candidate_markers = EMPTY_MARKERS,
   marker_error,
   on_seek,
   on_selected_transcript_indices_change,
   on_add_marker,
-  on_update_marker_tags,
+  on_update_marker,
+  on_delete_marker,
   on_update_transcript,
 }: MediaTimelineProps) {
   const [editing_transcript_index, set_editing_transcript_index] = useState<
@@ -341,7 +465,17 @@ export function MediaTimeline({
   const [editing_marker_id, set_editing_marker_id] = useState<string | null>(
     null,
   );
+  const [marker_title_draft, set_marker_title_draft] = useState("");
   const [marker_tags_draft, set_marker_tags_draft] = useState("");
+  const [marker_start_draft, set_marker_start_draft] = useState(0);
+  const [marker_end_draft, set_marker_end_draft] = useState<number | null>(
+    null,
+  );
+  const [confirming_delete, set_confirming_delete] = useState(false);
+  const [marker_save_error, set_marker_save_error] = useState<string | null>(
+    null,
+  );
+  const [is_saving_marker, set_is_saving_marker] = useState(false);
   const [marker_editor_position, set_marker_editor_position] =
     useState<TimelinePointerPosition | null>(null);
   const transcript_segments = useMemo(
@@ -353,11 +487,12 @@ export function MediaTimeline({
     current_time,
     transcript_segments,
     segments,
-    markers,
+    [...markers, ...candidate_markers],
   );
   const tracks = useMemo(
-    () => build_tracks(transcript_segments, segments, markers),
-    [markers, segments, transcript_segments],
+    () =>
+      build_tracks(transcript_segments, segments, markers, candidate_markers),
+    [candidate_markers, markers, segments, transcript_segments],
   );
   const timeline_markers = useMemo(() => build_markers(markers), [markers]);
   const engine = useMemo(
@@ -460,32 +595,151 @@ export function MediaTimeline({
           </PopoverAnchor>
         ) : null}
         <PopoverContent
+          className="w-80 max-w-[calc(100vw-1rem)]"
           side="bottom"
           align="start"
           sideOffset={MARKER_EDITOR_OFFSET}
           collisionPadding={MARKER_EDITOR_COLLISION_PADDING}
         >
-          <form
-            className="flex items-center gap-2"
-            onSubmit={(event) => void save_marker_tags(event)}
-          >
-            <FieldGroup className="min-w-0 flex-1">
+          <PopoverHeader>
+            <PopoverTitle>编辑标记</PopoverTitle>
+            <PopoverDescription>
+              可精确编辑标题、标签和点/范围边界。
+            </PopoverDescription>
+          </PopoverHeader>
+          <form className="flex flex-col gap-4" onSubmit={save_marker}>
+            <FieldGroup className="gap-4">
               <Field>
-                <FieldLabel className="sr-only" htmlFor="marker-tags">
-                  编辑标记标签
-                </FieldLabel>
+                <FieldLabel htmlFor="marker-title">标题</FieldLabel>
+                <Input
+                  id="marker-title"
+                  autoFocus
+                  value={marker_title_draft}
+                  maxLength={200}
+                  placeholder="标记标题"
+                  onChange={(event) =>
+                    set_marker_title_draft(event.currentTarget.value)
+                  }
+                  disabled={is_saving_marker}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="marker-tags">标签</FieldLabel>
                 <Input
                   id="marker-tags"
-                  autoFocus
+                  aria-label="编辑标记标签"
                   value={marker_tags_draft}
                   placeholder="输入标签，用逗号分隔"
                   onChange={(event) =>
                     set_marker_tags_draft(event.currentTarget.value)
                   }
+                  disabled={is_saving_marker}
                 />
               </Field>
+              <Field>
+                <FieldLabel htmlFor="marker-start">开始时间（秒）</FieldLabel>
+                <Input
+                  id="marker-start"
+                  type="number"
+                  min={0}
+                  max={duration}
+                  step={0.1}
+                  value={marker_start_draft}
+                  onChange={(event) =>
+                    set_marker_start_draft(event.currentTarget.valueAsNumber)
+                  }
+                  disabled={is_saving_marker}
+                />
+              </Field>
+              {marker_end_draft !== null ? (
+                <Field
+                  data-invalid={
+                    marker_end_draft <= marker_start_draft || undefined
+                  }
+                >
+                  <FieldLabel htmlFor="marker-end">结束时间（秒）</FieldLabel>
+                  <Input
+                    id="marker-end"
+                    type="number"
+                    min={marker_start_draft}
+                    max={duration}
+                    step={0.1}
+                    value={marker_end_draft}
+                    aria-invalid={marker_end_draft <= marker_start_draft}
+                    onChange={(event) =>
+                      set_marker_end_draft(event.currentTarget.valueAsNumber)
+                    }
+                    disabled={is_saving_marker}
+                  />
+                  {marker_end_draft <= marker_start_draft ? (
+                    <FieldDescription>
+                      结束时间必须晚于开始时间。
+                    </FieldDescription>
+                  ) : null}
+                </Field>
+              ) : null}
             </FieldGroup>
-            <Button type="submit">确认</Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() =>
+                set_marker_end_draft((current) =>
+                  current === null
+                    ? Math.min(duration, marker_start_draft + 5)
+                    : null,
+                )
+              }
+              disabled={is_saving_marker}
+            >
+              转换为{marker_end_draft === null ? "范围" : "点"}标记
+            </Button>
+            {marker_save_error ? (
+              <FieldDescription className="text-destructive" role="alert">
+                {marker_save_error}
+              </FieldDescription>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => {
+                  if (!confirming_delete) {
+                    set_confirming_delete(true);
+                    return;
+                  }
+                  if (editing_marker_id === null) return;
+                  set_is_saving_marker(true);
+                  void on_delete_marker(editing_marker_id).then(
+                    cancel_marker_edit,
+                  );
+                }}
+                disabled={is_saving_marker}
+              >
+                <Trash2 data-icon="inline-start" />
+                {confirming_delete ? "确认删除" : "删除"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={cancel_marker_edit}
+                disabled={is_saving_marker}
+              >
+                取消
+              </Button>
+              <Button
+                type="submit"
+                disabled={
+                  is_saving_marker ||
+                  !Number.isFinite(marker_start_draft) ||
+                  (marker_end_draft !== null &&
+                    (!Number.isFinite(marker_end_draft) ||
+                      marker_end_draft <= marker_start_draft))
+                }
+              >
+                {is_saving_marker ? <Spinner data-icon="inline-start" /> : null}
+                {is_saving_marker ? "保存中…" : "保存"}
+              </Button>
+            </div>
           </form>
         </PopoverContent>
       </Popover>
@@ -502,6 +756,22 @@ export function MediaTimeline({
             engine={engine}
             on_seek={on_seek}
             on_add_marker={on_add_marker}
+            on_update_marker_bounds={(
+              marker_id,
+              start_seconds,
+              end_seconds,
+            ) => {
+              const marker = markers.find(
+                (item) => item.marker_id === marker_id,
+              );
+              if (!marker) return;
+              void on_update_marker(marker_id, {
+                start_seconds,
+                end_seconds,
+                title: marker.title,
+                tags: marker.tags,
+              });
+            }}
             on_select_marker={select_marker}
             on_select_transcript={(segment_index) =>
               on_selected_transcript_indices_change([segment_index])
@@ -536,7 +806,12 @@ export function MediaTimeline({
     );
     if (!marker) return;
     set_editing_marker_id(marker.marker_id);
+    set_marker_title_draft(marker.title);
     set_marker_tags_draft(marker.tags.join(", "));
+    set_marker_start_draft(marker.start_seconds);
+    set_marker_end_draft(marker.end_seconds);
+    set_confirming_delete(false);
+    set_marker_save_error(null);
     set_marker_editor_position(pointer_position);
     cancel_transcript_edit();
   }
@@ -573,20 +848,34 @@ export function MediaTimeline({
     }
   }
 
-  async function save_marker_tags(event: FormEvent<HTMLFormElement>) {
+  function save_marker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (editing_marker_id === null) return;
     const tags = marker_tags_draft
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean);
-    await on_update_marker_tags(editing_marker_id, tags);
-    cancel_marker_edit();
+    set_is_saving_marker(true);
+    set_marker_save_error(null);
+    void on_update_marker(editing_marker_id, {
+      start_seconds: marker_start_draft,
+      end_seconds: marker_end_draft,
+      title: marker_title_draft,
+      tags,
+    })
+      .then(cancel_marker_edit)
+      .catch(() => set_marker_save_error("标记保存失败，请稍后重试"))
+      .finally(() => set_is_saving_marker(false));
   }
 
   function cancel_marker_edit() {
     set_editing_marker_id(null);
+    set_marker_title_draft("");
     set_marker_tags_draft("");
+    set_marker_start_draft(0);
+    set_marker_end_draft(null);
+    set_confirming_delete(false);
+    set_marker_save_error(null);
     set_marker_editor_position(null);
   }
 
@@ -602,22 +891,38 @@ function build_tracks(
   transcript_segments: Transcript["segments"],
   segments: MediaSegment[],
   markers: MediaMarker[],
+  candidate_markers: MediaMarker[],
 ): Track[] {
   return [
     create_track(
       MARKER_TRACK_ID,
       "标记",
       "marker",
-      markers.map((marker) =>
-        create_clip(
-          marker.marker_id,
-          marker.marker_id,
-          marker.time_seconds,
-          marker.time_seconds + MINIMUM_CLIP_DURATION_SECONDS,
-          marker.tags.join(" · ") || "未添加标签",
-          { kind: "marker", source_id: marker.marker_id },
+      [
+        ...markers.map((marker) =>
+          create_clip(
+            marker.marker_id,
+            marker.marker_id,
+            marker.start_seconds,
+            marker.end_seconds ??
+              marker.start_seconds + MINIMUM_CLIP_DURATION_SECONDS,
+            marker.title || marker.tags.join(" · ") || "未命名标记",
+            { kind: "marker", source_id: marker.marker_id },
+          ),
         ),
-      ),
+        ...candidate_markers.map((marker) =>
+          create_clip(
+            `candidate-${marker.marker_id}`,
+            marker.marker_id,
+            marker.start_seconds,
+            marker.end_seconds ??
+              marker.start_seconds + MINIMUM_CLIP_DURATION_SECONDS,
+            `待审批 · ${marker.title || "标记"}`,
+            { kind: "candidate", source_id: marker.marker_id },
+          ),
+        ),
+      ],
+      false,
     ),
     create_track(
       TRANSCRIPT_TRACK_ID,
@@ -657,6 +962,7 @@ function create_track(
   name: string,
   kind: string,
   clips: Clip[],
+  locked = true,
 ): Track {
   return {
     id,
@@ -664,7 +970,7 @@ function create_track(
     kind,
     clips,
     selected: false,
-    locked: true,
+    locked,
     muted: false,
     visible: true,
     height: TRACK_HEIGHT,
@@ -691,8 +997,8 @@ function create_clip(
     sourceStart: fromSeconds(0),
     selected: false,
     label,
-    movable: false,
-    resizable: false,
+    movable: metadata.kind === "marker",
+    resizable: metadata.kind === "marker",
     metadata,
   };
 }
@@ -700,8 +1006,8 @@ function create_clip(
 function build_markers(markers: MediaMarker[]): Marker[] {
   return markers.map((marker) => ({
     id: marker.marker_id,
-    time: fromSeconds(marker.time_seconds),
-    label: marker.tags.join(" · ") || "标记",
+    time: fromSeconds(marker.start_seconds),
+    label: marker.title || marker.tags.join(" · ") || "标记",
   }));
 }
 
@@ -717,9 +1023,19 @@ function timeline_duration(
     current_time,
     ...transcript_segments.map((segment) => segment.end_seconds),
     ...segments.map((segment) => segment.end_seconds),
-    ...markers.map((marker) => marker.time_seconds),
+    ...markers.map((marker) => marker.end_seconds ?? marker.start_seconds),
     MINIMUM_DURATION_SECONDS,
   );
+}
+
+function bounded_pointer_time(
+  client_x: number,
+  bounds: DOMRect,
+  engine: TimelineEngine,
+  duration: number,
+): number {
+  const seconds = toSeconds(engine.pixelToTime(client_x - bounds.left));
+  return Math.min(Math.max(seconds, 0), duration);
 }
 
 function is_text_editing_target(target: EventTarget | null): boolean {

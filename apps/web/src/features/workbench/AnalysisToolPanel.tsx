@@ -4,6 +4,8 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
+  type Dispatch,
+  type SetStateAction,
 } from "react";
 import { SlidersHorizontal, Sparkles, Wrench } from "lucide-react";
 
@@ -36,6 +38,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { Slider } from "@/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_duration, format_time } from "@/shared/format";
+import {
+  DEFAULT_ANALYSIS_STRATEGY,
+  MARKER_RANGE_MAX_SECONDS,
+  MARKER_RANGE_MIN_SECONDS,
+  MARKER_RANGE_STEP_SECONDS,
+} from "@/shared/analysis";
 import { transcription_runtime_profile } from "@/shared/transcription";
 import {
   IMAGE_INPUT_MODALITY,
@@ -70,20 +78,6 @@ const SOURCE_LABELS: Record<MediaAsset["source_platform"], string> = {
   youtube: "YouTube",
 };
 
-const DEFAULT_ANALYSIS_STRATEGY: AnalysisStrategy = {
-  preset: "course_notes",
-  weights: {
-    core_concepts: 90,
-    formula_derivation: 65,
-    case_demonstration: 60,
-    questions_conclusions: 80,
-    visual_content: 55,
-    user_markers: 100,
-  },
-  depth: "balanced",
-  marker_context_seconds: 30,
-};
-
 const DEFAULT_ANALYSIS_PRESET: AnalysisStrategyPresetDescriptor = {
   preset: "course_notes",
   name: "课程笔记",
@@ -115,6 +109,8 @@ type AnalysisToolPanelProps = {
   is_analyzing: boolean;
   ai_models: AiModelSummary[];
   analysis_strategies?: AnalysisStrategyPresetDescriptor[];
+  analysis_strategy: AnalysisStrategy;
+  set_analysis_strategy: Dispatch<SetStateAction<AnalysisStrategy>>;
   on_start_analysis: (
     mode: AnalysisMode,
     marker_ids: string[],
@@ -150,6 +146,8 @@ export function AnalysisToolPanel({
   is_analyzing,
   ai_models,
   analysis_strategies = [],
+  analysis_strategy,
+  set_analysis_strategy,
   on_start_analysis,
   selected_transcript_count,
   active_correction_scope,
@@ -162,9 +160,6 @@ export function AnalysisToolPanel({
   on_collapsed_change,
 }: AnalysisToolPanelProps) {
   const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
-  const [analysis_strategy, set_analysis_strategy] = useState<AnalysisStrategy>(
-    () => structuredClone(DEFAULT_ANALYSIS_STRATEGY),
-  );
   const [advanced_strategy_open, set_advanced_strategy_open] = useState(false);
   const [transcription_options, set_transcription_options] =
     useState<TranscriptionOptions | null>(default_transcription);
@@ -665,35 +660,51 @@ export function AnalysisToolPanel({
                       />
                     </Field>
                   ))}
-                  <Field>
-                    <div className="flex items-center justify-between gap-2">
-                      <FieldLabel htmlFor="marker_context_seconds">
-                        标记上下文
-                      </FieldLabel>
-                      <output
-                        className="text-xs text-muted-foreground tabular-nums"
-                        htmlFor="marker_context_seconds"
-                      >
-                        前后 {analysis_strategy.marker_context_seconds} 秒
-                      </output>
-                    </div>
-                    <Slider
-                      id="marker_context_seconds"
-                      min={10}
-                      max={120}
-                      step={10}
-                      value={[analysis_strategy.marker_context_seconds]}
-                      onValueChange={([value]) =>
-                        set_analysis_strategy((current) => ({
-                          ...current,
-                          marker_context_seconds:
-                            value ?? current.marker_context_seconds,
-                        }))
-                      }
-                      disabled={is_analyzing}
-                      aria-label="标记上下文秒数"
-                    />
-                  </Field>
+                  <FieldGroup className="gap-4">
+                    <FieldDescription>标记范围权重</FieldDescription>
+                    {(
+                      [
+                        {
+                          field: "marker_range_before_seconds",
+                          label: "默认向前",
+                        },
+                        {
+                          field: "marker_range_after_seconds",
+                          label: "默认向后",
+                        },
+                      ] as const
+                    ).map(({ field, label }) => (
+                      <Field key={field}>
+                        <div className="flex items-center justify-between gap-2">
+                          <FieldLabel htmlFor={field}>{label}</FieldLabel>
+                          <output
+                            className="text-xs text-muted-foreground tabular-nums"
+                            htmlFor={field}
+                          >
+                            {analysis_strategy[field]} 秒
+                          </output>
+                        </div>
+                        <Slider
+                          id={field}
+                          min={MARKER_RANGE_MIN_SECONDS}
+                          max={MARKER_RANGE_MAX_SECONDS}
+                          step={MARKER_RANGE_STEP_SECONDS}
+                          value={[analysis_strategy[field]]}
+                          onValueChange={([value]) =>
+                            set_analysis_strategy((current) => ({
+                              ...current,
+                              [field]: value ?? current[field],
+                            }))
+                          }
+                          disabled={is_analyzing}
+                          aria-label={`${label}范围秒数`}
+                        />
+                      </Field>
+                    ))}
+                    <FieldDescription>
+                      标记点权重最高，并向两侧边缘线性衰减。
+                    </FieldDescription>
+                  </FieldGroup>
                 </FieldGroup>
               ) : null}
               <AiModelSelect
@@ -720,10 +731,10 @@ export function AnalysisToolPanel({
                             toggle_marker(current, marker.marker_id),
                           )
                         }
-                        aria-label={`选择 ${format_time(marker.time_seconds)} 标记`}
+                        aria-label={`选择 ${format_time(marker.start_seconds)} 标记`}
                       />
                       <time className="font-mono text-primary">
-                        {format_time(marker.time_seconds)}
+                        {format_time(marker.start_seconds)}
                       </time>
                       <span className="truncate text-muted-foreground">
                         {marker.tags.join(" / ") || "未分类标记"}

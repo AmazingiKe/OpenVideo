@@ -101,7 +101,8 @@ class AnalysisStrategy(BaseModel):
     preset: AnalysisStrategyPreset = AnalysisStrategyPreset.COURSE_NOTES
     weights: AnalysisWeights | None = None
     depth: AnalysisDepth = AnalysisDepth.BALANCED
-    marker_context_seconds: int = Field(default=30, ge=10, le=120)
+    marker_range_before_seconds: int = Field(default=10, ge=0, le=120, multiple_of=5)
+    marker_range_after_seconds: int = Field(default=20, ge=0, le=120, multiple_of=5)
 
     @model_validator(mode="after")
     def resolve_weights(self) -> "AnalysisStrategy":
