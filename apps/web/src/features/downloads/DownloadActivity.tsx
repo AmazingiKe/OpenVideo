@@ -6,6 +6,12 @@ import {
   TerminalSquare,
 } from "lucide-react";
 
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,12 +43,6 @@ export function DownloadActivity({
   retrying_task_id,
   on_retry,
 }: DownloadActivityProps) {
-  const log_entries = tasks
-    .flatMap((task) => task.events.map((event) => ({ task, event })))
-    .sort(
-      (left, right) =>
-        Date.parse(right.event.created_at) - Date.parse(left.event.created_at),
-    );
   return (
     <section className="flex flex-col gap-4" aria-labelledby="activity_title">
       <div className="flex items-end justify-between gap-4">
@@ -84,51 +84,89 @@ export function DownloadActivity({
         <ActivityCard
           icon={TerminalSquare}
           title="运行日志"
-          description="处理阶段、提示与错误信息。"
+          description="每个任务显示最新状态，展开可查看完整步骤。"
         >
-          {log_entries.length === 0 ? (
+          {tasks.length === 0 ? (
             <DownloadEmpty
               icon={ServerCog}
               title="暂无运行记录"
               description="任务开始后，这里会同步显示处理阶段。"
             />
           ) : (
-            <ul className="overflow-hidden rounded-lg border">
-              {log_entries.map(({ task, event }) => (
-                <li
-                  key={event.event_id}
-                  className="flex flex-col gap-1 border-b px-3 py-2.5 last:border-b-0"
-                >
-                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                    <span
-                      className="line-clamp-2 text-xs font-medium sm:truncate"
-                      title={task.name}
-                    >
-                      {task.name}
-                    </span>
-                    <time
-                      className="text-xs text-muted-foreground tabular-nums sm:shrink-0"
-                      dateTime={event.created_at}
-                    >
-                      {format_task_created_at(event.created_at)}
-                    </time>
-                  </div>
-                  <div className="grid gap-1 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3">
-                    <span className="text-xs font-medium">
-                      {TASK_STAGE_LABELS[event.stage] ?? event.stage}
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {event.error_message ?? event.message}
-                    </span>
-                  </div>
-                </li>
+            <Accordion type="multiple">
+              {tasks.map((task) => (
+                <DownloadLog key={task.task_id} task={task} />
               ))}
-            </ul>
+            </Accordion>
           )}
         </ActivityCard>
       </div>
     </section>
   );
+}
+
+function DownloadLog({ task }: { task: TaskRecord }) {
+  const latest_log = latest_task_log(task);
+  return (
+    <AccordionItem value={task.task_id}>
+      <AccordionTrigger>
+        <span className="grid min-w-0 flex-1 gap-1">
+          <span className="flex min-w-0 items-center justify-between gap-3">
+            <span className="truncate text-xs font-medium" title={task.name}>
+              {task.name}
+            </span>
+            <time
+              className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums"
+              dateTime={latest_log.created_at}
+            >
+              {format_task_created_at(latest_log.created_at)}
+            </time>
+          </span>
+          <span className="grid min-w-0 gap-1 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3">
+            <span className="text-xs font-medium">
+              {TASK_STAGE_LABELS[latest_log.stage] ?? latest_log.stage}
+            </span>
+            <span className="truncate text-xs font-normal text-muted-foreground">
+              {latest_log.error_message ?? latest_log.message}
+            </span>
+          </span>
+        </span>
+      </AccordionTrigger>
+      <AccordionContent>
+        <ol className="flex flex-col gap-2 border-t pt-3">
+          {[...task.events].reverse().map((event) => (
+            <li
+              key={event.event_id}
+              className="grid gap-1 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:gap-3"
+            >
+              <span className="text-xs font-medium">
+                {TASK_STAGE_LABELS[event.stage] ?? event.stage}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {event.error_message ?? event.message}
+              </span>
+              <time
+                className="text-xs text-muted-foreground tabular-nums sm:text-right"
+                dateTime={event.created_at}
+              >
+                {format_task_created_at(event.created_at)}
+              </time>
+            </li>
+          ))}
+        </ol>
+      </AccordionContent>
+    </AccordionItem>
+  );
+}
+
+function latest_task_log(task: TaskRecord) {
+  const latest_event = task.events.at(-1);
+  return {
+    stage: latest_event?.stage ?? task.stage,
+    message: latest_event?.message ?? task.message,
+    error_message: latest_event?.error_message ?? task.error_message,
+    created_at: latest_event?.created_at ?? task.created_at,
+  };
 }
 
 function ActivityCard({

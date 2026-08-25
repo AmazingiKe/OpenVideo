@@ -363,6 +363,25 @@ def test_download_history_restores_title_and_events_after_restart(
     messages = [event["message"] for event in task_response.json()["events"]]
     assert "已识别视频：Blender 角色绑定完整教程" in messages
     assert task_response.json()["events"][-1]["error_message"] == "测试下载失败"
+    reading_events = [
+        event
+        for event in task_response.json()["events"]
+        if event["message"] == "正在读取视频信息"
+    ]
+    assert len(reading_events) == 1
+    assert reading_events[0]["stage"] == "reading_metadata"
+    identified_event = next(
+        event
+        for event in task_response.json()["events"]
+        if event["message"] == "已识别视频：Blender 角色绑定完整教程"
+    )
+    assert identified_event["stage"] == "reading_metadata"
+    downloading_event = next(
+        event
+        for event in task_response.json()["events"]
+        if event["message"] == "正在下载视频和音频"
+    )
+    assert downloading_event["stage"] == "downloading"
 
     restarted_app = api.create_app(settings)
     with TestClient(restarted_app) as client:

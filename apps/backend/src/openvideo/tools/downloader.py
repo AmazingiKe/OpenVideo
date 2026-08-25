@@ -28,6 +28,8 @@ MAX_DIAGNOSTIC_LINES = 30
 PLAYLIST_PROBE_LIMIT = 100
 BILIBILI_VIEW_API_URL = "https://api.bilibili.com/x/web-interface/view"
 BILIBILI_VIEW_TIMEOUT_SECONDS = 20
+READING_METADATA_MESSAGE = "正在读取视频信息"
+DOWNLOADING_MEDIA_MESSAGE = "正在下载视频和音频"
 BILIBILI_VIEW_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -128,10 +130,10 @@ def download_video(
         shutil.rmtree(staging_directory)
     staging_directory.mkdir(parents=True)
 
-    on_stage("正在读取视频信息")
+    on_stage(READING_METADATA_MESSAGE)
     metadata = read_download_metadata(source_url, platform, cookie_source)
     on_metadata(metadata)
-    on_stage("正在下载视频和音频")
+    on_stage(DOWNLOADING_MEDIA_MESSAGE)
     temporary_template = staging_directory / "download.%(ext)s"
     command = [
         sys.executable,

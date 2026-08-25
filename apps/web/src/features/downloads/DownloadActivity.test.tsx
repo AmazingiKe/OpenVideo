@@ -40,13 +40,17 @@ describe("DownloadActivity", () => {
       />,
     );
 
-    const time = screen.getByText(expected_text);
-    expect(time).toHaveAttribute("datetime", created_at);
-    expect(time.tagName).toBe("TIME");
+    const times = screen.getAllByText(expected_text);
+    expect(times).toHaveLength(2);
+    for (const time of times) {
+      expect(time).toHaveAttribute("datetime", created_at);
+      expect(time.tagName).toBe("TIME");
+    }
   });
 
-  it("shows the video title in both the task card and persisted log", () => {
+  it("shows one task summary and reveals persisted steps on demand", () => {
     const name = "Blender 角色绑定完整教程";
+    const identified_message = `已识别视频：${name}`;
     render(
       <DownloadActivity
         retrying_task_id={null}
@@ -65,11 +69,20 @@ describe("DownloadActivity", () => {
               {
                 event_id: "event-0198d12345677890abcdef1234567891",
                 job_id: "job-0198d12345677890abcdef1234567890",
+                stage: "reading_metadata",
+                progress_percent: 1,
+                message: identified_message,
+                error_message: null,
+                created_at: "2026-01-02T03:04:06Z",
+              },
+              {
+                event_id: "event-0198d12345677890abcdef1234567892",
+                job_id: "job-0198d12345677890abcdef1234567890",
                 stage: "downloading",
                 progress_percent: 2,
                 message: "正在下载视频和音频",
                 error_message: null,
-                created_at: "2026-01-02T03:04:06Z",
+                created_at: "2026-01-02T03:04:08Z",
               },
             ],
           },
@@ -78,7 +91,15 @@ describe("DownloadActivity", () => {
     );
 
     expect(screen.getAllByText(name)).toHaveLength(2);
-    expect(screen.getByText("正在下载视频和音频")).toBeInTheDocument();
+    expect(screen.queryByText(identified_message)).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Blender 角色绑定完整教程/,
+      }),
+    );
+
+    expect(screen.getByText(identified_message)).toBeVisible();
   });
 
   it("retries a failed task and disables the action while submitting", () => {

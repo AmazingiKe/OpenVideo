@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { userEvent, within } from "storybook/test";
 
 import { DownloadActivity } from "@/features/downloads/DownloadActivity";
 
@@ -82,6 +83,24 @@ export const Retrying: Story = {
   args: {
     ...Running.args,
     retrying_task_id: FAILED_TASK_ID,
+  },
+};
+
+export const Detailed: Story = {
+  ...Running,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(
+      within(canvasElement).getByRole("button", {
+        name: /Blender 角色绑定完整教程/,
+      }),
+    );
+  },
+};
+
+export const Narrow: Story = {
+  ...Detailed,
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
   },
 };
 

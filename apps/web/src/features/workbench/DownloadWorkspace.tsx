@@ -182,7 +182,7 @@ export function DownloadWorkspace({
                 添加视频链接
               </CardTitle>
               <CardDescription>
-                粘贴单个视频或播放列表地址，我们会先读取可下载内容。
+                粘贴链接下载视频
               </CardDescription>
             </div>
           </div>

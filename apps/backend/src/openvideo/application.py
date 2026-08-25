@@ -44,6 +44,8 @@ from openvideo.download_accounts import (
 )
 from openvideo.tools.analysis_pipeline import build_segments
 from openvideo.tools.downloader import (
+    DOWNLOADING_MEDIA_MESSAGE,
+    READING_METADATA_MESSAGE,
     DownloadFailure,
     DownloadMetadata,
     download_video,
@@ -221,7 +223,7 @@ class DownloadManager:
                 job_id,
                 DownloadStage.READING_METADATA,
                 1,
-                "正在读取视频信息",
+                READING_METADATA_MESSAGE,
             )
             asset.status = MediaAssetStatus.DOWNLOADING
             self.library.save(asset)
@@ -331,7 +333,7 @@ class DownloadManager:
             return
         stage = (
             DownloadStage.DOWNLOADING
-            if job.stage == DownloadStage.READING_METADATA
+            if message == DOWNLOADING_MEDIA_MESSAGE
             else job.stage
         )
         progress = max(job.progress_percent, 2)
