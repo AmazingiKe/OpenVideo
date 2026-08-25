@@ -170,6 +170,86 @@ def test_download_folder_assignment_defaults_and_preserves_duplicates(
     assert by_id[uncategorized.json()[0]["asset_id"]]["folder_id"] is None
 
 
+def test_failed_download_reuses_asset_for_a_new_job(monkeypatch, tmp_path):
+    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    app = api.create_app(Settings(library_path=tmp_path))
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ]
+            },
+        )
+        first_job = first_response.json()[0]
+        app.state.download_manager._fail(first_job["job_id"], "测试下载失败")
+
+        retry_response = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ]
+            },
+        )
+        assets = client.get("/api/media/assets").json()
+
+    retry_job = retry_response.json()[0]
+    assert retry_response.status_code == 202
+    assert retry_job["job_id"] != first_job["job_id"]
+    assert retry_job["asset_id"] == first_job["asset_id"]
+    assert retry_job["stage"] == "pending"
+    assert len(assets) == 1
+    assert assets[0]["status"] == "pending"
+    assert assets[0]["error_message"] is None
+
+
+def test_interrupted_download_can_be_retried_after_restart(monkeypatch, tmp_path):
+    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    settings = Settings(library_path=tmp_path)
+    app = api.create_app(settings)
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ]
+            },
+        )
+        first_job = first_response.json()[0]
+
+    restarted_app = api.create_app(settings)
+    with TestClient(restarted_app) as client:
+        retry_response = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ]
+            },
+        )
+        history = client.get("/api/downloads?limit=50").json()
+        assets = client.get("/api/media/assets").json()
+
+    retry_job = retry_response.json()[0]
+    history_by_id = {job["job_id"]: job for job in history}
+    assert retry_response.status_code == 202
+    assert retry_job["job_id"] != first_job["job_id"]
+    assert retry_job["asset_id"] == first_job["asset_id"]
+    assert retry_job["stage"] == "pending"
+    assert history_by_id[first_job["job_id"]]["stage"] == "failed"
+    assert history_by_id[first_job["job_id"]]["error_message"] == (
+        "应用重启中断了下载任务"
+    )
+    assert len(assets) == 1
+    assert assets[0]["status"] == "pending"
+    assert assets[0]["error_message"] is None
+
+
 def test_asset_delete_keeps_files_when_a_related_task_cannot_stop(
     monkeypatch,
     tmp_path,

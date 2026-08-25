@@ -96,9 +96,13 @@ class DownloadManager:
                     return active_job
                 if existing_asset.status == MediaAssetStatus.READY:
                     return self._completed_job(existing_asset)
+                existing_asset.folder_id = folder_id
+                existing_asset.source_url = source.normalized_url
+                existing_asset.status = MediaAssetStatus.PENDING
+                existing_asset.error_message = None
+                return self._create_download_job(existing_asset)
 
         asset_id = str(uuid7())
-        job_id = f"job-{uuid7().hex}"
         asset = MediaAsset(
             asset_id=asset_id,
             folder_id=folder_id,
@@ -106,12 +110,17 @@ class DownloadManager:
             source_platform=source.platform,
             source_video_id=source.source_video_id,
         )
-        job = DownloadJob(job_id=job_id, asset_id=asset_id)
+        return self._create_download_job(asset)
+
+    def _create_download_job(self, asset: MediaAsset) -> DownloadJob:
+        """素材与任务先共同落盘，避免轮询观察到没有持久化资源的任务。"""
+        job_id = f"job-{uuid7().hex}"
+        job = DownloadJob(job_id=job_id, asset_id=asset.asset_id)
         self.library.save(asset)
         self.library.save_download_job(job, DownloadEvent.capture(job))
         with self._lock:
             self._jobs[job_id] = job
-            self._active_job_id_by_asset_id[asset_id] = job_id
+            self._active_job_id_by_asset_id[asset.asset_id] = job_id
         return job.model_copy(deep=True)
 
     def create_batch(
@@ -294,7 +303,9 @@ class DownloadManager:
                 self._fail(job_id, str(error) or "视频下载失败")
             finally:
                 with self._lock:
-                    self._active_job_id_by_asset_id.pop(job.asset_id, None)
+                    active_job_id = self._active_job_id_by_asset_id.get(job.asset_id)
+                    if active_job_id == job_id:
+                        self._active_job_id_by_asset_id.pop(job.asset_id)
 
     def _update_stage_message(self, job_id: str, message: str) -> None:
         job = self.get(job_id)
@@ -380,7 +391,10 @@ class DownloadManager:
         with self._lock:
             job_id = self._active_job_id_by_asset_id.get(asset_id)
             job = self._jobs.get(job_id) if job_id else None
-            return job.model_copy(deep=True) if job else None
+            if not job or job.stage in TERMINAL_DOWNLOAD_STAGES:
+                self._active_job_id_by_asset_id.pop(asset_id, None)
+                return None
+            return job.model_copy(deep=True)
 
     def _completed_job(self, asset: MediaAsset) -> DownloadJob:
         job = DownloadJob(
