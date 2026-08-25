@@ -129,6 +129,24 @@ class DownloadManager:
         """为多个来源各建一个任务，返回与输入一一对应的任务列表。"""
         return [self.create(source, folder_id) for source in sources]
 
+    def retry(self, job_id: str) -> DownloadJob:
+        """失败任务保留原历史并创建新任务，素材来源与归档位置保持不变。"""
+        failed_job = self.get(job_id)
+        if failed_job is None:
+            raise LookupError("下载任务不存在")
+        if failed_job.stage != DownloadStage.FAILED:
+            raise ValueError("只有失败的下载任务可以重新下载")
+        asset = self.library.get(failed_job.asset_id)
+        if asset is None:
+            raise LookupError("下载任务对应的媒体资源不存在")
+        source = SourceMatch(
+            platform=asset.source_platform,
+            normalized_url=asset.source_url,
+            source_video_id=asset.source_video_id,
+            is_playlist=False,
+        )
+        return self.create(source, asset.folder_id)
+
     def start(self, job_id: str) -> None:
         with self._lock:
             current = self._tasks.get(job_id)

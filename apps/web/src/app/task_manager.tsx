@@ -16,6 +16,7 @@ import {
   create_transcript_correction,
   list_asset_agent_jobs,
   list_downloads,
+  request_download_retry,
   respond_to_agent_job,
   transcribe_asset,
 } from "@/shared/api";
@@ -43,6 +44,7 @@ type TaskManager = {
     urls: string[],
     folder_id?: string | null,
   ) => Promise<DownloadJob[]>;
+  retry_download: (job_id: string) => Promise<DownloadJob>;
   start_analysis: (
     asset_id: string,
     mode: AnalysisMode,
@@ -168,37 +170,65 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     return () => controller.abort();
   }, [record_download_job]);
 
-  const start_downloads = useCallback(
-    async (urls: string[], folder_id: string | null = null) => {
+  const track_download_jobs = useCallback(
+    async (jobs: DownloadJob[], controller: AbortController) => {
+      jobs.forEach(record_download_job);
+      const final_jobs = await Promise.all(
+        jobs.map((job) =>
+          TERMINAL_DOWNLOAD_STAGES.has(job.stage)
+            ? Promise.resolve(job)
+            : poll_download(job, record_download_job, controller.signal),
+        ),
+      );
+      final_jobs.forEach(record_download_job);
+      const completed_jobs = final_jobs.filter(
+        (job) => job.stage === "complete",
+      );
+      if (completed_jobs.length > 0) {
+        await refresh_assets(controller.signal);
+        select_asset(completed_jobs.at(-1)?.asset_id ?? null);
+      }
+      return final_jobs;
+    },
+    [record_download_job, refresh_assets, select_asset],
+  );
+
+  const with_download_controller = useCallback(
+    async <Result,>(
+      operation: (controller: AbortController) => Promise<Result>,
+    ) => {
       download_controller_ref.current?.abort();
       const controller = new AbortController();
       download_controller_ref.current = controller;
       try {
-        const jobs = await create_download(urls, controller.signal, folder_id);
-        jobs.forEach(record_download_job);
-        const final_jobs = await Promise.all(
-          jobs.map((job) =>
-            TERMINAL_DOWNLOAD_STAGES.has(job.stage)
-              ? Promise.resolve(job)
-              : poll_download(job, record_download_job, controller.signal),
-          ),
-        );
-        final_jobs.forEach(record_download_job);
-        const completed_jobs = final_jobs.filter(
-          (job) => job.stage === "complete",
-        );
-        if (completed_jobs.length > 0) {
-          await refresh_assets(controller.signal);
-          select_asset(completed_jobs.at(-1)?.asset_id ?? null);
-        }
-        return final_jobs;
+        return await operation(controller);
       } finally {
         if (download_controller_ref.current === controller) {
           download_controller_ref.current = null;
         }
       }
     },
-    [record_download_job, refresh_assets, select_asset],
+    [],
+  );
+
+  const start_downloads = useCallback(
+    (urls: string[], folder_id: string | null = null) =>
+      with_download_controller(async (controller) => {
+        const jobs = await create_download(urls, controller.signal, folder_id);
+        return track_download_jobs(jobs, controller);
+      }),
+    [track_download_jobs, with_download_controller],
+  );
+
+  const retry_download = useCallback(
+    (job_id: string) =>
+      with_download_controller(async (controller) => {
+        const job = await request_download_retry(job_id, controller.signal);
+        const [final_job] = await track_download_jobs([job], controller);
+        if (!final_job) throw new Error("重新下载任务未返回结果");
+        return final_job;
+      }),
+    [track_download_jobs, with_download_controller],
   );
 
   const run_analysis_operation = useCallback(
@@ -360,6 +390,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     () => ({
       task_records,
       start_downloads,
+      retry_download,
       start_analysis,
       start_transcription,
       start_transcript_correction,
@@ -375,6 +406,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       agent_jobs_by_asset,
       start_analysis,
       start_downloads,
+      retry_download,
       start_transcription,
       start_transcript_correction,
       restore_transcript_correction,

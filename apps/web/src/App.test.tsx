@@ -59,6 +59,7 @@ vi.mock("./shared/api", () => ({
   list_transcription_models: vi.fn(),
   media_url: (path: string) => path,
   probe_source: vi.fn(),
+  request_download_retry: vi.fn(),
   save_download_account: vi.fn(),
   select_directory: vi.fn(),
   test_ai_model: vi.fn(),

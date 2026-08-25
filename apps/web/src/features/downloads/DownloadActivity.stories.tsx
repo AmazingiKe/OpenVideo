@@ -5,11 +5,17 @@ import { DownloadActivity } from "@/features/downloads/DownloadActivity";
 const meta = {
   title: "Downloads/DownloadActivity",
   component: DownloadActivity,
-  args: { tasks: [] },
+  args: {
+    tasks: [],
+    retrying_task_id: null,
+    on_retry: () => undefined,
+  },
 } satisfies Meta<typeof DownloadActivity>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+const FAILED_TASK_ID = "job-0198d12345677890abcdef1234567891";
 
 export const Empty: Story = {};
 
@@ -47,7 +53,7 @@ export const Running: Story = {
         ],
       },
       {
-        task_id: "job-0198d12345677890abcdef1234567891",
+        task_id: FAILED_TASK_ID,
         task_type: "download",
         stage: "failed",
         message: "下载失败",
@@ -68,6 +74,14 @@ export const Running: Story = {
         ],
       },
     ],
+  },
+};
+
+export const Retrying: Story = {
+  ...Running,
+  args: {
+    ...Running.args,
+    retrying_task_id: FAILED_TASK_ID,
   },
 };
 

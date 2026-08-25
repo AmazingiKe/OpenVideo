@@ -348,6 +348,16 @@ export function get_download(
   });
 }
 
+export function request_download_retry(
+  job_id: string,
+  signal?: AbortSignal,
+): Promise<DownloadJob> {
+  return request_json(`/api/downloads/${encodeURIComponent(job_id)}/retry`, {
+    method: "POST",
+    signal,
+  });
+}
+
 export function list_assets(
   signal?: AbortSignal,
   options?: {

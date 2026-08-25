@@ -52,6 +52,7 @@ type DownloadWorkspaceProps = {
   target_folder_id: string | null;
   current_source_video_id: string | null;
   is_submitting: boolean;
+  retrying_download_task_id: string | null;
   error: string | null;
   download_accounts: DownloadAccount[];
   account_loading_platform: SourcePlatform | null;
@@ -62,6 +63,7 @@ type DownloadWorkspaceProps = {
   on_replace_selection: (urls: string[]) => void;
   on_target_folder_change: (folder_id: string | null) => void;
   on_start_download: () => void;
+  on_retry_download: (task_id: string) => void;
   on_save_download_account: (
     platform: SourcePlatform,
     cookie: string,
@@ -88,6 +90,7 @@ export function DownloadWorkspace({
   target_folder_id,
   current_source_video_id,
   is_submitting,
+  retrying_download_task_id,
   error,
   download_accounts,
   account_loading_platform,
@@ -98,6 +101,7 @@ export function DownloadWorkspace({
   on_replace_selection,
   on_target_folder_change,
   on_start_download,
+  on_retry_download,
   on_save_download_account,
   on_login_download_account,
   on_cancel_download_account_login,
@@ -267,7 +271,11 @@ export function DownloadWorkspace({
           on_start_download={on_start_download}
         />
       ) : null}
-      <DownloadActivity tasks={download_tasks} />
+      <DownloadActivity
+        tasks={download_tasks}
+        retrying_task_id={retrying_download_task_id}
+        on_retry={on_retry_download}
+      />
     </section>
   );
 }

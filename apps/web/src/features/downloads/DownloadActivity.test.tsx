@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { DownloadActivity } from "@/features/downloads/DownloadActivity";
 
@@ -22,6 +22,8 @@ describe("DownloadActivity", () => {
 
     render(
       <DownloadActivity
+        retrying_task_id={null}
+        on_retry={vi.fn()}
         tasks={[
           {
             task_id: "job-0198d12345677890abcdef1234567890",
@@ -47,6 +49,8 @@ describe("DownloadActivity", () => {
     const name = "Blender 角色绑定完整教程";
     render(
       <DownloadActivity
+        retrying_task_id={null}
+        on_retry={vi.fn()}
         tasks={[
           {
             task_id: "job-0198d12345677890abcdef1234567890",
@@ -75,5 +79,56 @@ describe("DownloadActivity", () => {
 
     expect(screen.getAllByText(name)).toHaveLength(2);
     expect(screen.getByText("正在下载视频和音频")).toBeInTheDocument();
+  });
+
+  it("retries a failed task and disables the action while submitting", () => {
+    const on_retry = vi.fn();
+    const task_id = "job-0198d12345677890abcdef1234567890";
+    const { rerender } = render(
+      <DownloadActivity
+        retrying_task_id={null}
+        on_retry={on_retry}
+        tasks={[
+          {
+            task_id,
+            task_type: "download",
+            stage: "failed",
+            message: "下载失败",
+            progress_percent: 12,
+            error_message: "网络连接中断",
+            created_at: "2026-01-02T03:04:05Z",
+            name: "Maya 灯光渲染案例",
+            events: [],
+          },
+        ]}
+      />,
+    );
+
+    const retry_button = screen.getByRole("button", {
+      name: "重新下载：Maya 灯光渲染案例",
+    });
+    fireEvent.click(retry_button);
+    expect(on_retry).toHaveBeenCalledWith(task_id);
+
+    rerender(
+      <DownloadActivity
+        retrying_task_id={task_id}
+        on_retry={on_retry}
+        tasks={[
+          {
+            task_id,
+            task_type: "download",
+            stage: "failed",
+            message: "下载失败",
+            progress_percent: 12,
+            error_message: "网络连接中断",
+            created_at: "2026-01-02T03:04:05Z",
+            name: "Maya 灯光渲染案例",
+            events: [],
+          },
+        ]}
+      />,
+    );
+    expect(retry_button).toBeDisabled();
   });
 });

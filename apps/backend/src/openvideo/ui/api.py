@@ -59,7 +59,7 @@ from openvideo.core.transcription_models import (
     TranscriptionOptions,
 )
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
-from openvideo.core.download_models import DownloadTask
+from openvideo.core.download_models import DownloadStage, DownloadTask
 from openvideo.core.library import (
     FolderConflictError,
     FolderNotFoundError,
@@ -836,6 +836,25 @@ def create_app(
         task = manager.get_task(job_id)
         if not task:
             raise HTTPException(status_code=404, detail="下载任务不存在")
+        return task
+
+    @app.post(
+        "/api/downloads/{job_id}/retry",
+        response_model=DownloadTask,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def retry_download(job_id: str) -> DownloadTask:
+        try:
+            job = manager.retry(job_id)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if job.stage != DownloadStage.COMPLETE:
+            manager.start(job.job_id)
+        task = manager.get_task(job.job_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="重新下载任务不存在")
         return task
 
     @app.get("/api/library/folders", response_model=list[FolderResponse])

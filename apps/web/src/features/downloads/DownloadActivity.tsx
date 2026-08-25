@@ -1,6 +1,13 @@
-import { Download, FileClock, ServerCog, TerminalSquare } from "lucide-react";
+import {
+  Download,
+  FileClock,
+  RotateCcw,
+  ServerCog,
+  TerminalSquare,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -16,9 +23,20 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
+import { Spinner } from "@/components/ui/spinner";
 import { TASK_STAGE_LABELS, type TaskRecord } from "@/features/workbench/tasks";
 
-export function DownloadActivity({ tasks }: { tasks: TaskRecord[] }) {
+type DownloadActivityProps = {
+  tasks: TaskRecord[];
+  retrying_task_id: string | null;
+  on_retry: (task_id: string) => void;
+};
+
+export function DownloadActivity({
+  tasks,
+  retrying_task_id,
+  on_retry,
+}: DownloadActivityProps) {
   const log_entries = tasks
     .flatMap((task) => task.events.map((event) => ({ task, event })))
     .sort(
@@ -53,7 +71,12 @@ export function DownloadActivity({ tasks }: { tasks: TaskRecord[] }) {
           ) : (
             <ul className="flex flex-col gap-3">
               {tasks.map((task) => (
-                <DownloadTask key={task.task_id} task={task} />
+                <DownloadTask
+                  key={task.task_id}
+                  task={task}
+                  is_retrying={retrying_task_id === task.task_id}
+                  on_retry={on_retry}
+                />
               ))}
             </ul>
           )}
@@ -160,9 +183,18 @@ function DownloadEmpty({
   );
 }
 
-function DownloadTask({ task }: { task: TaskRecord }) {
+function DownloadTask({
+  task,
+  is_retrying,
+  on_retry,
+}: {
+  task: TaskRecord;
+  is_retrying: boolean;
+  on_retry: (task_id: string) => void;
+}) {
   const progress = Math.min(Math.max(task.progress_percent, 0), 100);
   const stage_label = TASK_STAGE_LABELS[task.stage] ?? task.stage;
+  const is_failed = task.stage === "failed";
   return (
     <li className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
@@ -191,10 +223,32 @@ function DownloadTask({ task }: { task: TaskRecord }) {
           {format_task_created_at(task.created_at)}
         </time>
       </div>
-      {task.error_message ? (
-        <p className="text-xs text-destructive" role="alert">
-          {task.error_message}
-        </p>
+      {task.error_message || is_failed ? (
+        <div className="flex items-start justify-between gap-3">
+          {task.error_message ? (
+            <p className="text-xs text-destructive" role="alert">
+              {task.error_message}
+            </p>
+          ) : null}
+          {is_failed ? (
+            <Button
+              className="ml-auto"
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={is_retrying}
+              aria-label={`重新下载：${task.name}`}
+              onClick={() => on_retry(task.task_id)}
+            >
+              {is_retrying ? (
+                <Spinner data-icon="inline-start" aria-hidden="true" />
+              ) : (
+                <RotateCcw data-icon="inline-start" aria-hidden="true" />
+              )}
+              重新下载
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </li>
   );

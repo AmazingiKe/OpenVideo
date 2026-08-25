@@ -206,6 +206,41 @@ def test_failed_download_reuses_asset_for_a_new_job(monkeypatch, tmp_path):
     assert assets[0]["error_message"] is None
 
 
+def test_failed_download_can_be_retried_by_job_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    app = api.create_app(Settings(library_path=tmp_path))
+
+    with TestClient(app) as client:
+        first_job = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ]
+            },
+        ).json()[0]
+        app.state.download_manager._fail(first_job["job_id"], "测试下载失败")
+
+        retry_response = client.post(
+            f"/api/downloads/{first_job['job_id']}/retry"
+        )
+        invalid_response = client.post(
+            f"/api/downloads/{retry_response.json()['job_id']}/retry"
+        )
+        missing_response = client.post(
+            "/api/downloads/job-019c0000000070008000000000000000/retry"
+        )
+
+    retry_job = retry_response.json()
+    assert retry_response.status_code == 202
+    assert retry_job["job_id"] != first_job["job_id"]
+    assert retry_job["asset_id"] == first_job["asset_id"]
+    assert retry_job["stage"] == "pending"
+    assert invalid_response.status_code == 409
+    assert invalid_response.json()["detail"] == "只有失败的下载任务可以重新下载"
+    assert missing_response.status_code == 404
+
+
 def test_interrupted_download_can_be_retried_after_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
     settings = Settings(library_path=tmp_path)
