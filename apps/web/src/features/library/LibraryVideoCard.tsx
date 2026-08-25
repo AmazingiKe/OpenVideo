@@ -66,6 +66,9 @@ export function LibraryVideoCard({
           "sm:grid sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-center",
       )}
       aria-label={asset.title}
+      role="group"
+      data-selected={selected ? "true" : undefined}
+      data-library-asset-id={asset.asset_id}
     >
       <div
         className={cn(

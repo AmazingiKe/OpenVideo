@@ -1,4 +1,14 @@
-import { type FormEvent, useDeferredValue, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  type KeyboardEvent,
+  type PointerEvent,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckSquare,
@@ -112,6 +122,22 @@ type MoveTarget =
   | { kind: "assets"; asset_ids: string[]; initial_folder_id: string | null }
   | { kind: "folder"; folder: LibraryFolder }
   | null;
+type SelectionRectangle = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+type MarqueeGesture = {
+  pointer_id: number;
+  start_x: number;
+  start_y: number;
+  base_selection: Set<string>;
+};
+
+const INTERACTIVE_SELECTOR =
+  'a, button, input, select, textarea, [role="checkbox"], [role="menuitem"]';
+const MARQUEE_DRAG_THRESHOLD = 3;
 
 export function LibraryPage() {
   const navigate = useNavigate();
@@ -132,6 +158,10 @@ export function LibraryPage() {
   const [selected_asset_ids, set_selected_asset_ids] = useState<Set<string>>(
     new Set(),
   );
+  const selection_anchor_id = useRef<string | null>(null);
+  const marquee_gesture = useRef<MarqueeGesture | null>(null);
+  const [selection_rectangle, set_selection_rectangle] =
+    useState<SelectionRectangle | null>(null);
   const [mobile_tree_open, set_mobile_tree_open] = useState(false);
   const [folder_editor, set_folder_editor] = useState<FolderEditor | null>(
     null,
@@ -187,6 +217,29 @@ export function LibraryPage() {
   const selected_visible_count = assets.filter((asset) =>
     selected_asset_ids.has(asset.asset_id),
   ).length;
+  const all_visible_selected =
+    assets.length > 0 && selected_visible_count === assets.length;
+
+  useEffect(() => {
+    if (!assets_query.data) return;
+    const visible_asset_ids = new Set(
+      assets_query.data.map((asset) => asset.asset_id),
+    );
+    set_selected_asset_ids((current) => {
+      const visible_selection = new Set(
+        [...current].filter((asset_id) => visible_asset_ids.has(asset_id)),
+      );
+      return visible_selection.size === current.size
+        ? current
+        : visible_selection;
+    });
+    if (
+      selection_anchor_id.current &&
+      !visible_asset_ids.has(selection_anchor_id.current)
+    ) {
+      selection_anchor_id.current = null;
+    }
+  }, [assets_query.data]);
 
   async function refresh_library() {
     await Promise.all([
@@ -201,7 +254,156 @@ export function LibraryPage() {
   function select_scope(scope: LibraryScope) {
     set_selected_scope(scope);
     set_selected_asset_ids(new Set());
+    selection_anchor_id.current = null;
     set_mobile_tree_open(false);
+  }
+
+  function select_all_visible_assets() {
+    if (all_visible_selected) {
+      set_selected_asset_ids(new Set());
+      selection_anchor_id.current = null;
+      return;
+    }
+    set_selected_asset_ids(new Set(assets.map((asset) => asset.asset_id)));
+    selection_anchor_id.current = assets.at(-1)?.asset_id ?? null;
+  }
+
+  function select_asset_from_pointer(
+    asset_id: string,
+    options: { additive: boolean; range: boolean },
+  ) {
+    const visible_asset_ids = assets.map((asset) => asset.asset_id);
+    const asset_index = visible_asset_ids.indexOf(asset_id);
+    const anchor_index = selection_anchor_id.current
+      ? visible_asset_ids.indexOf(selection_anchor_id.current)
+      : -1;
+
+    if (options.range && anchor_index >= 0 && asset_index >= 0) {
+      const range_start = Math.min(anchor_index, asset_index);
+      const range_end = Math.max(anchor_index, asset_index);
+      const range_asset_ids = visible_asset_ids.slice(
+        range_start,
+        range_end + 1,
+      );
+      set_selected_asset_ids((current) => {
+        const next = options.additive ? new Set(current) : new Set<string>();
+        range_asset_ids.forEach((visible_asset_id) =>
+          next.add(visible_asset_id),
+        );
+        return next;
+      });
+    } else if (options.additive) {
+      set_selected_asset_ids((current) => {
+        const next = new Set(current);
+        if (next.has(asset_id)) next.delete(asset_id);
+        else next.add(asset_id);
+        return next;
+      });
+    } else {
+      set_selected_asset_ids(new Set([asset_id]));
+    }
+    selection_anchor_id.current = asset_id;
+  }
+
+  function handle_selection_pointer_down(event: PointerEvent<HTMLDivElement>) {
+    if (
+      event.button !== 0 ||
+      (event.pointerType && event.pointerType !== "mouse")
+    ) {
+      return;
+    }
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || target.closest(INTERACTIVE_SELECTOR)) return;
+
+    event.currentTarget.focus({ preventScroll: true });
+    const asset_card = target.closest<HTMLElement>("[data-library-asset-id]");
+    if (asset_card) {
+      const asset_id = asset_card.dataset.libraryAssetId;
+      if (asset_id) {
+        select_asset_from_pointer(asset_id, {
+          additive: event.ctrlKey || event.metaKey,
+          range: event.shiftKey,
+        });
+      }
+      return;
+    }
+
+    event.preventDefault();
+    const base_selection =
+      event.ctrlKey || event.metaKey
+        ? new Set(selected_asset_ids)
+        : new Set<string>();
+    marquee_gesture.current = {
+      pointer_id: event.pointerId,
+      start_x: event.clientX,
+      start_y: event.clientY,
+      base_selection,
+    };
+    set_selected_asset_ids(base_selection);
+    selection_anchor_id.current = null;
+    set_selection_rectangle(null);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function handle_selection_pointer_move(event: PointerEvent<HTMLDivElement>) {
+    const gesture = marquee_gesture.current;
+    if (!gesture || gesture.pointer_id !== event.pointerId) return;
+    const horizontal_distance = Math.abs(event.clientX - gesture.start_x);
+    const vertical_distance = Math.abs(event.clientY - gesture.start_y);
+    if (
+      horizontal_distance < MARQUEE_DRAG_THRESHOLD &&
+      vertical_distance < MARQUEE_DRAG_THRESHOLD
+    ) {
+      return;
+    }
+
+    const selection_bounds = normalized_rectangle(
+      gesture.start_x,
+      gesture.start_y,
+      event.clientX,
+      event.clientY,
+    );
+    const container_bounds = event.currentTarget.getBoundingClientRect();
+    set_selection_rectangle({
+      left: selection_bounds.left - container_bounds.left,
+      top: selection_bounds.top - container_bounds.top,
+      width: selection_bounds.width,
+      height: selection_bounds.height,
+    });
+
+    const next = new Set(gesture.base_selection);
+    event.currentTarget
+      .querySelectorAll<HTMLElement>("[data-library-asset-id]")
+      .forEach((card) => {
+        const asset_id = card.dataset.libraryAssetId;
+        if (
+          asset_id &&
+          rectangles_intersect(selection_bounds, card.getBoundingClientRect())
+        ) {
+          next.add(asset_id);
+        }
+      });
+    set_selected_asset_ids(next);
+  }
+
+  function finish_marquee_selection(event: PointerEvent<HTMLDivElement>) {
+    const gesture = marquee_gesture.current;
+    if (!gesture || gesture.pointer_id !== event.pointerId) return;
+    marquee_gesture.current = null;
+    set_selection_rectangle(null);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function handle_selection_key_down(event: KeyboardEvent<HTMLDivElement>) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      select_all_visible_assets();
+    } else if (event.key === "Escape") {
+      set_selected_asset_ids(new Set());
+      selection_anchor_id.current = null;
+    }
   }
 
   function toggle_folder(folder_id: string) {
@@ -475,6 +677,16 @@ export function LibraryPage() {
                 <List />
               </ToggleGroupItem>
             </ToggleGroup>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={assets.length === 0}
+              onClick={select_all_visible_assets}
+            >
+              <CheckSquare data-icon="inline-start" />
+              {all_visible_selected ? "取消全选" : "全选当前结果"}
+            </Button>
           </div>
           {selected_visible_count > 0 ? (
             <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/50 p-3">
@@ -533,10 +745,19 @@ export function LibraryPage() {
           ) : (
             <div
               className={cn(
+                "relative outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/40",
                 view_mode === "grid"
                   ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
                   : "flex flex-col gap-3",
               )}
+              role="region"
+              aria-label="视频选择区域"
+              tabIndex={0}
+              onPointerDown={handle_selection_pointer_down}
+              onPointerMove={handle_selection_pointer_move}
+              onPointerUp={finish_marquee_selection}
+              onPointerCancel={finish_marquee_selection}
+              onKeyDown={handle_selection_key_down}
             >
               {assets.map((asset) => (
                 <LibraryVideoCard
@@ -552,8 +773,12 @@ export function LibraryPage() {
                   on_selected_change={(selected) =>
                     set_selected_asset_ids((current) => {
                       const next = new Set(current);
-                      if (selected) next.add(asset.asset_id);
-                      else next.delete(asset.asset_id);
+                      if (selected) {
+                        next.add(asset.asset_id);
+                        selection_anchor_id.current = asset.asset_id;
+                      } else {
+                        next.delete(asset.asset_id);
+                      }
                       return next;
                     })
                   }
@@ -569,6 +794,13 @@ export function LibraryPage() {
                   on_open_summary={() => open_workspace(asset, "/summary")}
                 />
               ))}
+              {selection_rectangle ? (
+                <div
+                  className="pointer-events-none absolute rounded-sm border border-primary bg-primary/10"
+                  style={selection_rectangle satisfies CSSProperties}
+                  aria-hidden="true"
+                />
+              ) : null}
             </div>
           )}
         </main>
@@ -839,5 +1071,33 @@ function has_descendants(
     (candidate) =>
       candidate.folder_id !== folder.folder_id &&
       candidate.materialized_path.startsWith(folder.materialized_path),
+  );
+}
+
+function normalized_rectangle(
+  start_x: number,
+  start_y: number,
+  end_x: number,
+  end_y: number,
+) {
+  return {
+    left: Math.min(start_x, end_x),
+    top: Math.min(start_y, end_y),
+    right: Math.max(start_x, end_x),
+    bottom: Math.max(start_y, end_y),
+    width: Math.abs(end_x - start_x),
+    height: Math.abs(end_y - start_y),
+  };
+}
+
+function rectangles_intersect(
+  first: Pick<DOMRect, "left" | "top" | "right" | "bottom">,
+  second: Pick<DOMRect, "left" | "top" | "right" | "bottom">,
+) {
+  return (
+    first.left <= second.right &&
+    first.right >= second.left &&
+    first.top <= second.bottom &&
+    first.bottom >= second.top
   );
 }
