@@ -158,6 +158,12 @@ function DownloadTask({ task }: { task: TaskRecord }) {
         value={progress}
         aria-label={`${stage_label} ${progress.toFixed(0)}%`}
       />
+      <time
+        className="text-xs text-muted-foreground tabular-nums"
+        dateTime={task.created_at}
+      >
+        {format_task_created_at(task.created_at)}
+      </time>
       {task.error_message ? (
         <p className="text-xs text-destructive" role="alert">
           {task.error_message}
@@ -165,4 +171,23 @@ function DownloadTask({ task }: { task: TaskRecord }) {
       ) : null}
     </li>
   );
+}
+
+function format_task_created_at(created_at: string): string {
+  const created_date = new Date(created_at);
+  const date = [
+    created_date.getFullYear(),
+    pad_time_component(created_date.getMonth() + 1),
+    pad_time_component(created_date.getDate()),
+  ].join("-");
+  const time = [
+    pad_time_component(created_date.getHours()),
+    pad_time_component(created_date.getMinutes()),
+    pad_time_component(created_date.getSeconds()),
+  ].join(":");
+  return `${date} ${time}`;
+}
+
+function pad_time_component(value: number): string {
+  return value.toString().padStart(2, "0");
 }

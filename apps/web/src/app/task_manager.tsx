@@ -31,9 +31,8 @@ import type {
   AgentJob,
   AgentQuestionAction,
 } from "@/shared/types";
-import type { TaskRecord } from "@/features/workbench/tasks";
+import { merge_task_record, type TaskRecord } from "@/features/workbench/tasks";
 
-const MAX_TASK_RECORDS = 100;
 const TERMINAL_DOWNLOAD_STAGES = new Set(["complete", "failed"]);
 
 type TaskManager = {
@@ -93,12 +92,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   );
 
   const record_task = useCallback((task: TaskRecord) => {
-    set_task_records((current) => {
-      const remaining_tasks = current.filter(
-        (item) => item.task_id !== task.task_id,
-      );
-      return [task, ...remaining_tasks].slice(0, MAX_TASK_RECORDS);
-    });
+    set_task_records((current) => merge_task_record(current, task));
   }, []);
 
   const record_download_job = useCallback(
@@ -110,6 +104,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         message: job.message,
         progress_percent: job.progress_percent,
         error_message: job.error_message,
+        created_at: job.created_at,
       });
     },
     [record_task],
@@ -124,6 +119,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         message: job.message,
         progress_percent: job.progress_percent,
         error_message: job.error_message,
+        created_at: job.created_at,
       });
     },
     [record_task],
@@ -143,6 +139,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         message: job.message,
         progress_percent: job.progress_percent,
         error_message: job.error_message,
+        created_at: job.created_at,
       });
     },
     [record_task],

@@ -5,7 +5,35 @@ export type TaskRecord = {
   message: string;
   progress_percent: number;
   error_message: string | null;
+  created_at: string;
 };
+
+const MAX_TASK_RECORDS = 100;
+
+export function merge_task_record(
+  current_tasks: TaskRecord[],
+  updated_task: TaskRecord,
+): TaskRecord[] {
+  const existing_task_index = current_tasks.findIndex(
+    (task) => task.task_id === updated_task.task_id,
+  );
+  const next_tasks = [...current_tasks];
+
+  if (existing_task_index === -1) {
+    next_tasks.push(updated_task);
+  } else {
+    next_tasks[existing_task_index] = updated_task;
+  }
+
+  return next_tasks.sort(compare_task_records).slice(0, MAX_TASK_RECORDS);
+}
+
+function compare_task_records(left: TaskRecord, right: TaskRecord): number {
+  const created_at_difference =
+    Date.parse(right.created_at) - Date.parse(left.created_at);
+  if (created_at_difference !== 0) return created_at_difference;
+  return right.task_id.localeCompare(left.task_id);
+}
 
 export const TASK_STAGE_LABELS: Record<string, string> = {
   pending: "等待中",
