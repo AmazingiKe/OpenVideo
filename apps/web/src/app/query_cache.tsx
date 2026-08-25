@@ -10,6 +10,7 @@ const QUERY_CACHE_RETENTION_MS = 30 * 60_000;
 
 export const RESOURCE_QUERY_KEYS = {
   assets: ["assets"] as const,
+  library_folders: ["library_folders"] as const,
   asset_analysis: (asset_id: string | null) =>
     ["asset_analysis", asset_id] as const,
   asset_markers: (asset_id: string | null) =>

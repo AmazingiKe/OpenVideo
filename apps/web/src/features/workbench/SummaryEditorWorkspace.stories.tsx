@@ -17,6 +17,7 @@ const CREATED_AT = "2026-08-24T08:00:00Z";
 
 const ASSET: MediaAsset = {
   asset_id: ASSET_ID,
+  folder_id: null,
   media_type: "video",
   source_url: "https://example.com/course.mp4",
   source_platform: "bilibili",

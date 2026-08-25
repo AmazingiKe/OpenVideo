@@ -37,7 +37,10 @@ const TERMINAL_DOWNLOAD_STAGES = new Set(["complete", "failed"]);
 
 type TaskManager = {
   task_records: TaskRecord[];
-  start_downloads: (urls: string[]) => Promise<DownloadJob[]>;
+  start_downloads: (
+    urls: string[],
+    folder_id?: string | null,
+  ) => Promise<DownloadJob[]>;
   start_analysis: (
     asset_id: string,
     mode: AnalysisMode,
@@ -146,12 +149,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   );
 
   const start_downloads = useCallback(
-    async (urls: string[]) => {
+    async (urls: string[], folder_id: string | null = null) => {
       download_controller_ref.current?.abort();
       const controller = new AbortController();
       download_controller_ref.current = controller;
       try {
-        const jobs = await create_download(urls, controller.signal);
+        const jobs = await create_download(urls, controller.signal, folder_id);
         jobs.forEach(record_download_job);
         const final_jobs = await Promise.all(
           jobs.map((job) =>

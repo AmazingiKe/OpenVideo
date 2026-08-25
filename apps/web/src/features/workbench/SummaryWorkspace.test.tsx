@@ -68,6 +68,7 @@ vi.mock("@/shared/api", async (import_original) => {
 
 const ASSET: MediaAsset = {
   asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
+  folder_id: null,
   media_type: "video",
   source_url: "https://example.com/video",
   source_platform: "bilibili",

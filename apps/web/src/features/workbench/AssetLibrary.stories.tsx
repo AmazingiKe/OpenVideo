@@ -5,6 +5,7 @@ import type { MediaAsset } from "@/shared/types";
 
 const ASSET: MediaAsset = {
   asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
+  folder_id: null,
   media_type: "video",
   source_url: "https://www.bilibili.com/video/BV1xx411c7mD",
   source_platform: "bilibili",

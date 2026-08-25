@@ -22,5 +22,13 @@ describe("Topbar", () => {
     expect(screen.getByRole("link", { name: "下载" })).not.toHaveAttribute(
       "aria-current",
     );
+    expect(
+      screen
+        .getAllByRole("link")
+        .filter((link) =>
+          ["下载", "视频库", "标记", "解析"].includes(link.textContent ?? ""),
+        )
+        .map((link) => link.textContent),
+    ).toEqual(["下载", "视频库", "标记", "解析"]);
   });
 });

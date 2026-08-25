@@ -350,6 +350,7 @@ type ThumbnailStoryboard = {
 
 export type MediaAsset = {
   asset_id: string;
+  folder_id: string | null;
   media_type: "video" | "image";
   source_url: string;
   source_platform: SourcePlatform;
@@ -367,6 +368,17 @@ export type MediaAsset = {
   playback_url: string | null;
   thumbnail_url: string | null;
   thumbnail_storyboard: ThumbnailStoryboard | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LibraryFolder = {
+  folder_id: string;
+  name: string;
+  parent_id: string | null;
+  materialized_path: string;
+  direct_asset_count: number;
+  recursive_asset_count: number;
   created_at: string;
   updated_at: string;
 };

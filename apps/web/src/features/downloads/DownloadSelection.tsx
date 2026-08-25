@@ -20,13 +20,26 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { folder_path_label } from "@/features/library/MoveToFolderDialog";
 import { format_duration } from "@/shared/format";
-import type { ProbeResponse } from "@/shared/types";
+import type { LibraryFolder, ProbeResponse } from "@/shared/types";
+
+const UNCATEGORIZED_FOLDER_VALUE = "__uncategorized__";
 
 type DownloadSelectionProps = {
   probe_result: ProbeResponse;
   visible_entries: ProbeResponse["entries"];
   selected_urls: Set<string>;
+  folders: LibraryFolder[];
+  target_folder_id: string | null;
   current_source_video_id: string | null;
   current_entry_url: string | null;
   entry_filter: string;
@@ -34,6 +47,7 @@ type DownloadSelectionProps = {
   on_entry_filter_change: (value: string) => void;
   on_toggle_url: (url: string) => void;
   on_replace_selection: (urls: string[]) => void;
+  on_target_folder_change: (folder_id: string | null) => void;
   on_start_download: () => void;
 };
 
@@ -41,6 +55,8 @@ export function DownloadSelection({
   probe_result,
   visible_entries,
   selected_urls,
+  folders,
+  target_folder_id,
   current_source_video_id,
   current_entry_url,
   entry_filter,
@@ -48,6 +64,7 @@ export function DownloadSelection({
   on_entry_filter_change,
   on_toggle_url,
   on_replace_selection,
+  on_target_folder_change,
   on_start_download,
 }: DownloadSelectionProps) {
   return (
@@ -184,9 +201,37 @@ export function DownloadSelection({
         </ul>
       </CardContent>
       <CardFooter className="justify-between gap-4">
-        <p className="text-sm text-muted-foreground">
-          下载将在后台继续，可随时切换到其他工作区。
-        </p>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <p className="text-sm text-muted-foreground">目标文件夹</p>
+          <Select
+            value={target_folder_id ?? UNCATEGORIZED_FOLDER_VALUE}
+            onValueChange={(value) =>
+              on_target_folder_change(
+                value === UNCATEGORIZED_FOLDER_VALUE ? null : value,
+              )
+            }
+            disabled={is_submitting}
+          >
+            <SelectTrigger
+              className="w-full sm:w-64"
+              aria-label="下载目标文件夹"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              <SelectGroup>
+                <SelectItem value={UNCATEGORIZED_FOLDER_VALUE}>
+                  未分类
+                </SelectItem>
+                {folders.map((folder) => (
+                  <SelectItem key={folder.folder_id} value={folder.folder_id}>
+                    {folder_path_label(folder, folders)}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
         <Button
           className="shrink-0"
           type="button"

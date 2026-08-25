@@ -1,7 +1,7 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 
 type PageModule = Promise<{ default: ComponentType }>;
-export type WorkspacePath = "/downloads" | "/markers" | "/summary";
+export type WorkspacePath = "/downloads" | "/library" | "/markers" | "/summary";
 
 type WorkspaceRoute = {
   label: string;
@@ -19,6 +19,10 @@ const load_markers_page = () =>
   import("@/pages/MarkersPage").then((module) => ({
     default: module.MarkersPage,
   }));
+const load_library_page = () =>
+  import("@/pages/LibraryPage").then((module) => ({
+    default: module.LibraryPage,
+  }));
 const load_summary_page = () =>
   import("@/pages/SummaryPage").then((module) => ({
     default: module.SummaryPage,
@@ -34,6 +38,13 @@ export const WORKSPACE_ROUTES: WorkspaceRoute[] = [
     path: "/downloads",
     component: lazy(load_downloads_page),
     load_component: load_downloads_page,
+    preserve_state_when_hidden: true,
+  },
+  {
+    label: "视频库",
+    path: "/library",
+    component: lazy(load_library_page),
+    load_component: load_library_page,
     preserve_state_when_hidden: true,
   },
   {

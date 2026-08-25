@@ -36,6 +36,7 @@ import type {
   DownloadAccount,
   DownloadCookieBrowser,
   HealthResponse,
+  LibraryFolder,
   ProbeResponse,
   SourcePlatform,
 } from "@/shared/types";
@@ -47,6 +48,8 @@ type DownloadWorkspaceProps = {
   source_url: string;
   probe_result: ProbeResponse | null;
   selected_urls: Set<string>;
+  folders: LibraryFolder[];
+  target_folder_id: string | null;
   current_source_video_id: string | null;
   is_submitting: boolean;
   error: string | null;
@@ -57,6 +60,7 @@ type DownloadWorkspaceProps = {
   on_submit_probe: (event: FormEvent<HTMLFormElement>) => void;
   on_toggle_url: (url: string) => void;
   on_replace_selection: (urls: string[]) => void;
+  on_target_folder_change: (folder_id: string | null) => void;
   on_start_download: () => void;
   on_save_download_account: (
     platform: SourcePlatform,
@@ -80,6 +84,8 @@ export function DownloadWorkspace({
   source_url,
   probe_result,
   selected_urls,
+  folders,
+  target_folder_id,
   current_source_video_id,
   is_submitting,
   error,
@@ -90,6 +96,7 @@ export function DownloadWorkspace({
   on_submit_probe,
   on_toggle_url,
   on_replace_selection,
+  on_target_folder_change,
   on_start_download,
   on_save_download_account,
   on_login_download_account,
@@ -247,6 +254,8 @@ export function DownloadWorkspace({
           probe_result={probe_result}
           visible_entries={visible_entries}
           selected_urls={selected_urls}
+          folders={folders}
+          target_folder_id={target_folder_id}
           current_source_video_id={current_source_video_id}
           current_entry_url={current_entry?.url ?? null}
           entry_filter={entry_filter}
@@ -254,6 +263,7 @@ export function DownloadWorkspace({
           on_entry_filter_change={set_entry_filter}
           on_toggle_url={on_toggle_url}
           on_replace_selection={on_replace_selection}
+          on_target_folder_change={on_target_folder_change}
           on_start_download={on_start_download}
         />
       ) : null}

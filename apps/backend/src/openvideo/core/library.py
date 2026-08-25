@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
+from uuid import UUID
 
 import portalocker
 from pydantic import BaseModel
@@ -20,6 +22,7 @@ from openvideo.core.agent_runtime_models import (
 from openvideo.core.analysis_models import AnalysisJob
 from openvideo.core.download_models import DownloadJob, DownloadStage
 from openvideo.core.identifiers import is_uuid7, uuid7
+from openvideo.core.folder_models import Folder, FolderManifest, FolderResponse
 from openvideo.core.library_files import (
     ARTIFACTS_DIRECTORY_NAME,
     ASSET_METADATA_FILE_NAME,
@@ -38,7 +41,9 @@ from openvideo.core.library_files import (
 from openvideo.core.library_index import (
     load_index_issues,
     open_index_database,
+    remove_asset_projection,
     synchronize_asset,
+    synchronize_folders,
 )
 from openvideo.core.media_models import (
     MediaAsset,
@@ -66,6 +71,7 @@ from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 FORMAT_VERSION = 2
 MANIFEST_FILE_NAME = "library.json"
+FOLDER_MANIFEST_FILE_NAME = "folders.json"
 AGENT_CHECKPOINT_DATABASE_FILE_NAME = "agent_checkpoints.sqlite3"
 LOCK_FILE_NAME = ".openvideo.lock"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
@@ -84,6 +90,14 @@ class InvalidLibraryError(LibraryError):
 
 class LibraryLockedError(LibraryError):
     code = "library_locked"
+
+
+class FolderNotFoundError(LibraryError):
+    code = "folder_not_found"
+
+
+class FolderConflictError(LibraryError):
+    code = "folder_conflict"
 
 
 class LibraryManifest(BaseModel):
@@ -105,6 +119,8 @@ class MediaLibrary:
         self.library_path = root_path.resolve()
         self.manifest = manifest
         self.assets_path = self.library_path / "assets"
+        self.folder_manifest_path = self.library_path / FOLDER_MANIFEST_FILE_NAME
+        self._folders = self._load_folder_manifest()
         self._connection: sqlite3.Connection | None = None
         self._file_lock: portalocker.Lock | None = None
         self._lock = RLock()
@@ -127,6 +143,10 @@ class MediaLibrary:
         for directory_name in ("assets", "cache", "temp"):
             (resolved_path / directory_name).mkdir()
         atomic_write_model(resolved_path / MANIFEST_FILE_NAME, manifest)
+        atomic_write_model(
+            resolved_path / FOLDER_MANIFEST_FILE_NAME,
+            FolderManifest(),
+        )
         library = cls(resolved_path, manifest)
         library._open_session()
         return library
@@ -223,13 +243,195 @@ class MediaLibrary:
         )
         return MediaAsset.model_validate(dict(row)) if row else None
 
-    def list(self) -> list[MediaAsset]:
+    def list(
+        self,
+        *,
+        folder_id: str | None = None,
+        uncategorized: bool = False,
+        search: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> list[MediaAsset]:
+        sort_columns = {
+            "created_at": "created_at",
+            "title": "title COLLATE NOCASE",
+            "duration": "duration_seconds",
+        }
+        if sort_by not in sort_columns or sort_order not in {"asc", "desc"}:
+            raise ValueError("素材排序参数无效")
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if folder_id is not None:
+            self._require_folder(folder_id)
+            clauses.append("folder_id = ?")
+            parameters.append(folder_id)
+        elif uncategorized:
+            clauses.append("folder_id IS NULL")
+        normalized_search = search.strip() if search else ""
+        if normalized_search:
+            clauses.append(
+                "(title LIKE ? COLLATE NOCASE OR author_name LIKE ? COLLATE NOCASE)"
+            )
+            pattern = f"%{normalized_search}%"
+            parameters.extend((pattern, pattern))
+        where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        order_column = sort_columns[sort_by]
         rows = (
             self._db()
-            .execute("SELECT * FROM assets ORDER BY created_at DESC")
+            .execute(
+                f"SELECT * FROM assets{where_clause} "
+                f"ORDER BY {order_column} {sort_order.upper()}, asset_id ASC",
+                tuple(parameters),
+            )
             .fetchall()
         )
         return [MediaAsset.model_validate(dict(row)) for row in rows]
+
+    def list_folders(self) -> list[FolderResponse]:
+        rows = (
+            self._db()
+            .execute(
+                "SELECT folder.*, "
+                "(SELECT COUNT(*) FROM assets WHERE folder_id = folder.folder_id) "
+                "AS direct_asset_count, "
+                "(SELECT COUNT(*) FROM assets asset "
+                " JOIN folders owner ON owner.folder_id = asset.folder_id "
+                " WHERE owner.materialized_path LIKE folder.materialized_path || '%') "
+                "AS recursive_asset_count "
+                "FROM folders folder ORDER BY folder.materialized_path"
+            )
+            .fetchall()
+        )
+        return [FolderResponse.model_validate(dict(row)) for row in rows]
+
+    def get_folder(self, folder_id: str) -> FolderResponse:
+        self._require_folder(folder_id)
+        return self._folder_response(folder_id)
+
+    def create_folder(self, name: str, parent_id: str | None = None) -> FolderResponse:
+        parent = self._require_folder(parent_id) if parent_id else None
+        folder_id = f"folder-{uuid7().hex}"
+        path_prefix = parent.materialized_path if parent else "/"
+        folder = Folder(
+            folder_id=folder_id,
+            name=name,
+            parent_id=parent_id,
+            materialized_path=f"{path_prefix}{folder_id}/",
+        )
+        with self._lock:
+            self._ensure_unique_folder_name(folder.name, folder.parent_id)
+            self._folders[folder.folder_id] = folder
+            self._write_folder_manifest()
+            synchronize_folders(self._db(), self.folder_manifest_path)
+        return self._folder_response(folder.folder_id)
+
+    def rename_folder(self, folder_id: str, name: str) -> FolderResponse:
+        folder = self._require_folder(folder_id)
+        normalized = Folder(
+            **folder.model_dump(exclude={"name", "updated_at"}),
+            name=name,
+            updated_at=datetime.now(UTC),
+        )
+        with self._lock:
+            self._ensure_unique_folder_name(
+                normalized.name,
+                normalized.parent_id,
+                exclude_id=folder_id,
+            )
+            self._folders[folder_id] = normalized
+            self._write_folder_manifest()
+            synchronize_folders(self._db(), self.folder_manifest_path)
+        return self._folder_response(folder_id)
+
+    def move_folder(self, folder_id: str, parent_id: str | None) -> FolderResponse:
+        folder = self._require_folder(folder_id)
+        parent = self._require_folder(parent_id) if parent_id else None
+        if parent_id == folder_id:
+            raise FolderConflictError("文件夹不能移动到自身")
+        if parent and parent.materialized_path.startswith(folder.materialized_path):
+            raise FolderConflictError("文件夹不能移动到自己的后代")
+        self._ensure_unique_folder_name(folder.name, parent_id, exclude_id=folder_id)
+        old_path = folder.materialized_path
+        new_prefix = parent.materialized_path if parent else "/"
+        new_path = f"{new_prefix}{folder_id}/"
+        updated_at = datetime.now(UTC)
+        with self._lock:
+            for descendant_id, descendant in list(self._folders.items()):
+                if not descendant.materialized_path.startswith(old_path):
+                    continue
+                suffix = descendant.materialized_path.removeprefix(old_path)
+                values = {"materialized_path": f"{new_path}{suffix}"}
+                if descendant_id == folder_id:
+                    values["parent_id"] = parent_id
+                    values["updated_at"] = updated_at
+                self._folders[descendant_id] = descendant.model_copy(update=values)
+            self._write_folder_manifest()
+            synchronize_folders(self._db(), self.folder_manifest_path)
+        return self._folder_response(folder_id)
+
+    def move_assets(
+        self, asset_ids: list[str], folder_id: str | None
+    ) -> list[MediaAsset]:
+        if folder_id is not None:
+            self._require_folder(folder_id)
+        unique_ids = list(dict.fromkeys(asset_ids))
+        assets = [self.get(asset_id) for asset_id in unique_ids]
+        if any(asset is None for asset in assets):
+            raise ValueError("移动请求包含不存在的素材")
+        moved: list[MediaAsset] = []
+        with self._lock:
+            for asset in assets:
+                if asset is None:
+                    continue
+                asset.folder_id = folder_id
+                self.save(asset)
+                moved.append(asset)
+        return moved
+
+    def folder_asset_ids(self, folder_id: str) -> list[str]:
+        folder = self._require_folder(folder_id)
+        rows = (
+            self._db()
+            .execute(
+                "SELECT asset.asset_id FROM assets asset "
+                "JOIN folders owner ON owner.folder_id = asset.folder_id "
+                "WHERE owner.materialized_path LIKE ? ORDER BY asset.asset_id",
+                (f"{folder.materialized_path}%",),
+            )
+            .fetchall()
+        )
+        return [row[0] for row in rows]
+
+    def delete_folder(self, folder_id: str) -> None:
+        folder = self._require_folder(folder_id)
+        if self.folder_asset_ids(folder_id):
+            raise FolderConflictError("文件夹仍包含素材，不能只删除目录记录")
+        subtree_ids = {
+            item.folder_id
+            for item in self._folders.values()
+            if item.materialized_path.startswith(folder.materialized_path)
+        }
+        with self._lock:
+            for descendant_id in subtree_ids:
+                self._folders.pop(descendant_id, None)
+            self._write_folder_manifest()
+            synchronize_folders(self._db(), self.folder_manifest_path)
+
+    def delete_asset(self, asset_id: str) -> None:
+        asset = self.get(asset_id)
+        if asset is None:
+            raise ValueError("媒体资源不存在")
+        directory = self.asset_directory(asset_id)
+        assets_root = self.assets_path.resolve()
+        if not directory.is_relative_to(assets_root) or directory == assets_root:
+            raise ValueError("素材目录超出资料库范围")
+        if directory.is_symlink():
+            raise ValueError("素材目录不能是符号链接")
+        with self._lock:
+            if directory.exists():
+                shutil.rmtree(directory)
+            with self._db():
+                remove_asset_projection(self._db(), asset_id)
 
     def find_by_source_video_id(
         self, platform: SourcePlatform, source_video_id: str
@@ -1365,6 +1567,98 @@ class MediaLibrary:
             raise RuntimeError("资料库未打开")
         return self._connection
 
+    def _load_folder_manifest(self) -> dict[str, Folder]:
+        if not self.folder_manifest_path.exists():
+            manifest = FolderManifest()
+            atomic_write_model(self.folder_manifest_path, manifest)
+            return {}
+        try:
+            manifest = FolderManifest.model_validate_json(
+                self.folder_manifest_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as error:
+            raise InvalidLibraryError("资料库文件夹清单无效") from error
+        if manifest.format_version != FolderManifest().format_version:
+            raise InvalidLibraryError("资料库文件夹清单版本不受支持")
+        folders = {folder.folder_id: folder for folder in manifest.folders}
+        if len(folders) != len(manifest.folders):
+            raise InvalidLibraryError("资料库文件夹标识重复")
+        sibling_names: set[tuple[str | None, str]] = set()
+        for folder in manifest.folders:
+            self._validate_folder_id(folder.folder_id)
+            key = (folder.parent_id, folder.name.casefold())
+            if key in sibling_names:
+                raise InvalidLibraryError("同一父目录下存在重名文件夹")
+            sibling_names.add(key)
+        for folder in manifest.folders:
+            expected_path = self._expected_folder_path(folder, folders, set())
+            if folder.materialized_path != expected_path:
+                raise InvalidLibraryError("资料库文件夹路径无效")
+        return folders
+
+    def _expected_folder_path(
+        self,
+        folder: Folder,
+        folders: dict[str, Folder],
+        visited: set[str],
+    ) -> str:
+        if folder.folder_id in visited:
+            raise InvalidLibraryError("资料库文件夹存在循环引用")
+        if folder.parent_id is None:
+            return f"/{folder.folder_id}/"
+        parent = folders.get(folder.parent_id)
+        if parent is None:
+            raise InvalidLibraryError("资料库文件夹引用了不存在的父目录")
+        parent_path = self._expected_folder_path(
+            parent,
+            folders,
+            {*visited, folder.folder_id},
+        )
+        return f"{parent_path}{folder.folder_id}/"
+
+    def _write_folder_manifest(self) -> None:
+        ordered_folders = sorted(
+            self._folders.values(), key=lambda item: item.materialized_path
+        )
+        atomic_write_model(
+            self.folder_manifest_path,
+            FolderManifest(folders=ordered_folders),
+        )
+
+    def _require_folder(self, folder_id: str | None) -> Folder:
+        if folder_id is None:
+            raise FolderNotFoundError("文件夹不存在")
+        self._validate_folder_id(folder_id)
+        folder = self._folders.get(folder_id)
+        if folder is None:
+            raise FolderNotFoundError("文件夹不存在")
+        return folder
+
+    def _ensure_unique_folder_name(
+        self,
+        name: str,
+        parent_id: str | None,
+        *,
+        exclude_id: str | None = None,
+    ) -> None:
+        normalized = name.casefold()
+        if any(
+            folder.folder_id != exclude_id
+            and folder.parent_id == parent_id
+            and folder.name.casefold() == normalized
+            for folder in self._folders.values()
+        ):
+            raise FolderConflictError("同一父目录下不能创建重名文件夹")
+
+    def _folder_response(self, folder_id: str) -> FolderResponse:
+        response = next(
+            (folder for folder in self.list_folders() if folder.folder_id == folder_id),
+            None,
+        )
+        if response is None:
+            raise FolderNotFoundError("文件夹不存在")
+        return response
+
     @staticmethod
     def _validate_identifier(identifier: str, prefix: str) -> None:
         expected_prefix = f"{prefix}-"
@@ -1381,6 +1675,21 @@ class MediaLibrary:
     def _validate_asset_id(asset_id: str) -> None:
         if not is_uuid7(asset_id):
             raise ValueError("asset ID 无效")
+
+    @staticmethod
+    def _validate_folder_id(folder_id: str) -> None:
+        prefix = "folder-"
+        suffix = folder_id.removeprefix(prefix)
+        try:
+            parsed = UUID(hex=suffix)
+        except (ValueError, AttributeError) as error:
+            raise ValueError("folder ID 无效") from error
+        if (
+            not folder_id.startswith(prefix)
+            or len(suffix) != HEX_IDENTIFIER_LENGTH
+            or parsed.version != 7
+        ):
+            raise ValueError("folder ID 无效")
 
 
 def _sqlite_value(value: object) -> object:

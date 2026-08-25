@@ -11,6 +11,7 @@ import {
   get_download_accounts,
   get_health,
   import_download_account_from_browser,
+  list_folders,
   probe_source,
   save_download_account,
   test_download_account,
@@ -51,11 +52,18 @@ export function DownloadsPage() {
     queryKey: RESOURCE_QUERY_KEYS.download_accounts,
     queryFn: ({ signal }) => get_download_accounts(signal),
   });
+  const folders_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.library_folders,
+    queryFn: ({ signal }) => list_folders(signal),
+  });
   const health: HealthResponse | null = health_query.data ?? null;
   const download_accounts = download_accounts_query.data ?? [];
   const [source_url, set_source_url] = useState("");
   const [probe_result, set_probe_result] = useState<ProbeResponse | null>(null);
   const [selected_urls, set_selected_urls] = useState<Set<string>>(new Set());
+  const [target_folder_id, set_target_folder_id] = useState<string | null>(
+    null,
+  );
   const [is_submitting, set_is_submitting] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [account_loading_platform, set_account_loading_platform] =
@@ -124,7 +132,7 @@ export function DownloadsPage() {
     set_is_submitting(true);
     set_page_error(null);
     try {
-      const final_jobs = await start_downloads(urls);
+      const final_jobs = await start_downloads(urls, target_folder_id);
       set_probe_result(null);
       set_selected_urls(new Set());
       if (final_jobs.some((job) => job.stage === "complete"))
@@ -329,6 +337,8 @@ export function DownloadsPage() {
       source_url={source_url}
       probe_result={probe_result}
       selected_urls={selected_urls}
+      folders={folders_query.data ?? []}
+      target_folder_id={target_folder_id}
       current_source_video_id={
         current_probe_entry(probe_result?.entries ?? [], source_url)
           ?.source_video_id ?? null
@@ -337,7 +347,8 @@ export function DownloadsPage() {
       error={
         page_error ??
         resource_error(health_query.error) ??
-        resource_error(download_accounts_query.error)
+        resource_error(download_accounts_query.error) ??
+        resource_error(folders_query.error)
       }
       download_accounts={download_accounts}
       account_loading_platform={account_loading_platform}
@@ -346,6 +357,7 @@ export function DownloadsPage() {
       on_submit_probe={submit_source_probe}
       on_toggle_url={toggle_url}
       on_replace_selection={(urls) => set_selected_urls(new Set(urls))}
+      on_target_folder_change={set_target_folder_id}
       on_start_download={() => void start_selected_downloads()}
       on_save_download_account={save_platform_account}
       on_login_download_account={login_platform_account}

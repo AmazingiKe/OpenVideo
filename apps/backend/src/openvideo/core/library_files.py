@@ -182,6 +182,7 @@ def metadata_from_asset(
         )
     return AssetMetadata(
         asset_id=asset.asset_id,
+        folder_id=asset.folder_id,
         media_type=asset.media_type,
         title=asset.title,
         source=AssetSourceMetadata(
@@ -209,6 +210,7 @@ def asset_from_metadata(metadata: AssetMetadata) -> MediaAsset:
     storyboard = metadata.storyboard
     return MediaAsset(
         asset_id=metadata.asset_id,
+        folder_id=metadata.folder_id,
         media_type=metadata.media_type,
         source_url=metadata.source.url,
         source_platform=metadata.source.platform,

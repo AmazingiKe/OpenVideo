@@ -110,7 +110,10 @@ class AgentManager:
 
     def restore(self) -> None:
         for job in self.list_jobs():
-            if job.stage not in TERMINAL_AGENT_STAGES and job.stage != AgentStage.WAITING_FOR_INPUT:
+            if (
+                job.stage not in TERMINAL_AGENT_STAGES
+                and job.stage != AgentStage.WAITING_FOR_INPUT
+            ):
                 self.start(job.job_id)
 
     def get(self, job_id: str) -> AgentJob | None:
@@ -118,7 +121,9 @@ class AgentManager:
             job = self._jobs.get(job_id)
             return job.model_copy(deep=True) if job else None
 
-    def list_jobs(self, asset_id: str | None = None, active: bool = False) -> list[AgentJob]:
+    def list_jobs(
+        self, asset_id: str | None = None, active: bool = False
+    ) -> list[AgentJob]:
         with self._lock:
             jobs = list(self._jobs.values())
         if asset_id is not None:
@@ -150,9 +155,7 @@ class AgentManager:
         return self._require_job(job_id)
 
     def has_active_jobs(self) -> bool:
-        return any(
-            job.stage not in TERMINAL_AGENT_STAGES for job in self.list_jobs()
-        )
+        return any(job.stage not in TERMINAL_AGENT_STAGES for job in self.list_jobs())
 
     async def close(self) -> None:
         with self._lock:
@@ -160,6 +163,28 @@ class AgentManager:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.to_thread(self._close_checkpoint_connection)
+
+    async def cancel_assets(self, asset_ids: set[str]) -> bool:
+        jobs = [job for job in self.list_jobs(active=True) if job.asset_id in asset_ids]
+        with self._lock:
+            tasks = [
+                self._tasks[job.job_id] for job in jobs if job.job_id in self._tasks
+            ]
+        if any(not task.done() for task in tasks):
+            # LangGraph 在线程中执行，线程真实结束前永久删除必须保持冲突状态。
+            return False
+        for job in jobs:
+            self._update(
+                job,
+                AgentStage.CANCELLED,
+                job.progress_percent,
+                "素材已请求删除，Agent 任务已取消",
+            )
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return all(task.done() for task in tasks)
 
     def _close_checkpoint_connection(self) -> None:
         with self._checkpointer.lock:
@@ -220,11 +245,17 @@ class AgentManager:
         builder.add_edge(START, "prepare")
         builder.add_conditional_edges(
             "prepare",
-            lambda state: "transcript_question" if state["issue"] == "transcript_changed" else "invoke_model",
+            lambda state: (
+                "transcript_question"
+                if state["issue"] == "transcript_changed"
+                else "invoke_model"
+            ),
         )
         builder.add_conditional_edges(
             "invoke_model",
-            lambda state: "context_question" if state["issue"] == "context_limit" else "validate",
+            lambda state: (
+                "context_question" if state["issue"] == "context_limit" else "validate"
+            ),
         )
         builder.add_conditional_edges(
             "context_question",
@@ -233,7 +264,9 @@ class AgentManager:
         builder.add_edge("validate", "apply")
         builder.add_conditional_edges(
             "apply",
-            lambda state: "transcript_question" if state["issue"] == "transcript_changed" else END,
+            lambda state: (
+                "transcript_question" if state["issue"] == "transcript_changed" else END
+            ),
         )
         builder.add_conditional_edges(
             "transcript_question",
@@ -280,12 +313,17 @@ class AgentManager:
     def _context_question(self, state: AgentState) -> dict[str, object]:
         job = self._require_job(state["job_id"])
         question = self._ensure_question(job, AgentQuestionType.CONTEXT_LIMIT)
-        response = AgentResponse.model_validate(interrupt(question.model_dump(mode="json")))
+        response = AgentResponse.model_validate(
+            interrupt(question.model_dump(mode="json"))
+        )
         if response.action == AgentQuestionAction.CANCEL:
             self._cancel(job)
             return {"cancelled": True, "issue": None}
         if response.action == AgentQuestionAction.CHANGE_MODEL:
-            if not response.ai_model_id or self.settings.ai_model(response.ai_model_id) is None:
+            if (
+                not response.ai_model_id
+                or self.settings.ai_model(response.ai_model_id) is None
+            ):
                 raise AgentError("所选 AI 模型不存在，请在设置中重新选择")
             job.ai_model_id = response.ai_model_id
             job.execution_mode = AgentExecutionMode.AUTOMATIC
@@ -307,7 +345,9 @@ class AgentManager:
         )
         corrections = state["corrections"]
         if any(
-            index not in allowed_indices or not isinstance(text, str) or not text.strip()
+            index not in allowed_indices
+            or not isinstance(text, str)
+            or not text.strip()
             for index, text in corrections.items()
         ):
             raise AgentError("模型返回了无法应用的转录片段")
@@ -336,7 +376,9 @@ class AgentManager:
     def _transcript_question(self, state: AgentState) -> dict[str, object]:
         job = self._require_job(state["job_id"])
         question = self._ensure_question(job, AgentQuestionType.TRANSCRIPT_CHANGED)
-        response = AgentResponse.model_validate(interrupt(question.model_dump(mode="json")))
+        response = AgentResponse.model_validate(
+            interrupt(question.model_dump(mode="json"))
+        )
         if response.action == AgentQuestionAction.CANCEL:
             self._cancel(job)
             return {"cancelled": True, "issue": None}
@@ -378,7 +420,9 @@ class AgentManager:
                 ],
             )
         job.question = question
-        self._update(job, AgentStage.WAITING_FOR_INPUT, job.progress_percent, question.message)
+        self._update(
+            job, AgentStage.WAITING_FOR_INPUT, job.progress_percent, question.message
+        )
 
     def _ensure_question(
         self,
@@ -399,7 +443,9 @@ class AgentManager:
         job = self.get(job_id)
         if job is None or job.stage in TERMINAL_AGENT_STAGES:
             return
-        self._update(job, AgentStage.FAILED, job.progress_percent, "转录修正失败", message)
+        self._update(
+            job, AgentStage.FAILED, job.progress_percent, "转录修正失败", message
+        )
 
     def _update(
         self,

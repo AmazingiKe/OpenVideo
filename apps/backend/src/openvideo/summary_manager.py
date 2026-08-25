@@ -144,6 +144,7 @@ class SummaryManager:
         self.library = library
         self.settings = settings
         self._tasks: set[asyncio.Task[None]] = set()
+        self._task_asset_ids: dict[asyncio.Task[None], str] = {}
         self._agent_runtimes: dict[str, AgentRuntime] = {}
         self.library.interrupt_agent_runs()
         for asset in self.library.list():
@@ -157,6 +158,38 @@ class SummaryManager:
 
     def has_active_jobs(self) -> bool:
         return any(not task.done() for task in self._tasks)
+
+    async def cancel_assets(self, asset_ids: set[str]) -> bool:
+        for run_id, runtime in list(self._agent_runtimes.items()):
+            run = self.library.load_agent_run(run_id)
+            session = self.library.load_agent_session(run.session_id) if run else None
+            binding = (
+                self.library.load_summary_agent_session_binding(session.session_id)
+                if session and session.agent_type == SUMMARY_AGENT_TYPE
+                else None
+            )
+            if binding and binding[0] in asset_ids:
+                runtime.cancel(run_id)
+        tasks = [
+            task
+            for task, asset_id in self._task_asset_ids.items()
+            if asset_id in asset_ids and not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return all(task.done() for task in tasks)
+
+    def _track_task(self, task: asyncio.Task[None], asset_id: str) -> None:
+        self._tasks.add(task)
+        self._task_asset_ids[task] = asset_id
+
+        def discard(completed: asyncio.Task[None]) -> None:
+            self._tasks.discard(completed)
+            self._task_asset_ids.pop(completed, None)
+
+        task.add_done_callback(discard)
 
     def agent_sessions(self, asset_id: str) -> list[SummaryAgentSession]:
         self._require_asset(asset_id)
@@ -190,9 +223,7 @@ class SummaryManager:
             agent_type=SUMMARY_AGENT_TYPE,
             title=document.title,
         )
-        self.library.save_summary_agent_session(
-            session, asset_id, root.document_id
-        )
+        self.library.save_summary_agent_session(session, asset_id, root.document_id)
         return SummaryAgentSessionState(
             session=session,
             asset_id=asset_id,
@@ -205,7 +236,11 @@ class SummaryManager:
             binding = self.library.load_summary_agent_session_binding(session_id)
         except ValueError as error:
             raise SummaryNotFoundError("总结 Agent 会话不存在") from error
-        if session is None or binding is None or session.agent_type != SUMMARY_AGENT_TYPE:
+        if (
+            session is None
+            or binding is None
+            or session.agent_type != SUMMARY_AGENT_TYPE
+        ):
             raise SummaryNotFoundError("总结 Agent 会话不存在")
         return SummaryAgentSessionState(
             session=session,
@@ -272,8 +307,7 @@ class SummaryManager:
         task = asyncio.create_task(
             self._execute_generic_agent_run(runtime, run, model, preset, content)
         )
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._track_task(task, state.asset_id)
         return run
 
     async def _execute_generic_agent_run(
@@ -418,7 +452,11 @@ class SummaryManager:
                 )
                 if len(evidence) >= parameters.limit:
                     break
-        return {"ok": True, "evidence": evidence, "truncated": len(evidence) >= parameters.limit}
+        return {
+            "ok": True,
+            "evidence": evidence,
+            "truncated": len(evidence) >= parameters.limit,
+        }
 
     @staticmethod
     def _evidence_in_range(
@@ -570,9 +608,7 @@ class SummaryManager:
                 else [
                     SummaryDocumentCreate(
                         title=segment.title,
-                        markdown=self._segment_markdown(
-                            segment, request.detail.value
-                        ),
+                        markdown=self._segment_markdown(segment, request.detail.value),
                     )
                     for segment in segments
                     if _segment_summary(segment) is not None
@@ -844,8 +880,7 @@ class SummaryManager:
         )
         self.library.save_summary_agent_run(run)
         task = asyncio.create_task(self._execute_agent_run(run, request, document))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._track_task(task, document.asset_id)
         return run
 
     async def _execute_agent_run(
@@ -1533,9 +1568,7 @@ def _parse_subdocuments(value: object) -> list[SummaryDocumentCreate]:
         if not title or not _has_markdown_body(markdown):
             continue
         subdocuments.append(
-            subdocument.model_copy(
-                update={"title": title, "markdown": f"{markdown}\n"}
-            )
+            subdocument.model_copy(update={"title": title, "markdown": f"{markdown}\n"})
         )
     return subdocuments
 

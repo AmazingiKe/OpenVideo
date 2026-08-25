@@ -10,7 +10,7 @@ import json
 import os
 import re
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
@@ -61,10 +61,13 @@ from openvideo.core.transcription_models import (
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.download_models import DownloadJob
 from openvideo.core.library import (
+    FolderConflictError,
+    FolderNotFoundError,
     LibraryDescription,
     LibraryError,
     MediaLibrary,
 )
+from openvideo.core.folder_models import FolderResponse
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import (
     MARKER_RANGE_MAX_SECONDS,
@@ -248,6 +251,29 @@ class ProbeResponse(BaseModel):
 
 class BatchDownloadRequest(BaseModel):
     source_urls: list[str]
+    folder_id: str | None = None
+
+
+class FolderCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    parent_id: str | None = None
+
+
+class FolderRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class FolderMoveRequest(BaseModel):
+    parent_id: str | None = None
+
+
+class FolderDeleteRequest(BaseModel):
+    confirmation_name: str | None = None
+
+
+class AssetMoveRequest(BaseModel):
+    asset_ids: list[str] = Field(min_length=1, max_length=100)
+    folder_id: str | None = None
 
 
 class MarkerCreateRequest(BaseModel):
@@ -782,7 +808,10 @@ def create_app(
                 matches.append(resolve_source(source_url))
             except UnsupportedSourceError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
-        jobs = manager.create_batch(matches)
+        try:
+            jobs = manager.create_batch(matches, request.folder_id)
+        except (FolderNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         for job in jobs:
             if job.stage.value != "complete":
                 manager.start(job.job_id)
@@ -795,9 +824,140 @@ def create_app(
             raise HTTPException(status_code=404, detail="下载任务不存在")
         return job
 
+    @app.get("/api/library/folders", response_model=list[FolderResponse])
+    def list_folders() -> list[FolderResponse]:
+        return library.list_folders()
+
+    @app.post(
+        "/api/library/folders",
+        response_model=FolderResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_folder(request: FolderCreateRequest) -> FolderResponse:
+        try:
+            return library.create_folder(request.name, request.parent_id)
+        except FolderNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except FolderConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.patch("/api/library/folders/{folder_id}", response_model=FolderResponse)
+    def rename_folder(folder_id: str, request: FolderRenameRequest) -> FolderResponse:
+        try:
+            return library.rename_folder(folder_id, request.name)
+        except FolderNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except FolderConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.put("/api/library/folders/{folder_id}/parent", response_model=FolderResponse)
+    def move_folder(folder_id: str, request: FolderMoveRequest) -> FolderResponse:
+        try:
+            return library.move_folder(folder_id, request.parent_id)
+        except FolderNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except FolderConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/api/media/assets/move", response_model=list[MediaAssetResponse])
+    def move_assets(request: AssetMoveRequest) -> list[MediaAssetResponse]:
+        try:
+            assets = library.move_assets(request.asset_ids, request.folder_id)
+        except FolderNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return [library.response_for(asset) for asset in assets]
+
+    @app.delete("/api/media/assets/{asset_id}", status_code=204)
+    async def delete_asset(asset_id: str) -> Response:
+        try:
+            asset = library.get(asset_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="媒体资源不存在") from error
+        if asset is None:
+            raise HTTPException(status_code=404, detail="媒体资源不存在")
+        await _stop_asset_tasks(
+            {asset_id},
+            manager,
+            analysis_manager,
+            agent_manager,
+            summary_manager,
+            marker_agent_manager,
+        )
+        try:
+            library.delete_asset(asset_id)
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.delete("/api/library/folders/{folder_id}", status_code=204)
+    async def delete_folder(
+        folder_id: str,
+        request: FolderDeleteRequest | None = None,
+    ) -> Response:
+        try:
+            folder = library.get_folder(folder_id)
+            asset_ids = library.folder_asset_ids(folder_id)
+            has_descendants = any(
+                candidate.folder_id != folder_id
+                and candidate.materialized_path.startswith(folder.materialized_path)
+                for candidate in library.list_folders()
+            )
+        except FolderNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if (asset_ids or has_descendants) and (
+            request is None or request.confirmation_name != folder.name
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="非空文件夹必须输入完整名称确认永久删除",
+            )
+        await _stop_asset_tasks(
+            set(asset_ids),
+            manager,
+            analysis_manager,
+            agent_manager,
+            summary_manager,
+            marker_agent_manager,
+        )
+        try:
+            for asset_id in asset_ids:
+                library.delete_asset(asset_id)
+            library.delete_folder(folder_id)
+        except (FolderConflictError, OSError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @app.get("/api/media/assets", response_model=list[MediaAssetResponse])
-    def list_assets() -> list[MediaAssetResponse]:
-        return [library.response_for(asset) for asset in library.list()]
+    def list_assets(
+        folder_id: str | None = None,
+        uncategorized: bool = False,
+        search: str | None = Query(default=None, max_length=200),
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> list[MediaAssetResponse]:
+        try:
+            assets = library.list(
+                folder_id=folder_id,
+                uncategorized=uncategorized,
+                search=search,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+        except FolderNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return [library.response_for(asset) for asset in assets]
 
     @app.get("/api/media/assets/{asset_id}", response_model=MediaAssetResponse)
     def get_asset(asset_id: str) -> MediaAssetResponse:
@@ -850,6 +1010,7 @@ def create_app(
         managed_prefixes = (
             "/api/media",
             "/api/downloads",
+            "/api/library/folders",
             "/api/analysis",
             "/api/agent-jobs",
             "/api/summary",
@@ -1916,6 +2077,42 @@ def _ensure_switch_allowed(
     ):
         _library_error(
             409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库"
+        )
+
+
+async def _stop_asset_tasks(
+    asset_ids: set[str],
+    manager: DownloadManager | None,
+    analysis_manager: AnalysisManager | None,
+    agent_manager: AgentManager | None,
+    summary_manager: SummaryManager | None,
+    marker_agent_manager: MarkerAgentManager | None,
+) -> None:
+    """永久删除只能在所有关联执行器确认停止后继续，避免后台写回已删除目录。"""
+    if not asset_ids:
+        return
+    cancellers = [
+        candidate.cancel_assets(asset_ids)
+        for candidate in (
+            manager,
+            analysis_manager,
+            agent_manager,
+            summary_manager,
+            marker_agent_manager,
+        )
+        if candidate is not None
+    ]
+    try:
+        results = await asyncio.gather(*cancellers)
+    except Exception as error:
+        raise HTTPException(
+            status_code=409,
+            detail="关联任务无法停止，未删除任何内容",
+        ) from error
+    if not all(results):
+        raise HTTPException(
+            status_code=409,
+            detail="关联任务无法停止，未删除任何内容",
         )
 
 

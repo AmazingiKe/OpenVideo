@@ -82,6 +82,7 @@ describe("VideoWorkspace", () => {
 function create_asset(): MediaAsset {
   return {
     asset_id: ASSET_ID,
+    folder_id: null,
     media_type: "video",
     source_url: "https://www.bilibili.com/video/BV1xx411c7mD",
     source_platform: "bilibili",

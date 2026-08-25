@@ -1,4 +1,11 @@
-import { Clapperboard, Download, FileText, Flag, Settings } from "lucide-react";
+import {
+  Clapperboard,
+  Download,
+  FileText,
+  Flag,
+  Library,
+  Settings,
+} from "lucide-react";
 import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 
@@ -9,6 +16,7 @@ const IDLE_PRELOAD_TIMEOUT_MS = 2_000;
 
 const WORKSPACE_ICONS = {
   "/downloads": Download,
+  "/library": Library,
   "/markers": Flag,
   "/summary": FileText,
 } as const;

@@ -108,3 +108,45 @@ def test_unavailable_directory_picker_returns_stable_error(tmp_path: Path):
         "code": "directory_picker_unavailable",
         "message": "无法打开系统文件夹选择器",
     }
+
+
+def test_folder_api_manages_nested_virtual_folders(tmp_path: Path):
+    library_path = tmp_path / "portable"
+    library_path.mkdir()
+    app = create_app(Settings(), PreferenceStore(tmp_path / "preferences.json"))
+
+    with TestClient(app) as client:
+        assert client.post(
+            "/api/library/create", json={"path": str(library_path)}
+        ).status_code == 201
+        root = client.post(
+            "/api/library/folders", json={"name": "课程", "parent_id": None}
+        ).json()
+        child = client.post(
+            "/api/library/folders",
+            json={"name": "镜头", "parent_id": root["folder_id"]},
+        ).json()
+
+        duplicate = client.post(
+            "/api/library/folders", json={"name": "课程", "parent_id": None}
+        )
+        cycle = client.put(
+            f"/api/library/folders/{root['folder_id']}/parent",
+            json={"parent_id": child["folder_id"]},
+        )
+        unconfirmed = client.request(
+            "DELETE",
+            f"/api/library/folders/{root['folder_id']}",
+            json={"confirmation_name": None},
+        )
+        confirmed = client.request(
+            "DELETE",
+            f"/api/library/folders/{root['folder_id']}",
+            json={"confirmation_name": "课程"},
+        )
+
+        assert duplicate.status_code == 409
+        assert cycle.status_code == 409
+        assert unconfirmed.status_code == 409
+        assert confirmed.status_code == 204
+        assert client.get("/api/library/folders").json() == []

@@ -34,6 +34,7 @@ class MediaType(StrEnum):
 
 class MediaAsset(BaseModel):
     asset_id: str
+    folder_id: str | None = None
     media_type: MediaType = MediaType.VIDEO
     source_url: str
     source_platform: SourcePlatform
@@ -76,6 +77,7 @@ class ThumbnailStoryboardResponse(BaseModel):
 
 class MediaAssetResponse(BaseModel):
     asset_id: str
+    folder_id: str | None
     media_type: MediaType
     source_url: str
     source_platform: SourcePlatform
@@ -131,6 +133,7 @@ class AssetTranscriptionMetadata(BaseModel):
 
 class AssetMetadata(BaseModel):
     asset_id: str
+    folder_id: str | None = None
     media_type: MediaType
     title: str
     source: AssetSourceMetadata

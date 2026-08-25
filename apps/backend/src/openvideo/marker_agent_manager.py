@@ -126,6 +126,7 @@ class MarkerAgentManager:
         self.library = library
         self.settings = settings
         self._tasks: set[asyncio.Task[None]] = set()
+        self._task_asset_ids: dict[asyncio.Task[None], str] = {}
         self._agent_runtimes: dict[str, AgentRuntime] = {}
         self._turn_states: dict[str, MarkerTurnState] = {}
 
@@ -135,6 +136,35 @@ class MarkerAgentManager:
 
     def has_active_jobs(self) -> bool:
         return any(not task.done() for task in self._tasks)
+
+    async def cancel_assets(self, asset_ids: set[str]) -> bool:
+        for run_id, runtime in list(self._agent_runtimes.items()):
+            run = self.library.load_agent_run(run_id)
+            if run is None:
+                continue
+            asset_id = self.library.load_marker_agent_session_binding(run.session_id)
+            if asset_id in asset_ids:
+                runtime.cancel(run_id)
+        tasks = [
+            task
+            for task, asset_id in self._task_asset_ids.items()
+            if asset_id in asset_ids and not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return all(task.done() for task in tasks)
+
+    def _track_task(self, task: asyncio.Task[None], asset_id: str) -> None:
+        self._tasks.add(task)
+        self._task_asset_ids[task] = asset_id
+
+        def discard(completed: asyncio.Task[None]) -> None:
+            self._tasks.discard(completed)
+            self._task_asset_ids.pop(completed, None)
+
+        task.add_done_callback(discard)
 
     def sessions(self, asset_id: str) -> list[MarkerAgentSession]:
         self._require_asset(asset_id)
@@ -236,8 +266,7 @@ class MarkerAgentManager:
         task = asyncio.create_task(
             self._execute_run(runtime, run, model, preset, content)
         )
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._track_task(task, state.asset_id)
         return run
 
     async def _execute_run(

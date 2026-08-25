@@ -2,8 +2,10 @@ from fastapi.testclient import TestClient
 import pytest
 import time
 from threading import Event
+from unittest.mock import AsyncMock
 from uuid import UUID
 
+from openvideo import application
 from openvideo.core.media_models import SourcePlatform
 from openvideo.download_accounts import (
     DownloadAccountLoginCancelled,
@@ -113,6 +115,86 @@ def test_probe_preserves_bilibili_part_download_urls(monkeypatch, tmp_path):
     assert response.json()["entries"][0]["url"] == (
         "https://www.bilibili.com/video/BV1X7411F744?p=2"
     )
+
+
+def test_download_folder_assignment_defaults_and_preserves_duplicates(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    app = api.create_app(Settings(library_path=tmp_path))
+
+    with TestClient(app) as client:
+        courses = client.post(
+            "/api/library/folders",
+            json={"name": "课程", "parent_id": None},
+        ).json()
+        archive = client.post(
+            "/api/library/folders",
+            json={"name": "归档", "parent_id": None},
+        ).json()
+        first = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ],
+                "folder_id": courses["folder_id"],
+            },
+        )
+        duplicate = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ],
+                "folder_id": archive["folder_id"],
+            },
+        )
+        uncategorized = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.youtube.com/watch?v=BaW_jenozKc"
+                ]
+            },
+        )
+        assets = client.get("/api/media/assets").json()
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 202
+    assert uncategorized.status_code == 202
+    assert duplicate.json()[0]["asset_id"] == first.json()[0]["asset_id"]
+    by_id = {asset["asset_id"]: asset for asset in assets}
+    assert by_id[first.json()[0]["asset_id"]]["folder_id"] == courses["folder_id"]
+    assert by_id[uncategorized.json()[0]["asset_id"]]["folder_id"] is None
+
+
+def test_asset_delete_keeps_files_when_a_related_task_cannot_stop(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    app = api.create_app(Settings(library_path=tmp_path))
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ]
+            },
+        ).json()[0]
+        asset_directory = tmp_path / "assets" / created["asset_id"]
+        app.state.download_manager.cancel_assets = AsyncMock(return_value=False)
+
+        response = client.delete(f"/api/media/assets/{created['asset_id']}")
+        invalid_response = client.delete("/api/media/assets/not-an-asset-id")
+
+    assert response.status_code == 409
+    assert invalid_response.status_code == 404
+    assert asset_directory.is_dir()
 
 
 def test_platform_account_can_be_saved_tested_listed_and_removed(

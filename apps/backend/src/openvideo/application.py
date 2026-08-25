@@ -77,8 +77,11 @@ class DownloadManager:
         self._active_job_id_by_asset_id: dict[str, str] = {}
         self._lock = RLock()
         self._download_lock = asyncio.Lock()
+        self._tasks: dict[str, asyncio.Task[None]] = {}
 
-    def create(self, source: SourceMatch) -> DownloadJob:
+    def create(self, source: SourceMatch, folder_id: str | None = None) -> DownloadJob:
+        if folder_id is not None:
+            self.library.get_folder(folder_id)
         if source.source_video_id:
             existing_asset = self.library.find_by_source_video_id(
                 source.platform,
@@ -95,6 +98,7 @@ class DownloadManager:
         job_id = f"job-{uuid7().hex}"
         asset = MediaAsset(
             asset_id=asset_id,
+            folder_id=folder_id,
             source_url=source.normalized_url,
             source_platform=source.platform,
             source_video_id=source.source_video_id,
@@ -107,12 +111,20 @@ class DownloadManager:
             self._active_job_id_by_asset_id[asset_id] = job_id
         return job.model_copy(deep=True)
 
-    def create_batch(self, sources: list[SourceMatch]) -> list[DownloadJob]:
+    def create_batch(
+        self, sources: list[SourceMatch], folder_id: str | None = None
+    ) -> list[DownloadJob]:
         """为多个来源各建一个任务，返回与输入一一对应的任务列表。"""
-        return [self.create(source) for source in sources]
+        return [self.create(source, folder_id) for source in sources]
 
     def start(self, job_id: str) -> None:
-        asyncio.create_task(self._run(job_id))
+        with self._lock:
+            current = self._tasks.get(job_id)
+            if current and not current.done():
+                return
+            task = asyncio.create_task(self._run(job_id))
+            self._tasks[job_id] = task
+            task.add_done_callback(lambda _: self._discard_task(job_id))
 
     def get(self, job_id: str) -> DownloadJob | None:
         with self._lock:
@@ -121,7 +133,35 @@ class DownloadManager:
 
     def has_active_jobs(self) -> bool:
         with self._lock:
-            return any(job.stage not in TERMINAL_DOWNLOAD_STAGES for job in self._jobs.values())
+            return any(
+                job.stage not in TERMINAL_DOWNLOAD_STAGES for job in self._jobs.values()
+            )
+
+    async def cancel_assets(self, asset_ids: set[str]) -> bool:
+        with self._lock:
+            jobs = [
+                job.model_copy(deep=True)
+                for job in self._jobs.values()
+                if job.asset_id in asset_ids
+                and job.stage not in TERMINAL_DOWNLOAD_STAGES
+            ]
+            tasks = [
+                self._tasks[job.job_id] for job in jobs if job.job_id in self._tasks
+            ]
+        if any(job.stage != DownloadStage.PENDING for job in jobs):
+            # yt-dlp 和元数据探测运行在线程中，进程未退出前不能声称已停止。
+            return False
+        for job in jobs:
+            self._fail(job.job_id, "素材已请求删除，下载任务已取消")
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return all(task.done() for task in tasks)
+
+    def _discard_task(self, job_id: str) -> None:
+        with self._lock:
+            self._tasks.pop(job_id, None)
 
     async def _run(self, job_id: str) -> None:
         job = self.get(job_id)
@@ -314,6 +354,7 @@ class AnalysisManager:
         self._transcription_options_by_job_id: dict[str, TranscriptionOptions] = {}
         self._lock = RLock()
         self._analysis_lock = asyncio.Lock()
+        self._tasks: dict[str, asyncio.Task[None]] = {}
 
     def create_analysis(
         self,
@@ -416,7 +457,13 @@ class AnalysisManager:
         return job.model_copy(deep=True)
 
     def start(self, job_id: str) -> None:
-        asyncio.create_task(self._run(job_id))
+        with self._lock:
+            current = self._tasks.get(job_id)
+            if current and not current.done():
+                return
+            task = asyncio.create_task(self._run(job_id))
+            self._tasks[job_id] = task
+            task.add_done_callback(lambda _: self._discard_task(job_id))
 
     def restore(self) -> None:
         """服务重启后恢复未完成任务，复用已经落盘的转写与事件产物。"""
@@ -444,7 +491,35 @@ class AnalysisManager:
 
     def has_active_jobs(self) -> bool:
         with self._lock:
-            return any(job.stage not in TERMINAL_ANALYSIS_STAGES for job in self._jobs.values())
+            return any(
+                job.stage not in TERMINAL_ANALYSIS_STAGES for job in self._jobs.values()
+            )
+
+    async def cancel_assets(self, asset_ids: set[str]) -> bool:
+        with self._lock:
+            jobs = [
+                job.model_copy(deep=True)
+                for job in self._jobs.values()
+                if job.asset_id in asset_ids
+                and job.stage not in TERMINAL_ANALYSIS_STAGES
+            ]
+            tasks = [
+                self._tasks[job.job_id] for job in jobs if job.job_id in self._tasks
+            ]
+        if any(job.stage != AnalysisStage.PENDING for job in jobs):
+            # 转录与画面分析运行在线程中，底层工具返回前删除目录会产生写回竞争。
+            return False
+        for job in jobs:
+            self._fail(job.job_id, "素材已请求删除，分析任务已取消")
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return all(task.done() for task in tasks)
+
+    def _discard_task(self, job_id: str) -> None:
+        with self._lock:
+            self._tasks.pop(job_id, None)
 
     def transcript(self, asset_id: str) -> Transcript | None:
         return self.library.load_transcript(asset_id)

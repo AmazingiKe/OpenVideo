@@ -15,10 +15,11 @@ from openvideo.core.library_files import (
     IndexIssue,
     load_asset_bundle,
 )
+from openvideo.core.folder_models import Folder, FolderManifest
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 13
+DATABASE_VERSION = 14
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -41,8 +42,35 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     if not _database_matches_schema(database_path):
         _rebuild_database(database_path, library_path / "temp", assets_path)
     connection = _connect(database_path)
+    synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
     return connection
+
+
+def synchronize_folders(connection: sqlite3.Connection, manifest_path: Path) -> None:
+    folders = _load_folders(manifest_path)
+    folder_ids = {folder.folder_id for folder in folders}
+    with connection:
+        for folder in sorted(
+            folders, key=lambda item: item.materialized_path.count("/")
+        ):
+            values = folder.model_dump(mode="json")
+            columns = tuple(values)
+            updates = ", ".join(f"{column}=excluded.{column}" for column in columns[1:])
+            connection.execute(
+                f"INSERT INTO folders ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)}) "
+                f"ON CONFLICT(folder_id) DO UPDATE SET {updates}",
+                tuple(values[column] for column in columns),
+            )
+        if folder_ids:
+            placeholders = ", ".join("?" for _ in folder_ids)
+            connection.execute(
+                f"DELETE FROM folders WHERE folder_id NOT IN ({placeholders})",
+                tuple(sorted(folder_ids)),
+            )
+        else:
+            connection.execute("DELETE FROM folders")
 
 
 def synchronize_index(connection: sqlite3.Connection, assets_path: Path) -> None:
@@ -309,9 +337,10 @@ def _database_matches_schema(database_path: Path) -> bool:
         }
         proposal_columns = {
             row[1]
-            for row in connection.execute(
-                "PRAGMA table_info(summary_agent_proposals)"
-            )
+            for row in connection.execute("PRAGMA table_info(summary_agent_proposals)")
+        }
+        asset_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(assets)")
         }
         connection.close()
     except sqlite3.Error:
@@ -322,6 +351,8 @@ def _database_matches_schema(database_path: Path) -> bool:
         and REQUIRED_AGENT_TABLES <= tables
         and not LEGACY_AGENT_TABLES & tables
         and "session_id" in proposal_columns
+        and "folders" in tables
+        and "folder_id" in asset_columns
     )
 
 
@@ -339,6 +370,7 @@ def _rebuild_database(
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(_SCHEMA)
         connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
+        synchronize_folders(connection, database_path.parent / "folders.json")
         synchronize_index(connection, assets_path)
         connection.commit()
         connection.close()
@@ -427,9 +459,26 @@ def _sqlite_value(value: object) -> object:
     return value
 
 
+def _load_folders(manifest_path: Path) -> list[Folder]:
+    if not manifest_path.is_file():
+        return []
+    manifest = FolderManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    return manifest.folders
+
+
 _SCHEMA = """
+CREATE TABLE folders (
+    folder_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+    parent_id TEXT REFERENCES folders(folder_id) ON DELETE CASCADE,
+    materialized_path TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    UNIQUE(parent_id, name COLLATE NOCASE)
+);
 CREATE TABLE assets (
-    asset_id TEXT PRIMARY KEY, media_type TEXT NOT NULL, source_url TEXT NOT NULL,
+    asset_id TEXT PRIMARY KEY, folder_id TEXT REFERENCES folders(folder_id) ON DELETE SET NULL,
+    media_type TEXT NOT NULL, source_url TEXT NOT NULL,
     source_platform TEXT NOT NULL, source_video_id TEXT, title TEXT NOT NULL,
     author_name TEXT, description TEXT, duration_seconds REAL, width INTEGER,
     height INTEGER, video_codec TEXT, audio_codec TEXT, playback_path TEXT,
@@ -533,6 +582,10 @@ CREATE TABLE index_issues (
     code TEXT NOT NULL, message TEXT NOT NULL
 );
 CREATE INDEX assets_created_at_index ON assets(created_at DESC);
+CREATE INDEX assets_folder_created_index ON assets(folder_id, created_at DESC);
+CREATE INDEX assets_title_index ON assets(title COLLATE NOCASE);
+CREATE INDEX folders_parent_name_index ON folders(parent_id, name COLLATE NOCASE);
+CREATE INDEX folders_materialized_path_index ON folders(materialized_path);
 CREATE INDEX markers_asset_time_index ON markers(asset_id, start_seconds);
 CREATE INDEX agent_jobs_asset_created_index ON agent_jobs(asset_id, created_at DESC);
 CREATE UNIQUE INDEX summary_documents_root_asset_index ON summary_documents(asset_id) WHERE parent_document_id IS NULL;

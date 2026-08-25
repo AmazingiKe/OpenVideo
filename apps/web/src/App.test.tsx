@@ -654,6 +654,7 @@ function create_asset({
         : status === "downloading"
           ? "01890f4c-7a2b-7cc2-98c4-dc0c0c073990"
           : "01890f4c-7a2b-7cc2-98c4-dc0c0c073991",
+    folder_id: null,
     media_type: "video",
     source_url: "https://www.bilibili.com/video/BV1xx411c7mD",
     source_platform: "bilibili",
