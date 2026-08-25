@@ -15,6 +15,7 @@ import {
   create_download,
   create_transcript_correction,
   list_asset_agent_jobs,
+  list_downloads,
   respond_to_agent_job,
   transcribe_asset,
 } from "@/shared/api";
@@ -34,6 +35,7 @@ import type {
 import { merge_task_record, type TaskRecord } from "@/features/workbench/tasks";
 
 const TERMINAL_DOWNLOAD_STAGES = new Set(["complete", "failed"]);
+const INITIAL_DOWNLOAD_TASK_LIMIT = 50;
 
 type TaskManager = {
   task_records: TaskRecord[];
@@ -108,6 +110,8 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         progress_percent: job.progress_percent,
         error_message: job.error_message,
         created_at: job.created_at,
+        name: job.name,
+        events: job.events,
       });
     },
     [record_task],
@@ -123,6 +127,8 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         progress_percent: job.progress_percent,
         error_message: job.error_message,
         created_at: job.created_at,
+        name: "素材分析",
+        events: [],
       });
     },
     [record_task],
@@ -143,10 +149,24 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         progress_percent: job.progress_percent,
         error_message: job.error_message,
         created_at: job.created_at,
+        name: "转录修正",
+        events: [],
       });
     },
     [record_task],
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    try {
+      void list_downloads(INITIAL_DOWNLOAD_TASK_LIMIT, controller.signal)
+        .then((jobs) => jobs.forEach(record_download_job))
+        .catch(() => undefined);
+    } catch {
+      // 测试或离线壳层未提供历史端点时，实时任务仍可正常工作。
+    }
+    return () => controller.abort();
+  }, [record_download_job]);
 
   const start_downloads = useCallback(
     async (urls: string[], folder_id: string | null = null) => {

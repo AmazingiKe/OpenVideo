@@ -92,6 +92,7 @@ class PlaylistProbe:
 
 ProgressCallback = Callable[[float, str], None]
 StageCallback = Callable[[str], None]
+MetadataCallback = Callable[[DownloadMetadata], None]
 
 
 def yt_dlp_available() -> bool:
@@ -108,6 +109,7 @@ def download_video(
     project_bin_dir: Path | None,
     on_progress: ProgressCallback,
     on_stage: StageCallback,
+    on_metadata: MetadataCallback,
     cookie_source: Path | None = None,
     staging_directory: Path | None = None,
 ) -> DownloadedMedia:
@@ -128,6 +130,7 @@ def download_video(
 
     on_stage("正在读取视频信息")
     metadata = read_download_metadata(source_url, platform, cookie_source)
+    on_metadata(metadata)
     on_stage("正在下载视频和音频")
     temporary_template = staging_directory / "download.%(ext)s"
     command = [

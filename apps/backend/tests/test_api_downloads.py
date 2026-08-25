@@ -197,6 +197,68 @@ def test_asset_delete_keeps_files_when_a_related_task_cannot_stop(
     assert asset_directory.is_dir()
 
 
+def test_download_history_restores_title_and_events_after_restart(
+    monkeypatch,
+    tmp_path,
+):
+    def fail_after_metadata(
+        _source_url,
+        _platform,
+        _asset_directory,
+        _configured_ffmpeg_path,
+        _project_bin_dir,
+        _on_progress,
+        on_stage,
+        on_metadata,
+        **_options,
+    ):
+        metadata = DownloadMetadata(
+            source_video_id="BaW_jenozKc",
+            title="Blender 角色绑定完整教程",
+            author_name="OpenVideo",
+            description=None,
+            duration_seconds=120,
+            width=1920,
+            height=1080,
+            thumbnail_url=None,
+        )
+        on_stage("正在读取视频信息")
+        on_metadata(metadata)
+        on_stage("正在下载视频和音频")
+        raise DownloadFailure("测试下载失败")
+
+    monkeypatch.setattr(application, "download_video", fail_after_metadata)
+    settings = Settings(library_path=tmp_path)
+    app = api.create_app(settings)
+    with TestClient(app) as client:
+        created_response = client.post(
+            "/api/downloads",
+            json={"source_urls": ["https://www.youtube.com/watch?v=BaW_jenozKc"]},
+        )
+        job_id = created_response.json()[0]["job_id"]
+        task_response = created_response
+        for _ in range(50):
+            task_response = client.get(f"/api/downloads/{job_id}")
+            if task_response.json()["stage"] == "failed":
+                break
+            time.sleep(0.01)
+
+    assert created_response.status_code == 202
+    assert task_response.json()["name"] == "Blender 角色绑定完整教程"
+    messages = [event["message"] for event in task_response.json()["events"]]
+    assert "已识别视频：Blender 角色绑定完整教程" in messages
+    assert task_response.json()["events"][-1]["error_message"] == "测试下载失败"
+
+    restarted_app = api.create_app(settings)
+    with TestClient(restarted_app) as client:
+        history_response = client.get("/api/downloads?limit=50")
+
+    assert history_response.status_code == 200
+    assert history_response.json()[0]["job_id"] == job_id
+    assert history_response.json()[0]["name"] == "Blender 角色绑定完整教程"
+    assert history_response.json()[0]["events"] == task_response.json()["events"]
+
+
 def test_platform_account_can_be_saved_tested_listed_and_removed(
     monkeypatch,
     tmp_path,

@@ -42,6 +42,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     if not _database_matches_schema(database_path):
         _rebuild_database(database_path, library_path / "temp", assets_path)
     connection = _connect(database_path)
+    _ensure_download_event_schema(connection)
     synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
     return connection
@@ -80,7 +81,9 @@ def synchronize_index(connection: sqlite3.Connection, assets_path: Path) -> None
     scanned_ids: set[str] = set()
     with connection:
         connection.execute("DELETE FROM index_issues")
-        for asset_directory in sorted(assets_path.iterdir(), key=lambda path: path.name):
+        for asset_directory in sorted(
+            assets_path.iterdir(), key=lambda path: path.name
+        ):
             try:
                 bundle = load_asset_bundle(assets_path, asset_directory)
             except AssetIndexError as error:
@@ -179,7 +182,9 @@ def replace_asset_projection(
                 marker.marker_range_after_seconds,
             ),
         )
-        _replace_tags(connection, "marker_tags", "marker_id", marker.marker_id, marker.tags)
+        _replace_tags(
+            connection, "marker_tags", "marker_id", marker.marker_id, marker.tags
+        )
     for position, segment in enumerate(bundle.segments):
         connection.execute(
             "INSERT INTO timeline_segments "
@@ -298,7 +303,9 @@ def replace_asset_projection(
                 tuple(proposal_values[column] for column in columns),
             )
 
-    connection.execute("DELETE FROM summary_media WHERE asset_id = ?", (asset.asset_id,))
+    connection.execute(
+        "DELETE FROM summary_media WHERE asset_id = ?", (asset.asset_id,)
+    )
     for media in bundle.summary_media:
         _insert_model(connection, "summary_media", media.model_dump(mode="json"))
     connection.execute(
@@ -389,6 +396,23 @@ def _connect(database_path: Path) -> sqlite3.Connection:
     connection.execute("PRAGMA busy_timeout = 5000")
     connection.execute("PRAGMA synchronous = NORMAL")
     return connection
+
+
+def _ensure_download_event_schema(connection: sqlite3.Connection) -> None:
+    """事件日志独立增量建表，避免升级查询投影时删除已有任务历史。"""
+
+    with connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS download_events ("
+            "event_id TEXT PRIMARY KEY, "
+            "job_id TEXT NOT NULL REFERENCES download_jobs(job_id) ON DELETE CASCADE, "
+            "stage TEXT NOT NULL, progress_percent REAL NOT NULL, "
+            "message TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS download_events_job_created_index "
+            "ON download_events(job_id, created_at)"
+        )
 
 
 def _save_issue(connection: sqlite3.Connection, issue: IndexIssue) -> None:
@@ -494,6 +518,12 @@ CREATE TABLE download_jobs (
     stage TEXT NOT NULL, progress_percent REAL NOT NULL, message TEXT NOT NULL,
     error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE download_events (
+    event_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES download_jobs(job_id) ON DELETE CASCADE,
+    stage TEXT NOT NULL, progress_percent REAL NOT NULL, message TEXT NOT NULL,
+    error_message TEXT, created_at TEXT NOT NULL
+);
 CREATE TABLE analysis_jobs (
     job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, strategy TEXT NOT NULL,
@@ -588,6 +618,7 @@ CREATE INDEX folders_parent_name_index ON folders(parent_id, name COLLATE NOCASE
 CREATE INDEX folders_materialized_path_index ON folders(materialized_path);
 CREATE INDEX markers_asset_time_index ON markers(asset_id, start_seconds);
 CREATE INDEX agent_jobs_asset_created_index ON agent_jobs(asset_id, created_at DESC);
+CREATE INDEX download_events_job_created_index ON download_events(job_id, created_at);
 CREATE UNIQUE INDEX summary_documents_root_asset_index ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);
 CREATE INDEX agent_sessions_updated_index ON agent_sessions(updated_at DESC);

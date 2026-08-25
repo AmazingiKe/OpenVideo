@@ -156,6 +156,16 @@ type DownloadStage =
   | "complete"
   | "failed";
 
+export type DownloadEvent = {
+  event_id: string;
+  job_id: string;
+  stage: DownloadStage;
+  progress_percent: number;
+  message: string;
+  error_message: string | null;
+  created_at: string;
+};
+
 export type DownloadJob = {
   job_id: string;
   asset_id: string;
@@ -165,6 +175,8 @@ export type DownloadJob = {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+  name: string;
+  events: DownloadEvent[];
 };
 
 type AnalysisStage =

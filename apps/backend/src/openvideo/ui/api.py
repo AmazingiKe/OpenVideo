@@ -59,7 +59,7 @@ from openvideo.core.transcription_models import (
     TranscriptionOptions,
 )
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
-from openvideo.core.download_models import DownloadJob
+from openvideo.core.download_models import DownloadTask
 from openvideo.core.library import (
     FolderConflictError,
     FolderNotFoundError,
@@ -147,6 +147,8 @@ from openvideo.ui.directory_picker import DirectoryPickerError, select_directory
 STREAM_CHUNK_SIZE = 1024 * 1024
 VIDEO_MEDIA_TYPE = "video/mp4"
 MAX_BATCH_DOWNLOADS = 100
+DEFAULT_DOWNLOAD_HISTORY_LIMIT = 50
+MAX_DOWNLOAD_HISTORY_LIMIT = 100
 MILLISECONDS_PER_SECOND = 1_000
 MODEL_TEST_MAX_TOKENS = 8
 MODEL_TEST_PROMPT = "Reply only with OK."
@@ -791,10 +793,10 @@ def create_app(
 
     @app.post(
         "/api/downloads",
-        response_model=list[DownloadJob],
+        response_model=list[DownloadTask],
         status_code=status.HTTP_202_ACCEPTED,
     )
-    async def create_downloads(request: BatchDownloadRequest) -> list[DownloadJob]:
+    async def create_downloads(request: BatchDownloadRequest) -> list[DownloadTask]:
         if not request.source_urls:
             raise HTTPException(status_code=422, detail="请至少提供一个视频地址")
         if len(request.source_urls) > MAX_BATCH_DOWNLOADS:
@@ -815,14 +817,26 @@ def create_app(
         for job in jobs:
             if job.stage.value != "complete":
                 manager.start(job.job_id)
-        return jobs
+        return [
+            task for job in jobs if (task := manager.get_task(job.job_id)) is not None
+        ]
 
-    @app.get("/api/downloads/{job_id}", response_model=DownloadJob)
-    def get_download(job_id: str) -> DownloadJob:
-        job = manager.get(job_id)
-        if not job:
+    @app.get("/api/downloads", response_model=list[DownloadTask])
+    def list_downloads(
+        limit: int = Query(
+            default=DEFAULT_DOWNLOAD_HISTORY_LIMIT,
+            ge=1,
+            le=MAX_DOWNLOAD_HISTORY_LIMIT,
+        ),
+    ) -> list[DownloadTask]:
+        return manager.list_tasks(limit) if manager else []
+
+    @app.get("/api/downloads/{job_id}", response_model=DownloadTask)
+    def get_download(job_id: str) -> DownloadTask:
+        task = manager.get_task(job_id)
+        if not task:
             raise HTTPException(status_code=404, detail="下载任务不存在")
-        return job
+        return task
 
     @app.get("/api/library/folders", response_model=list[FolderResponse])
     def list_folders() -> list[FolderResponse]:
@@ -1524,8 +1538,7 @@ def create_app(
             idle_seconds = 0.0
             while not await request.is_disconnected():
                 signature = tuple(
-                    (document.document_id, document.revision)
-                    for document in documents
+                    (document.document_id, document.revision) for document in documents
                 )
                 if signature != previous_signature:
                     payload = [
@@ -1782,7 +1795,11 @@ def create_app(
                     if event_name:
                         yield _sse_event(
                             event_name,
-                            {"event_id": event.event_id, "sequence": event.sequence, **payload},
+                            {
+                                "event_id": event.event_id,
+                                "sequence": event.sequence,
+                                **payload,
+                            },
                             event.event_id,
                         )
                     result = event.payload.get("result")
@@ -1803,12 +1820,16 @@ def create_app(
                             f"{event.event_id}-proposal",
                         )
                 run_state = summary_manager.generic_agent_run(run_id)
-                if run_state.stage in {
-                    AgentRunStage.COMPLETE,
-                    AgentRunStage.FAILED,
-                    AgentRunStage.CANCELLED,
-                    AgentRunStage.INTERRUPTED,
-                } and not events:
+                if (
+                    run_state.stage
+                    in {
+                        AgentRunStage.COMPLETE,
+                        AgentRunStage.FAILED,
+                        AgentRunStage.CANCELLED,
+                        AgentRunStage.INTERRUPTED,
+                    }
+                    and not events
+                ):
                     terminal_event = {
                         AgentRunStage.COMPLETE: "complete",
                         AgentRunStage.CANCELLED: "cancelled",

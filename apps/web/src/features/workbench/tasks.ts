@@ -1,3 +1,5 @@
+import type { DownloadEvent } from "@/shared/types";
+
 export type TaskRecord = {
   task_id: string;
   task_type: "download" | "analysis" | "agent";
@@ -6,6 +8,8 @@ export type TaskRecord = {
   progress_percent: number;
   error_message: string | null;
   created_at: string;
+  name: string;
+  events: DownloadEvent[];
 };
 
 const MAX_TASK_RECORDS = 100;

@@ -19,6 +19,12 @@ import { Progress } from "@/components/ui/progress";
 import { TASK_STAGE_LABELS, type TaskRecord } from "@/features/workbench/tasks";
 
 export function DownloadActivity({ tasks }: { tasks: TaskRecord[] }) {
+  const log_entries = tasks
+    .flatMap((task) => task.events.map((event) => ({ task, event })))
+    .sort(
+      (left, right) =>
+        Date.parse(right.event.created_at) - Date.parse(left.event.created_at),
+    );
   return (
     <section className="flex flex-col gap-4" aria-labelledby="activity_title">
       <div className="flex items-end justify-between gap-4">
@@ -57,7 +63,7 @@ export function DownloadActivity({ tasks }: { tasks: TaskRecord[] }) {
           title="运行日志"
           description="处理阶段、提示与错误信息。"
         >
-          {tasks.length === 0 ? (
+          {log_entries.length === 0 ? (
             <DownloadEmpty
               icon={ServerCog}
               title="暂无运行记录"
@@ -65,17 +71,33 @@ export function DownloadActivity({ tasks }: { tasks: TaskRecord[] }) {
             />
           ) : (
             <ul className="overflow-hidden rounded-lg border">
-              {tasks.map((task) => (
+              {log_entries.map(({ task, event }) => (
                 <li
-                  key={task.task_id}
-                  className="grid gap-1 border-b px-3 py-2.5 last:border-b-0 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3"
+                  key={event.event_id}
+                  className="flex flex-col gap-1 border-b px-3 py-2.5 last:border-b-0"
                 >
-                  <span className="text-xs font-medium">
-                    {TASK_STAGE_LABELS[task.stage] ?? task.stage}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {task.error_message ?? task.message}
-                  </span>
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                    <span
+                      className="line-clamp-2 text-xs font-medium sm:truncate"
+                      title={task.name}
+                    >
+                      {task.name}
+                    </span>
+                    <time
+                      className="text-xs text-muted-foreground tabular-nums sm:shrink-0"
+                      dateTime={event.created_at}
+                    >
+                      {format_task_created_at(event.created_at)}
+                    </time>
+                  </div>
+                  <div className="grid gap-1 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3">
+                    <span className="text-xs font-medium">
+                      {TASK_STAGE_LABELS[event.stage] ?? event.stage}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {event.error_message ?? event.message}
+                    </span>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -147,8 +169,8 @@ function DownloadTask({ task }: { task: TaskRecord }) {
         <Badge variant={task.stage === "failed" ? "destructive" : "secondary"}>
           {stage_label}
         </Badge>
-        <span className="truncate text-xs text-muted-foreground">
-          {task.message}
+        <span className="truncate text-sm font-medium" title={task.name}>
+          {task.name}
         </span>
         <span className="text-xs font-medium tabular-nums">
           {progress.toFixed(0)}%
@@ -158,12 +180,17 @@ function DownloadTask({ task }: { task: TaskRecord }) {
         value={progress}
         aria-label={`${stage_label} ${progress.toFixed(0)}%`}
       />
-      <time
-        className="text-xs text-muted-foreground tabular-nums"
-        dateTime={task.created_at}
-      >
-        {format_task_created_at(task.created_at)}
-      </time>
+      <div className="flex items-center justify-between gap-3">
+        <span className="truncate text-xs text-muted-foreground">
+          {task.message}
+        </span>
+        <time
+          className="shrink-0 text-xs text-muted-foreground tabular-nums"
+          dateTime={task.created_at}
+        >
+          {format_task_created_at(task.created_at)}
+        </time>
+      </div>
       {task.error_message ? (
         <p className="text-xs text-destructive" role="alert">
           {task.error_message}

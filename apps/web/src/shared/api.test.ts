@@ -18,6 +18,7 @@ import {
   get_markers_page_settings,
   import_download_account_from_browser,
   list_marker_agent_sessions,
+  list_downloads,
   list_transcription_models,
   media_url,
   probe_source,
@@ -180,6 +181,8 @@ describe("api client", () => {
         error_message: null,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
+        name: "测试视频",
+        events: [],
       },
     ];
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -195,7 +198,21 @@ describe("api client", () => {
     expect(fetch_mock).toHaveBeenCalledWith("/api/downloads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source_urls: ["https://b23.tv/test"] }),
+      body: JSON.stringify({
+        source_urls: ["https://b23.tv/test"],
+        folder_id: null,
+      }),
+      signal: undefined,
+    });
+  });
+
+  it("loads a bounded download history", async () => {
+    const fetch_mock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("[]", { status: 200 }));
+
+    await expect(list_downloads(50)).resolves.toEqual([]);
+    expect(fetch_mock).toHaveBeenCalledWith("/api/downloads?limit=50", {
       signal: undefined,
     });
   });

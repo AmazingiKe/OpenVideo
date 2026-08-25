@@ -331,6 +331,14 @@ export function create_download(
   });
 }
 
+export function list_downloads(
+  limit: number,
+  signal?: AbortSignal,
+): Promise<DownloadJob[]> {
+  const parameters = new URLSearchParams({ limit: limit.toString() });
+  return request_json(`/api/downloads?${parameters}`, { signal });
+}
+
 export function get_download(
   job_id: string,
   signal?: AbortSignal,

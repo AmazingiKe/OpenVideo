@@ -13,8 +13,10 @@ from openvideo.core.analysis_models import (
     TERMINAL_ANALYSIS_STAGES,
 )
 from openvideo.core.download_models import (
+    DownloadEvent,
     DownloadJob,
     DownloadStage,
+    DownloadTask,
     TERMINAL_DOWNLOAD_STAGES,
 )
 from openvideo.core.identifiers import uuid7
@@ -43,6 +45,7 @@ from openvideo.download_accounts import (
 from openvideo.tools.analysis_pipeline import build_segments
 from openvideo.tools.downloader import (
     DownloadFailure,
+    DownloadMetadata,
     download_video,
     is_authentication_failure,
 )
@@ -92,7 +95,7 @@ class DownloadManager:
                 if active_job:
                     return active_job
                 if existing_asset.status == MediaAssetStatus.READY:
-                    return self._completed_job(existing_asset.asset_id)
+                    return self._completed_job(existing_asset)
 
         asset_id = str(uuid7())
         job_id = f"job-{uuid7().hex}"
@@ -105,7 +108,7 @@ class DownloadManager:
         )
         job = DownloadJob(job_id=job_id, asset_id=asset_id)
         self.library.save(asset)
-        self.library.save_download_job(job)
+        self.library.save_download_job(job, DownloadEvent.capture(job))
         with self._lock:
             self._jobs[job_id] = job
             self._active_job_id_by_asset_id[asset_id] = job_id
@@ -130,6 +133,20 @@ class DownloadManager:
         with self._lock:
             job = self._jobs.get(job_id)
             return job.model_copy(deep=True) if job else None
+
+    def get_task(self, job_id: str) -> DownloadTask | None:
+        job = self.get(job_id)
+        return self._task_for(job) if job else None
+
+    def list_tasks(self, limit: int) -> list[DownloadTask]:
+        with self._lock:
+            jobs = sorted(
+                self._jobs.values(),
+                key=lambda job: (job.created_at, job.job_id),
+                reverse=True,
+            )[:limit]
+            snapshots = [job.model_copy(deep=True) for job in jobs]
+        return [self._task_for(job) for job in snapshots]
 
     def has_active_jobs(self) -> bool:
         with self._lock:
@@ -199,6 +216,7 @@ class DownloadManager:
                             message,
                         ),
                         lambda message: self._update_stage_message(job_id, message),
+                        lambda metadata: self._record_metadata(job_id, metadata),
                         cookie_source=cookie_source,
                         staging_directory=self.library.temporary_directory(job_id),
                     )
@@ -224,7 +242,9 @@ class DownloadManager:
                 asset.title = metadata.title
                 asset.author_name = metadata.author_name
                 asset.description = metadata.description
-                asset.duration_seconds = probe.duration_seconds or metadata.duration_seconds
+                asset.duration_seconds = (
+                    probe.duration_seconds or metadata.duration_seconds
+                )
                 asset.width = probe.width or metadata.width
                 asset.height = probe.height or metadata.height
                 asset.video_codec = probe.video_codec
@@ -250,8 +270,13 @@ class DownloadManager:
                 )
                 if storyboard:
                     asset.thumbnail_sprite_path = (
-                        self.library.media_directory(asset.asset_id) / storyboard.sprite_path
-                    ).relative_to(self.library.asset_directory(asset.asset_id)).as_posix()
+                        (
+                            self.library.media_directory(asset.asset_id)
+                            / storyboard.sprite_path
+                        )
+                        .relative_to(self.library.asset_directory(asset.asset_id))
+                        .as_posix()
+                    )
                     asset.thumbnail_tile_width = storyboard.tile_width
                     asset.thumbnail_tile_height = storyboard.tile_height
                     asset.thumbnail_interval_seconds = storyboard.interval_seconds
@@ -283,6 +308,32 @@ class DownloadManager:
         progress = max(job.progress_percent, 2)
         self._update_job(job_id, stage, progress, message)
 
+    def _record_metadata(self, job_id: str, metadata: DownloadMetadata) -> None:
+        job = self.get(job_id)
+        if not job or job.stage in TERMINAL_DOWNLOAD_STAGES:
+            return
+        asset = self.library.get(job.asset_id)
+        if asset:
+            asset.source_video_id = metadata.source_video_id
+            asset.title = metadata.title
+            asset.author_name = metadata.author_name
+            asset.description = metadata.description
+            asset.duration_seconds = metadata.duration_seconds
+            asset.width = metadata.width
+            asset.height = metadata.height
+            asset.remote_thumbnail_url = metadata.thumbnail_url
+            self.library.save(asset)
+        with self._lock:
+            current_job = self._jobs.get(job_id)
+            if not current_job or current_job.stage in TERMINAL_DOWNLOAD_STAGES:
+                return
+            current_job.updated_at = datetime.now(UTC)
+            event = DownloadEvent.capture(
+                current_job,
+                message=f"已识别视频：{metadata.title}",
+            )
+            self.library.save_download_job(current_job, event)
+
     def _update_job(
         self,
         job_id: str,
@@ -295,11 +346,18 @@ class DownloadManager:
             job = self._jobs.get(job_id)
             if not job or job.stage in TERMINAL_DOWNLOAD_STAGES:
                 return
+            semantic_change = (
+                stage != job.stage
+                or message != job.message
+                or error_message != job.error_message
+            )
             job.stage = stage
             job.progress_percent = min(max(progress_percent, job.progress_percent), 100)
             job.message = message
             job.error_message = error_message
             job.updated_at = datetime.now(UTC)
+            event = DownloadEvent.capture(job) if semantic_change else None
+            self.library.save_download_job(job, event)
 
     def _fail(self, job_id: str, message: str) -> None:
         job = self.get(job_id)
@@ -324,14 +382,25 @@ class DownloadManager:
             job = self._jobs.get(job_id) if job_id else None
             return job.model_copy(deep=True) if job else None
 
-    @staticmethod
-    def _completed_job(asset_id: str) -> DownloadJob:
-        return DownloadJob(
+    def _completed_job(self, asset: MediaAsset) -> DownloadJob:
+        job = DownloadJob(
             job_id=f"job-{uuid7().hex}",
-            asset_id=asset_id,
+            asset_id=asset.asset_id,
             stage=DownloadStage.COMPLETE,
             progress_percent=100,
             message="该视频已在媒体库中",
+        )
+        self.library.save_download_job(job, DownloadEvent.capture(job))
+        with self._lock:
+            self._jobs[job.job_id] = job
+        return job.model_copy(deep=True)
+
+    def _task_for(self, job: DownloadJob) -> DownloadTask:
+        asset = self.library.get(job.asset_id)
+        return DownloadTask(
+            **job.model_dump(),
+            name=asset.title if asset else job.message,
+            events=self.library.list_download_events(job.job_id),
         )
 
 
@@ -373,7 +442,9 @@ class AnalysisManager:
         if ai_model_id:
             model = self.settings.ai_model(ai_model_id)
             if model is None:
-                raise AnalysisPrerequisiteError("所选 AI 模型不存在，请在设置中重新选择")
+                raise AnalysisPrerequisiteError(
+                    "所选 AI 模型不存在，请在设置中重新选择"
+                )
             if IMAGE_INPUT_MODALITY not in model.input_modalities:
                 raise AnalysisPrerequisiteError("所选 AI 模型不支持视觉分析")
         active_job = self._active_job_for(asset_id)
@@ -539,7 +610,9 @@ class AnalysisManager:
         updated_segments[segment_index] = updated_segments[segment_index].model_copy(
             update={"text": text}
         )
-        updated_transcript = transcript.model_copy(update={"segments": updated_segments})
+        updated_transcript = transcript.model_copy(
+            update={"segments": updated_segments}
+        )
         self.library.save_transcript(updated_transcript)
         return updated_transcript
 
@@ -600,7 +673,9 @@ class AnalysisManager:
                             started_at=transcription_started_at,
                         )
                     )
-                    self._update_job(job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
+                    self._update_job(
+                        job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频"
+                    )
                     work_directory = self.library.temporary_directory(job_id)
                     transcription_result = await asyncio.to_thread(
                         transcribe_media,
@@ -632,7 +707,9 @@ class AnalysisManager:
                             options=transcription_options,
                             started_at=transcription_started_at,
                             completed_at=completed_at,
-                            duration_seconds=(completed_at - transcription_started_at).total_seconds(),
+                            duration_seconds=(
+                                completed_at - transcription_started_at
+                            ).total_seconds(),
                         )
                     )
                 self._add_capability(job_id, AnalysisCapability.TRANSCRIPT)
@@ -642,7 +719,9 @@ class AnalysisManager:
                     return
 
                 describer = self._describer(job.ai_model_id)
-                self._update_job(job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件")
+                self._update_job(
+                    job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件"
+                )
                 markers = self._job_markers(job)
                 asset_directory = self.library.artifacts_directory(asset.asset_id)
                 segments = await asyncio.to_thread(
@@ -670,7 +749,9 @@ class AnalysisManager:
                         for relative_path in segment.key_frame_paths
                     ]
                 self._add_capability(job_id, AnalysisCapability.TIMELINE)
-                if describer is not None and any(segment.visual_description for segment in segments):
+                if describer is not None and any(
+                    segment.visual_description for segment in segments
+                ):
                     self._add_capability(job_id, AnalysisCapability.VISUAL)
                 completed_stage = (
                     AnalysisStage.DESCRIBING_VISUALS
@@ -774,7 +855,9 @@ class AnalysisManager:
                 for segment in existing
                 if not selected_ids.intersection(segment.marker_ids)
             ]
-        return sorted([*retained, *new_segments], key=lambda segment: segment.start_seconds)
+        return sorted(
+            [*retained, *new_segments], key=lambda segment: segment.start_seconds
+        )
 
     def _add_capability(self, job_id: str, capability: AnalysisCapability) -> None:
         with self._lock:

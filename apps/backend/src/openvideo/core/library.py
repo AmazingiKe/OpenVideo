@@ -20,7 +20,7 @@ from openvideo.core.agent_runtime_models import (
     AgentSession,
 )
 from openvideo.core.analysis_models import AnalysisJob
-from openvideo.core.download_models import DownloadJob, DownloadStage
+from openvideo.core.download_models import DownloadEvent, DownloadJob, DownloadStage
 from openvideo.core.identifiers import is_uuid7, uuid7
 from openvideo.core.folder_models import Folder, FolderManifest, FolderResponse
 from openvideo.core.library_files import (
@@ -447,8 +447,24 @@ class MediaLibrary:
         )
         return MediaAsset.model_validate(dict(row)) if row else None
 
-    def save_download_job(self, job: DownloadJob) -> None:
-        self._upsert_runtime_model("download_jobs", job.model_dump(mode="json"))
+    def save_download_job(
+        self,
+        job: DownloadJob,
+        event: DownloadEvent | None = None,
+    ) -> None:
+        if event is not None and event.job_id != job.job_id:
+            raise ValueError("下载事件与任务不匹配")
+        values = job.model_dump(mode="json")
+        with self._lock, self._db():
+            self._upsert_runtime_model("download_jobs", values, transaction=False)
+            if event is not None:
+                event_values = event.model_dump(mode="json")
+                columns = tuple(event_values)
+                self._db().execute(
+                    f"INSERT INTO download_events ({', '.join(columns)}) "
+                    f"VALUES ({', '.join('?' for _ in columns)})",
+                    tuple(event_values[column] for column in columns),
+                )
 
     def get_download_job(self, job_id: str) -> DownloadJob | None:
         row = (
@@ -458,13 +474,27 @@ class MediaLibrary:
         )
         return DownloadJob.model_validate(dict(row)) if row else None
 
-    def list_download_jobs(self) -> list[DownloadJob]:
+    def list_download_jobs(self, limit: int | None = None) -> list[DownloadJob]:
+        statement = "SELECT * FROM download_jobs ORDER BY created_at DESC, job_id DESC"
+        parameters: tuple[int, ...] = ()
+        if limit is not None:
+            statement += " LIMIT ?"
+            parameters = (limit,)
+        rows = self._db().execute(statement, parameters).fetchall()
+        return [DownloadJob.model_validate(dict(row)) for row in rows]
+
+    def list_download_events(self, job_id: str) -> list[DownloadEvent]:
+        self._validate_identifier(job_id, "job")
         rows = (
             self._db()
-            .execute("SELECT * FROM download_jobs ORDER BY created_at DESC")
+            .execute(
+                "SELECT * FROM download_events WHERE job_id = ? "
+                "ORDER BY created_at, event_id",
+                (job_id,),
+            )
             .fetchall()
         )
-        return [DownloadJob.model_validate(dict(row)) for row in rows]
+        return [DownloadEvent.model_validate(dict(row)) for row in rows]
 
     def asset_directory(self, asset_id: str) -> Path:
         self._validate_asset_id(asset_id)
@@ -1477,18 +1507,24 @@ class MediaLibrary:
     def _recover_interrupted_downloads(self) -> None:
         now = datetime.now(UTC)
         terminal_stages = (DownloadStage.COMPLETE.value, DownloadStage.FAILED.value)
-        with self._db():
-            self._db().execute(
-                "UPDATE download_jobs SET stage = ?, message = ?, error_message = ?, "
-                "updated_at = ? WHERE stage NOT IN (?, ?)",
-                (
-                    DownloadStage.FAILED.value,
-                    "下载失败",
-                    "应用重启中断了下载任务",
-                    now.isoformat(),
-                    *terminal_stages,
-                ),
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM download_jobs WHERE stage NOT IN (?, ?)",
+                terminal_stages,
             )
+            .fetchall()
+        )
+        for row in rows:
+            job = DownloadJob.model_validate(dict(row)).model_copy(
+                update={
+                    "stage": DownloadStage.FAILED,
+                    "message": "下载失败",
+                    "error_message": "应用重启中断了下载任务",
+                    "updated_at": now,
+                }
+            )
+            self.save_download_job(job, DownloadEvent.capture(job))
         interrupted = {
             MediaAssetStatus.PENDING,
             MediaAssetStatus.DOWNLOADING,
@@ -1696,6 +1732,19 @@ def _sqlite_value(value: object) -> object:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
     return value
+
+
+def _insert_model(
+    connection: sqlite3.Connection,
+    table_name: str,
+    values: dict[str, object],
+) -> None:
+    columns = tuple(values)
+    connection.execute(
+        f"INSERT INTO {table_name} ({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)})",
+        tuple(_sqlite_value(values[column]) for column in columns),
+    )
 
 
 def _agent_job_from_row(row: sqlite3.Row) -> AgentJob:

@@ -77,5 +77,7 @@ function task_record(task_id: string, created_at: string): TaskRecord {
     progress_percent: 0,
     error_message: null,
     created_at,
+    name: task_id,
+    events: [],
   };
 }

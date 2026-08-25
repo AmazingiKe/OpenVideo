@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from openvideo.core.download_models import DownloadJob
+from openvideo.core.download_models import DownloadEvent, DownloadJob, DownloadStage
 from openvideo.core.library import InvalidLibraryError, MediaLibrary
 from openvideo.core.library_files import (
     SummaryConversationFile,
@@ -123,6 +123,27 @@ def _save_summary(library: MediaLibrary) -> None:
             start_seconds=1,
         )
     )
+
+
+def test_download_events_survive_library_reopen(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+    job = DownloadJob(
+        job_id=JOB_ID,
+        asset_id=ASSET_ID,
+        stage=DownloadStage.COMPLETE,
+        progress_percent=100,
+        message="下载完成",
+    )
+    event = DownloadEvent.capture(job)
+    library.save_download_job(job, event)
+    library.close()
+
+    reopened = MediaLibrary.open(tmp_path)
+
+    assert reopened.list_download_jobs(1) == [job]
+    assert reopened.list_download_events(JOB_ID) == [event]
+    reopened.close()
 
 
 def test_saves_complete_asset_metadata_and_recovers_ready_asset(tmp_path: Path):
