@@ -7,12 +7,25 @@ import {
   Settings,
 } from "lucide-react";
 import { useEffect } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
-import { SETTINGS_ROUTE, WORKSPACE_ROUTES } from "@/app/workspace_routes";
+import {
+  MARKERS_ROUTE_PATH,
+  SETTINGS_ROUTE,
+  WORKSPACE_ROUTES,
+  marker_asset_path,
+  workspace_route,
+} from "@/app/workspace_routes";
+import { MarkerAssetMenu } from "@/features/markers/MarkerAssetMenu";
 import { cn } from "@/lib/utils";
+import type { MediaAsset } from "@/shared/types";
 
 const IDLE_PRELOAD_TIMEOUT_MS = 2_000;
+
+function preload_component(load_component: () => Promise<unknown>) {
+  // 预加载只优化切换速度，失败时由用户实际进入页面后的 Suspense 正常重试。
+  void load_component().catch(() => undefined);
+}
 
 const WORKSPACE_ICONS = {
   "/downloads": Download,
@@ -21,11 +34,22 @@ const WORKSPACE_ICONS = {
   "/summary": FileText,
 } as const;
 
-export function Topbar() {
+type TopbarProps = {
+  assets: MediaAsset[];
+  selected_asset_id: string | null;
+};
+
+export function Topbar({ assets, selected_asset_id }: TopbarProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const is_markers_page =
+    workspace_route(location.pathname)?.path === MARKERS_ROUTE_PATH;
   useEffect(() => {
     const preload_routes = () => {
-      for (const route of WORKSPACE_ROUTES) void route.load_component();
-      void SETTINGS_ROUTE.load_component();
+      for (const route of WORKSPACE_ROUTES) {
+        preload_component(route.load_component);
+      }
+      preload_component(SETTINGS_ROUTE.load_component);
     };
     if (window.requestIdleCallback) {
       const idle_callback_id = window.requestIdleCallback(preload_routes, {
@@ -60,8 +84,8 @@ export function Topbar() {
             <NavLink
               key={module.path}
               to={module.path}
-              onPointerEnter={() => void module.load_component()}
-              onFocus={() => void module.load_component()}
+              onPointerEnter={() => preload_component(module.load_component)}
+              onFocus={() => preload_component(module.load_component)}
               className={({ isActive }) =>
                 cn(
                   "flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
@@ -75,18 +99,27 @@ export function Topbar() {
           );
         })}
       </nav>
-      <NavLink
-        className={({ isActive }) =>
-          cn(
-            "col-start-2 row-start-1 flex size-8 items-center justify-center justify-self-end rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:col-start-3",
-            isActive && "bg-muted text-foreground",
-          )
-        }
-        to="/settings"
-        aria-label="设置"
-      >
-        <Settings className="size-4" aria-hidden="true" />
-      </NavLink>
+      <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-2 justify-self-end md:col-start-3">
+        {is_markers_page ? (
+          <MarkerAssetMenu
+            assets={assets}
+            selected_asset_id={selected_asset_id}
+            on_select={(asset_id) => navigate(marker_asset_path(asset_id))}
+          />
+        ) : null}
+        <NavLink
+          className={({ isActive }) =>
+            cn(
+              "flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+              isActive && "bg-muted text-foreground",
+            )
+          }
+          to="/settings"
+          aria-label="设置"
+        >
+          <Settings className="size-4" aria-hidden="true" />
+        </NavLink>
+      </div>
     </header>
   );
 }

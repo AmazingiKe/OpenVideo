@@ -173,6 +173,7 @@ export function MarkerAgentPanel({
   return (
     <aside
       className="flex h-full min-h-80 flex-col bg-card"
+      data-slot="marker-agent-panel"
       aria-label="标记 Agent"
     >
       <div className="flex flex-col gap-3 border-b p-3">

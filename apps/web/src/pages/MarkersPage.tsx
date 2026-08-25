@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Video } from "lucide-react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
@@ -14,7 +13,6 @@ import { use_markers_page_settings } from "@/features/markers/use_markers_page_s
 import { MarkerAgentPanel } from "@/features/markers/MarkerAgentPanel";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
-import { AssetLibrary } from "@/features/workbench/AssetLibrary";
 import { AnalysisToolPanel } from "@/features/workbench/AnalysisToolPanel";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
 import { MediaTimeline } from "@/features/workbench/MediaTimeline";
@@ -25,7 +23,6 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FloatingError } from "@/components/FloatingError";
 import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
@@ -42,8 +39,7 @@ import type {
 const PANEL_TOGGLE_TRANSITION_MS = 280;
 
 export function MarkersPage() {
-  const { assets, selected_asset, selected_asset_id, select_asset } =
-    use_asset_catalog();
+  const { selected_asset, selected_asset_id } = use_asset_catalog();
   const {
     start_analysis,
     start_transcription,
@@ -85,7 +81,6 @@ export function MarkersPage() {
     useState(false);
   const panel_transition_timeout_ref = useRef<number | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
-  const asset_library_panel_ref = useRef<PanelImperativeHandle>(null);
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
   const is_compact_layout = use_compact_markers_layout();
@@ -233,30 +228,6 @@ export function MarkersPage() {
     }
   }
 
-  function set_asset_library_collapsed(collapsed: boolean) {
-    animate_panel_size_change();
-    if (collapsed) asset_library_panel_ref.current?.collapse();
-    else
-      asset_library_panel_ref.current?.resize(
-        `${settings.asset_library_size_percent}%`,
-      );
-    update_settings({ asset_library_collapsed: collapsed });
-  }
-
-  function set_left_panel_tab(value: string) {
-    const left_panel_tab = value === "agent" ? "agent" : "video";
-    if (!is_compact_layout && !settings.asset_library_collapsed) {
-      asset_library_panel_ref.current?.resize(
-        `${
-          left_panel_tab === "agent"
-            ? settings.agent_panel_size_percent
-            : settings.asset_library_size_percent
-        }%`,
-      );
-    }
-    update_settings({ left_panel_tab });
-  }
-
   function set_tool_panel_collapsed(collapsed: boolean) {
     animate_panel_size_change();
     if (collapsed) tool_panel_ref.current?.collapse();
@@ -265,19 +236,12 @@ export function MarkersPage() {
   }
 
   function save_desktop_layout(layout: Record<string, number>) {
-    const asset_library_collapsed =
-      asset_library_panel_ref.current?.isCollapsed() ?? false;
     const tool_panel_collapsed = tool_panel_ref.current?.isCollapsed() ?? false;
     const patch: Parameters<typeof update_settings>[0] = {
-      asset_library_collapsed,
       tool_panel_collapsed,
     };
-    if (!asset_library_collapsed && layout["asset-library"] !== undefined) {
-      if (settings.left_panel_tab === "agent") {
-        patch.agent_panel_size_percent = layout["asset-library"];
-      } else {
-        patch.asset_library_size_percent = layout["asset-library"];
-      }
+    if (layout["agent-panel"] !== undefined) {
+      patch.agent_panel_size_percent = layout["agent-panel"];
     }
     if (!tool_panel_collapsed && layout["tool-panel"] !== undefined) {
       patch.tool_panel_size_percent = layout["tool-panel"];
@@ -307,44 +271,14 @@ export function MarkersPage() {
     (model) =>
       transcription_model_overrides[`${model.engine}:${model.model}`] ?? model,
   );
-  const left_panel = (
-    <Tabs
-      value={settings.left_panel_tab}
-      onValueChange={set_left_panel_tab}
-      className="h-full min-h-0 gap-0 bg-card"
-      data-slot="markers-left-panel"
-    >
-      <div className="border-b p-2">
-        <TabsList className="w-full" aria-label="左侧面板">
-          <TabsTrigger value="video">
-            <Video data-icon="inline-start" /> 视频
-          </TabsTrigger>
-          <TabsTrigger value="agent">
-            <Bot data-icon="inline-start" /> Agent
-          </TabsTrigger>
-        </TabsList>
-      </div>
-      <TabsContent value="video" className="min-h-0 overflow-hidden">
-        <AssetLibrary
-          assets={assets}
-          selected_asset_id={selected_asset_id}
-          on_select={select_asset}
-          collapsed={!is_compact_layout && settings.asset_library_collapsed}
-          on_collapsed_change={
-            is_compact_layout ? undefined : set_asset_library_collapsed
-          }
-        />
-      </TabsContent>
-      <TabsContent value="agent" className="min-h-0 overflow-hidden">
-        <MarkerAgentPanel
-          asset_id={selected_asset_id}
-          models={ai_models}
-          on_seek={seek_player}
-          on_candidate_markers_change={set_candidate_markers}
-          on_markers_changed={reload_markers}
-        />
-      </TabsContent>
-    </Tabs>
+  const agent_panel = (
+    <MarkerAgentPanel
+      asset_id={selected_asset_id}
+      models={ai_models}
+      on_seek={seek_player}
+      on_candidate_markers_change={set_candidate_markers}
+      on_markers_changed={reload_markers}
+    />
   );
   const video_workspace = (
     <VideoWorkspace
@@ -421,8 +355,8 @@ export function MarkersPage() {
             正在恢复工作台布局
           </div>
         ) : is_compact_layout ? (
-          <div className="flex min-h-full flex-col [&>[data-slot=analysis-tools]]:min-h-72 [&>[data-slot=analysis-tools]]:shrink-0 [&>[data-slot=analysis-tools]]:border-t [&>[data-slot=markers-left-panel]]:max-h-96 [&>[data-slot=markers-left-panel]]:min-h-64 [&>[data-slot=markers-left-panel]]:shrink-0 [&>[data-slot=markers-left-panel]]:border-b [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
-            {left_panel}
+          <div className="flex min-h-full flex-col [&>[data-slot=analysis-tools]]:min-h-72 [&>[data-slot=analysis-tools]]:shrink-0 [&>[data-slot=analysis-tools]]:border-t [&>[data-slot=marker-agent-panel]]:max-h-96 [&>[data-slot=marker-agent-panel]]:min-h-64 [&>[data-slot=marker-agent-panel]]:shrink-0 [&>[data-slot=marker-agent-panel]]:border-b [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
+            {agent_panel}
             {video_workspace}
             {tool_panel}
           </div>
@@ -435,28 +369,17 @@ export function MarkersPage() {
             }}
           >
             <ResizablePanel
-              id="asset-library"
-              panelRef={asset_library_panel_ref}
-              defaultSize={
-                settings.asset_library_collapsed
-                  ? `${PANEL_RAIL_WIDTH_PX}px`
-                  : `${
-                      settings.left_panel_tab === "agent"
-                        ? settings.agent_panel_size_percent
-                        : settings.asset_library_size_percent
-                    }%`
-              }
-              minSize={settings.left_panel_tab === "agent" ? "320px" : "10%"}
-              maxSize={settings.left_panel_tab === "agent" ? "40%" : "28%"}
-              collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
-              collapsible
+              id="agent-panel"
+              defaultSize={`${settings.agent_panel_size_percent}%`}
+              minSize="320px"
+              maxSize="40%"
             >
-              {left_panel}
+              {agent_panel}
             </ResizablePanel>
             <ResizableHandle
               className="hover:bg-primary"
               withHandle
-              aria-label="调整视频库宽度"
+              aria-label="调整 Agent 面板宽度"
             />
             <ResizablePanel id="video-player" minSize="400px">
               {video_workspace}

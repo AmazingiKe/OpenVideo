@@ -7,6 +7,7 @@ const meta = {
   title: "App/Topbar",
   component: Topbar,
   parameters: { layout: "fullscreen" },
+  args: { assets: [], selected_asset_id: null },
 } satisfies Meta<typeof Topbar>;
 
 export default meta;

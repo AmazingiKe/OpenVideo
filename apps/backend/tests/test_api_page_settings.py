@@ -26,22 +26,16 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
         defaults = client.get("/api/page-settings/markers")
         assert defaults.status_code == 200
         assert defaults.json() == {
-            "asset_library_size_percent": 14.0,
             "agent_panel_size_percent": 24.0,
-            "asset_library_collapsed": False,
             "tool_panel_size_percent": 16.0,
             "tool_panel_collapsed": False,
-            "left_panel_tab": "video",
             "open_tool_sections": ["video_information"],
         }
 
         payload = {
-            "asset_library_size_percent": 18,
             "agent_panel_size_percent": 28,
-            "asset_library_collapsed": True,
             "tool_panel_size_percent": 26,
             "tool_panel_collapsed": False,
-            "left_panel_tab": "agent",
             "open_tool_sections": ["transcription", "analysis"],
         }
         saved = client.put("/api/page-settings/markers", json=payload)
@@ -50,7 +44,7 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
 
         invalid_size = client.put(
             "/api/page-settings/markers",
-            json={**payload, "asset_library_size_percent": 9},
+            json={**payload, "agent_panel_size_percent": 17},
         )
         invalid_section = client.put(
             "/api/page-settings/markers",
@@ -87,7 +81,7 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
 
     with TestClient(app) as client:
         first_settings = client.get("/api/page-settings/markers").json()
-        first_settings["asset_library_collapsed"] = True
+        first_settings["agent_panel_size_percent"] = 30
         assert client.put(
             "/api/page-settings/markers", json=first_settings
         ).status_code == 200
@@ -96,7 +90,7 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
             "/api/library/open", json={"path": str(second_path)}
         ).status_code == 200
         second_settings = client.get("/api/page-settings/markers").json()
-        assert second_settings["asset_library_collapsed"] is False
+        assert second_settings["agent_panel_size_percent"] == 24
         second_settings["tool_panel_size_percent"] = 28
         assert client.put(
             "/api/page-settings/markers", json=second_settings
@@ -106,7 +100,7 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
             "/api/library/open", json={"path": str(first_path)}
         ).status_code == 200
         restored = client.get("/api/page-settings/markers").json()
-        assert restored["asset_library_collapsed"] is True
+        assert restored["agent_panel_size_percent"] == 30
         assert restored["tool_panel_size_percent"] == 16
 
 

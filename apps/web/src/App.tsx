@@ -65,16 +65,21 @@ function LibraryGate() {
 
 function WorkspaceRouter() {
   const location = useLocation();
-  const [visited_paths, set_visited_paths] = useState(
-    () => new Set([location.pathname]),
-  );
   const active_workspace_route = workspace_route(location.pathname);
   const is_settings_active = location.pathname === SETTINGS_ROUTE.path;
+  const [visited_paths, set_visited_paths] = useState(
+    () =>
+      new Set([
+        active_workspace_route?.path ??
+          (is_settings_active ? SETTINGS_ROUTE.path : location.pathname),
+      ]),
+  );
   useEffect(() => {
     if (!active_workspace_route && !is_settings_active) return;
+    const active_path = active_workspace_route?.path ?? SETTINGS_ROUTE.path;
     set_visited_paths((current) => {
-      if (current.has(location.pathname)) return current;
-      return new Set([...current, location.pathname]);
+      if (current.has(active_path)) return current;
+      return new Set([...current, active_path]);
     });
   }, [active_workspace_route, is_settings_active, location.pathname]);
   if (!active_workspace_route && !is_settings_active) {

@@ -139,10 +139,7 @@ export type AgentJob = {
 };
 
 export type MarkersPageSettings = {
-  asset_library_size_percent: number;
   agent_panel_size_percent: number;
-  asset_library_collapsed: boolean;
-  left_panel_tab: "video" | "agent";
   tool_panel_size_percent: number;
   tool_panel_collapsed: boolean;
   open_tool_sections: AnalysisToolSection[];

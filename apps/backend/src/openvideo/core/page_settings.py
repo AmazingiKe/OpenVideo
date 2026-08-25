@@ -12,7 +12,7 @@ from openvideo.configuration import migrate_configuration_file
 
 LEGACY_PAGE_SETTINGS_FILE_NAME = "page_setting.json"
 PAGE_SETTINGS_FILE_NAME_TEMPLATE = "page-settings-{library_id}.json"
-PAGE_SETTINGS_VERSION = 2
+PAGE_SETTINGS_VERSION = 3
 
 ToolSection = Literal[
     "video_information",
@@ -25,10 +25,7 @@ ToolSection = Literal[
 class MarkersPageSettings(BaseModel):
     """保存资料库内标记工作台的用户布局，不把设备无关状态写入全局偏好。"""
 
-    asset_library_size_percent: float = Field(default=14, ge=10, le=28)
     agent_panel_size_percent: float = Field(default=24, ge=18, le=40)
-    asset_library_collapsed: bool = False
-    left_panel_tab: Literal["video", "agent"] = "video"
     tool_panel_size_percent: float = Field(default=16, ge=14, le=32)
     tool_panel_collapsed: bool = False
     open_tool_sections: list[ToolSection] = Field(

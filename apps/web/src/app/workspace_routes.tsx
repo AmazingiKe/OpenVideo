@@ -3,6 +3,8 @@ import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 type PageModule = Promise<{ default: ComponentType }>;
 export type WorkspacePath = "/downloads" | "/library" | "/markers" | "/summary";
 
+export const MARKERS_ROUTE_PATH: WorkspacePath = "/markers";
+
 type WorkspaceRoute = {
   label: string;
   path: WorkspacePath;
@@ -49,7 +51,7 @@ export const WORKSPACE_ROUTES: WorkspaceRoute[] = [
   },
   {
     label: "标记",
-    path: "/markers",
+    path: MARKERS_ROUTE_PATH,
     component: lazy(load_markers_page),
     load_component: load_markers_page,
     // Vidstack 无法在 Activity 清理 Effect 后恢复已销毁的内部播放器实例。
@@ -71,5 +73,28 @@ export const SETTINGS_ROUTE = {
 } as const;
 
 export function workspace_route(pathname: string): WorkspaceRoute | null {
-  return WORKSPACE_ROUTES.find((route) => route.path === pathname) ?? null;
+  return (
+    WORKSPACE_ROUTES.find(
+      (route) =>
+        route.path === pathname ||
+        (route.path === MARKERS_ROUTE_PATH &&
+          pathname.startsWith(`${MARKERS_ROUTE_PATH}/`)),
+    ) ?? null
+  );
+}
+
+export function marker_asset_path(asset_id: string): string {
+  return `${MARKERS_ROUTE_PATH}/${encodeURIComponent(asset_id)}`;
+}
+
+export function marker_asset_id(pathname: string): string | null {
+  const prefix = `${MARKERS_ROUTE_PATH}/`;
+  if (!pathname.startsWith(prefix)) return null;
+  const encoded_asset_id = pathname.slice(prefix.length);
+  if (!encoded_asset_id || encoded_asset_id.includes("/")) return null;
+  try {
+    return decodeURIComponent(encoded_asset_id);
+  } catch {
+    return null;
+  }
 }

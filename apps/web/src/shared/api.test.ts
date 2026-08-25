@@ -115,12 +115,9 @@ describe("api client", () => {
 
   it("loads and saves markers page settings", async () => {
     const settings = {
-      asset_library_size_percent: 14,
       agent_panel_size_percent: 24,
-      asset_library_collapsed: false,
       tool_panel_size_percent: 16,
       tool_panel_collapsed: false,
-      left_panel_tab: "video" as const,
       open_tool_sections: ["video_information" as const],
     };
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>

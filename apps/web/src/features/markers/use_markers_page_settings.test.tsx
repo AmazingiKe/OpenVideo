@@ -36,7 +36,7 @@ describe("use_markers_page_settings", () => {
     expect(result.current.is_ready).toBe(true);
 
     act(() => {
-      result.current.update_settings({ asset_library_size_percent: 18 });
+      result.current.update_settings({ agent_panel_size_percent: 28 });
       result.current.update_settings({ tool_panel_size_percent: 24 });
     });
     await act(async () => vi.advanceTimersByTimeAsync(299));
@@ -47,7 +47,7 @@ describe("use_markers_page_settings", () => {
     expect(update_markers_page_settings).toHaveBeenCalledWith(
       {
         ...DEFAULT_MARKERS_PAGE_SETTINGS,
-        asset_library_size_percent: 18,
+        agent_panel_size_percent: 28,
         tool_panel_size_percent: 24,
       },
       expect.any(AbortSignal),
@@ -78,12 +78,10 @@ describe("use_markers_page_settings", () => {
     });
     await act(async () => vi.advanceTimersByTimeAsync(0));
 
-    act(() =>
-      result.current.update_settings({ asset_library_collapsed: true }),
-    );
+    act(() => result.current.update_settings({ tool_panel_collapsed: true }));
     await act(async () => vi.advanceTimersByTimeAsync(300));
 
-    expect(result.current.settings.asset_library_collapsed).toBe(true);
+    expect(result.current.settings.tool_panel_collapsed).toBe(true);
     expect(result.current.settings_error).toBe("设置保存失败");
   });
 });

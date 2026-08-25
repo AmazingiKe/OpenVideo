@@ -106,12 +106,9 @@ describe("App", () => {
       library_path_managed: false,
     });
     vi.mocked(get_markers_page_settings).mockResolvedValue({
-      asset_library_size_percent: 14,
       agent_panel_size_percent: 24,
-      asset_library_collapsed: false,
       tool_panel_size_percent: 16,
       tool_panel_collapsed: false,
-      left_panel_tab: "video",
       open_tool_sections: ["video_information"],
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
@@ -262,13 +259,16 @@ describe("App", () => {
         screen.getByRole("heading", { name: "演示视频" }),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByLabelText("视频库")).toBeInTheDocument();
+    expect(screen.queryByLabelText("视频库")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "选择标记视频" }),
+    ).toHaveTextContent("演示视频");
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(screen.queryByText("下载中的视频")).not.toBeInTheDocument();
     expect(screen.queryByText("失败的视频")).not.toBeInTheDocument();
 
-    expect(window.location.pathname).toBe("/markers");
+    expect(window.location.pathname).toBe(`/markers/${ASSET_ID}`);
     expect(download_module).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("link", { name: "标记" })).toHaveAttribute(
       "aria-current",
