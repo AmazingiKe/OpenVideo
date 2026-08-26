@@ -7,6 +7,8 @@ const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(SCRIPT_DIRECTORY, "..");
 const LOG_DIRECTORY = join(PROJECT_ROOT, "runtime", "logs", "dev");
 const IS_WINDOWS = process.platform === "win32";
+const BACKEND_HOST = "127.0.0.1";
+const BACKEND_PORT = "38471";
 const FRONTEND_COMMAND = IS_WINDOWS
   ? "pnpm --filter @openvideo/web dev"
   : "pnpm";
@@ -23,9 +25,9 @@ const SERVICE_DEFINITIONS = [
       "uvicorn",
       "openvideo.ui.api:app",
       "--host",
-      "127.0.0.1",
+      BACKEND_HOST,
       "--port",
-      "8000",
+      BACKEND_PORT,
       "--reload",
     ],
     workingDirectory: join(PROJECT_ROOT, "apps", "backend"),

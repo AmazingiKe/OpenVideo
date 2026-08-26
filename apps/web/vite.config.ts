@@ -7,6 +7,7 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const current_directory = path.dirname(fileURLToPath(import.meta.url));
+const backend_origin = "http://127.0.0.1:38471";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -22,8 +23,8 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:8000",
-      "/assets/media-": "http://127.0.0.1:8000",
+      "/api": backend_origin,
+      "/assets/media-": backend_origin,
     },
   },
   test: {
