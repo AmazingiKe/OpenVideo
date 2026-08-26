@@ -2,7 +2,6 @@ import {
   CanvasRenderer,
   type Clip,
   type ClipHitTestResult,
-  type Marker,
   Timeline,
   TimelineEngine,
   TimelineProvider,
@@ -81,7 +80,9 @@ const MARKER_TRACK_ID = "timeline-marker-track";
 const TRANSCRIPT_TRACK_ID = "timeline-transcript-track";
 const EVENT_TRACK_ID = "timeline-event-track";
 const TIMELINE_RULER_HEIGHT = 32;
-const RANGE_DRAG_MINIMUM_PIXELS = 4;
+const TRANSPARENT_CLIP_COLOR = "#00000000";
+const INVISIBLE_CLIP_OPACITY = 0.001;
+const DEFAULT_MARKER_HIT_DURATION_SECONDS = 0.4;
 const EMPTY_MARKERS: MediaMarker[] = [];
 
 type TimelineTrackPresentation = {
@@ -123,6 +124,10 @@ type TimelineClipMetadata = {
   kind: "marker" | "candidate" | "transcript" | "event";
   source_id?: string;
   source_index?: number;
+  marker_shape?: "default" | "manual";
+  marker_anchor_seconds?: number;
+  rendered_start_seconds?: number;
+  marker_name?: string;
 };
 
 type TimelinePointerPosition = {
@@ -130,10 +135,18 @@ type TimelinePointerPosition = {
   y: number;
 };
 
+type TimelineViewportState = {
+  zoom_scale: number;
+  scroll_left: number;
+  scroll_top: number;
+};
+
 function TimelineLayers({
   on_clip_double_click,
+  selected_marker_id,
 }: {
   on_clip_double_click: (hit: ClipHitTestResult) => void;
+  selected_marker_id: string | null;
 }) {
   const { state } = useTimeline();
 
@@ -147,6 +160,8 @@ function TimelineLayers({
         ))}
       </Timeline.TrackList>
       <Timeline.ClipInteractionLayer
+        activeClipId={selected_marker_id ?? undefined}
+        getClipAriaLabel={timeline_clip_aria_label}
         onClipDoubleClick={(hit: ClipHitTestResult) =>
           on_clip_double_click(hit)
         }
@@ -174,6 +189,10 @@ type TimelineSurfaceProps = {
     end_seconds: number | null,
   ) => void;
   on_select_marker: (
+    marker_id: string | null,
+    viewport: TimelineViewportState,
+  ) => void;
+  on_edit_marker: (
     marker_id: string,
     pointer_position: TimelinePointerPosition,
   ) => void;
@@ -192,15 +211,13 @@ function TimelineSurface({
   on_add_marker,
   on_update_marker_bounds,
   on_select_marker,
+  on_edit_marker,
   on_select_transcript,
   on_edit_transcript,
 }: TimelineSurfaceProps) {
   const { state } = useTimeline();
   const syncing_playhead_ref = useRef(false);
   const pointer_position_ref = useRef<TimelinePointerPosition>({ x: 0, y: 0 });
-  const range_drag_ref = useRef<{ x: number; start_seconds: number } | null>(
-    null,
-  );
   const resized_clip_ref = useRef<Clip | null>(null);
 
   useEffect(() => {
@@ -222,13 +239,23 @@ function TimelineSurface({
   useEffect(
     () =>
       engine.on("clip:select", ({ clip }) => {
-        if (!clip) return;
-        const metadata = clip.metadata as TimelineClipMetadata | undefined;
-        on_seek(toSeconds(clip.timelineStart));
-        if (metadata?.kind === "marker" && metadata.source_id) {
-          on_select_marker(metadata.source_id, pointer_position_ref.current);
+        if (!clip) {
+          on_select_marker(null, current_timeline_viewport(engine));
           return;
         }
+        const metadata = clip.metadata as TimelineClipMetadata | undefined;
+        if (metadata?.kind === "marker" && metadata.source_id) {
+          on_seek(
+            metadata.marker_anchor_seconds ?? toSeconds(clip.timelineStart),
+          );
+          on_select_marker(
+            metadata.source_id,
+            current_timeline_viewport(engine),
+          );
+          return;
+        }
+        on_select_marker(null, current_timeline_viewport(engine));
+        on_seek(toSeconds(clip.timelineStart));
         if (
           metadata?.kind === "transcript" &&
           metadata.source_index !== undefined
@@ -240,11 +267,25 @@ function TimelineSurface({
   );
 
   useEffect(() => {
-    const commit_bounds = (clip: Clip) => {
+    const commit_bounds = (clip: Clip, interaction: "move" | "resize") => {
       const metadata = clip.metadata as TimelineClipMetadata | undefined;
       if (metadata?.kind !== "marker" || !metadata.source_id) return;
       const start_seconds = toSeconds(clip.timelineStart);
       const rendered_end = toSeconds(clip.timelineEnd);
+      if (
+        metadata.marker_shape === "default" &&
+        interaction === "move" &&
+        metadata.marker_anchor_seconds !== undefined &&
+        metadata.rendered_start_seconds !== undefined
+      ) {
+        const movement = start_seconds - metadata.rendered_start_seconds;
+        on_update_marker_bounds(
+          metadata.source_id,
+          metadata.marker_anchor_seconds + movement,
+          null,
+        );
+        return;
+      }
       const end_seconds =
         rendered_end - start_seconds <= MINIMUM_CLIP_DURATION_SECONDS
           ? null
@@ -252,14 +293,14 @@ function TimelineSurface({
       on_update_marker_bounds(metadata.source_id, start_seconds, end_seconds);
     };
     const unsubscribe_move = engine.on("clip:move", ({ clip, phase }) => {
-      if (phase === "commit") commit_bounds(clip);
+      if (phase === "commit") commit_bounds(clip, "move");
     });
     const unsubscribe_resize = engine.on("clip:resize", ({ clip }) => {
       resized_clip_ref.current = clip;
     });
     const unsubscribe_settled = engine.on("state:settled", () => {
       if (!resized_clip_ref.current) return;
-      commit_bounds(resized_clip_ref.current);
+      commit_bounds(resized_clip_ref.current, "resize");
       resized_clip_ref.current = null;
     });
     return () => {
@@ -268,13 +309,6 @@ function TimelineSurface({
       unsubscribe_settled();
     };
   }, [engine, on_update_marker_bounds]);
-
-  function add_marker_at_pointer(event: MouseEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const time = engine.pixelToTime(event.clientX - bounds.left);
-    void on_add_marker(toSeconds(time));
-  }
 
   function zoom_with_alt(event: WheelEvent<HTMLDivElement>) {
     if (!event.altKey) return;
@@ -298,43 +332,6 @@ function TimelineSurface({
       x: event.clientX,
       y: event.clientY,
     };
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const local_y = event.clientY - bounds.top;
-    if (
-      event.button === 0 &&
-      local_y >= TIMELINE_RULER_HEIGHT &&
-      local_y <= TIMELINE_RULER_HEIGHT + TRACK_HEIGHT
-    ) {
-      range_drag_ref.current = {
-        x: event.clientX,
-        start_seconds: bounded_pointer_time(
-          event.clientX,
-          bounds,
-          engine,
-          duration,
-        ),
-      };
-    }
-  }
-
-  function create_range_at_pointer(event: PointerEvent<HTMLDivElement>) {
-    const drag = range_drag_ref.current;
-    range_drag_ref.current = null;
-    if (!drag || Math.abs(event.clientX - drag.x) < RANGE_DRAG_MINIMUM_PIXELS) {
-      return;
-    }
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const finish = bounded_pointer_time(
-      event.clientX,
-      bounds,
-      engine,
-      duration,
-    );
-    const start_seconds = Math.min(drag.start_seconds, finish);
-    const end_seconds = Math.max(drag.start_seconds, finish);
-    if (end_seconds - start_seconds >= MINIMUM_CLIP_DURATION_SECONDS) {
-      void on_add_marker(start_seconds, end_seconds);
-    }
   }
 
   function create_point_at_pointer(event: MouseEvent<HTMLDivElement>) {
@@ -343,6 +340,16 @@ function TimelineSurface({
     if (
       local_y < TIMELINE_RULER_HEIGHT ||
       local_y > TIMELINE_RULER_HEIGHT + TRACK_HEIGHT
+    ) {
+      return;
+    }
+    const local_x = event.clientX - bounds.left;
+    if (
+      engine.getClipAtPoint({
+        x: local_x,
+        y: local_y,
+        pointerType: "mouse",
+      })
     ) {
       return;
     }
@@ -415,11 +422,9 @@ function TimelineSurface({
         <div className="timeline-canvas-stage">
           <Timeline.Root
             className="timeline-fill"
-            aria-label="时间线画布；拖动平移，Alt 加滚轮缩放，方向键定位"
-            onContextMenu={add_marker_at_pointer}
+            aria-label="时间线画布；单击标记显示手柄，双击空白处添加，双击标记编辑"
             onDoubleClick={create_point_at_pointer}
             onPointerDownCapture={remember_pointer_position}
-            onPointerUpCapture={create_range_at_pointer}
             onWheelCapture={zoom_with_alt}
           >
             <CanvasRenderer />
@@ -431,9 +436,17 @@ function TimelineSurface({
               selected_marker_id={selected_marker_id}
             />
             <TimelineLayers
+              selected_marker_id={selected_marker_id}
               on_clip_double_click={(hit) => {
                 const metadata = hit.clip.metadata as
                   TimelineClipMetadata | undefined;
+                if (metadata?.kind === "marker" && metadata.source_id) {
+                  on_edit_marker(
+                    metadata.source_id,
+                    pointer_position_ref.current,
+                  );
+                  return;
+                }
                 if (
                   metadata?.kind === "transcript" &&
                   metadata.source_index !== undefined
@@ -487,10 +500,15 @@ function MarkerRangeBands({
   return (
     <div className="timeline-marker-ranges" aria-label="标记影响范围">
       {markers.map((marker) => {
-        const { before_seconds, after_seconds } = effective_marker_ranges(
+        const effective_ranges = effective_marker_ranges(
           marker,
           analysis_strategy,
         );
+        const marker_shape = marker.end_seconds === null ? "default" : "manual";
+        const before_seconds =
+          marker_shape === "default" ? effective_ranges.before_seconds : 0;
+        const after_seconds =
+          marker_shape === "default" ? effective_ranges.after_seconds : 0;
         const focus_end = marker.end_seconds ?? marker.start_seconds;
         const range_start = Math.max(0, marker.start_seconds - before_seconds);
         const range_end = Math.min(duration, focus_end + after_seconds);
@@ -504,11 +522,16 @@ function MarkerRangeBands({
           100;
         const core_end_position =
           ((focus_end - range_start) / (range_end - range_start)) * 100;
+        const label_position =
+          marker_shape === "default"
+            ? core_start_position
+            : (core_start_position + core_end_position) / 2;
         const style = {
           left,
           width,
           "--marker-core-start-position": `${core_start_position}%`,
           "--marker-core-end-position": `${core_end_position}%`,
+          "--marker-label-position": `${label_position}%`,
         } as CSSProperties;
         const marker_name =
           marker.title || marker.tags.join("、") || "未命名标记";
@@ -520,10 +543,19 @@ function MarkerRangeBands({
             data-selected={
               marker.marker_id === selected_marker_id ? "true" : undefined
             }
+            data-shape={marker_shape}
             style={style}
             role="img"
-            aria-label={`${marker_name}：向前 ${before_seconds} 秒，向后 ${after_seconds} 秒`}
-          />
+            aria-label={
+              marker_shape === "default"
+                ? `${marker_name}：默认范围，向前 ${before_seconds} 秒，向后 ${after_seconds} 秒`
+                : `${marker_name}：手动范围 ${format_time(marker.start_seconds)} 至 ${format_time(focus_end)}`
+            }
+          >
+            <span className="timeline-marker-label" aria-hidden>
+              {marker_name}
+            </span>
+          </span>
         );
       })}
     </div>
@@ -557,6 +589,18 @@ export function MediaTimeline({
   const [editing_marker_id, set_editing_marker_id] = useState<string | null>(
     null,
   );
+  const [marker_selection, set_marker_selection] = useState<{
+    marker_id: string | null;
+    viewport: TimelineViewportState;
+  }>({
+    marker_id: null,
+    viewport: {
+      zoom_scale: DEFAULT_ZOOM_SCALE,
+      scroll_left: 0,
+      scroll_top: 0,
+    },
+  });
+  const selected_marker_id = marker_selection.marker_id;
   const [marker_title_draft, set_marker_title_draft] = useState("");
   const [marker_tags_draft, set_marker_tags_draft] = useState("");
   const [marker_start_draft, set_marker_start_draft] = useState(0);
@@ -589,20 +633,36 @@ export function MediaTimeline({
   );
   const tracks = useMemo(
     () =>
-      build_tracks(transcript_segments, segments, markers, candidate_markers),
-    [candidate_markers, markers, segments, transcript_segments],
+      build_tracks(
+        transcript_segments,
+        segments,
+        markers,
+        candidate_markers,
+        analysis_strategy,
+        duration,
+        selected_marker_id,
+      ),
+    [
+      analysis_strategy,
+      candidate_markers,
+      duration,
+      markers,
+      selected_marker_id,
+      segments,
+      transcript_segments,
+    ],
   );
-  const timeline_markers = useMemo(() => build_markers(markers), [markers]);
   const engine = useMemo(
     () =>
       new TimelineEngine({
         duration: fromSeconds(duration),
         playheadTime: fromSeconds(0),
-        zoomScale: DEFAULT_ZOOM_SCALE,
+        zoomScale: marker_selection.viewport.zoom_scale,
+        scrollLeft: marker_selection.viewport.scroll_left,
+        scrollTop: marker_selection.viewport.scroll_top,
         tracks,
-        markers: timeline_markers,
       }),
-    [duration, timeline_markers, tracks],
+    [duration, marker_selection.viewport, tracks],
   );
   const bounded_time = Math.min(Math.max(current_time, 0), duration);
 
@@ -631,13 +691,23 @@ export function MediaTimeline({
         <output aria-label="当前播放时间">
           {format_time(bounded_time)} / {format_time(duration)}
         </output>
-        <div>
+        <div className="media_timeline_header_summary">
           <strong>时间线</strong>
           <span>
             {transcript_segments.length} 条转写 · {segments.length} 个事件 ·{" "}
             {markers.length} 个标记
           </span>
         </div>
+        <Button
+          type="button"
+          size="xs"
+          variant="secondary"
+          aria-label={`在 ${format_time(bounded_time)} 添加标记`}
+          onClick={() => void on_add_marker(bounded_time)}
+        >
+          <Flag data-icon="inline-start" />
+          添加标记
+        </Button>
       </header>
 
       {editing_transcript_index !== null ? (
@@ -845,9 +915,13 @@ export function MediaTimeline({
                   }
                   if (editing_marker_id === null) return;
                   set_is_saving_marker(true);
-                  void on_delete_marker(editing_marker_id).then(
-                    cancel_marker_edit,
-                  );
+                  void on_delete_marker(editing_marker_id).then(() => {
+                    set_marker_selection((current) => ({
+                      marker_id: null,
+                      viewport: current.viewport,
+                    }));
+                    cancel_marker_edit();
+                  });
                 }}
                 disabled={is_saving_marker}
               >
@@ -892,7 +966,7 @@ export function MediaTimeline({
             engine={engine}
             markers={markers}
             analysis_strategy={analysis_strategy}
-            selected_marker_id={editing_marker_id}
+            selected_marker_id={selected_marker_id}
             on_seek={on_seek}
             on_add_marker={on_add_marker}
             on_update_marker_bounds={(
@@ -913,7 +987,15 @@ export function MediaTimeline({
                 marker_range_after_seconds: marker.marker_range_after_seconds,
               });
             }}
-            on_select_marker={select_marker}
+            on_select_marker={(marker_id, viewport) => {
+              set_marker_selection((current) =>
+                current.marker_id === marker_id
+                  ? current
+                  : { marker_id, viewport },
+              );
+              if (marker_id !== null) cancel_transcript_edit();
+            }}
+            on_edit_marker={edit_marker}
             on_select_transcript={(segment_index) =>
               on_selected_transcript_indices_change([segment_index])
             }
@@ -938,7 +1020,7 @@ export function MediaTimeline({
     </section>
   );
 
-  function select_marker(
+  function edit_marker(
     marker_id: string,
     pointer_position: TimelinePointerPosition,
   ) {
@@ -946,6 +1028,10 @@ export function MediaTimeline({
       (candidate) => candidate.marker_id === marker_id,
     );
     if (!marker) return;
+    set_marker_selection((current) => ({
+      marker_id: marker.marker_id,
+      viewport: current.viewport,
+    }));
     set_editing_marker_id(marker.marker_id);
     set_marker_title_draft(marker.title);
     set_marker_tags_draft(marker.tags.join(", "));
@@ -1039,22 +1125,27 @@ function build_tracks(
   segments: MediaSegment[],
   markers: MediaMarker[],
   candidate_markers: MediaMarker[],
+  analysis_strategy: AnalysisStrategy,
+  duration: number,
+  selected_marker_id: string | null,
 ): Track[] {
+  const ordered_markers = [...markers].sort((left, right) => {
+    if (left.marker_id === selected_marker_id) return -1;
+    if (right.marker_id === selected_marker_id) return 1;
+    return 0;
+  });
   return [
     create_track(
       MARKER_TRACK_ID,
       "标记",
       "marker",
       [
-        ...markers.map((marker) =>
-          create_clip(
-            marker.marker_id,
-            marker.marker_id,
-            marker.start_seconds,
-            marker.end_seconds ??
-              marker.start_seconds + MINIMUM_CLIP_DURATION_SECONDS,
-            marker.title || marker.tags.join(" · ") || "未命名标记",
-            { kind: "marker", source_id: marker.marker_id },
+        ...ordered_markers.map((marker) =>
+          create_marker_clip(
+            marker,
+            analysis_strategy,
+            duration,
+            marker.marker_id === selected_marker_id,
           ),
         ),
         ...candidate_markers.map((marker) =>
@@ -1104,6 +1195,69 @@ function build_tracks(
   ];
 }
 
+function create_marker_clip(
+  marker: MediaMarker,
+  analysis_strategy: AnalysisStrategy,
+  duration: number,
+  is_selected: boolean,
+): Clip {
+  const marker_name = marker.title || marker.tags.join(" · ") || "未命名标记";
+  if (marker.end_seconds !== null) {
+    const clip = create_clip(
+      marker.marker_id,
+      marker.marker_id,
+      marker.start_seconds,
+      marker.end_seconds,
+      "",
+      {
+        kind: "marker",
+        source_id: marker.marker_id,
+        marker_shape: "manual",
+        marker_anchor_seconds: marker.start_seconds,
+        rendered_start_seconds: marker.start_seconds,
+        marker_name,
+      },
+    );
+    return invisible_marker_clip(clip);
+  }
+
+  const { before_seconds, after_seconds } = effective_marker_ranges(
+    marker,
+    analysis_strategy,
+  );
+  const half_hit_duration = DEFAULT_MARKER_HIT_DURATION_SECONDS / 2;
+  const rendered_start_seconds = is_selected
+    ? Math.max(0, marker.start_seconds - before_seconds)
+    : Math.max(0, marker.start_seconds - half_hit_duration);
+  const rendered_end_seconds = is_selected
+    ? Math.min(duration, marker.start_seconds + after_seconds)
+    : Math.min(duration, marker.start_seconds + half_hit_duration);
+  const clip = create_clip(
+    marker.marker_id,
+    marker.marker_id,
+    rendered_start_seconds,
+    rendered_end_seconds,
+    "",
+    {
+      kind: "marker",
+      source_id: marker.marker_id,
+      marker_shape: "default",
+      marker_anchor_seconds: marker.start_seconds,
+      rendered_start_seconds,
+      marker_name,
+    },
+  );
+  return invisible_marker_clip(clip);
+}
+
+function invisible_marker_clip(clip: Clip): Clip {
+  return {
+    ...clip,
+    color: TRANSPARENT_CLIP_COLOR,
+    opacity: INVISIBLE_CLIP_OPACITY,
+  };
+}
+
 function create_track(
   id: string,
   name: string,
@@ -1150,12 +1304,12 @@ function create_clip(
   };
 }
 
-function build_markers(markers: MediaMarker[]): Marker[] {
-  return markers.map((marker) => ({
-    id: marker.marker_id,
-    time: fromSeconds(marker.start_seconds),
-    label: marker.title || marker.tags.join(" · ") || "标记",
-  }));
+function timeline_clip_aria_label(clip: Clip, track: Track): string {
+  const metadata = clip.metadata as TimelineClipMetadata | undefined;
+  if (metadata?.kind === "marker") {
+    return metadata.marker_name || "未命名标记";
+  }
+  return clip.label || `${track.name ?? "未命名轨道"}片段`;
 }
 
 function timeline_duration(
@@ -1183,6 +1337,16 @@ function bounded_pointer_time(
 ): number {
   const seconds = toSeconds(engine.pixelToTime(client_x - bounds.left));
   return Math.min(Math.max(seconds, 0), duration);
+}
+
+function current_timeline_viewport(
+  engine: TimelineEngine,
+): TimelineViewportState {
+  return {
+    zoom_scale: engine.zoomScale,
+    scroll_left: engine.scrollLeft,
+    scroll_top: engine.scrollTop,
+  };
 }
 
 function is_text_editing_target(target: EventTarget | null): boolean {
