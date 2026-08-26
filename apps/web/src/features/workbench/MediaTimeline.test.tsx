@@ -249,7 +249,7 @@ describe("MediaTimeline", () => {
   it("maps media data to official canvas timeline tracks", () => {
     const { seek_to } = render_timeline();
 
-    expect(screen.getByText("Canvas Timeline")).toBeInTheDocument();
+    expect(screen.getByText("时间线")).toBeInTheDocument();
     expect(
       screen.getByRole("separator", { name: "调整轨道标题栏宽度" }),
     ).toBeInTheDocument();
@@ -310,13 +310,14 @@ describe("MediaTimeline", () => {
         name: "重点：向前 10 秒，向后 20 秒",
       }),
     ).toHaveAttribute("data-selected", "true");
-    expect(screen.getByText("使用默认（当前 10 秒）")).toBeInTheDocument();
-    expect(screen.getByText("使用默认（当前 20 秒）")).toBeInTheDocument();
+    expect(screen.getAllByText("跟随当前分析策略")).toHaveLength(2);
+    expect(screen.getByText("默认 · 10 秒")).toBeInTheDocument();
+    expect(screen.getByText("默认 · 20 秒")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("编辑标记标签"), {
       target: { value: "重点, 公式" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "向前范围：单独设置" }));
+    fireEvent.click(screen.getByRole("radio", { name: "标记前自定义" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() =>

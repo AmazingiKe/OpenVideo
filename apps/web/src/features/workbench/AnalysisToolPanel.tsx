@@ -7,7 +7,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { SlidersHorizontal, Sparkles, Wrench } from "lucide-react";
+import { Flag, SlidersHorizontal, Sparkles, Wrench } from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
@@ -85,7 +85,7 @@ const DEFAULT_ANALYSIS_PRESET: AnalysisStrategyPresetDescriptor = {
   strategy: DEFAULT_ANALYSIS_STRATEGY,
 };
 
-const ANALYSIS_WEIGHT_FIELDS: {
+const CONTENT_WEIGHT_FIELDS: {
   field: keyof AnalysisWeights;
   label: string;
 }[] = [
@@ -94,8 +94,19 @@ const ANALYSIS_WEIGHT_FIELDS: {
   { field: "case_demonstration", label: "案例演示" },
   { field: "questions_conclusions", label: "疑问结论" },
   { field: "visual_content", label: "视觉内容" },
-  { field: "user_markers", label: "用户标记" },
 ];
+
+const ANALYSIS_WEIGHT_FIELDS = [
+  ...CONTENT_WEIGHT_FIELDS,
+  { field: "user_markers" as const, label: "用户标记" },
+];
+
+const MARKER_WEIGHT_PRESETS = [
+  { value: 25, label: "较低" },
+  { value: 50, label: "均衡" },
+  { value: 75, label: "较高" },
+  { value: 100, label: "最高" },
+] as const;
 
 type AnalysisToolPanelProps = {
   asset: MediaAsset | null;
@@ -267,6 +278,17 @@ export function AnalysisToolPanel({
     toggle_all_sections();
   }
 
+  function handle_sections_change(sections: string[]) {
+    const opened_section = sections.find(
+      (section) => !open_sections.includes(section as AnalysisToolSection),
+    );
+    on_open_sections_change(
+      opened_section
+        ? [opened_section as AnalysisToolSection]
+        : (sections as AnalysisToolSection[]),
+    );
+  }
+
   return (
     <aside
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-l bg-card"
@@ -284,9 +306,7 @@ export function AnalysisToolPanel({
       <Accordion
         type="multiple"
         value={open_sections}
-        onValueChange={(sections) =>
-          on_open_sections_change(sections as AnalysisToolSection[])
-        }
+        onValueChange={handle_sections_change}
         className="min-h-0 overflow-y-auto px-3 pb-3"
       >
         <AccordionItem value="video_information">
@@ -584,6 +604,86 @@ export function AnalysisToolPanel({
                   </Badge>
                 ))}
               </div>
+              <Field
+                className="rounded-lg border bg-muted/30 p-3"
+                data-disabled={
+                  is_analyzing || markers.length === 0 || undefined
+                }
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 gap-2">
+                    <Flag
+                      className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <div className="flex min-w-0 flex-col gap-0.5">
+                      <FieldLabel htmlFor="analysis_weight_user_markers">
+                        标记优先级
+                      </FieldLabel>
+                      <FieldDescription>
+                        {markers.length === 0
+                          ? "添加标记后可调整"
+                          : "控制标记片段相对其他内容的重要程度"}
+                      </FieldDescription>
+                    </div>
+                  </div>
+                  <Badge variant="secondary">
+                    {marker_weight_label(
+                      analysis_strategy.weights.user_markers,
+                    )}{" "}
+                    · {analysis_strategy.weights.user_markers}
+                  </Badge>
+                </div>
+                <Slider
+                  id="analysis_weight_user_markers"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={[analysis_strategy.weights.user_markers]}
+                  onValueChange={([value]) =>
+                    set_analysis_strategy((current) => ({
+                      ...current,
+                      preset: "custom",
+                      weights: {
+                        ...current.weights,
+                        user_markers: value ?? current.weights.user_markers,
+                      },
+                    }))
+                  }
+                  disabled={is_analyzing || markers.length === 0}
+                  aria-label="标记优先级"
+                />
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  value={String(analysis_strategy.weights.user_markers)}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    set_analysis_strategy((current) => ({
+                      ...current,
+                      preset: "custom",
+                      weights: {
+                        ...current.weights,
+                        user_markers: Number(value),
+                      },
+                    }));
+                  }}
+                  disabled={is_analyzing || markers.length === 0}
+                  aria-label="标记优先级快捷设置"
+                >
+                  {MARKER_WEIGHT_PRESETS.map((preset) => (
+                    <ToggleGroupItem
+                      key={preset.value}
+                      value={String(preset.value)}
+                      className="min-w-0 flex-1"
+                    >
+                      {preset.label}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </Field>
               <Button
                 type="button"
                 variant="ghost"
@@ -626,7 +726,7 @@ export function AnalysisToolPanel({
                       </SelectContent>
                     </Select>
                   </Field>
-                  {ANALYSIS_WEIGHT_FIELDS.map(({ field, label }) => (
+                  {CONTENT_WEIGHT_FIELDS.map(({ field, label }) => (
                     <Field key={field}>
                       <div className="flex items-center justify-between gap-2">
                         <FieldLabel htmlFor={`analysis_weight_${field}`}>
@@ -661,16 +761,16 @@ export function AnalysisToolPanel({
                     </Field>
                   ))}
                   <FieldGroup className="gap-4">
-                    <FieldDescription>标记范围权重</FieldDescription>
+                    <FieldDescription>标记影响范围</FieldDescription>
                     {(
                       [
                         {
                           field: "marker_range_before_seconds",
-                          label: "默认向前",
+                          label: "标记前",
                         },
                         {
                           field: "marker_range_after_seconds",
-                          label: "默认向后",
+                          label: "标记后",
                         },
                       ] as const
                     ).map(({ field, label }) => (
@@ -702,7 +802,7 @@ export function AnalysisToolPanel({
                       </Field>
                     ))}
                     <FieldDescription>
-                      标记点权重最高，并向两侧边缘线性衰减。
+                      标记本身优先级最高，超出标记的内容向两侧边缘逐渐减弱。
                     </FieldDescription>
                   </FieldGroup>
                 </FieldGroup>
@@ -829,6 +929,14 @@ function toggle_marker(current: Set<string>, marker_id: string): Set<string> {
   if (next.has(marker_id)) next.delete(marker_id);
   else next.add(marker_id);
   return next;
+}
+
+function marker_weight_label(weight: number): string {
+  if (weight === 0) return "忽略";
+  if (weight < 40) return "较低";
+  if (weight < 70) return "均衡";
+  if (weight < 100) return "较高";
+  return "最高";
 }
 
 function format_resolution(asset: MediaAsset): string {

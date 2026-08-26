@@ -112,15 +112,25 @@ describe("AnalysisToolPanel", () => {
     );
   });
 
+  it("adjusts marker priority without opening advanced settings", () => {
+    render_panel(["analysis"]);
+
+    const marker_priority = screen.getByRole("slider", {
+      name: "标记优先级",
+    });
+    expect(marker_priority).toHaveAttribute("aria-valuenow", "100");
+
+    fireEvent.click(screen.getByRole("radio", { name: "较高" }));
+    expect(marker_priority).toHaveAttribute("aria-valuenow", "75");
+    expect(screen.getByText("较高 · 75")).toBeInTheDocument();
+  });
+
   it("toggles one section normally and all sections with Shift", () => {
     const change_sections = vi.fn();
     render_panel(["video_information"], { change_sections });
 
     fireEvent.click(screen.getByRole("button", { name: "转录" }));
-    expect(change_sections).toHaveBeenLastCalledWith([
-      "video_information",
-      "transcription",
-    ]);
+    expect(change_sections).toHaveBeenLastCalledWith(["transcription"]);
 
     fireEvent.click(screen.getByRole("button", { name: "分析" }), {
       shiftKey: true,
@@ -138,10 +148,10 @@ describe("AnalysisToolPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     const before_slider = screen.getByRole("slider", {
-      name: "默认向前范围秒数",
+      name: "标记前范围秒数",
     });
     const after_slider = screen.getByRole("slider", {
-      name: "默认向后范围秒数",
+      name: "标记后范围秒数",
     });
     expect(before_slider).toHaveAttribute("aria-valuenow", "10");
     expect(after_slider).toHaveAttribute("aria-valuenow", "20");

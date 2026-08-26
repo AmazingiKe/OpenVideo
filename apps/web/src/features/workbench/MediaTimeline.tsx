@@ -485,7 +485,7 @@ function MarkerRangeBands({
   }, [engine]);
 
   return (
-    <div className="timeline-marker-ranges" aria-label="标记范围权重">
+    <div className="timeline-marker-ranges" aria-label="标记影响范围">
       {markers.map((marker) => {
         const { before_seconds, after_seconds } = effective_marker_ranges(
           marker,
@@ -632,7 +632,7 @@ export function MediaTimeline({
           {format_time(bounded_time)} / {format_time(duration)}
         </output>
         <div>
-          <strong>Canvas Timeline</strong>
+          <strong>时间线</strong>
           <span>
             {transcript_segments.length} 条转写 · {segments.length} 个事件 ·{" "}
             {markers.length} 个标记
@@ -693,7 +693,7 @@ export function MediaTimeline({
           </PopoverAnchor>
         ) : null}
         <PopoverContent
-          className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto"
+          className="max-h-[var(--radix-popover-content-available-height)] w-[min(30rem,calc(100vw-1rem))] overflow-y-auto p-4"
           side="bottom"
           align="start"
           sideOffset={MARKER_EDITOR_OFFSET}
@@ -702,7 +702,7 @@ export function MediaTimeline({
           <PopoverHeader>
             <PopoverTitle>编辑标记</PopoverTitle>
             <PopoverDescription>
-              可精确编辑标题、标签和点/范围边界。
+              编辑标记内容、时间位置与分析影响范围。
             </PopoverDescription>
           </PopoverHeader>
           <form className="flex flex-col gap-4" onSubmit={save_marker}>
@@ -734,54 +734,69 @@ export function MediaTimeline({
                   disabled={is_saving_marker}
                 />
               </Field>
-              <Field>
-                <FieldLabel htmlFor="marker-start">开始时间（秒）</FieldLabel>
-                <Input
-                  id="marker-start"
-                  type="number"
-                  min={0}
-                  max={duration}
-                  step={0.1}
-                  value={marker_start_draft}
-                  onChange={(event) =>
-                    set_marker_start_draft(event.currentTarget.valueAsNumber)
-                  }
-                  disabled={is_saving_marker}
-                />
-              </Field>
-              {marker_end_draft !== null ? (
-                <Field
-                  data-invalid={
-                    marker_end_draft <= marker_start_draft || undefined
-                  }
-                >
-                  <FieldLabel htmlFor="marker-end">结束时间（秒）</FieldLabel>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="marker-start">开始时间（秒）</FieldLabel>
                   <Input
-                    id="marker-end"
+                    id="marker-start"
                     type="number"
-                    min={marker_start_draft}
+                    min={0}
                     max={duration}
                     step={0.1}
-                    value={marker_end_draft}
-                    aria-invalid={marker_end_draft <= marker_start_draft}
+                    value={marker_start_draft}
                     onChange={(event) =>
-                      set_marker_end_draft(event.currentTarget.valueAsNumber)
+                      set_marker_start_draft(event.currentTarget.valueAsNumber)
                     }
                     disabled={is_saving_marker}
                   />
-                  {marker_end_draft <= marker_start_draft ? (
-                    <FieldDescription>
-                      结束时间必须晚于开始时间。
-                    </FieldDescription>
-                  ) : null}
                 </Field>
-              ) : null}
-              <div className="rounded-md border bg-muted/30 p-4">
-                <p className="mb-4 text-sm font-medium">标记范围权重</p>
-                <div className="flex flex-col gap-4">
+                {marker_end_draft !== null ? (
+                  <Field
+                    data-invalid={
+                      marker_end_draft <= marker_start_draft || undefined
+                    }
+                  >
+                    <FieldLabel htmlFor="marker-end">结束时间（秒）</FieldLabel>
+                    <Input
+                      id="marker-end"
+                      type="number"
+                      min={marker_start_draft}
+                      max={duration}
+                      step={0.1}
+                      value={marker_end_draft}
+                      aria-invalid={marker_end_draft <= marker_start_draft}
+                      onChange={(event) =>
+                        set_marker_end_draft(event.currentTarget.valueAsNumber)
+                      }
+                      disabled={is_saving_marker}
+                    />
+                    {marker_end_draft <= marker_start_draft ? (
+                      <FieldDescription>
+                        结束时间必须晚于开始时间。
+                      </FieldDescription>
+                    ) : null}
+                  </Field>
+                ) : null}
+              </div>
+              <section
+                className="flex flex-col gap-4 rounded-lg border bg-muted/30 p-4"
+                aria-labelledby="marker-influence-range-title"
+              >
+                <div className="flex flex-col gap-1">
+                  <h3
+                    id="marker-influence-range-title"
+                    className="text-sm font-medium"
+                  >
+                    分析影响范围
+                  </h3>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    标记内容权重最高，向前后边缘逐渐减弱。时间线会同步预览范围。
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <MarkerRangeField
                     id="marker-range-before"
-                    label="向前范围"
+                    label="标记前"
                     value={marker_range_before_draft}
                     default_value={
                       analysis_strategy.marker_range_before_seconds
@@ -791,14 +806,14 @@ export function MediaTimeline({
                   />
                   <MarkerRangeField
                     id="marker-range-after"
-                    label="向后范围"
+                    label="标记后"
                     value={marker_range_after_draft}
                     default_value={analysis_strategy.marker_range_after_seconds}
                     disabled={is_saving_marker}
                     on_change={set_marker_range_after_draft}
                   />
                 </div>
-              </div>
+              </section>
             </FieldGroup>
             <Button
               type="button"

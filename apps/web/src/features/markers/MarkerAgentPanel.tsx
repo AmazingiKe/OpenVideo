@@ -5,6 +5,7 @@ import {
   History,
   MessageSquareText,
   Plus,
+  SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 
@@ -35,6 +36,14 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -43,6 +52,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AgentToolTrace } from "@/features/workbench/SummaryAgentToolTrace";
+import { CollapsiblePanelRail } from "@/features/workbench/CollapsiblePanelRail";
+import { WorkbenchPanelHeader } from "@/features/workbench/WorkbenchPanelHeader";
 import {
   cancel_agent_run,
   create_marker_agent_message,
@@ -78,6 +89,8 @@ type MarkerAgentPanelProps = {
   on_seek: (seconds: number) => void;
   on_candidate_markers_change: (markers: MediaMarker[]) => void;
   on_markers_changed: () => Promise<void>;
+  collapsed?: boolean;
+  on_collapsed_change?: (collapsed: boolean) => void;
 };
 
 type DisplayItem =
@@ -96,6 +109,8 @@ export function MarkerAgentPanel({
   on_seek,
   on_candidate_markers_change,
   on_markers_changed,
+  collapsed = false,
+  on_collapsed_change,
 }: MarkerAgentPanelProps) {
   const [sessions, set_sessions] = useState<MarkerAgentSession[]>([]);
   const [session, set_session] = useState<MarkerAgentSessionState | null>(null);
@@ -156,6 +171,23 @@ export function MarkerAgentPanel({
     selected_model !== undefined &&
     !selected_model.input_modalities.includes("image");
 
+  if (collapsed) {
+    return (
+      <aside
+        className="h-full overflow-hidden bg-card"
+        data-slot="marker-agent-panel"
+        aria-label="标记 Agent"
+      >
+        <CollapsiblePanelRail
+          icon={Bot}
+          label="Agent"
+          edge="left"
+          on_expand={() => on_collapsed_change?.(false)}
+        />
+      </aside>
+    );
+  }
+
   if (!asset_id) {
     return (
       <Empty className="h-full rounded-none border-0">
@@ -172,16 +204,77 @@ export function MarkerAgentPanel({
 
   return (
     <aside
-      className="flex h-full min-h-80 flex-col bg-card"
+      className="flex h-full min-h-80 min-w-0 flex-col bg-card"
       data-slot="marker-agent-panel"
       aria-label="标记 Agent"
     >
-      <div className="flex flex-col gap-3 border-b p-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-2 text-sm font-medium">
-            <Bot aria-hidden /> 标记 Agent
-          </span>
-          <div className="flex items-center gap-1">
+      <WorkbenchPanelHeader
+        icon={Bot}
+        title="标记 Agent"
+        collapse_label="收起 Agent 面板"
+        on_collapse={
+          on_collapsed_change ? () => on_collapsed_change(true) : undefined
+        }
+        accessory={
+          <>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Agent 设置"
+                  disabled={pending}
+                >
+                  <SlidersHorizontal />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-80 p-4">
+                <PopoverHeader>
+                  <PopoverTitle>Agent 设置</PopoverTitle>
+                  <PopoverDescription>
+                    选择执行模型与检索证据的方式。
+                  </PopoverDescription>
+                </PopoverHeader>
+                <AiModelSelect
+                  id="marker-agent-model"
+                  label="模型"
+                  models={models}
+                  value={model_id}
+                  on_change={set_model_id}
+                  disabled={pending}
+                />
+                <Select
+                  value={retrieval_mode}
+                  onValueChange={(value) =>
+                    set_retrieval_mode(value as MarkerRetrievalMode)
+                  }
+                  disabled={pending}
+                >
+                  <SelectTrigger className="w-full" aria-label="检索模式">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {Object.entries(RETRIEVAL_MODE_LABELS).map(
+                        ([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                {vision_unavailable ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      当前模型不支持图像输入，请切换视觉模型。
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+              </PopoverContent>
+            </Popover>
             <Button
               type="button"
               variant="ghost"
@@ -202,10 +295,12 @@ export function MarkerAgentPanel({
             >
               <Trash2 />
             </Button>
-          </div>
-        </div>
+          </>
+        }
+      />
+      <div className="flex flex-col gap-2 border-b p-3">
         <Select
-          value={session?.session.session_id}
+          value={session?.session.session_id ?? ""}
           onValueChange={(session_id) => void select_session(session_id)}
           disabled={pending || sessions.length === 0}
         >
@@ -226,41 +321,10 @@ export function MarkerAgentPanel({
             </SelectGroup>
           </SelectContent>
         </Select>
-        <AiModelSelect
-          id="marker-agent-model"
-          label="模型"
-          models={models}
-          value={model_id}
-          on_change={set_model_id}
-          disabled={pending}
-        />
-        <Select
-          value={retrieval_mode}
-          onValueChange={(value) =>
-            set_retrieval_mode(value as MarkerRetrievalMode)
-          }
-          disabled={pending}
-        >
-          <SelectTrigger className="w-full" aria-label="检索模式">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {Object.entries(RETRIEVAL_MODE_LABELS).map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        {vision_unavailable ? (
-          <Alert variant="destructive">
-            <AlertDescription>
-              当前模型不支持图像输入，请切换视觉模型。
-            </AlertDescription>
-          </Alert>
-        ) : null}
+        <p className="truncate text-xs text-muted-foreground">
+          {selected_model?.name ?? "未选择模型"} ·{" "}
+          {RETRIEVAL_MODE_LABELS[retrieval_mode]}
+        </p>
       </div>
       <MessageScroller className="flex-1">
         {items.length === 0 && proposals.length === 0 ? (

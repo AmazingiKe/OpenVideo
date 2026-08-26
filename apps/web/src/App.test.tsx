@@ -276,7 +276,7 @@ describe("App", () => {
       "page",
     );
 
-    expect(screen.getByText("Canvas Timeline")).toBeInTheDocument();
+    expect(screen.getByText("时间线")).toBeInTheDocument();
   });
 
   it("selects the Douyin video opened from a search result", async () => {

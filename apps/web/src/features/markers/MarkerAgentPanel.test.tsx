@@ -101,6 +101,43 @@ describe("MarkerAgentPanel", () => {
     expect(screen.getByText("请先选择视频")).toBeInTheDocument();
   });
 
+  it("keeps advanced Agent options out of the conversation area", () => {
+    render(
+      <MarkerAgentPanel
+        asset_id={ASSET_ID}
+        models={MODELS}
+        on_seek={vi.fn()}
+        on_candidate_markers_change={vi.fn()}
+        on_markers_changed={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("combobox", { name: "模型" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Agent 设置" }));
+    expect(screen.getByRole("combobox", { name: "模型" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "检索模式" }),
+    ).toBeInTheDocument();
+  });
+
+  it("expands from the compact Agent rail", () => {
+    const on_collapsed_change = vi.fn();
+    render(
+      <MarkerAgentPanel
+        asset_id={ASSET_ID}
+        models={MODELS}
+        on_seek={vi.fn()}
+        on_candidate_markers_change={vi.fn()}
+        on_markers_changed={vi.fn()}
+        collapsed
+        on_collapsed_change={on_collapsed_change}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开Agent" }));
+    expect(on_collapsed_change).toHaveBeenCalledWith(false);
+  });
+
   it("restores pending proposals and resolves the whole batch", async () => {
     const on_candidate_markers_change = vi.fn();
     const on_markers_changed = vi.fn().mockResolvedValue(undefined);

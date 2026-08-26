@@ -79,8 +79,11 @@ export function MarkersPage() {
     useState<Record<string, (typeof loaded_transcription_models)[number]>>({});
   const [is_panel_size_transitioning, set_is_panel_size_transitioning] =
     useState(false);
+  const [is_agent_panel_collapsed, set_is_agent_panel_collapsed] =
+    useState(false);
   const panel_transition_timeout_ref = useRef<number | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
+  const agent_panel_ref = useRef<PanelImperativeHandle>(null);
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
   const is_compact_layout = use_compact_markers_layout();
@@ -235,12 +238,22 @@ export function MarkersPage() {
     update_settings({ tool_panel_collapsed: collapsed });
   }
 
+  function set_agent_panel_collapsed(collapsed: boolean) {
+    animate_panel_size_change();
+    set_is_agent_panel_collapsed(collapsed);
+    if (collapsed) agent_panel_ref.current?.collapse();
+    else
+      agent_panel_ref.current?.resize(`${settings.agent_panel_size_percent}%`);
+  }
+
   function save_desktop_layout(layout: Record<string, number>) {
+    const agent_panel_collapsed =
+      agent_panel_ref.current?.isCollapsed() ?? is_agent_panel_collapsed;
     const tool_panel_collapsed = tool_panel_ref.current?.isCollapsed() ?? false;
     const patch: Parameters<typeof update_settings>[0] = {
       tool_panel_collapsed,
     };
-    if (layout["agent-panel"] !== undefined) {
+    if (!agent_panel_collapsed && layout["agent-panel"] !== undefined) {
       patch.agent_panel_size_percent = layout["agent-panel"];
     }
     if (!tool_panel_collapsed && layout["tool-panel"] !== undefined) {
@@ -278,6 +291,10 @@ export function MarkersPage() {
       on_seek={seek_player}
       on_candidate_markers_change={set_candidate_markers}
       on_markers_changed={reload_markers}
+      collapsed={!is_compact_layout && is_agent_panel_collapsed}
+      on_collapsed_change={
+        is_compact_layout ? undefined : set_agent_panel_collapsed
+      }
     />
   );
   const video_workspace = (
@@ -370,9 +387,17 @@ export function MarkersPage() {
           >
             <ResizablePanel
               id="agent-panel"
+              panelRef={agent_panel_ref}
               defaultSize={`${settings.agent_panel_size_percent}%`}
               minSize="320px"
               maxSize="40%"
+              collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
+              collapsible
+              onResize={(size) =>
+                set_is_agent_panel_collapsed(
+                  size.inPixels <= PANEL_RAIL_WIDTH_PX + 1,
+                )
+              }
             >
               {agent_panel}
             </ResizablePanel>
