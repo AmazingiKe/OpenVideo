@@ -21,6 +21,7 @@ import { poll_download_account_login } from "@/shared/poll_download_account_logi
 import type {
   DownloadAccount,
   DownloadCookieBrowser,
+  DownloadFolderSelection,
   HealthResponse,
   ProbeEntry,
   ProbeResponse,
@@ -61,9 +62,8 @@ export function DownloadsPage() {
   const [source_url, set_source_url] = useState("");
   const [probe_result, set_probe_result] = useState<ProbeResponse | null>(null);
   const [selected_urls, set_selected_urls] = useState<Set<string>>(new Set());
-  const [target_folder_id, set_target_folder_id] = useState<string | null>(
-    null,
-  );
+  const [target_folder_id, set_target_folder_id] =
+    useState<DownloadFolderSelection>(undefined);
   const [is_submitting, set_is_submitting] = useState(false);
   const [retrying_download_task_id, set_retrying_download_task_id] = useState<
     string | null
@@ -135,7 +135,16 @@ export function DownloadsPage() {
     set_is_submitting(true);
     set_page_error(null);
     try {
-      const final_jobs = await start_downloads(urls, target_folder_id);
+      const automatic_folder_name =
+        target_folder_id === undefined && probe_result?.is_playlist
+          ? probe_result.title
+          : null;
+      const final_jobs = await start_downloads(urls, {
+        folder_id: target_folder_id ?? null,
+        automatic_folder_name,
+        assign_folder:
+          target_folder_id !== undefined || automatic_folder_name !== null,
+      });
       set_probe_result(null);
       set_selected_urls(new Set());
       if (final_jobs.some((job) => job.stage === "complete"))

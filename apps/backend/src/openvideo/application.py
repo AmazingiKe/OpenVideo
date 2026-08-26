@@ -84,7 +84,12 @@ class DownloadManager:
         self._download_lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
-    def create(self, source: SourceMatch, folder_id: str | None = None) -> DownloadJob:
+    def create(
+        self,
+        source: SourceMatch,
+        folder_id: str | None = None,
+        assign_ready_folder: bool = False,
+    ) -> DownloadJob:
         if folder_id is not None:
             self.library.get_folder(folder_id)
         if source.source_video_id:
@@ -97,6 +102,12 @@ class DownloadManager:
                 if active_job:
                     return active_job
                 if existing_asset.status == MediaAssetStatus.READY:
+                    if (
+                        assign_ready_folder
+                        and existing_asset.folder_id != folder_id
+                    ):
+                        existing_asset.folder_id = folder_id
+                        self.library.save(existing_asset)
                     return self._completed_job(existing_asset)
                 existing_asset.folder_id = folder_id
                 existing_asset.source_url = source.normalized_url
@@ -126,10 +137,15 @@ class DownloadManager:
         return job.model_copy(deep=True)
 
     def create_batch(
-        self, sources: list[SourceMatch], folder_id: str | None = None
+        self,
+        sources: list[SourceMatch],
+        folder_id: str | None = None,
+        assign_ready_folder: bool = False,
     ) -> list[DownloadJob]:
         """为多个来源各建一个任务，返回与输入一一对应的任务列表。"""
-        return [self.create(source, folder_id) for source in sources]
+        return [
+            self.create(source, folder_id, assign_ready_folder) for source in sources
+        ]
 
     def retry(self, job_id: str) -> DownloadJob:
         """失败任务保留原历史并创建新任务，素材来源与归档位置保持不变。"""

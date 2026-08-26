@@ -28,6 +28,7 @@ import type {
   AnalysisMode,
   AnalysisOperation,
   AnalysisStrategy,
+  DownloadDestination,
   DownloadJob,
   TranscriptionOptions,
   AgentJob,
@@ -42,7 +43,7 @@ type TaskManager = {
   task_records: TaskRecord[];
   start_downloads: (
     urls: string[],
-    folder_id?: string | null,
+    destination?: DownloadDestination,
   ) => Promise<DownloadJob[]>;
   retry_download: (job_id: string) => Promise<DownloadJob>;
   start_analysis: (
@@ -212,9 +213,13 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   );
 
   const start_downloads = useCallback(
-    (urls: string[], folder_id: string | null = null) =>
+    (urls: string[], destination?: DownloadDestination) =>
       with_download_controller(async (controller) => {
-        const jobs = await create_download(urls, controller.signal, folder_id);
+        const jobs = await create_download(
+          urls,
+          controller.signal,
+          destination,
+        );
         return track_download_jobs(jobs, controller);
       }),
     [track_download_jobs, with_download_controller],

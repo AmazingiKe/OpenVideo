@@ -7,6 +7,13 @@ from pydantic import BaseModel, Field, field_validator
 
 FOLDER_MANIFEST_FORMAT_VERSION = 1
 FOLDER_NAME_MAX_LENGTH = 100
+SOURCE_TITLE_SEPARATOR_TRANSLATION = str.maketrans({"/": "／", "\\": "＼"})
+
+
+def folder_name_from_source_title(source_title: str) -> str:
+    """远端合集标题需转换路径分隔符并限长，才能安全用于自动分类。"""
+    normalized = source_title.translate(SOURCE_TITLE_SEPARATOR_TRANSLATION).strip()
+    return normalized[:FOLDER_NAME_MAX_LENGTH].rstrip()
 
 
 class Folder(BaseModel):

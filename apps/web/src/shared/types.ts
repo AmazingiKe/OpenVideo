@@ -42,6 +42,14 @@ export type ProbeResponse = {
   total_count: number;
 };
 
+export type DownloadFolderSelection = string | null | undefined;
+
+export type DownloadDestination = {
+  folder_id: string | null;
+  automatic_folder_name: string | null;
+  assign_folder: boolean;
+};
+
 export type HealthResponse = {
   status: "ready" | "degraded";
   dependencies: DependencyStatus;

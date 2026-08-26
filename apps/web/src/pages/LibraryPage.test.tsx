@@ -153,7 +153,9 @@ describe("LibraryPage", () => {
     const selection_region = await screen.findByRole("region", {
       name: "视频选择区域",
     });
-    const first_card = screen.getByRole("group", { name: "镜头语言入门" });
+    const first_card = await screen.findByRole("group", {
+      name: "镜头语言入门",
+    });
     const second_card = screen.getByRole("group", { name: "镜头语言进阶" });
     const first_checkbox = screen.getByRole("checkbox", {
       name: "选择 镜头语言入门",
@@ -189,6 +191,20 @@ describe("LibraryPage", () => {
     expect(second_checkbox).not.toBeChecked();
   });
 
+  it("keeps the whole library surface out of browser text selection", async () => {
+    render_page();
+
+    const selection_region = await screen.findByRole("region", {
+      name: "视频选择区域",
+    });
+    const page = selection_region.closest("section");
+
+    expect(page).toHaveClass("select-none");
+    expect(screen.getByRole("searchbox", { name: "搜索视频" })).toHaveClass(
+      "select-text",
+    );
+  });
+
   it("selects every card intersecting the mouse marquee", async () => {
     vi.mocked(list_assets).mockResolvedValue([ASSET, SECOND_ASSET]);
     render_page();
@@ -196,7 +212,9 @@ describe("LibraryPage", () => {
     const selection_region = await screen.findByRole("region", {
       name: "视频选择区域",
     });
-    const first_card = screen.getByRole("group", { name: "镜头语言入门" });
+    const first_card = await screen.findByRole("group", {
+      name: "镜头语言入门",
+    });
     const second_card = screen.getByRole("group", { name: "镜头语言进阶" });
     vi.spyOn(selection_region, "getBoundingClientRect").mockReturnValue(
       dom_rectangle(0, 0, 600, 400),

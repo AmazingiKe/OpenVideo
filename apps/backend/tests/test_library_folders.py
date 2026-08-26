@@ -67,6 +67,18 @@ def test_folder_manifest_and_asset_assignment_rebuild_sqlite(tmp_path: Path):
     rebuilt.close()
 
 
+def test_automatic_root_folder_reuses_sanitized_source_title(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+
+    first = library.create_or_get_root_folder(" 课程/第一季 ")
+    repeated = library.create_or_get_root_folder("课程/第一季")
+
+    assert repeated.folder_id == first.folder_id
+    assert first.name == "课程／第一季"
+    assert len(library.list_folders()) == 1
+    library.close()
+
+
 def test_old_asset_metadata_without_folder_is_uncategorized(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     save_asset(library)

@@ -35,6 +35,7 @@ import { DownloadSelection } from "@/features/downloads/DownloadSelection";
 import type {
   DownloadAccount,
   DownloadCookieBrowser,
+  DownloadFolderSelection,
   HealthResponse,
   LibraryFolder,
   ProbeResponse,
@@ -49,7 +50,7 @@ type DownloadWorkspaceProps = {
   probe_result: ProbeResponse | null;
   selected_urls: Set<string>;
   folders: LibraryFolder[];
-  target_folder_id: string | null;
+  target_folder_id: DownloadFolderSelection;
   current_source_video_id: string | null;
   is_submitting: boolean;
   retrying_download_task_id: string | null;
@@ -61,7 +62,7 @@ type DownloadWorkspaceProps = {
   on_submit_probe: (event: FormEvent<HTMLFormElement>) => void;
   on_toggle_url: (url: string) => void;
   on_replace_selection: (urls: string[]) => void;
-  on_target_folder_change: (folder_id: string | null) => void;
+  on_target_folder_change: (folder_id: DownloadFolderSelection) => void;
   on_start_download: () => void;
   on_retry_download: (task_id: string) => void;
   on_save_download_account: (
@@ -181,9 +182,7 @@ export function DownloadWorkspace({
               <CardTitle role="heading" aria-level={2}>
                 添加视频链接
               </CardTitle>
-              <CardDescription>
-                粘贴链接下载视频
-              </CardDescription>
+              <CardDescription>粘贴链接下载视频</CardDescription>
             </div>
           </div>
           <CardAction>

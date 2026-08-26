@@ -22,7 +22,12 @@ from openvideo.core.agent_runtime_models import (
 from openvideo.core.analysis_models import AnalysisJob
 from openvideo.core.download_models import DownloadEvent, DownloadJob, DownloadStage
 from openvideo.core.identifiers import is_uuid7, uuid7
-from openvideo.core.folder_models import Folder, FolderManifest, FolderResponse
+from openvideo.core.folder_models import (
+    Folder,
+    FolderManifest,
+    FolderResponse,
+    folder_name_from_source_title,
+)
 from openvideo.core.library_files import (
     ARTIFACTS_DIRECTORY_NAME,
     ASSET_METADATA_FILE_NAME,
@@ -324,6 +329,23 @@ class MediaLibrary:
             self._write_folder_manifest()
             synchronize_folders(self._db(), self.folder_manifest_path)
         return self._folder_response(folder.folder_id)
+
+    def create_or_get_root_folder(self, name: str) -> FolderResponse:
+        """合集自动归档需要稳定复用同名顶层分类，避免每次下载产生重复目录。"""
+        normalized_name = folder_name_from_source_title(name)
+        with self._lock:
+            existing = next(
+                (
+                    folder
+                    for folder in self._folders.values()
+                    if folder.parent_id is None
+                    and folder.name.casefold() == normalized_name.casefold()
+                ),
+                None,
+            )
+            if existing is not None:
+                return self._folder_response(existing.folder_id)
+            return self.create_folder(normalized_name)
 
     def rename_folder(self, folder_id: str, name: str) -> FolderResponse:
         folder = self._require_folder(folder_id)

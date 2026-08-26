@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 from openvideo import application
-from openvideo.core.media_models import SourcePlatform
+from openvideo.core.media_models import MediaAssetStatus, SourcePlatform
 from openvideo.download_accounts import (
     DownloadAccountLoginCancelled,
     DownloadAccountStore,
@@ -168,6 +168,81 @@ def test_download_folder_assignment_defaults_and_preserves_duplicates(
     by_id = {asset["asset_id"]: asset for asset in assets}
     assert by_id[first.json()[0]["asset_id"]]["folder_id"] == courses["folder_id"]
     assert by_id[uncategorized.json()[0]["asset_id"]]["folder_id"] is None
+
+
+def test_playlist_download_automatically_creates_and_reuses_folder(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    app = api.create_app(Settings(library_path=tmp_path))
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ],
+                "automatic_folder_name": "课程/第一季",
+            },
+        )
+        second = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.youtube.com/watch?v=BaW_jenozKc"
+                ],
+                "automatic_folder_name": "课程/第一季",
+            },
+        )
+        folders = client.get("/api/library/folders").json()
+        assets = client.get("/api/media/assets").json()
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert len(folders) == 1
+    assert folders[0]["name"] == "课程／第一季"
+    assert {asset["folder_id"] for asset in assets} == {folders[0]["folder_id"]}
+
+
+def test_existing_ready_download_moves_to_requested_folder(monkeypatch, tmp_path):
+    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    app = api.create_app(Settings(library_path=tmp_path))
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ]
+            },
+        ).json()[0]
+        app.state.download_manager._fail(created["job_id"], "模拟原任务已结束")
+        asset = app.state.library.get(created["asset_id"])
+        asset.status = MediaAssetStatus.READY
+        app.state.library.save(asset)
+        folder = client.post(
+            "/api/library/folders",
+            json={"name": "课程", "parent_id": None},
+        ).json()
+
+        repeated = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.bilibili.com/video/BV1xx411c7mD"
+                ],
+                "folder_id": folder["folder_id"],
+                "assign_folder": True,
+            },
+        )
+        moved = client.get(f"/api/media/assets/{created['asset_id']}").json()
+
+    assert repeated.status_code == 202
+    assert repeated.json()[0]["stage"] == "complete"
+    assert moved["folder_id"] == folder["folder_id"]
 
 
 def test_failed_download_reuses_asset_for_a_new_job(monkeypatch, tmp_path):

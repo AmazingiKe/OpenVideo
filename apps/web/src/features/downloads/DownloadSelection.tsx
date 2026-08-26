@@ -30,8 +30,13 @@ import {
 } from "@/components/ui/select";
 import { folder_path_label } from "@/features/library/MoveToFolderDialog";
 import { format_duration } from "@/shared/format";
-import type { LibraryFolder, ProbeResponse } from "@/shared/types";
+import type {
+  DownloadFolderSelection,
+  LibraryFolder,
+  ProbeResponse,
+} from "@/shared/types";
 
+const AUTOMATIC_FOLDER_VALUE = "__automatic__";
 const UNCATEGORIZED_FOLDER_VALUE = "__uncategorized__";
 
 type DownloadSelectionProps = {
@@ -39,7 +44,7 @@ type DownloadSelectionProps = {
   visible_entries: ProbeResponse["entries"];
   selected_urls: Set<string>;
   folders: LibraryFolder[];
-  target_folder_id: string | null;
+  target_folder_id: DownloadFolderSelection;
   current_source_video_id: string | null;
   current_entry_url: string | null;
   entry_filter: string;
@@ -47,7 +52,7 @@ type DownloadSelectionProps = {
   on_entry_filter_change: (value: string) => void;
   on_toggle_url: (url: string) => void;
   on_replace_selection: (urls: string[]) => void;
-  on_target_folder_change: (folder_id: string | null) => void;
+  on_target_folder_change: (folder_id: DownloadFolderSelection) => void;
   on_start_download: () => void;
 };
 
@@ -204,12 +209,20 @@ export function DownloadSelection({
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <p className="text-sm text-muted-foreground">目标文件夹</p>
           <Select
-            value={target_folder_id ?? UNCATEGORIZED_FOLDER_VALUE}
-            onValueChange={(value) =>
-              on_target_folder_change(
-                value === UNCATEGORIZED_FOLDER_VALUE ? null : value,
-              )
+            value={
+              target_folder_id === undefined
+                ? AUTOMATIC_FOLDER_VALUE
+                : (target_folder_id ?? UNCATEGORIZED_FOLDER_VALUE)
             }
+            onValueChange={(value) => {
+              if (value === AUTOMATIC_FOLDER_VALUE) {
+                on_target_folder_change(undefined);
+              } else {
+                on_target_folder_change(
+                  value === UNCATEGORIZED_FOLDER_VALUE ? null : value,
+                );
+              }
+            }}
             disabled={is_submitting}
           >
             <SelectTrigger
@@ -220,6 +233,9 @@ export function DownloadSelection({
             </SelectTrigger>
             <SelectContent position="popper">
               <SelectGroup>
+                <SelectItem value={AUTOMATIC_FOLDER_VALUE}>
+                  自动分类（按合集名称）
+                </SelectItem>
                 <SelectItem value={UNCATEGORIZED_FOLDER_VALUE}>
                   未分类
                 </SelectItem>

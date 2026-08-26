@@ -190,15 +190,21 @@ describe("api client", () => {
       }),
     );
 
-    await expect(create_download(["https://b23.tv/test"])).resolves.toEqual(
-      response,
-    );
+    await expect(
+      create_download(["https://b23.tv/test"], undefined, {
+        folder_id: null,
+        automatic_folder_name: "测试合集",
+        assign_folder: true,
+      }),
+    ).resolves.toEqual(response);
     expect(fetch_mock).toHaveBeenCalledWith("/api/downloads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         source_urls: ["https://b23.tv/test"],
         folder_id: null,
+        automatic_folder_name: "测试合集",
+        assign_folder: true,
       }),
       signal: undefined,
     });

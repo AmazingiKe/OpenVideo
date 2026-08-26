@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,14 @@ function DialogStory() {
   );
 }
 
+function DarkDialogStory() {
+  useEffect(() => {
+    document.documentElement.classList.add("dark");
+    return () => document.documentElement.classList.remove("dark");
+  }, []);
+  return <DialogStory />;
+}
+
 const meta = {
   title: "Library/MoveToFolderDialog",
   component: DialogStory,
@@ -34,3 +42,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Open: Story = {};
+
+export const Dark: Story = {
+  render: () => <DarkDialogStory />,
+};

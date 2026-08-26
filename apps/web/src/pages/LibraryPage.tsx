@@ -557,7 +557,7 @@ export function LibraryPage() {
 
   return (
     <section
-      className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 px-4 py-8 md:px-8 md:py-10"
+      className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 px-4 py-8 select-none md:px-8 md:py-10"
       aria-labelledby="library_page_title"
     >
       <PageHeader
@@ -580,7 +580,17 @@ export function LibraryPage() {
         <aside className="hidden rounded-xl border bg-card p-3 md:block">
           {folder_tree}
         </aside>
-        <main className="flex min-w-0 flex-col gap-4">
+        <main
+          className="relative flex min-w-0 flex-col gap-4 outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          role="region"
+          aria-label="视频选择区域"
+          tabIndex={0}
+          onPointerDown={handle_selection_pointer_down}
+          onPointerMove={handle_selection_pointer_move}
+          onPointerUp={finish_marquee_selection}
+          onPointerCancel={finish_marquee_selection}
+          onKeyDown={handle_selection_key_down}
+        >
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
@@ -639,7 +649,7 @@ export function LibraryPage() {
               />
               <Input
                 type="search"
-                className="pl-9"
+                className="pl-9 select-text"
                 value={search}
                 onChange={(event) => set_search(event.target.value)}
                 placeholder="搜索标题或作者"
@@ -745,19 +755,10 @@ export function LibraryPage() {
           ) : (
             <div
               className={cn(
-                "relative outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/40",
                 view_mode === "grid"
                   ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
                   : "flex flex-col gap-3",
               )}
-              role="region"
-              aria-label="视频选择区域"
-              tabIndex={0}
-              onPointerDown={handle_selection_pointer_down}
-              onPointerMove={handle_selection_pointer_move}
-              onPointerUp={finish_marquee_selection}
-              onPointerCancel={finish_marquee_selection}
-              onKeyDown={handle_selection_key_down}
             >
               {assets.map((asset) => (
                 <LibraryVideoCard
@@ -840,6 +841,7 @@ export function LibraryPage() {
                 <FieldLabel htmlFor="folder_name">文件夹名称</FieldLabel>
                 <Input
                   id="folder_name"
+                  className="select-text"
                   value={folder_name}
                   onChange={(event) => set_folder_name(event.target.value)}
                   maxLength={100}
@@ -965,6 +967,7 @@ export function LibraryPage() {
                 </FieldLabel>
                 <Input
                   id="folder_delete_confirmation"
+                  className="select-text"
                   value={folder_confirmation}
                   onChange={(event) =>
                     set_folder_confirmation(event.target.value)

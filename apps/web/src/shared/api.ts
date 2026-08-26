@@ -12,6 +12,7 @@ import type {
   DownloadAccount,
   DownloadAccountLoginSession,
   DownloadCookieBrowser,
+  DownloadDestination,
   DownloadJob,
   HealthResponse,
   LibraryDescription,
@@ -321,12 +322,16 @@ export function probe_source(
 export function create_download(
   source_urls: string[],
   signal?: AbortSignal,
-  folder_id: string | null = null,
+  destination: DownloadDestination = {
+    folder_id: null,
+    automatic_folder_name: null,
+    assign_folder: false,
+  },
 ): Promise<DownloadJob[]> {
   return request_json("/api/downloads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_urls, folder_id }),
+    body: JSON.stringify({ source_urls, ...destination }),
     signal,
   });
 }

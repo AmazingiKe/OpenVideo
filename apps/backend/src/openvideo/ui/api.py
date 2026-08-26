@@ -254,6 +254,8 @@ class ProbeResponse(BaseModel):
 class BatchDownloadRequest(BaseModel):
     source_urls: list[str]
     folder_id: str | None = None
+    automatic_folder_name: str | None = None
+    assign_folder: bool = False
 
 
 class FolderCreateRequest(BaseModel):
@@ -811,7 +813,15 @@ def create_app(
             except UnsupportedSourceError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
         try:
-            jobs = manager.create_batch(matches, request.folder_id)
+            folder_id = request.folder_id
+            if folder_id is None and request.automatic_folder_name:
+                folder_id = library.create_or_get_root_folder(
+                    request.automatic_folder_name
+                ).folder_id
+            assign_ready_folder = request.assign_folder or bool(
+                request.automatic_folder_name
+            )
+            jobs = manager.create_batch(matches, folder_id, assign_ready_folder)
         except (FolderNotFoundError, ValueError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         for job in jobs:
