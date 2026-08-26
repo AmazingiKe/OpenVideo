@@ -28,14 +28,13 @@ type MarkdownEditorProps = {
 
 export function MarkdownEditor(props: MarkdownEditorProps) {
   return (
-    <MilkdownProvider>
+    <MilkdownProvider key={props.document_key}>
       <MarkdownEditorInner {...props} />
     </MilkdownProvider>
   );
 }
 
 function MarkdownEditorInner({
-  document_key,
   markdown,
   on_change,
   on_selection_change,
@@ -98,7 +97,7 @@ function MarkdownEditorInner({
       });
       return editor;
     },
-    [document_key, readonly],
+    [readonly],
   );
 
   useEffect(() => {

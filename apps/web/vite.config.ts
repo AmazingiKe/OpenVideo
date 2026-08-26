@@ -10,6 +10,11 @@ const current_directory = path.dirname(fileURLToPath(import.meta.url));
 const backend_origin = "http://127.0.0.1:38471";
 
 export default defineConfig({
+  define: {
+    __VUE_OPTIONS_API__: true,
+    __VUE_PROD_DEVTOOLS__: false,
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false,
+  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

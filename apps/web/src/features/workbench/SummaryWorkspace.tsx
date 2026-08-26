@@ -1,4 +1,5 @@
 import {
+  Component,
   useCallback,
   useEffect,
   useMemo,
@@ -13,6 +14,7 @@ import {
   Bot,
   ChevronDown,
   CircleCheck,
+  CircleX,
   Code2,
   Download,
   Eye,
@@ -159,7 +161,7 @@ const SUMMARY_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
   minute: "2-digit",
 });
 
-type SaveStatus = "saved" | "saving" | "failed" | "conflict";
+type SaveStatus = "saved" | "pending" | "saving" | "failed" | "conflict";
 
 type SummaryWorkspaceProps = {
   selected_asset: MediaAsset | null;
@@ -186,12 +188,20 @@ async function load_summary_project(
 ): Promise<SummaryProject> {
   const documents = await list_summary_documents(asset_id, signal);
   if (documents.length === 0) return EMPTY_SUMMARY_PROJECT;
-  const sessions = await list_summary_agent_sessions(asset_id, signal);
-  const active_session = sessions[0];
-  const session = active_session
-    ? await get_summary_agent_session(active_session.session.session_id, signal)
-    : null;
-  return { documents, sessions, session };
+  try {
+    const sessions = await list_summary_agent_sessions(asset_id, signal);
+    const active_session = sessions[0];
+    const session = active_session
+      ? await get_summary_agent_session(
+          active_session.session.session_id,
+          signal,
+        )
+      : null;
+    return { documents, sessions, session };
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return { documents, sessions: [], session: null };
+  }
 }
 
 export function SummaryWorkspace({
@@ -268,9 +278,11 @@ export function SummaryWorkspace({
   );
   const active_document_id_ref = useRef<string | null>(null);
   const active_document_revision_ref = useRef<number | null>(null);
+  const active_document_title_ref = useRef("");
   const draft_markdown_ref = useRef("");
   const draft_title_ref = useRef("");
   const dirty_ref = useRef(false);
+  const save_promise_ref = useRef<Promise<boolean> | null>(null);
   const project_loaded_ref = useRef(project_query.data !== undefined);
   const project_state_ref = useRef<SummaryProject>(initial_project);
 
@@ -291,6 +303,84 @@ export function SummaryWorkspace({
     dirty_ref.current = next_dirty;
     set_dirty(next_dirty);
   }, []);
+
+  const activate_document = useCallback(
+    (document: SummaryDocument) => {
+      active_document_id_ref.current = document.document_id;
+      active_document_revision_ref.current = document.revision;
+      active_document_title_ref.current = document.title;
+      draft_markdown_ref.current = document.markdown;
+      draft_title_ref.current = document.title;
+      set_draft_markdown(document.markdown);
+      set_draft_title(document.title);
+      update_dirty(false);
+      set_save_status("saved");
+      set_selection(null);
+    },
+    [update_dirty],
+  );
+
+  const save_active_draft = useCallback(async (): Promise<boolean> => {
+    const pending_save = save_promise_ref.current;
+    if (pending_save) return pending_save;
+    if (!dirty_ref.current) return true;
+
+    const document_id = active_document_id_ref.current;
+    const expected_revision = active_document_revision_ref.current;
+    if (!document_id || expected_revision === null) return false;
+
+    const markdown = draft_markdown_ref.current;
+    const draft_title = draft_title_ref.current;
+    const title = draft_title.trim() || active_document_title_ref.current;
+    set_save_status("saving");
+
+    const save_promise = update_summary_document(
+      document_id,
+      expected_revision,
+      {
+        markdown,
+        title,
+      },
+    )
+      .then((updated) => {
+        set_documents((current) =>
+          current.map((document) =>
+            document.document_id === updated.document_id ? updated : document,
+          ),
+        );
+        if (active_document_id_ref.current !== document_id) return true;
+
+        active_document_revision_ref.current = updated.revision;
+        active_document_title_ref.current = updated.title;
+        const current_title = draft_title_ref.current.trim() || updated.title;
+        const unchanged =
+          draft_markdown_ref.current === markdown && current_title === title;
+        if (unchanged && !draft_title.trim()) {
+          draft_title_ref.current = updated.title;
+          set_draft_title(updated.title);
+        }
+        update_dirty(!unchanged);
+        set_save_status(unchanged ? "saved" : "pending");
+        return true;
+      })
+      .catch((error: unknown) => {
+        if (active_document_id_ref.current === document_id) {
+          set_save_status(
+            error instanceof ApiError && error.status === 409
+              ? "conflict"
+              : "failed",
+          );
+        }
+        return false;
+      })
+      .finally(() => {
+        if (save_promise_ref.current === save_promise) {
+          save_promise_ref.current = null;
+        }
+      });
+    save_promise_ref.current = save_promise;
+    return save_promise;
+  }, [update_dirty]);
 
   const load_agent_session = useCallback(
     async (session_id: string, signal?: AbortSignal) => {
@@ -425,59 +515,48 @@ export function SummaryWorkspace({
     const revision_changed =
       active_document_revision_ref.current !== selected_document.revision;
     if (document_changed || (revision_changed && !dirty)) {
-      active_document_id_ref.current = selected_document.document_id;
-      active_document_revision_ref.current = selected_document.revision;
-      set_draft_markdown(selected_document.markdown);
-      set_draft_title(selected_document.title);
-      draft_markdown_ref.current = selected_document.markdown;
-      draft_title_ref.current = selected_document.title;
-      update_dirty(false);
-      set_save_status("saved");
-      set_selection(null);
+      activate_document(selected_document);
     }
-  }, [dirty, selected_document, update_dirty]);
+  }, [activate_document, dirty, selected_document]);
 
   useEffect(() => {
-    if (!selected_document || !dirty || save_status === "conflict") return;
-    const document_id = selected_document.document_id;
-    const expected_revision = selected_document.revision;
-    const markdown = draft_markdown;
-    const title = draft_title.trim() || selected_document.title;
+    if (
+      !selected_document ||
+      !dirty ||
+      save_status === "saving" ||
+      save_status === "conflict"
+    )
+      return;
     const timeout = window.setTimeout(() => {
-      set_save_status("saving");
-      void update_summary_document(document_id, expected_revision, {
-        markdown,
-        title,
-      })
-        .then((updated) => {
-          set_documents((current) =>
-            current.map((document) =>
-              document.document_id === updated.document_id ? updated : document,
-            ),
-          );
-          const unchanged =
-            draft_markdown_ref.current === markdown &&
-            draft_title_ref.current.trim() === title;
-          update_dirty(!unchanged);
-          set_save_status(unchanged ? "saved" : "saving");
-        })
-        .catch((error: unknown) => {
-          set_save_status(
-            error instanceof ApiError && error.status === 409
-              ? "conflict"
-              : "failed",
-          );
-        });
+      void save_active_draft();
     }, AUTO_SAVE_DELAY_MS);
     return () => window.clearTimeout(timeout);
   }, [
     dirty,
     draft_markdown,
     draft_title,
+    save_active_draft,
     save_status,
     selected_document,
-    update_dirty,
   ]);
+
+  async function select_document(document_id: string) {
+    if (selected_document_id === document_id) {
+      set_tree_sheet_open(false);
+      return;
+    }
+    const target_document = documents.find(
+      (document) => document.document_id === document_id,
+    );
+    if (!target_document) return;
+
+    while (dirty_ref.current || save_promise_ref.current) {
+      if (!(await save_active_draft())) return;
+    }
+    activate_document(target_document);
+    set_selected_document_id(document_id);
+    set_tree_sheet_open(false);
+  }
 
   async function generate_documents() {
     if (!selected_asset) return;
@@ -851,10 +930,7 @@ export function SummaryWorkspace({
       root={root_document}
       children={child_documents}
       selected_document_id={selected_document.document_id}
-      on_select={(document_id) => {
-        set_selected_document_id(document_id);
-        set_tree_sheet_open(false);
-      }}
+      on_select={(document_id) => void select_document(document_id)}
       on_create={() => set_new_document_open(true)}
       on_move={(document_id, direction) => move_child(document_id, direction)}
       on_reorder={(document_ids) => void reorder_children(document_ids)}
@@ -901,18 +977,18 @@ export function SummaryWorkspace({
         set_draft_title(title);
         draft_title_ref.current = title;
         update_dirty(true);
-        set_save_status("saving");
+        set_save_status("pending");
       }}
       on_markdown_change={(markdown) => {
         set_draft_markdown(markdown);
         draft_markdown_ref.current = markdown;
         update_dirty(true);
-        set_save_status("saving");
+        set_save_status("pending");
       }}
       on_mode_change={set_editor_mode}
       on_selection_change={set_selection}
       on_retry={() => {
-        set_save_status("saving");
+        set_save_status("pending");
         update_dirty(true);
       }}
       compact_actions={
@@ -1460,12 +1536,17 @@ function DocumentEditor({
         ) : null}
       </header>
       <TabsContent value="visual" className="min-h-0">
-        <MarkdownEditor
-          document_key={document.document_id}
-          markdown={markdown}
-          on_change={on_markdown_change}
-          on_selection_change={on_selection_change}
-        />
+        <MarkdownEditorErrorBoundary
+          document_id={document.document_id}
+          on_use_source={() => on_mode_change("source")}
+        >
+          <MarkdownEditor
+            document_key={document.document_id}
+            markdown={markdown}
+            on_change={on_markdown_change}
+            on_selection_change={on_selection_change}
+          />
+        </MarkdownEditorErrorBoundary>
       </TabsContent>
       <TabsContent value="source" className="min-h-0">
         <Textarea
@@ -1503,6 +1584,7 @@ function SaveState({
 }) {
   const labels: Record<SaveStatus, string> = {
     saved: "已保存",
+    pending: "等待保存",
     saving: "保存中",
     failed: "保存失败",
     conflict: "版本冲突",
@@ -1527,6 +1609,66 @@ function SaveState({
       {labels[status]}
     </Badge>
   );
+}
+
+type MarkdownEditorErrorBoundaryProps = {
+  document_id: string;
+  on_use_source: () => void;
+  children: ReactNode;
+};
+
+type MarkdownEditorErrorBoundaryState = {
+  failed: boolean;
+};
+
+class MarkdownEditorErrorBoundary extends Component<
+  MarkdownEditorErrorBoundaryProps,
+  MarkdownEditorErrorBoundaryState
+> {
+  state: MarkdownEditorErrorBoundaryState = { failed: false };
+
+  static getDerivedStateFromError(): MarkdownEditorErrorBoundaryState {
+    return { failed: true };
+  }
+
+  componentDidUpdate(previous: MarkdownEditorErrorBoundaryProps) {
+    if (this.state.failed && previous.document_id !== this.props.document_id) {
+      this.setState({ failed: false });
+    }
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="p-4">
+        <Alert variant="destructive">
+          <CircleX aria-hidden="true" />
+          <AlertTitle>可视化编辑器未能打开</AlertTitle>
+          <AlertDescription className="flex flex-col items-start gap-3">
+            <span>文档内容仍然安全，可切换到源码模式继续查看和编辑。</span>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={this.props.on_use_source}
+              >
+                <Code2 data-icon="inline-start" /> 使用源码模式
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => this.setState({ failed: false })}
+              >
+                重试可视化编辑器
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 }
 
 type AgentDisplayMessage = {
@@ -1850,10 +1992,7 @@ function SummaryAgentPanel({
               </div>
             </Message>
           ) : item.type === "tool" ? (
-            <AgentToolTrace
-              key={item.trace.call_id}
-              trace={item.trace}
-            />
+            <AgentToolTrace key={item.trace.call_id} trace={item.trace} />
           ) : (
             <ProposalCard
               key={item.proposal.proposal_id}

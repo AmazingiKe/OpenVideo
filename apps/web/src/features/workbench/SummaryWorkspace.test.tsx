@@ -27,20 +27,31 @@ function render(element: ReactElement) {
   return testing_render(element, { wrapper: ApplicationQueryProvider });
 }
 
+const markdown_editor_state = vi.hoisted(() => ({
+  failing_document_id: null as string | null,
+}));
+
 vi.mock("@/components/MarkdownEditor", () => ({
   MarkdownEditor: ({
+    document_key,
     markdown,
     on_change,
   }: {
+    document_key: string;
     markdown: string;
     on_change: (markdown: string) => void;
-  }) => (
-    <textarea
-      aria-label="可视化 Markdown"
-      value={markdown}
-      onChange={(event) => on_change(event.target.value)}
-    />
-  ),
+  }) => {
+    if (markdown_editor_state.failing_document_id === document_key) {
+      throw new Error("编辑器初始化失败");
+    }
+    return (
+      <textarea
+        aria-label="可视化 Markdown"
+        value={markdown}
+        onChange={(event) => on_change(event.target.value)}
+      />
+    );
+  },
 }));
 
 vi.mock("@/shared/api", async (import_original) => {
@@ -119,9 +130,20 @@ const DOCUMENT: SummaryDocument = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
+const CHILD_DOCUMENT: SummaryDocument = {
+  ...DOCUMENT,
+  document_id: "document-01890f4c7a2b7cc298c4dc0c0c073990",
+  parent_document_id: DOCUMENT.document_id,
+  title: "第一章",
+  markdown: "# 第一章\n\n子文档正文。\n",
+  relative_path: "docs/first-chapter.md",
+  position: 1,
+};
+
 describe("SummaryWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    markdown_editor_state.failing_document_id = null;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -238,6 +260,140 @@ describe("SummaryWorkspace", () => {
       { timeout: 2_000 },
     );
     expect(await screen.findByText("已保存")).toBeInTheDocument();
+  });
+
+  it("opens a generated child document with its markdown", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([
+      DOCUMENT,
+      CHILD_DOCUMENT,
+    ]);
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", {
+      name: "可视化 Markdown",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "文档" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: new RegExp(`^${CHILD_DOCUMENT.title}$`),
+      }),
+    );
+
+    await waitFor(() => expect(editor).toHaveValue(CHILD_DOCUMENT.markdown));
+    expect(screen.getByLabelText("文档标题")).toHaveValue(CHILD_DOCUMENT.title);
+  });
+
+  it("keeps documents available when Agent history cannot load", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([
+      DOCUMENT,
+      CHILD_DOCUMENT,
+    ]);
+    vi.mocked(list_summary_agent_sessions).mockRejectedValue(
+      new Error("Agent 服务暂时不可用"),
+    );
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("textbox", { name: "可视化 Markdown" }),
+    ).toHaveValue(DOCUMENT.markdown);
+    expect(
+      screen.queryByRole("button", { name: "生成主文档" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves pending edits before opening another document", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([
+      DOCUMENT,
+      CHILD_DOCUMENT,
+    ]);
+    vi.mocked(update_summary_document).mockResolvedValue({
+      ...DOCUMENT,
+      markdown: "# 尚未自动保存的修改\n",
+      revision: 2,
+    });
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    const editor = await screen.findByRole("textbox", {
+      name: "可视化 Markdown",
+    });
+    fireEvent.change(editor, {
+      target: { value: "# 尚未自动保存的修改\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "文档" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: new RegExp(`^${CHILD_DOCUMENT.title}$`),
+      }),
+    );
+
+    await waitFor(() =>
+      expect(update_summary_document).toHaveBeenCalledWith(
+        DOCUMENT.document_id,
+        1,
+        {
+          markdown: "# 尚未自动保存的修改\n",
+          title: DOCUMENT.title,
+        },
+      ),
+    );
+    await waitFor(() => expect(editor).toHaveValue(CHILD_DOCUMENT.markdown));
+  });
+
+  it("keeps the workspace available when the visual editor fails", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([
+      DOCUMENT,
+      CHILD_DOCUMENT,
+    ]);
+    markdown_editor_state.failing_document_id = CHILD_DOCUMENT.document_id;
+    const console_error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "文档" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: new RegExp(`^${CHILD_DOCUMENT.title}$`),
+      }),
+    );
+
+    expect(await screen.findByText("可视化编辑器未能打开")).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Markdown 总结工作台" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "使用源码模式" }));
+    expect(screen.getByRole("textbox", { name: "Markdown 源码" })).toHaveValue(
+      CHILD_DOCUMENT.markdown,
+    );
+    console_error.mockRestore();
   });
 
   it("refreshes a clean editor when the document event stream changes", async () => {

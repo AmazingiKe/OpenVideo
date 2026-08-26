@@ -37,7 +37,7 @@ export function AiModelSelect({
     <Field data-disabled={disabled || !has_options || undefined}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Select
-        value={value ?? (allow_without_model ? NO_AI_MODEL_VALUE : undefined)}
+        value={value ?? (allow_without_model ? NO_AI_MODEL_VALUE : "")}
         onValueChange={(next_value) =>
           on_change(next_value === NO_AI_MODEL_VALUE ? null : next_value)
         }
