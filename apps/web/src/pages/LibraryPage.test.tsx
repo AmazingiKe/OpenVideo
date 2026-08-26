@@ -107,7 +107,11 @@ describe("LibraryPage", () => {
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "选择 镜头语言入门" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "移动所选" }));
+    expect(
+      screen.queryByRole("button", { name: "移动所选" }),
+    ).not.toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByRole("group", { name: "镜头语言入门" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "移动所选" }));
     expect(
       screen.getByRole("dialog", { name: "移动视频" }),
     ).toBeInTheDocument();
@@ -191,18 +195,19 @@ describe("LibraryPage", () => {
     expect(second_checkbox).not.toBeChecked();
   });
 
-  it("keeps the whole library surface out of browser text selection", async () => {
+  it("limits selection handling to the video collection", async () => {
     render_page();
 
     const selection_region = await screen.findByRole("region", {
       name: "视频选择区域",
     });
     const page = selection_region.closest("section");
+    const searchbox = screen.getByRole("searchbox", { name: "搜索视频" });
 
-    expect(page).toHaveClass("select-none");
-    expect(screen.getByRole("searchbox", { name: "搜索视频" })).toHaveClass(
-      "select-text",
-    );
+    expect(page).not.toHaveClass("select-none");
+    expect(selection_region).toHaveClass("select-none");
+    expect(selection_region).not.toContainElement(searchbox);
+    expect(searchbox).toHaveClass("select-text");
   });
 
   it("selects every card intersecting the mouse marquee", async () => {
@@ -246,6 +251,44 @@ describe("LibraryPage", () => {
     expect(
       screen.getByRole("checkbox", { name: "选择 镜头语言进阶" }),
     ).not.toBeChecked();
+  });
+
+  it("drags the whole selection directly to a folder target", async () => {
+    vi.mocked(list_assets).mockResolvedValue([ASSET, SECOND_ASSET]);
+    render_page();
+
+    const first_card = await screen.findByRole("group", {
+      name: "镜头语言入门",
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择 镜头语言入门" }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择 镜头语言进阶" }),
+    );
+
+    const draggable_card = first_card.parentElement;
+    expect(draggable_card).toHaveAttribute("draggable", "true");
+    const data_transfer = {
+      effectAllowed: "none",
+      dropEffect: "none",
+      setData: vi.fn(),
+    };
+    fireEvent.dragStart(draggable_card as HTMLElement, {
+      dataTransfer: data_transfer,
+    });
+    const uncategorized = screen.getByRole("button", {
+      name: "未分类，0 个视频",
+    });
+    fireEvent.dragOver(uncategorized, { dataTransfer: data_transfer });
+    fireEvent.drop(uncategorized, { dataTransfer: data_transfer });
+
+    await waitFor(() =>
+      expect(move_assets).toHaveBeenCalledWith(
+        [ASSET_ID, SECOND_ASSET.asset_id],
+        null,
+      ),
+    );
   });
 
   it("requires the folder name before recursive deletion", async () => {

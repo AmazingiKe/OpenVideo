@@ -8,7 +8,12 @@ import {
   Trash2,
   Video,
 } from "lucide-react";
-import type { CSSProperties } from "react";
+import {
+  type CSSProperties,
+  type DragEvent,
+  type ReactNode,
+  useState,
+} from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +40,8 @@ type FolderTreeProps = {
   on_rename: (folder: LibraryFolder) => void;
   on_move: (folder: LibraryFolder) => void;
   on_delete: (folder: LibraryFolder) => void;
+  dragged_asset_count: number;
+  on_assets_drop: (folder_id: string | null) => void;
 };
 
 export function FolderTree({
@@ -48,6 +55,8 @@ export function FolderTree({
   on_rename,
   on_move,
   on_delete,
+  dragged_asset_count,
+  on_assets_drop,
 }: FolderTreeProps) {
   const total_count = folders.reduce(
     (count, folder) =>
@@ -64,13 +73,22 @@ export function FolderTree({
         selected={selected_scope === "all"}
         on_click={() => on_select("all")}
       />
-      <ScopeButton
-        icon={Folder}
-        label="未分类"
-        count={uncategorized_count}
-        selected={selected_scope === "uncategorized"}
-        on_click={() => on_select("uncategorized")}
-      />
+      <FolderDropTarget
+        target_folder_id={null}
+        dragged_asset_count={dragged_asset_count}
+        on_assets_drop={on_assets_drop}
+      >
+        {(drop_active) => (
+          <ScopeButton
+            icon={Folder}
+            label="未分类"
+            count={uncategorized_count}
+            selected={selected_scope === "uncategorized"}
+            drop_active={drop_active}
+            on_click={() => on_select("uncategorized")}
+          />
+        )}
+      </FolderDropTarget>
       <div className="mt-3 flex items-center justify-between px-2">
         <p className="text-xs font-medium text-muted-foreground">文件夹</p>
         <Button
@@ -98,6 +116,8 @@ export function FolderTree({
             on_rename={on_rename}
             on_move={on_move}
             on_delete={on_delete}
+            dragged_asset_count={dragged_asset_count}
+            on_assets_drop={on_assets_drop}
           />
         ))}
       </div>
@@ -117,6 +137,8 @@ function FolderTreeItem({
   on_rename,
   on_move,
   on_delete,
+  dragged_asset_count,
+  on_assets_drop,
 }: Omit<FolderTreeProps, "uncategorized_count"> & {
   folder: LibraryFolder;
   depth: number;
@@ -127,79 +149,90 @@ function FolderTreeItem({
 
   return (
     <div role="treeitem" aria-expanded={has_children ? is_expanded : undefined}>
-      <div
-        className={cn(
-          "group flex min-h-8 items-center rounded-lg [padding-inline-start:calc(var(--folder-depth)*var(--spacing)*4)] transition-colors hover:bg-muted",
-          selected_scope === folder.folder_id && "bg-muted",
-        )}
-        style={{ "--folder-depth": depth } as CSSProperties}
+      <FolderDropTarget
+        target_folder_id={folder.folder_id}
+        dragged_asset_count={dragged_asset_count}
+        on_assets_drop={on_assets_drop}
       >
-        {has_children ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={
-              is_expanded ? `收起 ${folder.name}` : `展开 ${folder.name}`
-            }
-            onClick={() => on_toggle(folder.folder_id)}
+        {(drop_active) => (
+          <div
+            className={cn(
+              "group flex min-h-8 items-center rounded-lg [padding-inline-start:calc(var(--folder-depth)*var(--spacing)*4)] transition-colors hover:bg-muted",
+              selected_scope === folder.folder_id && "bg-muted",
+              drop_active && "bg-primary/10 ring-2 ring-primary/40",
+            )}
+            style={{ "--folder-depth": depth } as CSSProperties}
           >
-            {is_expanded ? <ChevronDown /> : <ChevronRight />}
-          </Button>
-        ) : (
-          <span className="size-7 shrink-0" aria-hidden="true" />
-        )}
-        <button
-          type="button"
-          aria-label={`${folder.name}，${folder.direct_asset_count} 个视频`}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left text-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-          onClick={() => on_select(folder.folder_id)}
-        >
-          <Folder
-            className="size-4 shrink-0 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <span className="truncate">{folder.name}</span>
-          <Badge className="ml-auto" variant="secondary">
-            {folder.direct_asset_count}
-          </Badge>
-        </button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`${folder.name} 操作`}
-            >
-              <MoreHorizontal />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={() => on_create(folder.folder_id)}>
-                <FolderPlus />
-                新建子文件夹
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => on_rename(folder)}>
-                <Pencil />
-                重命名
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => on_move(folder)}>
-                <Folder />
-                移动
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => on_delete(folder)}
+            {has_children ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={
+                  is_expanded ? `收起 ${folder.name}` : `展开 ${folder.name}`
+                }
+                onClick={() => on_toggle(folder.folder_id)}
               >
-                <Trash2 />
-                永久删除
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+                {is_expanded ? <ChevronDown /> : <ChevronRight />}
+              </Button>
+            ) : (
+              <span className="size-7 shrink-0" aria-hidden="true" />
+            )}
+            <button
+              type="button"
+              aria-label={`${folder.name}，${folder.direct_asset_count} 个视频${drop_active ? `，释放以移动 ${dragged_asset_count} 个视频` : ""}`}
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left text-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+              onClick={() => on_select(folder.folder_id)}
+            >
+              <Folder
+                className="size-4 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <span className="truncate">{folder.name}</span>
+              <Badge className="ml-auto" variant="secondary">
+                {folder.direct_asset_count}
+              </Badge>
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`${folder.name} 操作`}
+                >
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem
+                    onSelect={() => on_create(folder.folder_id)}
+                  >
+                    <FolderPlus />
+                    新建子文件夹
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => on_rename(folder)}>
+                    <Pencil />
+                    重命名
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => on_move(folder)}>
+                    <Folder />
+                    移动
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => on_delete(folder)}
+                  >
+                    <Trash2 />
+                    永久删除
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+      </FolderDropTarget>
       {has_children && is_expanded ? (
         <div role="group">
           {children.map((child) => (
@@ -216,6 +249,8 @@ function FolderTreeItem({
               on_rename={on_rename}
               on_move={on_move}
               on_delete={on_delete}
+              dragged_asset_count={dragged_asset_count}
+              on_assets_drop={on_assets_drop}
             />
           ))}
         </div>
@@ -229,12 +264,14 @@ function ScopeButton({
   label,
   count,
   selected,
+  drop_active = false,
   on_click,
 }: {
   icon: typeof Video;
   label: string;
   count: number;
   selected: boolean;
+  drop_active?: boolean;
   on_click: () => void;
 }) {
   return (
@@ -242,7 +279,10 @@ function ScopeButton({
       type="button"
       aria-label={`${label}，${count} 个视频`}
       variant={selected ? "secondary" : "ghost"}
-      className="justify-start"
+      className={cn(
+        "w-full justify-start",
+        drop_active && "bg-primary/10 ring-2 ring-primary/40",
+      )}
       onClick={on_click}
     >
       <ScopeIcon data-icon="inline-start" />
@@ -251,6 +291,56 @@ function ScopeButton({
         {count}
       </Badge>
     </Button>
+  );
+}
+
+function FolderDropTarget({
+  target_folder_id,
+  dragged_asset_count,
+  on_assets_drop,
+  children,
+}: {
+  target_folder_id: string | null;
+  dragged_asset_count: number;
+  on_assets_drop: (folder_id: string | null) => void;
+  children: (drop_active: boolean) => ReactNode;
+}) {
+  const [drop_active, set_drop_active] = useState(false);
+  const enabled = dragged_asset_count > 0;
+
+  function handle_drag_over(event: DragEvent<HTMLDivElement>) {
+    if (!enabled) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    set_drop_active(true);
+  }
+
+  function handle_drag_leave(event: DragEvent<HTMLDivElement>) {
+    const next_target = event.relatedTarget;
+    if (
+      next_target instanceof Node &&
+      event.currentTarget.contains(next_target)
+    ) {
+      return;
+    }
+    set_drop_active(false);
+  }
+
+  function handle_drop(event: DragEvent<HTMLDivElement>) {
+    if (!enabled) return;
+    event.preventDefault();
+    set_drop_active(false);
+    on_assets_drop(target_folder_id);
+  }
+
+  return (
+    <div
+      onDragOver={handle_drag_over}
+      onDragLeave={handle_drag_leave}
+      onDrop={handle_drop}
+    >
+      {children(drop_active)}
+    </div>
   );
 }
 

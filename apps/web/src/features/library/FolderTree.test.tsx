@@ -40,16 +40,54 @@ describe("FolderTree", () => {
         on_rename={vi.fn()}
         on_move={vi.fn()}
         on_delete={vi.fn()}
+        dragged_asset_count={0}
+        on_assets_drop={vi.fn()}
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "镜头，1 个视频" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "镜头，1 个视频" }));
     expect(on_select).toHaveBeenCalledWith(CHILD.folder_id);
     expect(
       screen.getByRole("button", { name: "未分类，3 个视频" }),
     ).toBeVisible();
+  });
+
+  it("accepts selected videos on folders and uncategorized", () => {
+    const on_assets_drop = vi.fn();
+    render(
+      <FolderTree
+        folders={[ROOT]}
+        selected_scope="all"
+        expanded_folder_ids={new Set()}
+        uncategorized_count={3}
+        on_select={vi.fn()}
+        on_toggle={vi.fn()}
+        on_create={vi.fn()}
+        on_rename={vi.fn()}
+        on_move={vi.fn()}
+        on_delete={vi.fn()}
+        dragged_asset_count={2}
+        on_assets_drop={on_assets_drop}
+      />,
+    );
+
+    const course_button = screen.getByRole("button", {
+      name: "课程，1 个视频",
+    });
+    const data_transfer = { dropEffect: "none" };
+    fireEvent.dragOver(course_button, { dataTransfer: data_transfer });
+    expect(course_button).toHaveAccessibleName(
+      "课程，1 个视频，释放以移动 2 个视频",
+    );
+    fireEvent.drop(course_button, { dataTransfer: data_transfer });
+    expect(on_assets_drop).toHaveBeenCalledWith(ROOT.folder_id);
+
+    const uncategorized_button = screen.getByRole("button", {
+      name: "未分类，3 个视频",
+    });
+    fireEvent.dragOver(uncategorized_button, { dataTransfer: data_transfer });
+    fireEvent.drop(uncategorized_button, { dataTransfer: data_transfer });
+    expect(on_assets_drop).toHaveBeenCalledWith(null);
   });
 
   it("builds readable nested destination labels", () => {

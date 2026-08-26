@@ -1,4 +1,4 @@
-import type { LibraryFolder } from "@/shared/types";
+import type { LibraryFolder, MediaAsset } from "@/shared/types";
 
 export const STORY_FOLDERS: LibraryFolder[] = [
   {
@@ -19,6 +19,55 @@ export const STORY_FOLDERS: LibraryFolder[] = [
       "/folder-019c0000000070008000000000000001/folder-019c0000000070008000000000000002/",
     direct_asset_count: 2,
     recursive_asset_count: 2,
+    created_at: "2026-01-02T00:00:00Z",
+    updated_at: "2026-01-02T00:00:00Z",
+  },
+];
+
+export const STORY_ASSETS: MediaAsset[] = [
+  {
+    asset_id: "019c0000-0000-7000-8000-000000000001",
+    folder_id: STORY_FOLDERS[0].folder_id,
+    media_type: "video",
+    source_url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    source_platform: "bilibili",
+    source_video_id: "BV1xx411c7mD",
+    title: "从镜头语言理解电影叙事",
+    author_name: "开放影像课",
+    description: "课程简介",
+    duration_seconds: 1280,
+    width: 1920,
+    height: 1080,
+    video_codec: "h264",
+    audio_codec: "aac",
+    status: "ready",
+    error_message: null,
+    playback_url: "/stream",
+    thumbnail_url: null,
+    thumbnail_storyboard: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    asset_id: "019c0000-0000-7000-8000-000000000002",
+    folder_id: STORY_FOLDERS[1].folder_id,
+    media_type: "video",
+    source_url: "https://www.bilibili.com/video/BV1xx411c7mE",
+    source_platform: "bilibili",
+    source_video_id: "BV1xx411c7mE",
+    title: "景别与构图的叙事作用",
+    author_name: "开放影像课",
+    description: "课程简介",
+    duration_seconds: 960,
+    width: 1920,
+    height: 1080,
+    video_codec: "h264",
+    audio_codec: "aac",
+    status: "ready",
+    error_message: null,
+    playback_url: "/stream",
+    thumbnail_url: null,
+    thumbnail_storyboard: null,
     created_at: "2026-01-02T00:00:00Z",
     updated_at: "2026-01-02T00:00:00Z",
   },

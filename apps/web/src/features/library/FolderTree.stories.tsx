@@ -4,7 +4,11 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { FolderTree, type LibraryScope } from "@/features/library/FolderTree";
 import { STORY_FOLDERS } from "@/features/library/library_story_fixtures";
 
-function StatefulFolderTree() {
+function StatefulFolderTree({
+  dragged_asset_count = 0,
+}: {
+  dragged_asset_count?: number;
+}) {
   const [scope, set_scope] = useState<LibraryScope>("all");
   const [expanded, set_expanded] = useState(
     new Set([STORY_FOLDERS[0].folder_id]),
@@ -28,6 +32,8 @@ function StatefulFolderTree() {
       on_rename={() => undefined}
       on_move={() => undefined}
       on_delete={() => undefined}
+      dragged_asset_count={dragged_asset_count}
+      on_assets_drop={() => undefined}
     />
   );
 }
@@ -48,3 +54,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Nested: Story = {};
+
+export const DraggingTwoVideos: Story = {
+  args: { dragged_asset_count: 2 },
+};
