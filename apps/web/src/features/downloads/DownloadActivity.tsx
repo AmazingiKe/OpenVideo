@@ -234,7 +234,7 @@ function DownloadTask({
   const stage_label = TASK_STAGE_LABELS[task.stage] ?? task.stage;
   const is_failed = task.stage === "failed";
   return (
-    <li className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+    <li className="flex flex-col gap-2 rounded-lg border bg-surface-subtle p-3">
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
         <Badge variant={task.stage === "failed" ? "destructive" : "secondary"}>
           {stage_label}

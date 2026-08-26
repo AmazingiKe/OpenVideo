@@ -185,7 +185,7 @@ export function DownloadAccountsCard({
       <Card>
         <CardHeader className="border-b">
           <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-primary-muted text-primary">
               <UserRoundCheck aria-hidden="true" />
             </div>
             <div>

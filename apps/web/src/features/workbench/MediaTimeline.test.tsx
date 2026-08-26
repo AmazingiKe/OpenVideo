@@ -10,6 +10,8 @@ type MockClip = {
   label: string;
   timelineStart: number;
   timelineEnd: number;
+  color?: string;
+  opacity?: number;
   metadata: {
     kind: string;
     source_id?: string;
@@ -280,6 +282,10 @@ describe("MediaTimeline", () => {
     expect(screen.getByLabelText("canvas-item-marker")).toBeInTheDocument();
     expect(screen.getByLabelText("canvas-item-transcript")).toBeInTheDocument();
     expect(screen.getByLabelText("canvas-item-event")).toBeInTheDocument();
+    const marker_clip =
+      timeline_mock.create_engine.mock.calls[0]?.[0].tracks[0].clips[0];
+    expect(marker_clip).toMatchObject({ opacity: 0 });
+    expect(marker_clip).not.toHaveProperty("color");
     expect(
       screen.getByRole("complementary", { name: "时间线轨道" }),
     ).toBeInTheDocument();

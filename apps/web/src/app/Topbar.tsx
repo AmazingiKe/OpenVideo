@@ -65,7 +65,7 @@ export function Topbar({ assets, selected_asset_id }: TopbarProps) {
   }, []);
 
   return (
-    <header className="grid min-h-14 grid-cols-[1fr_auto] items-center gap-x-3 border-b bg-background/95 px-3 py-2 backdrop-blur-sm md:grid-cols-[minmax(10rem,1fr)_auto_minmax(10rem,1fr)] md:px-5">
+    <header className="grid min-h-14 grid-cols-[1fr_auto] items-center gap-x-3 border-b bg-surface-translucent px-3 py-2 backdrop-blur-sm md:grid-cols-[minmax(10rem,1fr)_auto_minmax(10rem,1fr)] md:px-5">
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <Clapperboard className="size-4" aria-hidden="true" />
@@ -88,7 +88,7 @@ export function Topbar({ assets, selected_asset_id }: TopbarProps) {
               onFocus={() => preload_component(module.load_component)}
               className={({ isActive }) =>
                 cn(
-                  "flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+                  "flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-focus-ring focus-visible:outline-none",
                   isActive && "bg-muted text-foreground",
                 )
               }
@@ -110,7 +110,7 @@ export function Topbar({ assets, selected_asset_id }: TopbarProps) {
         <NavLink
           className={({ isActive }) =>
             cn(
-              "flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+              "flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-focus-ring focus-visible:outline-none",
               isActive && "bg-muted text-foreground",
             )
           }

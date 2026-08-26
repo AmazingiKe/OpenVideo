@@ -60,8 +60,8 @@ export function LibraryVideoCard({
     <Card
       size="sm"
       className={cn(
-        "transition-shadow focus-within:ring-2 focus-within:ring-ring/40",
-        selected && "ring-2 ring-primary/40",
+        "transition-shadow focus-within:ring-2 focus-within:ring-focus-subtle",
+        selected && "ring-2 ring-primary-selected",
         view_mode === "list" &&
           "sm:grid sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-center",
       )}

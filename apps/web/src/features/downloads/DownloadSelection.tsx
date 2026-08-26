@@ -158,10 +158,10 @@ export function DownloadSelection({
             return (
               <li
                 key={entry.source_video_id}
-                className="border-b last:border-b-0 has-data-checked:bg-primary/5"
+                className="border-b last:border-b-0 has-data-checked:bg-primary-subtle"
               >
                 <label
-                  className="grid min-h-14 cursor-pointer grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 transition-colors hover:bg-muted/50"
+                  className="grid min-h-14 cursor-pointer grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 transition-colors hover:bg-surface-hover"
                   htmlFor={checkbox_id}
                 >
                   <Checkbox

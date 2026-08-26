@@ -12,7 +12,7 @@ export function LibrarySetup({
   on_library_opened: (library: LibraryDescription) => void;
 }) {
   return (
-    <main className="min-h-svh bg-muted/30 px-4 py-12 md:px-8 md:py-20">
+    <main className="min-h-svh bg-surface-muted px-4 py-12 md:px-8 md:py-20">
       <section
         className="mx-auto flex w-full max-w-6xl flex-col gap-8"
         aria-labelledby="library_setup_title"

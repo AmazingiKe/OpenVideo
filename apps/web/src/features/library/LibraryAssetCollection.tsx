@@ -275,7 +275,7 @@ export function LibraryAssetCollection({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          className="relative rounded-xl outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          className="relative rounded-xl outline-none select-none focus-visible:ring-2 focus-visible:ring-focus-subtle"
           role="region"
           aria-label="视频选择区域"
           tabIndex={0}
@@ -338,7 +338,7 @@ export function LibraryAssetCollection({
           </div>
           {selection_rectangle ? (
             <div
-              className="pointer-events-none absolute rounded-sm border border-primary bg-primary/10"
+              className="pointer-events-none absolute rounded-sm border border-primary bg-primary-muted"
               style={selection_rectangle satisfies CSSProperties}
               aria-hidden="true"
             />

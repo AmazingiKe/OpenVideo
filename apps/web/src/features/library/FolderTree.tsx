@@ -159,7 +159,7 @@ function FolderTreeItem({
             className={cn(
               "group flex min-h-8 items-center rounded-lg [padding-inline-start:calc(var(--folder-depth)*var(--spacing)*4)] transition-colors hover:bg-muted",
               selected_scope === folder.folder_id && "bg-muted",
-              drop_active && "bg-primary/10 ring-2 ring-primary/40",
+              drop_active && "bg-primary-muted ring-2 ring-primary-selected",
             )}
             style={{ "--folder-depth": depth } as CSSProperties}
           >
@@ -181,7 +181,7 @@ function FolderTreeItem({
             <button
               type="button"
               aria-label={`${folder.name}，${folder.direct_asset_count} 个视频${drop_active ? `，释放以移动 ${dragged_asset_count} 个视频` : ""}`}
-              className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left text-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left text-sm focus-visible:ring-3 focus-visible:ring-focus-ring focus-visible:outline-none"
               onClick={() => on_select(folder.folder_id)}
             >
               <Folder
@@ -281,7 +281,7 @@ function ScopeButton({
       variant={selected ? "secondary" : "ghost"}
       className={cn(
         "w-full justify-start",
-        drop_active && "bg-primary/10 ring-2 ring-primary/40",
+        drop_active && "bg-primary-muted ring-2 ring-primary-selected",
       )}
       onClick={on_click}
     >

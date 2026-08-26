@@ -605,7 +605,7 @@ export function AnalysisToolPanel({
                 ))}
               </div>
               <Field
-                className="rounded-lg border bg-muted/30 p-3"
+                className="rounded-lg border bg-surface-muted p-3"
                 data-disabled={
                   is_analyzing || markers.length === 0 || undefined
                 }

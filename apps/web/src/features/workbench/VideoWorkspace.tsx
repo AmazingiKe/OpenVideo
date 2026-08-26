@@ -112,8 +112,8 @@ export function VideoWorkspace({
         </p>
       </header>
       <div className="workspace_stage flex min-h-0 flex-1">
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-[var(--player-canvas)]">
-          <div className="min-h-56 flex-1 bg-[var(--player-canvas)] p-5 pb-2 max-[600px]:p-2 max-[600px]:pb-1">
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-player-canvas">
+          <div className="min-h-56 flex-1 bg-player-canvas p-5 pb-2 max-[600px]:p-2 max-[600px]:pb-1">
             <Player
               key={asset.asset_id}
               ref={player_ref}
@@ -142,7 +142,7 @@ export function VideoWorkspace({
             />
           </div>
           <div
-            className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-t bg-background/95 px-4 max-[600px]:grid-cols-[auto_minmax(0,1fr)] max-[600px]:gap-2 max-[600px]:px-2"
+            className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-t bg-surface-translucent px-4 max-[600px]:grid-cols-[auto_minmax(0,1fr)] max-[600px]:gap-2 max-[600px]:px-2"
             aria-label="播放控制"
           >
             <div className="col-start-2 flex items-center gap-2 max-[600px]:col-start-1">

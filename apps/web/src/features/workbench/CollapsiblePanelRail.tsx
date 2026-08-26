@@ -22,7 +22,7 @@ export function CollapsiblePanelRail({
   return (
     <button
       className={cn(
-        "flex h-full flex-col items-center gap-2 border-x bg-card px-1 py-3 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+        "flex h-full flex-col items-center gap-2 border-x bg-card px-1 py-3 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-focus-ring focus-visible:outline-none",
         edge === "right" && "ml-auto",
       )}
       style={{ width: PANEL_RAIL_WIDTH_PX }}

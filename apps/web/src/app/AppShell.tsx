@@ -28,7 +28,7 @@ export function AppShell() {
             "min-h-0",
             is_markers_page
               ? "grid grid-rows-[minmax(0,1fr)_262px] overflow-hidden max-[820px]:grid-rows-[minmax(460px,1fr)_238px]"
-              : "overflow-auto bg-muted/20",
+              : "overflow-auto bg-surface-subtle",
           )}
         >
           <Outlet />

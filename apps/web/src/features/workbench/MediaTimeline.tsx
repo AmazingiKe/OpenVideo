@@ -80,8 +80,7 @@ const MARKER_TRACK_ID = "timeline-marker-track";
 const TRANSCRIPT_TRACK_ID = "timeline-transcript-track";
 const EVENT_TRACK_ID = "timeline-event-track";
 const TIMELINE_RULER_HEIGHT = 32;
-const TRANSPARENT_CLIP_COLOR = "#00000000";
-const INVISIBLE_CLIP_OPACITY = 0.001;
+const INVISIBLE_CLIP_OPACITY = 0;
 const DEFAULT_MARKER_HIT_DURATION_SECONDS = 0.4;
 const EMPTY_MARKERS: MediaMarker[] = [];
 
@@ -849,7 +848,7 @@ export function MediaTimeline({
                 ) : null}
               </div>
               <section
-                className="flex flex-col gap-4 rounded-lg border bg-muted/30 p-4"
+                className="flex flex-col gap-4 rounded-lg border bg-surface-muted p-4"
                 aria-labelledby="marker-influence-range-title"
               >
                 <div className="flex flex-col gap-1">
@@ -1253,7 +1252,6 @@ function create_marker_clip(
 function invisible_marker_clip(clip: Clip): Clip {
   return {
     ...clip,
-    color: TRANSPARENT_CLIP_COLOR,
     opacity: INVISIBLE_CLIP_OPACITY,
   };
 }
