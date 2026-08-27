@@ -8,13 +8,7 @@ import {
   Captions,
   Flag,
   LockKeyhole,
-  Minus,
-  Pause,
-  Play,
-  Plus,
-  RotateCcw,
   ScanSearch,
-  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -32,18 +26,6 @@ import {
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuGroup,
@@ -53,38 +35,7 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverAnchor,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-} from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
-import { Spinner } from "@/components/ui/spinner";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { cn } from "@/lib/utils";
-import { format_time } from "@/shared/format";
-import {
-  format_marker_importance,
-  format_marker_label,
-} from "@/shared/marker_labels";
+import { format_marker_importance } from "@/shared/marker_labels";
 import type {
   AnalysisStrategy,
   MarkerImportance,
@@ -94,51 +45,46 @@ import type {
   Transcript,
 } from "@/shared/types";
 import { TimelineRulerCanvas } from "./TimelineRulerCanvas";
+import { MediaTimelineMarkerEditor } from "./MediaTimelineMarkerEditor";
+import { MediaTimelineActionContent } from "./MediaTimelineActionContent";
+import { MediaTimelineToolbar } from "./MediaTimelineToolbar";
+import { MediaTimelineTranscriptEditor } from "./MediaTimelineTranscriptEditor";
+import {
+  DEFAULT_ZOOM_PIXELS_PER_SECOND,
+  MARKER_SHAPE_VALUES,
+  MINIMUM_ACTION_DURATION_SECONDS,
+  TIMELINE_ROW_HEIGHT,
+  TIMELINE_START_LEFT,
+  TIMELINE_TRACK_IDS,
+  build_timeline_rows,
+  calculate_zoom_viewport,
+  consume_timeline_wheel_zoom_frame,
+  create_timeline_render_window,
+  extend_timeline_render_window,
+  filter_timeline_rows_for_window,
+  normalize_wheel_delta,
+  round_marker_time,
+  timeline_content_duration,
+  timeline_render_windows_equal,
+  update_timeline_render_window,
+  type MediaTimelineAction,
+  type TimelineAction,
+  type TimelineRenderWindow,
+  type TimelineViewportState,
+  type TimelineWheelZoomEvent,
+  type TimelineZoomViewport,
+} from "./media_timeline_calculations";
 
-const MINIMUM_DURATION_SECONDS = 1;
-const MINIMUM_ACTION_DURATION_SECONDS = 0.05;
-const MARKER_TIME_STEP_SECONDS = 0.05;
-const DEFAULT_POINT_HIT_DURATION_SECONDS = 0.4;
-const DEFAULT_ZOOM_PIXELS_PER_SECOND = 80;
-const MINIMUM_ZOOM_PIXELS_PER_SECOND = 4;
-const MAXIMUM_ZOOM_PIXELS_PER_SECOND = 320;
-const ZOOM_BUTTON_FACTOR = 1.25;
 const ALT_WHEEL_ZOOM_SENSITIVITY = -0.001;
-const WHEEL_DELTA_MODE_PIXEL = 0;
-const WHEEL_DELTA_MODE_LINE = 1;
-const WHEEL_DELTA_MODE_PAGE = 2;
-const WHEEL_LINE_HEIGHT_PIXELS = 16;
-const MINIMUM_WHEEL_FRAME_FACTOR = 0.8;
-const MAXIMUM_WHEEL_FRAME_FACTOR = 1.25;
 const WHEEL_ZOOM_IDLE_MILLISECONDS = 100;
-const WHEEL_ZOOM_EPSILON = 1e-9;
-const TIMELINE_START_LEFT = 16;
-const TIMELINE_ROW_HEIGHT = 48;
 const TIMELINE_SCALE_SECONDS = 1;
 const TIMELINE_SCALE_SPLIT_COUNT = 1;
 const DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS = 1024;
-const RENDER_WINDOW_BUFFER_VIEWPORTS = 0.5;
-const RENDER_WINDOW_COVERAGE_MARGIN_VIEWPORTS = 0.1;
-const RENDER_WINDOW_MOVEMENT_THRESHOLD_VIEWPORTS = 0.25;
-const MARKER_EDITOR_OFFSET = 8;
-const MARKER_EDITOR_COLLISION_PADDING = 8;
 const VIRTUALIZED_GRID_SELECTOR = ".ReactVirtualized__Grid";
 const VIRTUALIZED_GRID_ROLE_SELECTOR = '[role="row"], [role="gridcell"]';
 const EMPTY_MARKERS: MediaMarker[] = [];
 const EMPTY_TIMELINE_EFFECTS: TimelineEditor["effects"] = {};
 const MARKER_IMPORTANCE_VALUES: MarkerImportance[] = [0, 1, 2, 3, 4, 5];
-const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
-
-const TIMELINE_TRACK_IDS = {
-  marker: "timeline-marker-track",
-  transcript: "timeline-transcript-track",
-  event: "timeline-event-track",
-} as const;
-
-const MARKER_SHAPE_VALUES = {
-  point: "point",
-  range: "range",
-} as const;
 
 function normalize_virtualized_timeline_accessibility(root: Element) {
   const grids = root.matches(VIRTUALIZED_GRID_SELECTOR)
@@ -155,48 +101,6 @@ function normalize_virtualized_timeline_accessibility(root: Element) {
     : [...root.querySelectorAll(VIRTUALIZED_GRID_ROLE_SELECTOR)];
   for (const element of role_elements) element.removeAttribute("role");
 }
-
-type TimelineRow = TimelineEditor["editorData"][number];
-type TimelineAction = TimelineRow["actions"][number];
-type TimelineActionKind = "marker" | "candidate" | "transcript" | "event";
-type MarkerShape =
-  (typeof MARKER_SHAPE_VALUES)[keyof typeof MARKER_SHAPE_VALUES];
-
-type TimelineActionData = {
-  kind: TimelineActionKind;
-  label: string;
-  source_id?: string;
-  source_index?: number;
-  marker_shape?: MarkerShape;
-  marker_anchor_seconds?: number;
-  rendered_start_seconds?: number;
-};
-
-type MediaTimelineAction = TimelineAction & {
-  data: TimelineActionData;
-};
-
-type TimelineViewportState = {
-  zoom_pixels_per_second: number;
-  scroll_left: number;
-  scroll_top: number;
-};
-
-type TimelineZoomViewport = Pick<
-  TimelineViewportState,
-  "zoom_pixels_per_second" | "scroll_left"
->;
-
-type TimelineWheelZoomEvent = {
-  logarithmic_delta: number;
-  anchor_x: number;
-  viewport_width: number;
-};
-
-type TimelineRenderWindow = {
-  start_seconds: number;
-  end_seconds: number;
-};
 
 type TimelinePointerPosition = {
   x: number;
@@ -788,385 +692,43 @@ export function MediaTimeline({
     }
   }
 
-  function render_action(action: TimelineAction) {
-    const media_action = action as MediaTimelineAction;
-    const marker_anchor_position = marker_anchor_percent(media_action);
-    return (
-      <button
-        type="button"
-        className={cn(
-          "timeline_action_content",
-          `timeline_action_${media_action.data.kind}`,
-        )}
-        data-shape={media_action.data.marker_shape}
-        data-selected={media_action.selected || undefined}
-        aria-label={timeline_action_aria_label(media_action)}
-        aria-pressed={
-          media_action.data.kind === "marker"
-            ? Boolean(media_action.selected)
-            : undefined
-        }
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            const bounds = event.currentTarget.getBoundingClientRect();
-            open_action_editor(media_action, {
-              x: bounds.left + bounds.width / 2,
-              y: bounds.bottom,
-            });
-            return;
-          }
-          const opens_context_menu =
-            event.key === "ContextMenu" ||
-            (event.shiftKey && event.key === "F10");
-          if (!opens_context_menu) return;
-          event.preventDefault();
-          const bounds = event.currentTarget.getBoundingClientRect();
-          event.currentTarget.dispatchEvent(
-            new globalThis.MouseEvent("contextmenu", {
-              bubbles: true,
-              cancelable: true,
-              clientX: bounds.left + bounds.width / 2,
-              clientY: bounds.bottom,
-            }),
-          );
-        }}
-      >
-        {marker_anchor_position !== null ? (
-          <span
-            className="timeline_action_marker_anchor"
-            style={{ left: `${marker_anchor_position}%` }}
-            aria-hidden
-          />
-        ) : null}
-        <span className="timeline_action_label" aria-hidden>
-          {media_action.data.label}
-        </span>
-      </button>
-    );
-  }
-
   return (
     <section className="media_timeline" aria-label="剪辑时间轴">
-      <div className="media_timeline_toolbar" aria-label="时间线工具栏">
-        <div className="media_timeline_transport">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={on_toggle_playback}
-            aria-label={is_paused ? "播放" : "暂停"}
-          >
-            {is_paused ? (
-              <Play data-icon="inline-start" aria-hidden="true" />
-            ) : (
-              <Pause data-icon="inline-start" aria-hidden="true" />
-            )}
-          </Button>
-          <output aria-label="当前播放时间和总时长">
-            {format_time(bounded_time)} / {format_time(duration)}
-          </output>
-          <Select
-            value={String(playback_rate)}
-            onValueChange={(value) => on_playback_rate_change(Number(value))}
-          >
-            <SelectTrigger
-              size="sm"
-              aria-label={`播放倍速，当前 ${playback_rate} 倍`}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent position="popper" side="top">
-              <SelectGroup>
-                {PLAYBACK_RATES.map((rate) => (
-                  <SelectItem key={rate} value={String(rate)}>
-                    {rate}×
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            aria-label={`在 ${format_time(bounded_time)} 添加标记`}
-            title="添加标记（Ctrl+M）"
-            onClick={() => void add_marker_and_select(bounded_time)}
-          >
-            <Flag data-icon="inline-start" aria-hidden="true" />
-            <span className="media_timeline_add_label">添加标记</span>
-          </Button>
-        </div>
-        <div className="media_timeline_zoom" aria-label="时间线缩放">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            disabled={
-              viewport.zoom_pixels_per_second <= MINIMUM_ZOOM_PIXELS_PER_SECOND
-            }
-            onClick={() =>
-              zoom_to(viewport.zoom_pixels_per_second / ZOOM_BUTTON_FACTOR)
-            }
-            aria-label="缩小时间线"
-          >
-            <Minus data-icon="inline-start" aria-hidden="true" />
-          </Button>
-          <Slider
-            value={[viewport.zoom_pixels_per_second]}
-            min={MINIMUM_ZOOM_PIXELS_PER_SECOND}
-            max={MAXIMUM_ZOOM_PIXELS_PER_SECOND}
-            step={1}
-            onValueChange={([zoom = DEFAULT_ZOOM_PIXELS_PER_SECOND]) =>
-              zoom_to(zoom)
-            }
-            aria-label="时间线缩放比例"
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            disabled={
-              viewport.zoom_pixels_per_second >= MAXIMUM_ZOOM_PIXELS_PER_SECOND
-            }
-            onClick={() =>
-              zoom_to(viewport.zoom_pixels_per_second * ZOOM_BUTTON_FACTOR)
-            }
-            aria-label="放大时间线"
-          >
-            <Plus data-icon="inline-start" aria-hidden="true" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => zoom_to(DEFAULT_ZOOM_PIXELS_PER_SECOND)}
-            aria-label="重置时间线缩放"
-            title="重置为 80 px/s"
-          >
-            <RotateCcw data-icon="inline-start" aria-hidden="true" />
-          </Button>
-          <output aria-label="当前时间线缩放">
-            {Math.round(viewport.zoom_pixels_per_second)} px/s
-          </output>
-        </div>
-      </div>
+      <MediaTimelineToolbar
+        current_time={bounded_time}
+        duration={duration}
+        is_paused={is_paused}
+        playback_rate={playback_rate}
+        zoom_pixels_per_second={viewport.zoom_pixels_per_second}
+        on_toggle_playback={on_toggle_playback}
+        on_playback_rate_change={on_playback_rate_change}
+        on_add_marker={(seconds) => void add_marker_and_select(seconds)}
+        on_zoom_change={zoom_to}
+      />
 
-      {editing_transcript_index !== null ? (
-        <form
-          className="media_timeline_editor"
-          onSubmit={(event) => void save_transcript(event)}
-        >
-          <Field className="media_timeline_editor_field">
-            <FieldLabel
-              htmlFor="timeline-transcript-editor"
-              className="sr-only"
-            >
-              编辑转写文字
-            </FieldLabel>
-            <Input
-              id="timeline-transcript-editor"
-              autoFocus
-              value={transcript_draft}
-              maxLength={10_000}
-              onChange={(event) =>
-                set_transcript_draft(event.currentTarget.value)
-              }
-              disabled={is_saving_transcript}
-            />
-          </Field>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={is_saving_transcript || !transcript_draft.trim()}
-          >
-            {is_saving_transcript ? <Spinner data-icon="inline-start" /> : null}
-            {is_saving_transcript ? "保存中…" : "保存"}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={cancel_transcript_edit}
-            disabled={is_saving_transcript}
-          >
-            取消
-          </Button>
-        </form>
-      ) : null}
+      <MediaTimelineTranscriptEditor
+        editing_transcript_index={editing_transcript_index}
+        transcript_draft={transcript_draft}
+        is_saving_transcript={is_saving_transcript}
+        set_transcript_draft={set_transcript_draft}
+        save_transcript={save_transcript}
+        cancel_transcript_edit={cancel_transcript_edit}
+      />
 
-      <Popover
-        open={editing_marker_id !== null}
-        onOpenChange={(open) => {
-          if (!open) cancel_marker_edit();
-        }}
-      >
-        {marker_editor_position ? (
-          <PopoverAnchor asChild>
-            <span
-              className="timeline_marker_editor_anchor pointer-events-none fixed size-px"
-              style={{
-                left: marker_editor_position.x,
-                top: marker_editor_position.y,
-              }}
-              aria-hidden
-            />
-          </PopoverAnchor>
-        ) : null}
-        <PopoverContent
-          className="max-h-[var(--radix-popover-content-available-height)] w-[min(30rem,calc(100vw-1rem))] overflow-y-auto p-4"
-          side="bottom"
-          align="start"
-          sideOffset={MARKER_EDITOR_OFFSET}
-          collisionPadding={MARKER_EDITOR_COLLISION_PADDING}
-        >
-          <PopoverHeader>
-            <PopoverTitle>编辑标记</PopoverTitle>
-            <PopoverDescription>
-              调整标记时间、点与范围形态，或删除标记。
-            </PopoverDescription>
-          </PopoverHeader>
-          <form className="flex flex-col gap-4" onSubmit={save_marker}>
-            <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel htmlFor="marker-start">开始时间（秒）</FieldLabel>
-                <Input
-                  id="marker-start"
-                  autoFocus
-                  type="number"
-                  min={0}
-                  max={duration}
-                  step={MARKER_TIME_STEP_SECONDS}
-                  value={marker_start_draft}
-                  onChange={(event) =>
-                    set_marker_start_draft(event.currentTarget.valueAsNumber)
-                  }
-                  disabled={is_saving_marker}
-                />
-              </Field>
-              {marker_end_draft !== null ? (
-                <Field
-                  data-invalid={
-                    marker_end_draft <= marker_start_draft || undefined
-                  }
-                >
-                  <FieldLabel htmlFor="marker-end">结束时间（秒）</FieldLabel>
-                  <Input
-                    id="marker-end"
-                    type="number"
-                    min={marker_start_draft}
-                    max={duration}
-                    step={MARKER_TIME_STEP_SECONDS}
-                    value={marker_end_draft}
-                    aria-invalid={marker_end_draft <= marker_start_draft}
-                    onChange={(event) =>
-                      set_marker_end_draft(event.currentTarget.valueAsNumber)
-                    }
-                    disabled={is_saving_marker}
-                  />
-                  {marker_end_draft <= marker_start_draft ? (
-                    <FieldDescription>
-                      结束时间必须晚于开始时间。
-                    </FieldDescription>
-                  ) : null}
-                </Field>
-              ) : null}
-            </FieldGroup>
-            <Field className="flex-row items-center justify-between">
-              <FieldLabel id="marker-shape-label">标记形态</FieldLabel>
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                size="sm"
-                value={
-                  marker_end_draft === null
-                    ? MARKER_SHAPE_VALUES.point
-                    : MARKER_SHAPE_VALUES.range
-                }
-                onValueChange={(value) => {
-                  if (!value) return;
-                  set_marker_end_draft(
-                    value === MARKER_SHAPE_VALUES.range
-                      ? Math.min(duration, marker_start_draft + 5)
-                      : null,
-                  );
-                }}
-                disabled={is_saving_marker}
-                aria-labelledby="marker-shape-label"
-              >
-                <ToggleGroupItem value={MARKER_SHAPE_VALUES.point}>
-                  点标记
-                </ToggleGroupItem>
-                <ToggleGroupItem value={MARKER_SHAPE_VALUES.range}>
-                  范围标记
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </Field>
-            {marker_save_error ? (
-              <Alert variant="destructive">
-                <AlertDescription>{marker_save_error}</AlertDescription>
-              </Alert>
-            ) : null}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    disabled={is_saving_marker}
-                  >
-                    <Trash2 data-icon="inline-start" aria-hidden="true" />
-                    删除
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent size="sm">
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>删除这个标记？</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      删除后无法恢复，相关评分和范围信息也会一并移除。
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>取消</AlertDialogCancel>
-                    <AlertDialogAction
-                      variant="destructive"
-                      onClick={delete_marker}
-                    >
-                      <Trash2 data-icon="inline-start" aria-hidden="true" />
-                      删除标记
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={cancel_marker_edit}
-                  disabled={is_saving_marker}
-                >
-                  取消
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={
-                    is_saving_marker ||
-                    !Number.isFinite(marker_start_draft) ||
-                    (marker_end_draft !== null &&
-                      (!Number.isFinite(marker_end_draft) ||
-                        marker_end_draft <= marker_start_draft))
-                  }
-                >
-                  {is_saving_marker ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : null}
-                  {is_saving_marker ? "保存中…" : "保存"}
-                </Button>
-              </div>
-            </div>
-          </form>
-        </PopoverContent>
-      </Popover>
+      <MediaTimelineMarkerEditor
+        editing_marker_id={editing_marker_id}
+        marker_editor_position={marker_editor_position}
+        duration={duration}
+        marker_start_draft={marker_start_draft}
+        marker_end_draft={marker_end_draft}
+        marker_save_error={marker_save_error}
+        is_saving_marker={is_saving_marker}
+        set_marker_start_draft={set_marker_start_draft}
+        set_marker_end_draft={set_marker_end_draft}
+        cancel_marker_edit={cancel_marker_edit}
+        save_marker={save_marker}
+        delete_marker={delete_marker}
+      />
 
       <div className="media_timeline_editor_shell">
         <aside className="media_timeline_track_labels" aria-label="时间线轨道">
@@ -1221,7 +783,12 @@ export function MediaTimeline({
                 dragLine={false}
                 autoScroll
                 autoReRender={false}
-                getActionRender={render_action}
+                getActionRender={(action) => (
+                  <MediaTimelineActionContent
+                    action={action}
+                    open_action_editor={open_action_editor}
+                  />
+                )}
                 onScroll={(next_viewport) => {
                   synchronized_scroll_ref.current = {
                     scroll_left: next_viewport.scrollLeft,
@@ -1417,568 +984,6 @@ export function MediaTimeline({
     const direction = event.key === "ArrowLeft" ? -1 : 1;
     on_seek_bounded(bounded_time + direction);
   }
-}
-
-function calculate_zoom_viewport({
-  viewport,
-  requested_zoom,
-  anchor_x,
-  viewport_width,
-}: {
-  viewport: TimelineZoomViewport;
-  requested_zoom: number;
-  anchor_x: number;
-  viewport_width: number;
-}): TimelineZoomViewport {
-  const zoom_pixels_per_second = Math.min(
-    MAXIMUM_ZOOM_PIXELS_PER_SECOND,
-    Math.max(MINIMUM_ZOOM_PIXELS_PER_SECOND, requested_zoom),
-  );
-  const bounded_anchor_x = Math.min(
-    Math.max(anchor_x, 0),
-    Math.max(viewport_width, 0),
-  );
-  const anchor_time = Math.max(
-    0,
-    (viewport.scroll_left + bounded_anchor_x - TIMELINE_START_LEFT) /
-      viewport.zoom_pixels_per_second,
-  );
-  return {
-    zoom_pixels_per_second,
-    scroll_left: Math.max(
-      0,
-      anchor_time * zoom_pixels_per_second +
-        TIMELINE_START_LEFT -
-        bounded_anchor_x,
-    ),
-  };
-}
-
-function normalize_wheel_delta(
-  delta: number,
-  delta_mode: number,
-  page_height: number,
-): number {
-  if (!Number.isFinite(delta)) return 0;
-  if (delta_mode === WHEEL_DELTA_MODE_PIXEL) return delta;
-  if (delta_mode === WHEEL_DELTA_MODE_LINE) {
-    return delta * WHEEL_LINE_HEIGHT_PIXELS;
-  }
-  if (delta_mode === WHEEL_DELTA_MODE_PAGE) {
-    return delta * Math.max(page_height, 1);
-  }
-  return delta;
-}
-
-function consume_timeline_wheel_zoom_frame({
-  viewport,
-  events,
-}: {
-  viewport: TimelineZoomViewport;
-  events: TimelineWheelZoomEvent[];
-}): {
-  viewport: TimelineZoomViewport;
-  remaining_events: TimelineWheelZoomEvent[];
-} {
-  const frame_minimum_zoom = Math.max(
-    MINIMUM_ZOOM_PIXELS_PER_SECOND,
-    viewport.zoom_pixels_per_second * MINIMUM_WHEEL_FRAME_FACTOR,
-  );
-  const frame_maximum_zoom = Math.min(
-    MAXIMUM_ZOOM_PIXELS_PER_SECOND,
-    viewport.zoom_pixels_per_second * MAXIMUM_WHEEL_FRAME_FACTOR,
-  );
-  let next_viewport = viewport;
-
-  for (let event_index = 0; event_index < events.length; event_index += 1) {
-    const wheel_event = events[event_index];
-    if (!wheel_event) continue;
-    let remaining_delta = wheel_event.logarithmic_delta;
-    if (Math.abs(remaining_delta) <= WHEEL_ZOOM_EPSILON) continue;
-
-    const requested_zoom =
-      next_viewport.zoom_pixels_per_second * Math.exp(remaining_delta);
-    const frame_limited_zoom = Math.min(
-      frame_maximum_zoom,
-      Math.max(frame_minimum_zoom, requested_zoom),
-    );
-    const calculated_viewport = calculate_zoom_viewport({
-      viewport: next_viewport,
-      requested_zoom: frame_limited_zoom,
-      anchor_x: wheel_event.anchor_x,
-      viewport_width: wheel_event.viewport_width,
-    });
-    const applied_delta = Math.log(
-      calculated_viewport.zoom_pixels_per_second /
-        next_viewport.zoom_pixels_per_second,
-    );
-    next_viewport = calculated_viewport;
-    remaining_delta -= applied_delta;
-
-    if (Math.abs(remaining_delta) <= WHEEL_ZOOM_EPSILON) continue;
-    const reached_global_limit =
-      (remaining_delta > 0 &&
-        next_viewport.zoom_pixels_per_second >=
-          MAXIMUM_ZOOM_PIXELS_PER_SECOND) ||
-      (remaining_delta < 0 &&
-        next_viewport.zoom_pixels_per_second <= MINIMUM_ZOOM_PIXELS_PER_SECOND);
-    if (reached_global_limit) continue;
-
-    return {
-      viewport: next_viewport,
-      remaining_events: [
-        { ...wheel_event, logarithmic_delta: remaining_delta },
-        ...events.slice(event_index + 1),
-      ],
-    };
-  }
-
-  return { viewport: next_viewport, remaining_events: [] };
-}
-
-function create_timeline_render_window({
-  viewport,
-  canvas_width,
-  duration,
-}: {
-  viewport: TimelineZoomViewport;
-  canvas_width: number;
-  duration: number;
-}): TimelineRenderWindow {
-  const visible_duration = canvas_width / viewport.zoom_pixels_per_second;
-  const visible_range = calculate_timeline_visible_range({
-    viewport,
-    canvas_width,
-    duration,
-  });
-  const buffer_duration = visible_duration * RENDER_WINDOW_BUFFER_VIEWPORTS;
-  return {
-    start_seconds: Math.max(0, visible_range.start_seconds - buffer_duration),
-    end_seconds: Math.min(
-      duration,
-      visible_range.end_seconds + buffer_duration,
-    ),
-  };
-}
-
-function update_timeline_render_window({
-  render_window,
-  viewport,
-  canvas_width,
-  duration,
-}: {
-  render_window: TimelineRenderWindow;
-  viewport: TimelineZoomViewport;
-  canvas_width: number;
-  duration: number;
-}): TimelineRenderWindow {
-  const visible_duration = canvas_width / viewport.zoom_pixels_per_second;
-  const visible_range = calculate_timeline_visible_range({
-    viewport,
-    canvas_width,
-    duration,
-  });
-  const movement_threshold =
-    visible_duration * RENDER_WINDOW_MOVEMENT_THRESHOLD_VIEWPORTS;
-  const invalid_bounds =
-    render_window.start_seconds < 0 ||
-    render_window.start_seconds > visible_range.start_seconds ||
-    render_window.end_seconds < visible_range.end_seconds ||
-    render_window.end_seconds > duration;
-  const near_left_edge =
-    render_window.start_seconds > 0 &&
-    visible_range.start_seconds - render_window.start_seconds <
-      movement_threshold;
-  const near_right_edge =
-    render_window.end_seconds < duration &&
-    render_window.end_seconds - visible_range.end_seconds < movement_threshold;
-  if (!invalid_bounds && !near_left_edge && !near_right_edge) {
-    return render_window;
-  }
-  return create_timeline_render_window({ viewport, canvas_width, duration });
-}
-
-function extend_timeline_render_window({
-  render_window,
-  viewport,
-  canvas_width,
-  duration,
-}: {
-  render_window: TimelineRenderWindow;
-  viewport: TimelineZoomViewport;
-  canvas_width: number;
-  duration: number;
-}): TimelineRenderWindow {
-  const visible_duration = canvas_width / viewport.zoom_pixels_per_second;
-  const visible_range = calculate_timeline_visible_range({
-    viewport,
-    canvas_width,
-    duration,
-  });
-  const coverage_margin =
-    visible_duration * RENDER_WINDOW_COVERAGE_MARGIN_VIEWPORTS;
-  const required_start = Math.max(
-    0,
-    visible_range.start_seconds - coverage_margin,
-  );
-  const required_end = Math.min(
-    duration,
-    visible_range.end_seconds + coverage_margin,
-  );
-  const bounded_render_window = {
-    start_seconds: Math.min(duration, Math.max(0, render_window.start_seconds)),
-    end_seconds: Math.min(duration, Math.max(0, render_window.end_seconds)),
-  };
-  const covers_visible_range =
-    bounded_render_window.start_seconds <= required_start &&
-    bounded_render_window.end_seconds >= required_end;
-  if (
-    covers_visible_range &&
-    timeline_render_windows_equal(render_window, bounded_render_window)
-  ) {
-    return render_window;
-  }
-  if (covers_visible_range) return bounded_render_window;
-
-  const expanded_window = create_timeline_render_window({
-    viewport,
-    canvas_width,
-    duration,
-  });
-  return {
-    start_seconds: Math.min(
-      bounded_render_window.start_seconds,
-      expanded_window.start_seconds,
-    ),
-    end_seconds: Math.max(
-      bounded_render_window.end_seconds,
-      expanded_window.end_seconds,
-    ),
-  };
-}
-
-function calculate_timeline_visible_range({
-  viewport,
-  canvas_width,
-  duration,
-}: {
-  viewport: TimelineZoomViewport;
-  canvas_width: number;
-  duration: number;
-}): TimelineRenderWindow {
-  const start_seconds = Math.min(
-    duration,
-    Math.max(
-      0,
-      (viewport.scroll_left - TIMELINE_START_LEFT) /
-        viewport.zoom_pixels_per_second,
-    ),
-  );
-  return {
-    start_seconds,
-    end_seconds: Math.min(
-      duration,
-      Math.max(
-        start_seconds,
-        (viewport.scroll_left + canvas_width - TIMELINE_START_LEFT) /
-          viewport.zoom_pixels_per_second,
-      ),
-    ),
-  };
-}
-
-function timeline_render_windows_equal(
-  first: TimelineRenderWindow,
-  second: TimelineRenderWindow,
-): boolean {
-  return (
-    first.start_seconds === second.start_seconds &&
-    first.end_seconds === second.end_seconds
-  );
-}
-
-function filter_timeline_rows_for_window(
-  rows: TimelineRow[],
-  render_window: TimelineRenderWindow,
-): TimelineRow[] {
-  return rows.map((row) => {
-    if (row.id === TIMELINE_TRACK_IDS.marker) return row;
-    return {
-      ...row,
-      actions: row.actions.filter(
-        (action) =>
-          action.end >= render_window.start_seconds &&
-          action.start <= render_window.end_seconds,
-      ),
-    };
-  });
-}
-
-function build_timeline_rows({
-  transcript_segments,
-  segments,
-  markers,
-  candidate_markers,
-  analysis_strategy,
-  duration,
-  selected_marker_id,
-}: {
-  transcript_segments: Transcript["segments"];
-  segments: MediaSegment[];
-  markers: MediaMarker[];
-  candidate_markers: MediaMarker[];
-  analysis_strategy: AnalysisStrategy;
-  duration: number;
-  selected_marker_id: string | null;
-}): TimelineRow[] {
-  return [
-    {
-      id: TIMELINE_TRACK_IDS.marker,
-      rowHeight: TIMELINE_ROW_HEIGHT,
-      classNames: ["timeline_row_markers"],
-      actions: [
-        ...markers.map((marker) =>
-          create_marker_action(
-            marker,
-            analysis_strategy,
-            duration,
-            marker.marker_id === selected_marker_id,
-          ),
-        ),
-        ...candidate_markers.map((marker) =>
-          create_timeline_action({
-            id: `candidate-${marker.marker_id}`,
-            start: marker.start_seconds,
-            end:
-              marker.end_seconds ??
-              marker.start_seconds + MINIMUM_ACTION_DURATION_SECONDS,
-            duration,
-            movable: false,
-            flexible: false,
-            data: {
-              kind: "candidate",
-              source_id: marker.marker_id,
-              label: `待审批 · ${format_marker_label(marker)}`,
-            },
-          }),
-        ),
-      ],
-    },
-    {
-      id: TIMELINE_TRACK_IDS.transcript,
-      rowHeight: TIMELINE_ROW_HEIGHT,
-      classNames: ["timeline_row_transcript"],
-      actions: transcript_segments.map((segment, index) =>
-        create_timeline_action({
-          id: `transcript-${index}`,
-          start: segment.start_seconds,
-          end: segment.end_seconds,
-          duration,
-          movable: false,
-          flexible: false,
-          data: {
-            kind: "transcript",
-            source_index: index,
-            label: segment.text,
-          },
-        }),
-      ),
-    },
-    {
-      id: TIMELINE_TRACK_IDS.event,
-      rowHeight: TIMELINE_ROW_HEIGHT,
-      classNames: ["timeline_row_events"],
-      actions: segments.map((segment) =>
-        create_timeline_action({
-          id: `event-${segment.segment_id}`,
-          start: segment.start_seconds,
-          end: segment.end_seconds,
-          duration,
-          movable: false,
-          flexible: false,
-          data: {
-            kind: "event",
-            source_id: segment.segment_id,
-            label: segment.title,
-          },
-        }),
-      ),
-    },
-  ];
-}
-
-function create_marker_action(
-  marker: MediaMarker,
-  analysis_strategy: AnalysisStrategy,
-  duration: number,
-  is_selected: boolean,
-): MediaTimelineAction {
-  if (marker.end_seconds !== null) {
-    return create_timeline_action({
-      id: marker.marker_id,
-      start: marker.start_seconds,
-      end: marker.end_seconds,
-      duration,
-      selected: is_selected,
-      movable: true,
-      flexible: is_selected,
-      data: {
-        kind: "marker",
-        source_id: marker.marker_id,
-        label: format_marker_label(marker),
-        marker_shape: MARKER_SHAPE_VALUES.range,
-        marker_anchor_seconds: marker.start_seconds,
-        rendered_start_seconds: marker.start_seconds,
-      },
-    });
-  }
-
-  const half_hit_duration = DEFAULT_POINT_HIT_DURATION_SECONDS / 2;
-  const before_seconds = is_selected
-    ? analysis_strategy.marker_range_before_seconds
-    : half_hit_duration;
-  const after_seconds = is_selected
-    ? analysis_strategy.marker_range_after_seconds
-    : half_hit_duration;
-  const visible_range = bounded_action_range(
-    marker.start_seconds - before_seconds,
-    marker.start_seconds + after_seconds,
-    duration,
-  );
-  return create_timeline_action({
-    id: marker.marker_id,
-    start: visible_range.start,
-    end: visible_range.end,
-    duration,
-    selected: is_selected,
-    movable: true,
-    flexible: is_selected,
-    data: {
-      kind: "marker",
-      source_id: marker.marker_id,
-      label: format_marker_label(marker),
-      marker_shape: MARKER_SHAPE_VALUES.point,
-      marker_anchor_seconds: marker.start_seconds,
-      rendered_start_seconds: visible_range.start,
-    },
-  });
-}
-
-function create_timeline_action({
-  id,
-  start,
-  end,
-  duration,
-  selected = false,
-  movable,
-  flexible,
-  data,
-}: {
-  id: string;
-  start: number;
-  end: number;
-  duration: number;
-  selected?: boolean;
-  movable: boolean;
-  flexible: boolean;
-  data: TimelineActionData;
-}): MediaTimelineAction {
-  const range = bounded_action_range(start, end, duration);
-  return {
-    id,
-    start: range.start,
-    end: range.end,
-    effectId: data.kind,
-    selected,
-    movable,
-    flexible,
-    minStart: 0,
-    maxEnd: duration,
-    disable: true,
-    data: { ...data },
-  };
-}
-
-function bounded_action_range(start: number, end: number, duration: number) {
-  const bounded_start = Math.min(Math.max(start, 0), duration);
-  const bounded_end = Math.min(Math.max(end, 0), duration);
-  if (bounded_end - bounded_start >= MINIMUM_ACTION_DURATION_SECONDS) {
-    return { start: bounded_start, end: bounded_end };
-  }
-  if (bounded_start + MINIMUM_ACTION_DURATION_SECONDS <= duration) {
-    return {
-      start: bounded_start,
-      end: bounded_start + MINIMUM_ACTION_DURATION_SECONDS,
-    };
-  }
-  return {
-    start: Math.max(0, duration - MINIMUM_ACTION_DURATION_SECONDS),
-    end: duration,
-  };
-}
-
-function marker_anchor_percent(action: MediaTimelineAction): number | null {
-  if (
-    action.data.kind !== "marker" ||
-    action.data.marker_shape !== MARKER_SHAPE_VALUES.point ||
-    action.data.marker_anchor_seconds === undefined
-  ) {
-    return null;
-  }
-  const duration = action.end - action.start;
-  if (duration <= 0) return null;
-  return Math.min(
-    100,
-    Math.max(
-      0,
-      ((action.data.marker_anchor_seconds - action.start) / duration) * 100,
-    ),
-  );
-}
-
-function timeline_action_aria_label(action: MediaTimelineAction): string {
-  const time_range = `${format_time(action.start)} 至 ${format_time(action.end)}`;
-  if (action.data.kind === "candidate") {
-    return `${action.data.label}，只读，${time_range}`;
-  }
-  if (action.data.kind === "transcript") {
-    return `转写：${action.data.label}，只读，${time_range}`;
-  }
-  if (action.data.kind === "event") {
-    return `分析事件：${action.data.label}，只读，${time_range}`;
-  }
-  const shape =
-    action.data.marker_shape === MARKER_SHAPE_VALUES.point
-      ? "点标记"
-      : "范围标记";
-  return `${action.data.label}，${shape}，${time_range}`;
-}
-
-function timeline_content_duration(
-  duration_seconds: number | null,
-  transcript_segments: Transcript["segments"],
-  segments: MediaSegment[],
-  markers: MediaMarker[],
-  candidate_markers: MediaMarker[],
-): number {
-  return Math.max(
-    duration_seconds ?? 0,
-    ...transcript_segments.map((segment) => segment.end_seconds),
-    ...segments.map((segment) => segment.end_seconds),
-    ...markers.map((marker) => marker.end_seconds ?? marker.start_seconds),
-    ...candidate_markers.map(
-      (marker) => marker.end_seconds ?? marker.start_seconds,
-    ),
-    MINIMUM_DURATION_SECONDS,
-  );
-}
-
-function round_marker_time(seconds: number): number {
-  return Number(
-    (
-      Math.round(seconds / MARKER_TIME_STEP_SECONDS) * MARKER_TIME_STEP_SECONDS
-    ).toFixed(2),
-  );
 }
 
 function is_text_editing_target(target: EventTarget | null): boolean {

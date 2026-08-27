@@ -5,8 +5,8 @@ from threading import Event
 from unittest.mock import AsyncMock
 from uuid import UUID
 
-from openvideo import application
 from openvideo.core.media_models import MediaAssetStatus, SourcePlatform
+from openvideo import download_manager
 from openvideo.download_accounts import (
     DownloadAccountLoginCancelled,
     DownloadAccountStore,
@@ -121,7 +121,7 @@ def test_download_folder_assignment_defaults_and_preserves_duplicates(
     monkeypatch,
     tmp_path,
 ):
-    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     app = api.create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
@@ -171,7 +171,7 @@ def test_download_folder_assignment_defaults_and_preserves_duplicates(
 
 
 def test_download_persists_selected_video_quality(monkeypatch, tmp_path):
-    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     app = api.create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
@@ -195,7 +195,7 @@ def test_playlist_download_automatically_creates_and_reuses_folder(
     monkeypatch,
     tmp_path,
 ):
-    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     app = api.create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
@@ -228,7 +228,7 @@ def test_playlist_download_automatically_creates_and_reuses_folder(
 
 
 def test_existing_ready_download_moves_to_requested_folder(monkeypatch, tmp_path):
-    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     app = api.create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
@@ -267,7 +267,7 @@ def test_existing_ready_download_moves_to_requested_folder(monkeypatch, tmp_path
 
 
 def test_failed_download_reuses_asset_for_a_new_job(monkeypatch, tmp_path):
-    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     app = api.create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
@@ -303,7 +303,7 @@ def test_failed_download_reuses_asset_for_a_new_job(monkeypatch, tmp_path):
 
 
 def test_failed_download_can_be_retried_by_job_id(monkeypatch, tmp_path):
-    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     app = api.create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
@@ -340,7 +340,7 @@ def test_failed_download_can_be_retried_by_job_id(monkeypatch, tmp_path):
 
 
 def test_interrupted_download_can_be_retried_after_restart(monkeypatch, tmp_path):
-    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     settings = Settings(library_path=tmp_path)
     app = api.create_app(settings)
 
@@ -387,7 +387,7 @@ def test_asset_delete_keeps_files_when_a_related_task_cannot_stop(
     monkeypatch,
     tmp_path,
 ):
-    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     app = api.create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
@@ -440,7 +440,7 @@ def test_download_history_restores_title_and_events_after_restart(
         on_stage("正在下载视频和音频")
         raise DownloadFailure("测试下载失败")
 
-    monkeypatch.setattr(application, "download_video", fail_after_metadata)
+    monkeypatch.setattr(download_manager, "download_video", fail_after_metadata)
     settings = Settings(library_path=tmp_path)
     app = api.create_app(settings)
     with TestClient(app) as client:

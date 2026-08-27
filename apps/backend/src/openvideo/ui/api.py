@@ -29,12 +29,12 @@ from openvideo.agent_service import (
     AgentService,
     AgentServiceError,
 )
-from openvideo.application import (
+from openvideo.analysis_manager import (
     AnalysisError,
     AnalysisManager,
     AnalysisPrerequisiteError,
-    DownloadManager,
 )
+from openvideo.download_manager import DownloadManager
 from openvideo.summary_manager import (
     SummaryError,
     SummaryManager,

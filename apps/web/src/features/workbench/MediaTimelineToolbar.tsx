@@ -1,0 +1,149 @@
+import { Flag, Minus, Pause, Play, Plus, RotateCcw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { format_time } from "@/shared/format";
+import {
+  DEFAULT_ZOOM_PIXELS_PER_SECOND,
+  MAXIMUM_ZOOM_PIXELS_PER_SECOND,
+  MINIMUM_ZOOM_PIXELS_PER_SECOND,
+} from "./media_timeline_calculations";
+
+const ZOOM_BUTTON_FACTOR = 1.25;
+const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+
+type MediaTimelineToolbarProps = {
+  current_time: number;
+  duration: number;
+  is_paused: boolean;
+  playback_rate: number;
+  zoom_pixels_per_second: number;
+  on_toggle_playback: () => void;
+  on_playback_rate_change: (rate: number) => void;
+  on_add_marker: (seconds: number) => void;
+  on_zoom_change: (zoom_pixels_per_second: number) => void;
+};
+
+export function MediaTimelineToolbar({
+  current_time,
+  duration,
+  is_paused,
+  playback_rate,
+  zoom_pixels_per_second,
+  on_toggle_playback,
+  on_playback_rate_change,
+  on_add_marker,
+  on_zoom_change,
+}: MediaTimelineToolbarProps) {
+  const bounded_time = current_time;
+  return (
+    <div className="media_timeline_toolbar" aria-label="时间线工具栏">
+      <div className="media_timeline_transport">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={on_toggle_playback}
+          aria-label={is_paused ? "播放" : "暂停"}
+        >
+          {is_paused ? (
+            <Play data-icon="inline-start" aria-hidden="true" />
+          ) : (
+            <Pause data-icon="inline-start" aria-hidden="true" />
+          )}
+        </Button>
+        <output aria-label="当前播放时间和总时长">
+          {format_time(bounded_time)} / {format_time(duration)}
+        </output>
+        <Select
+          value={String(playback_rate)}
+          onValueChange={(value) => on_playback_rate_change(Number(value))}
+        >
+          <SelectTrigger
+            size="sm"
+            aria-label={`播放倍速，当前 ${playback_rate} 倍`}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper" side="top">
+            <SelectGroup>
+              {PLAYBACK_RATES.map((rate) => (
+                <SelectItem key={rate} value={String(rate)}>
+                  {rate}×
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          aria-label={`在 ${format_time(bounded_time)} 添加标记`}
+          title="添加标记（Ctrl+M）"
+          onClick={() => on_add_marker(bounded_time)}
+        >
+          <Flag data-icon="inline-start" aria-hidden="true" />
+          <span className="media_timeline_add_label">添加标记</span>
+        </Button>
+      </div>
+      <div className="media_timeline_zoom" aria-label="时间线缩放">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={zoom_pixels_per_second <= MINIMUM_ZOOM_PIXELS_PER_SECOND}
+          onClick={() =>
+            on_zoom_change(zoom_pixels_per_second / ZOOM_BUTTON_FACTOR)
+          }
+          aria-label="缩小时间线"
+        >
+          <Minus data-icon="inline-start" aria-hidden="true" />
+        </Button>
+        <Slider
+          value={[zoom_pixels_per_second]}
+          min={MINIMUM_ZOOM_PIXELS_PER_SECOND}
+          max={MAXIMUM_ZOOM_PIXELS_PER_SECOND}
+          step={1}
+          onValueChange={([zoom = DEFAULT_ZOOM_PIXELS_PER_SECOND]) =>
+            on_zoom_change(zoom)
+          }
+          aria-label="时间线缩放比例"
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={zoom_pixels_per_second >= MAXIMUM_ZOOM_PIXELS_PER_SECOND}
+          onClick={() =>
+            on_zoom_change(zoom_pixels_per_second * ZOOM_BUTTON_FACTOR)
+          }
+          aria-label="放大时间线"
+        >
+          <Plus data-icon="inline-start" aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => on_zoom_change(DEFAULT_ZOOM_PIXELS_PER_SECOND)}
+          aria-label="重置时间线缩放"
+          title="重置为 80 px/s"
+        >
+          <RotateCcw data-icon="inline-start" aria-hidden="true" />
+        </Button>
+        <output aria-label="当前时间线缩放">
+          {Math.round(zoom_pixels_per_second)} px/s
+        </output>
+      </div>
+    </div>
+  );
+}
