@@ -4,7 +4,6 @@ import {
   CircleAlert,
   Download,
   Link2,
-  ListChecks,
   Search,
 } from "lucide-react";
 
@@ -27,7 +26,6 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { DownloadActivity } from "@/features/downloads/DownloadActivity";
 import { DownloadAccountsCard } from "@/features/downloads/DownloadAccountsCard";
@@ -81,8 +79,6 @@ type DownloadWorkspaceProps = {
   on_test_download_account: (platform: SourcePlatform) => Promise<void>;
   on_disconnect_download_account: (platform: SourcePlatform) => Promise<void>;
 };
-
-const SUPPORTED_PLATFORMS = ["Bilibili", "抖音", "YouTube"];
 
 export function DownloadWorkspace({
   health,
@@ -196,7 +192,7 @@ export function DownloadWorkspace({
             <Badge variant="secondary">解析与下载</Badge>
           </CardAction>
         </CardHeader>
-        <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <CardContent>
           <form onSubmit={on_submit_probe}>
             <FieldGroup>
               <Field data-disabled={is_submitting || !dependencies_ready}>
@@ -239,24 +235,6 @@ export function DownloadWorkspace({
               </Alert>
             ) : null}
           </form>
-          <div className="flex flex-col gap-4 border-t pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6">
-            <div>
-              <p className="text-sm font-medium">支持的平台</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {SUPPORTED_PLATFORMS.map((platform) => (
-                  <Badge key={platform} variant="outline">
-                    {platform}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-            <Separator />
-            <ol className="flex flex-col gap-3 text-sm text-muted-foreground">
-              <DownloadStep icon={Link2} label="粘贴并解析链接" />
-              <DownloadStep icon={ListChecks} label="确认要下载的视频" />
-              <DownloadStep icon={Download} label="后台下载并处理" />
-            </ol>
-          </div>
         </CardContent>
         {probe_result ? (
           <DownloadSelection
@@ -285,22 +263,5 @@ export function DownloadWorkspace({
         on_retry={on_retry_download}
       />
     </section>
-  );
-}
-
-function DownloadStep({
-  icon: StepIcon,
-  label,
-}: {
-  icon: typeof Link2;
-  label: string;
-}) {
-  return (
-    <li className="flex items-center gap-3">
-      <span className="flex size-7 items-center justify-center rounded-md bg-muted text-foreground">
-        <StepIcon className="size-3.5" aria-hidden="true" />
-      </span>
-      {label}
-    </li>
   );
 }
