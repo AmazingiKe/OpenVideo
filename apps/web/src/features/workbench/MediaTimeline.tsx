@@ -28,15 +28,29 @@ import {
   type WheelEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   ContextMenu,
   ContextMenuContent,
+  ContextMenuGroup,
   ContextMenuLabel,
   ContextMenuRadioGroup,
   ContextMenuRadioItem,
@@ -64,6 +78,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_time } from "@/shared/format";
 import {
   format_marker_importance,
@@ -97,6 +112,10 @@ const INVISIBLE_CLIP_OPACITY = 0;
 const DEFAULT_MARKER_HIT_DURATION_SECONDS = 0.4;
 const EMPTY_MARKERS: MediaMarker[] = [];
 const MARKER_IMPORTANCE_VALUES: MarkerImportance[] = [0, 1, 2, 3, 4, 5];
+const MARKER_SHAPE_VALUES = {
+  point: "point",
+  range: "range",
+} as const;
 
 type TimelineTrackPresentation = {
   code: string;
@@ -140,8 +159,12 @@ type TimelineClipMetadata = {
   marker_shape?: "default" | "manual";
   marker_anchor_seconds?: number;
   rendered_start_seconds?: number;
-  marker_name?: string;
 };
+
+type TimelineMarkerGeometry = Pick<
+  MediaMarker,
+  "marker_id" | "start_seconds" | "end_seconds"
+>;
 
 type TimelinePointerPosition = {
   x: number;
@@ -156,12 +179,29 @@ type TimelineViewportState = {
 
 function TimelineLayers({
   on_clip_double_click,
+  markers,
   selected_marker_id,
 }: {
   on_clip_double_click: (hit: ClipHitTestResult) => void;
+  markers: MediaMarker[];
   selected_marker_id: string | null;
 }) {
   const { state } = useTimeline();
+  const marker_labels = useMemo(
+    () =>
+      new Map(
+        markers.map((marker) => [
+          marker.marker_id,
+          format_marker_label(marker),
+        ]),
+      ),
+    [markers],
+  );
+  const get_clip_aria_label = useCallback(
+    (clip: Clip, track: Track) =>
+      timeline_clip_aria_label(clip, track, marker_labels),
+    [marker_labels],
+  );
 
   return (
     <>
@@ -174,7 +214,7 @@ function TimelineLayers({
       </Timeline.TrackList>
       <Timeline.ClipInteractionLayer
         activeClipId={selected_marker_id ?? undefined}
-        getClipAriaLabel={timeline_clip_aria_label}
+        getClipAriaLabel={get_clip_aria_label}
         onClipDoubleClick={(hit: ClipHitTestResult) =>
           on_clip_double_click(hit)
         }
@@ -522,6 +562,7 @@ function TimelineSurface({
                   selected_marker_id={selected_marker_id}
                 />
                 <TimelineLayers
+                  markers={markers}
                   selected_marker_id={selected_marker_id}
                   on_clip_double_click={(hit) => {
                     const metadata = hit.clip.metadata as
@@ -544,27 +585,29 @@ function TimelineSurface({
               </Timeline.Root>
             </ContextMenuTrigger>
             {context_marker ? (
-              <ContextMenuContent>
-                <ContextMenuLabel>重要程度</ContextMenuLabel>
-                <ContextMenuRadioGroup
-                  value={String(context_marker.importance)}
-                  onValueChange={(value) =>
-                    on_rate_marker(
-                      context_marker.marker_id,
-                      Number(value) as MarkerImportance,
-                    )
-                  }
-                >
-                  {MARKER_IMPORTANCE_VALUES.map((importance) => (
-                    <ContextMenuRadioItem
-                      key={importance}
-                      value={String(importance)}
-                    >
-                      {format_marker_importance(importance)}
-                      <ContextMenuShortcut>{importance}</ContextMenuShortcut>
-                    </ContextMenuRadioItem>
-                  ))}
-                </ContextMenuRadioGroup>
+              <ContextMenuContent className="min-w-48">
+                <ContextMenuGroup>
+                  <ContextMenuLabel>标记重要程度</ContextMenuLabel>
+                  <ContextMenuRadioGroup
+                    value={String(context_marker.importance)}
+                    onValueChange={(value) =>
+                      on_rate_marker(
+                        context_marker.marker_id,
+                        Number(value) as MarkerImportance,
+                      )
+                    }
+                  >
+                    {MARKER_IMPORTANCE_VALUES.map((importance) => (
+                      <ContextMenuRadioItem
+                        key={importance}
+                        value={String(importance)}
+                      >
+                        {format_marker_importance(importance)}
+                        <ContextMenuShortcut>{importance}</ContextMenuShortcut>
+                      </ContextMenuRadioItem>
+                    ))}
+                  </ContextMenuRadioGroup>
+                </ContextMenuGroup>
               </ContextMenuContent>
             ) : null}
           </ContextMenu>
@@ -725,7 +768,6 @@ export function MediaTimeline({
   const [marker_end_draft, set_marker_end_draft] = useState<number | null>(
     null,
   );
-  const [confirming_delete, set_confirming_delete] = useState(false);
   const [marker_save_error, set_marker_save_error] = useState<string | null>(
     null,
   );
@@ -736,19 +778,30 @@ export function MediaTimeline({
     () => transcript?.segments ?? [],
     [transcript],
   );
+  const [timeline_markers, set_timeline_markers] = useState(() =>
+    create_timeline_marker_geometry(markers),
+  );
+  // 评分只改变展示信息；几何未变时保留引用，避免时间线引擎重建。
+  useLayoutEffect(() => {
+    set_timeline_markers((current) =>
+      has_same_marker_geometry(current, markers)
+        ? current
+        : create_timeline_marker_geometry(markers),
+    );
+  }, [markers]);
   const duration = timeline_duration(
     duration_seconds,
     current_time,
     transcript_segments,
     segments,
-    [...markers, ...candidate_markers],
+    [...timeline_markers, ...candidate_markers],
   );
   const tracks = useMemo(
     () =>
       build_tracks(
         transcript_segments,
         segments,
-        markers,
+        timeline_markers,
         candidate_markers,
         analysis_strategy,
         duration,
@@ -758,9 +811,9 @@ export function MediaTimeline({
       analysis_strategy,
       candidate_markers,
       duration,
-      markers,
       selected_marker_id,
       segments,
+      timeline_markers,
       transcript_segments,
     ],
   );
@@ -777,6 +830,7 @@ export function MediaTimeline({
     [duration, marker_selection.viewport, tracks],
   );
   const bounded_time = Math.min(Math.max(current_time, 0), duration);
+  const timeline_error = transcript_error ?? marker_error;
   const add_marker_and_select = useCallback(
     async (
       start_seconds: number,
@@ -834,26 +888,32 @@ export function MediaTimeline({
   return (
     <section className="media_timeline" aria-label="剪辑时间轴">
       <header className="media_timeline_header">
-        <output aria-label="当前播放时间">
-          {format_time(bounded_time)} / {format_time(duration)}
-        </output>
-        <div className="media_timeline_header_summary">
-          <strong>时间线</strong>
-          <span>
-            {transcript_segments.length} 条转写 · {segments.length} 个事件 ·{" "}
-            {markers.length} 个标记
-          </span>
+        <div className="media_timeline_heading">
+          <Flag aria-hidden="true" />
+          <div>
+            <h2>时间线</h2>
+            <p>
+              {transcript_segments.length} 条转写 · {segments.length} 个事件 ·{" "}
+              {markers.length} 个标记
+            </p>
+          </div>
         </div>
-        <Button
-          type="button"
-          size="xs"
-          variant="secondary"
-          aria-label={`在 ${format_time(bounded_time)} 添加标记`}
-          onClick={() => void add_marker_and_select(bounded_time)}
-        >
-          <Flag data-icon="inline-start" />
-          添加标记
-        </Button>
+        <div className="media_timeline_header_actions">
+          <output aria-label="当前播放时间和总时长">
+            {format_time(bounded_time)} / {format_time(duration)}
+          </output>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            aria-label={`在 ${format_time(bounded_time)} 添加标记`}
+            title="添加标记（Ctrl+M）"
+            onClick={() => void add_marker_and_select(bounded_time)}
+          >
+            <Flag data-icon="inline-start" />
+            添加标记
+          </Button>
+        </div>
       </header>
 
       {editing_transcript_index !== null ? (
@@ -861,27 +921,36 @@ export function MediaTimeline({
           className="media_timeline_editor"
           onSubmit={(event) => void save_transcript(event)}
         >
-          <Input
-            autoFocus
-            aria-label="编辑转写文字"
-            value={transcript_draft}
-            maxLength={10_000}
-            onChange={(event) =>
-              set_transcript_draft(event.currentTarget.value)
-            }
-            disabled={is_saving_transcript}
-          />
+          <Field className="media_timeline_editor_field">
+            <FieldLabel
+              htmlFor="timeline-transcript-editor"
+              className="sr-only"
+            >
+              编辑转写文字
+            </FieldLabel>
+            <Input
+              id="timeline-transcript-editor"
+              autoFocus
+              value={transcript_draft}
+              maxLength={10_000}
+              onChange={(event) =>
+                set_transcript_draft(event.currentTarget.value)
+              }
+              disabled={is_saving_transcript}
+            />
+          </Field>
           <Button
             type="submit"
-            size="xs"
+            size="sm"
             disabled={is_saving_transcript || !transcript_draft.trim()}
           >
-            {is_saving_transcript ? "保存中" : "保存"}
+            {is_saving_transcript ? <Spinner data-icon="inline-start" /> : null}
+            {is_saving_transcript ? "保存中…" : "保存"}
           </Button>
           <Button
             type="button"
-            size="xs"
-            variant="secondary"
+            size="sm"
+            variant="outline"
             onClick={cancel_transcript_edit}
             disabled={is_saving_transcript}
           >
@@ -922,122 +991,142 @@ export function MediaTimeline({
             </PopoverDescription>
           </PopoverHeader>
           <form className="flex flex-col gap-4" onSubmit={save_marker}>
-            <FieldGroup className="gap-4">
-              <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field>
-                  <FieldLabel htmlFor="marker-start">开始时间（秒）</FieldLabel>
+            <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="marker-start">开始时间（秒）</FieldLabel>
+                <Input
+                  id="marker-start"
+                  autoFocus
+                  type="number"
+                  min={0}
+                  max={duration}
+                  step={0.1}
+                  value={marker_start_draft}
+                  onChange={(event) =>
+                    set_marker_start_draft(event.currentTarget.valueAsNumber)
+                  }
+                  disabled={is_saving_marker}
+                />
+              </Field>
+              {marker_end_draft !== null ? (
+                <Field
+                  data-invalid={
+                    marker_end_draft <= marker_start_draft || undefined
+                  }
+                >
+                  <FieldLabel htmlFor="marker-end">结束时间（秒）</FieldLabel>
                   <Input
-                    id="marker-start"
-                    autoFocus
+                    id="marker-end"
                     type="number"
-                    min={0}
+                    min={marker_start_draft}
                     max={duration}
                     step={0.1}
-                    value={marker_start_draft}
+                    value={marker_end_draft}
+                    aria-invalid={marker_end_draft <= marker_start_draft}
                     onChange={(event) =>
-                      set_marker_start_draft(event.currentTarget.valueAsNumber)
+                      set_marker_end_draft(event.currentTarget.valueAsNumber)
                     }
                     disabled={is_saving_marker}
                   />
+                  {marker_end_draft <= marker_start_draft ? (
+                    <FieldDescription>
+                      结束时间必须晚于开始时间。
+                    </FieldDescription>
+                  ) : null}
                 </Field>
-                {marker_end_draft !== null ? (
-                  <Field
-                    data-invalid={
-                      marker_end_draft <= marker_start_draft || undefined
-                    }
-                  >
-                    <FieldLabel htmlFor="marker-end">结束时间（秒）</FieldLabel>
-                    <Input
-                      id="marker-end"
-                      type="number"
-                      min={marker_start_draft}
-                      max={duration}
-                      step={0.1}
-                      value={marker_end_draft}
-                      aria-invalid={marker_end_draft <= marker_start_draft}
-                      onChange={(event) =>
-                        set_marker_end_draft(event.currentTarget.valueAsNumber)
-                      }
-                      disabled={is_saving_marker}
-                    />
-                    {marker_end_draft <= marker_start_draft ? (
-                      <FieldDescription>
-                        结束时间必须晚于开始时间。
-                      </FieldDescription>
-                    ) : null}
-                  </Field>
-                ) : null}
-              </FieldGroup>
+              ) : null}
             </FieldGroup>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() =>
-                set_marker_end_draft((current) =>
-                  current === null
-                    ? Math.min(duration, marker_start_draft + 5)
-                    : null,
-                )
-              }
-              disabled={is_saving_marker}
-            >
-              转换为{marker_end_draft === null ? "范围" : "点"}标记
-            </Button>
-            {marker_save_error ? (
-              <FieldDescription className="text-destructive" role="alert">
-                {marker_save_error}
-              </FieldDescription>
-            ) : null}
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="destructive"
-                onClick={() => {
-                  if (!confirming_delete) {
-                    set_confirming_delete(true);
-                    return;
-                  }
-                  if (editing_marker_id === null) return;
-                  set_is_saving_marker(true);
-                  void on_delete_marker(editing_marker_id)
-                    .then(() => {
-                      set_marker_selection((current) => ({
-                        marker_id: null,
-                        viewport: current.viewport,
-                      }));
-                      cancel_marker_edit();
-                    })
-                    .catch(() =>
-                      set_marker_save_error("标记删除失败，请稍后重试"),
-                    )
-                    .finally(() => set_is_saving_marker(false));
+            <Field className="flex-row items-center justify-between">
+              <FieldLabel id="marker-shape-label">标记形态</FieldLabel>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                value={
+                  marker_end_draft === null
+                    ? MARKER_SHAPE_VALUES.point
+                    : MARKER_SHAPE_VALUES.range
+                }
+                onValueChange={(value) => {
+                  if (!value) return;
+                  set_marker_end_draft(
+                    value === MARKER_SHAPE_VALUES.range
+                      ? Math.min(duration, marker_start_draft + 5)
+                      : null,
+                  );
                 }}
                 disabled={is_saving_marker}
+                aria-labelledby="marker-shape-label"
               >
-                <Trash2 data-icon="inline-start" />
-                {confirming_delete ? "确认删除" : "删除"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={cancel_marker_edit}
-                disabled={is_saving_marker}
-              >
-                取消
-              </Button>
-              <Button
-                type="submit"
-                disabled={
-                  is_saving_marker ||
-                  !Number.isFinite(marker_start_draft) ||
-                  (marker_end_draft !== null &&
-                    (!Number.isFinite(marker_end_draft) ||
-                      marker_end_draft <= marker_start_draft))
-                }
-              >
-                {is_saving_marker ? <Spinner data-icon="inline-start" /> : null}
-                {is_saving_marker ? "保存中…" : "保存"}
-              </Button>
+                <ToggleGroupItem value={MARKER_SHAPE_VALUES.point}>
+                  点标记
+                </ToggleGroupItem>
+                <ToggleGroupItem value={MARKER_SHAPE_VALUES.range}>
+                  范围标记
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
+            {marker_save_error ? (
+              <Alert variant="destructive">
+                <AlertDescription>{marker_save_error}</AlertDescription>
+              </Alert>
+            ) : null}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={is_saving_marker}
+                  >
+                    <Trash2 data-icon="inline-start" />
+                    删除
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent size="sm">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>删除这个标记？</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      删除后无法恢复，相关评分和范围信息也会一并移除。
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>取消</AlertDialogCancel>
+                    <AlertDialogAction
+                      variant="destructive"
+                      onClick={delete_marker}
+                    >
+                      <Trash2 data-icon="inline-start" />
+                      删除标记
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={cancel_marker_edit}
+                  disabled={is_saving_marker}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={
+                    is_saving_marker ||
+                    !Number.isFinite(marker_start_draft) ||
+                    (marker_end_draft !== null &&
+                      (!Number.isFinite(marker_end_draft) ||
+                        marker_end_draft <= marker_start_draft))
+                  }
+                >
+                  {is_saving_marker ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : null}
+                  {is_saving_marker ? "保存中…" : "保存"}
+                </Button>
+              </div>
             </div>
           </form>
         </PopoverContent>
@@ -1093,15 +1182,10 @@ export function MediaTimeline({
         </TimelineProvider>
       </div>
 
-      {transcript_error ? (
-        <p className="media_timeline_error" role="alert">
-          {transcript_error}
-        </p>
-      ) : null}
-      {marker_error ? (
-        <p className="media_timeline_error" role="alert">
-          {marker_error}
-        </p>
+      {timeline_error ? (
+        <Alert className="media_timeline_error" variant="destructive">
+          <AlertDescription>{timeline_error}</AlertDescription>
+        </Alert>
       ) : null}
     </section>
   );
@@ -1121,7 +1205,6 @@ export function MediaTimeline({
     set_editing_marker_id(marker.marker_id);
     set_marker_start_draft(marker.start_seconds);
     set_marker_end_draft(marker.end_seconds);
-    set_confirming_delete(false);
     set_marker_save_error(null);
     set_marker_editor_position(pointer_position);
     cancel_transcript_edit();
@@ -1173,11 +1256,26 @@ export function MediaTimeline({
       .finally(() => set_is_saving_marker(false));
   }
 
+  function delete_marker() {
+    if (editing_marker_id === null) return;
+    set_is_saving_marker(true);
+    set_marker_save_error(null);
+    void on_delete_marker(editing_marker_id)
+      .then(() => {
+        set_marker_selection((current) => ({
+          marker_id: null,
+          viewport: current.viewport,
+        }));
+        cancel_marker_edit();
+      })
+      .catch(() => set_marker_save_error("标记删除失败，请稍后重试"))
+      .finally(() => set_is_saving_marker(false));
+  }
+
   function cancel_marker_edit() {
     set_editing_marker_id(null);
     set_marker_start_draft(0);
     set_marker_end_draft(null);
-    set_confirming_delete(false);
     set_marker_save_error(null);
     set_marker_editor_position(null);
   }
@@ -1193,7 +1291,7 @@ export function MediaTimeline({
 function build_tracks(
   transcript_segments: Transcript["segments"],
   segments: MediaSegment[],
-  markers: MediaMarker[],
+  markers: TimelineMarkerGeometry[],
   candidate_markers: MediaMarker[],
   analysis_strategy: AnalysisStrategy,
   duration: number,
@@ -1266,12 +1364,11 @@ function build_tracks(
 }
 
 function create_marker_clip(
-  marker: MediaMarker,
+  marker: TimelineMarkerGeometry,
   analysis_strategy: AnalysisStrategy,
   duration: number,
   is_selected: boolean,
 ): Clip {
-  const marker_name = format_marker_label(marker);
   if (marker.end_seconds !== null) {
     const clip = create_clip(
       marker.marker_id,
@@ -1285,7 +1382,6 @@ function create_marker_clip(
         marker_shape: "manual",
         marker_anchor_seconds: marker.start_seconds,
         rendered_start_seconds: marker.start_seconds,
-        marker_name,
       },
     );
     return invisible_marker_clip(clip);
@@ -1312,7 +1408,6 @@ function create_marker_clip(
       marker_shape: "default",
       marker_anchor_seconds: marker.start_seconds,
       rendered_start_seconds,
-      marker_name,
     },
   );
   return invisible_marker_clip(clip);
@@ -1371,12 +1466,44 @@ function create_clip(
   };
 }
 
-function timeline_clip_aria_label(clip: Clip, track: Track): string {
+function timeline_clip_aria_label(
+  clip: Clip,
+  track: Track,
+  marker_labels: ReadonlyMap<string, string>,
+): string {
   const metadata = clip.metadata as TimelineClipMetadata | undefined;
-  if (metadata?.kind === "marker") {
-    return metadata.marker_name || "标记";
+  if (metadata?.kind === "marker" && metadata.source_id) {
+    return marker_labels.get(metadata.source_id) ?? "标记";
   }
   return clip.label || `${track.name ?? "未命名轨道"}片段`;
+}
+
+function has_same_marker_geometry(
+  current: TimelineMarkerGeometry[],
+  markers: MediaMarker[],
+): boolean {
+  return (
+    current.length === markers.length &&
+    current.every((geometry, index) => {
+      const marker = markers[index];
+      return (
+        marker !== undefined &&
+        geometry.marker_id === marker.marker_id &&
+        geometry.start_seconds === marker.start_seconds &&
+        geometry.end_seconds === marker.end_seconds
+      );
+    })
+  );
+}
+
+function create_timeline_marker_geometry(
+  markers: MediaMarker[],
+): TimelineMarkerGeometry[] {
+  return markers.map(({ marker_id, start_seconds, end_seconds }) => ({
+    marker_id,
+    start_seconds,
+    end_seconds,
+  }));
 }
 
 function timeline_duration(
@@ -1384,7 +1511,7 @@ function timeline_duration(
   current_time: number,
   transcript_segments: Transcript["segments"],
   segments: MediaSegment[],
-  markers: MediaMarker[],
+  markers: TimelineMarkerGeometry[],
 ): number {
   return Math.max(
     duration_seconds ?? 0,

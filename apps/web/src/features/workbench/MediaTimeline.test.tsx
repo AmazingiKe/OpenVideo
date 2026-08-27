@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { forwardRef, type ReactNode, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -193,6 +199,8 @@ function render_timeline(options?: {
   added_marker?: MediaMarker;
   candidate_markers?: MediaMarker[];
 }) {
+  let replace_rendered_markers: (markers: MediaMarker[]) => void = () =>
+    undefined;
   const callbacks = {
     seek_to: vi.fn(),
     add_marker: vi.fn().mockResolvedValue(options?.added_marker),
@@ -244,6 +252,8 @@ function render_timeline(options?: {
 
   function TimelineHarness() {
     const [, set_selected_transcript_indices] = useState<number[]>([]);
+    const [rendered_markers, set_rendered_markers] = useState(markers);
+    replace_rendered_markers = set_rendered_markers;
 
     return (
       <MediaTimeline
@@ -251,7 +261,7 @@ function render_timeline(options?: {
         current_time={30}
         transcript={transcript}
         segments={segments}
-        markers={markers}
+        markers={rendered_markers}
         candidate_markers={options?.candidate_markers}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={null}
@@ -270,7 +280,7 @@ function render_timeline(options?: {
 
   render(<TimelineHarness />);
 
-  return callbacks;
+  return { ...callbacks, replace_rendered_markers };
 }
 
 describe("MediaTimeline", () => {
@@ -464,6 +474,46 @@ describe("MediaTimeline", () => {
     );
   });
 
+  it("updates marker ratings without rebuilding timeline geometry", () => {
+    const { replace_rendered_markers } = render_timeline();
+
+    expect(timeline_mock.create_engine).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByLabelText("canvas-item-marker"));
+    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(2);
+
+    act(() =>
+      replace_rendered_markers([
+        {
+          marker_id: "marker-0198d12345677890abcdef1234567890",
+          asset_id: ASSET_ID,
+          start_seconds: 20,
+          end_seconds: null,
+          importance: 5,
+        },
+      ]),
+    );
+
+    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByRole("img", {
+        name: "★★★★★ · 00:20：默认范围，向前 10 秒，向后 20 秒",
+      }),
+    ).toBeInTheDocument();
+
+    act(() =>
+      replace_rendered_markers([
+        {
+          marker_id: "marker-0198d12345677890abcdef1234567890",
+          asset_id: ASSET_ID,
+          start_seconds: 24,
+          end_seconds: null,
+          importance: 5,
+        },
+      ]),
+    );
+    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(3);
+  });
+
   it("opens the selected marker menu with Shift+F10", async () => {
     render_timeline();
     fireEvent.click(screen.getByLabelText("canvas-item-marker"));
@@ -483,7 +533,7 @@ describe("MediaTimeline", () => {
     fireEvent.click(marker_clip);
     fireEvent.doubleClick(marker_clip);
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除标记" }));
     await waitFor(() => expect(delete_marker).toHaveBeenCalledOnce());
 
     fireEvent.keyDown(window, { key: "5" });
