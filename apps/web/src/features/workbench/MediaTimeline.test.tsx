@@ -35,6 +35,10 @@ type MockTimelineAction =
 
 const timeline_mock = vi.hoisted(() => ({
   current_props: null as TimelineEditor | null,
+  viewport_events: [] as Array<{
+    type: "render" | "scroll";
+    value: number;
+  }>,
   set_time: vi.fn(),
   set_scroll_left: vi.fn(),
   set_scroll_top: vi.fn(),
@@ -44,6 +48,10 @@ vi.mock("@xzdarcy/react-timeline-editor", () => ({
   Timeline: forwardRef<TimelineState, TimelineEditor>(
     function MockTimeline(props, ref) {
       timeline_mock.current_props = props;
+      timeline_mock.viewport_events.push({
+        type: "render",
+        value: (props.scaleWidth ?? 0) / (props.scale ?? 1),
+      });
       useImperativeHandle(
         ref,
         () =>
@@ -289,6 +297,13 @@ describe("MediaTimeline", () => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     timeline_mock.current_props = null;
+    timeline_mock.viewport_events.length = 0;
+    timeline_mock.set_scroll_left.mockImplementation((scroll_left) => {
+      timeline_mock.viewport_events.push({
+        type: "scroll",
+        value: scroll_left,
+      });
+    });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 
@@ -652,6 +667,7 @@ describe("MediaTimeline", () => {
       });
     });
     timeline_mock.set_scroll_left.mockClear();
+    timeline_mock.viewport_events.length = 0;
 
     fireEvent.wheel(host, {
       altKey: true,
@@ -681,6 +697,14 @@ describe("MediaTimeline", () => {
     const pointer_time_after = (scroll_left + 200 - 16) / zoom;
     expect(zoom).toBeCloseTo(92.4);
     expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
+    expect(timeline_mock.viewport_events[0]).toEqual({
+      type: "scroll",
+      value: scroll_left,
+    });
+    expect(timeline_mock.viewport_events).toContainEqual({
+      type: "render",
+      value: zoom,
+    });
     expect(
       Math.abs(pointer_time_after - second_pointer_time),
     ).toBeLessThanOrEqual(0.01);

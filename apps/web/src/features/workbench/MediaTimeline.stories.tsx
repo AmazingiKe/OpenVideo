@@ -125,7 +125,7 @@ function TimelineStory({
   }
 
   return (
-    <div className="min-h-52 w-full">
+    <div className="h-64 w-full" data-testid="timeline-story-frame">
       <MediaTimeline
         asset_id={ASSET_ID}
         duration_seconds={duration_seconds}
@@ -190,7 +190,19 @@ export const Empty: Story = {
   },
 };
 
-export const FullThreeTracks: Story = {};
+export const FullThreeTracks: Story = {
+  play: async ({ canvasElement }) => {
+    const story_frame = within(canvasElement).getByTestId(
+      "timeline-story-frame",
+    );
+    const timeline = story_frame.querySelector<HTMLElement>(".media_timeline");
+    expect(timeline).not.toBeNull();
+    const frame_bounds = story_frame.getBoundingClientRect();
+    const timeline_bounds = timeline?.getBoundingClientRect();
+    expect(timeline_bounds?.right).toBeCloseTo(frame_bounds.right);
+    expect(timeline_bounds?.bottom).toBeCloseTo(frame_bounds.bottom);
+  },
+};
 
 export const SelectedPointMarker: Story = {
   args: {
