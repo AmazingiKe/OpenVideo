@@ -15,6 +15,7 @@ from openvideo.core.analysis_models import (
 from openvideo.core.download_models import (
     DownloadEvent,
     DownloadJob,
+    DownloadQuality,
     DownloadStage,
     DownloadTask,
     TERMINAL_DOWNLOAD_STAGES,
@@ -89,6 +90,7 @@ class DownloadManager:
         source: SourceMatch,
         folder_id: str | None = None,
         assign_ready_folder: bool = False,
+        video_quality: DownloadQuality = DownloadQuality.BEST,
     ) -> DownloadJob:
         if folder_id is not None:
             self.library.get_folder(folder_id)
@@ -108,12 +110,12 @@ class DownloadManager:
                     ):
                         existing_asset.folder_id = folder_id
                         self.library.save(existing_asset)
-                    return self._completed_job(existing_asset)
+                    return self._completed_job(existing_asset, video_quality)
                 existing_asset.folder_id = folder_id
                 existing_asset.source_url = source.normalized_url
                 existing_asset.status = MediaAssetStatus.PENDING
                 existing_asset.error_message = None
-                return self._create_download_job(existing_asset)
+                return self._create_download_job(existing_asset, video_quality)
 
         asset_id = str(uuid7())
         asset = MediaAsset(
@@ -123,12 +125,20 @@ class DownloadManager:
             source_platform=source.platform,
             source_video_id=source.source_video_id,
         )
-        return self._create_download_job(asset)
+        return self._create_download_job(asset, video_quality)
 
-    def _create_download_job(self, asset: MediaAsset) -> DownloadJob:
+    def _create_download_job(
+        self,
+        asset: MediaAsset,
+        video_quality: DownloadQuality,
+    ) -> DownloadJob:
         """素材与任务先共同落盘，避免轮询观察到没有持久化资源的任务。"""
         job_id = f"job-{uuid7().hex}"
-        job = DownloadJob(job_id=job_id, asset_id=asset.asset_id)
+        job = DownloadJob(
+            job_id=job_id,
+            asset_id=asset.asset_id,
+            video_quality=video_quality,
+        )
         self.library.save(asset)
         self.library.save_download_job(job, DownloadEvent.capture(job))
         with self._lock:
@@ -141,10 +151,12 @@ class DownloadManager:
         sources: list[SourceMatch],
         folder_id: str | None = None,
         assign_ready_folder: bool = False,
+        video_quality: DownloadQuality = DownloadQuality.BEST,
     ) -> list[DownloadJob]:
         """为多个来源各建一个任务，返回与输入一一对应的任务列表。"""
         return [
-            self.create(source, folder_id, assign_ready_folder) for source in sources
+            self.create(source, folder_id, assign_ready_folder, video_quality)
+            for source in sources
         ]
 
     def retry(self, job_id: str) -> DownloadJob:
@@ -163,7 +175,11 @@ class DownloadManager:
             source_video_id=asset.source_video_id,
             is_playlist=False,
         )
-        return self.create(source, asset.folder_id)
+        return self.create(
+            source,
+            asset.folder_id,
+            video_quality=failed_job.video_quality,
+        )
 
     def start(self, job_id: str) -> None:
         with self._lock:
@@ -262,6 +278,7 @@ class DownloadManager:
                         ),
                         lambda message: self._update_stage_message(job_id, message),
                         lambda metadata: self._record_metadata(job_id, metadata),
+                        video_quality=job.video_quality,
                         cookie_source=cookie_source,
                         staging_directory=self.library.temporary_directory(job_id),
                     )
@@ -432,10 +449,15 @@ class DownloadManager:
                 return None
             return job.model_copy(deep=True)
 
-    def _completed_job(self, asset: MediaAsset) -> DownloadJob:
+    def _completed_job(
+        self,
+        asset: MediaAsset,
+        video_quality: DownloadQuality,
+    ) -> DownloadJob:
         job = DownloadJob(
             job_id=f"job-{uuid7().hex}",
             asset_id=asset.asset_id,
+            video_quality=video_quality,
             stage=DownloadStage.COMPLETE,
             progress_percent=100,
             message="该视频已在媒体库中",

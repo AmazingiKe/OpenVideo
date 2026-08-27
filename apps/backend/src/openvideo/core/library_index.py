@@ -42,6 +42,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     if not _database_matches_schema(database_path):
         _rebuild_database(database_path, library_path / "temp", assets_path)
     connection = _connect(database_path)
+    _ensure_download_quality_schema(connection)
     _ensure_download_event_schema(connection)
     synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
@@ -415,6 +416,21 @@ def _ensure_download_event_schema(connection: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_download_quality_schema(connection: sqlite3.Connection) -> None:
+    """旧资料库增量补齐画质字段，避免为运行时任务表重建整个查询投影。"""
+
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(download_jobs)")
+    }
+    if "video_quality" in columns:
+        return
+    with connection:
+        connection.execute(
+            "ALTER TABLE download_jobs ADD COLUMN "
+            "video_quality TEXT NOT NULL DEFAULT 'best'"
+        )
+
+
 def _save_issue(connection: sqlite3.Connection, issue: IndexIssue) -> None:
     issue_key = f"{issue.asset_id or ''}\0{issue.relative_path}\0{issue.code}"
     connection.execute(
@@ -515,7 +531,8 @@ CREATE TABLE assets (
 );
 CREATE TABLE download_jobs (
     job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    stage TEXT NOT NULL, progress_percent REAL NOT NULL, message TEXT NOT NULL,
+    video_quality TEXT NOT NULL, stage TEXT NOT NULL,
+    progress_percent REAL NOT NULL, message TEXT NOT NULL,
     error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE download_events (

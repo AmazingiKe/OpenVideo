@@ -7,6 +7,7 @@ import type { DownloadJob } from "./types";
 const pending_job: DownloadJob = {
   job_id: "job-1",
   asset_id: "asset-1",
+  video_quality: "best",
   stage: "pending",
   progress_percent: 0,
   message: "等待开始",

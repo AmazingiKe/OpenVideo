@@ -10,6 +10,7 @@ from pathlib import Path
 
 import httpx
 
+from openvideo.core.download_models import DownloadQuality
 from openvideo.core.media_models import SourcePlatform
 from openvideo.tools.media import resolve_tool
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
@@ -38,14 +39,12 @@ BILIBILI_VIEW_HEADERS = {
     "Referer": "https://www.bilibili.com/",
 }
 
-# 浏览器 <video> 直接播放依赖 H.264/AAC；各平台按可得性给出优先级递减的 format 表达式。
-_FORMAT_BY_PLATFORM = {
-    SourcePlatform.BILIBILI: (
-        "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
-        "bestvideo[vcodec^=avc1]+bestaudio/best[ext=mp4]/best"
-    ),
-    SourcePlatform.DOUYIN: "best[ext=mp4]/best",
-    SourcePlatform.YOUTUBE: "best[ext=mp4]/best",
+_QUALITY_HEIGHTS = {
+    DownloadQuality.UHD_2160: 2160,
+    DownloadQuality.QHD_1440: 1440,
+    DownloadQuality.FULL_HD_1080: 1080,
+    DownloadQuality.HD_720: 720,
+    DownloadQuality.SD_480: 480,
 }
 
 
@@ -112,6 +111,7 @@ def download_video(
     on_progress: ProgressCallback,
     on_stage: StageCallback,
     on_metadata: MetadataCallback,
+    video_quality: DownloadQuality = DownloadQuality.BEST,
     cookie_source: Path | None = None,
     staging_directory: Path | None = None,
 ) -> DownloadedMedia:
@@ -151,7 +151,7 @@ def download_video(
         "--ffmpeg-location",
         ffmpeg_path,
         "--format",
-        _FORMAT_BY_PLATFORM[platform],
+        download_format(platform, video_quality),
         "--merge-output-format",
         "mp4",
         "--write-thumbnail",
@@ -311,6 +311,24 @@ def _bilibili_season_entry(episode: object) -> PlaylistEntry | None:
         title=_optional_text(episode.get("title")) or _optional_text(metadata.get("title")),
         duration_seconds=_optional_float(metadata.get("duration")),
         uploader=_optional_text(author_data.get("name")),
+    )
+
+
+def download_format(
+    platform: SourcePlatform,
+    video_quality: DownloadQuality,
+) -> str:
+    """按目标高度选择不高于该清晰度的最佳可播放格式。"""
+
+    maximum_height = _QUALITY_HEIGHTS.get(video_quality)
+    height_filter = f"[height<={maximum_height}]" if maximum_height else ""
+    if platform == SourcePlatform.DOUYIN:
+        return f"best[ext=mp4]{height_filter}/best{height_filter}"
+    return (
+        f"bestvideo[vcodec^=avc1]{height_filter}+bestaudio[acodec^=mp4a]/"
+        f"bestvideo[vcodec^=avc1]{height_filter}+bestaudio/"
+        f"bestvideo[ext=mp4]{height_filter}+bestaudio[ext=m4a]/"
+        f"best[ext=mp4]{height_filter}/best{height_filter}"
     )
 
 

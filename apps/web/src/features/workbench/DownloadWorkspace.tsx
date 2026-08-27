@@ -36,6 +36,7 @@ import type {
   DownloadAccount,
   DownloadCookieBrowser,
   DownloadFolderSelection,
+  DownloadQuality,
   HealthResponse,
   LibraryFolder,
   ProbeResponse,
@@ -51,6 +52,7 @@ type DownloadWorkspaceProps = {
   selected_urls: Set<string>;
   folders: LibraryFolder[];
   target_folder_id: DownloadFolderSelection;
+  video_quality: DownloadQuality;
   current_source_video_id: string | null;
   is_submitting: boolean;
   retrying_download_task_id: string | null;
@@ -63,6 +65,7 @@ type DownloadWorkspaceProps = {
   on_toggle_url: (url: string) => void;
   on_replace_selection: (urls: string[]) => void;
   on_target_folder_change: (folder_id: DownloadFolderSelection) => void;
+  on_video_quality_change: (quality: DownloadQuality) => void;
   on_start_download: () => void;
   on_retry_download: (task_id: string) => void;
   on_save_download_account: (
@@ -89,6 +92,7 @@ export function DownloadWorkspace({
   selected_urls,
   folders,
   target_folder_id,
+  video_quality,
   current_source_video_id,
   is_submitting,
   retrying_download_task_id,
@@ -101,6 +105,7 @@ export function DownloadWorkspace({
   on_toggle_url,
   on_replace_selection,
   on_target_folder_change,
+  on_video_quality_change,
   on_start_download,
   on_retry_download,
   on_save_download_account,
@@ -148,7 +153,7 @@ export function DownloadWorkspace({
         title_id="download_workspace_title"
         eyebrow="视频下载"
         title="下载在线视频，稍后集中处理"
-        description="解析视频或播放列表，选择内容后加入后台任务队列。"
+        description="解析视频或播放列表，选择内容和清晰度后加入后台任务队列。"
         icon={Download}
         action={
           <Badge variant={dependencies_ready ? "secondary" : "outline"}>
@@ -180,13 +185,15 @@ export function DownloadWorkspace({
             </div>
             <div>
               <CardTitle role="heading" aria-level={2}>
-                添加视频链接
+                解析视频链接
               </CardTitle>
-              <CardDescription>粘贴链接下载视频</CardDescription>
+              <CardDescription>
+                粘贴链接，解析后选择要下载的内容。
+              </CardDescription>
             </div>
           </div>
           <CardAction>
-            <Badge variant="secondary">步骤 1</Badge>
+            <Badge variant="secondary">解析与下载</Badge>
           </CardAction>
         </CardHeader>
         <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
@@ -216,7 +223,7 @@ export function DownloadWorkspace({
                     ) : (
                       <Search data-icon="inline-start" />
                     )}
-                    {is_submitting ? "正在检测" : "检测链接"}
+                    {is_submitting ? "正在解析" : "解析链接"}
                   </Button>
                 </div>
                 <FieldDescription>
@@ -227,7 +234,7 @@ export function DownloadWorkspace({
             {error ? (
               <Alert className="mt-4" variant="destructive">
                 <CircleAlert aria-hidden="true" />
-                <AlertTitle>无法处理此链接</AlertTitle>
+                <AlertTitle>无法解析此链接</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             ) : null}
@@ -245,31 +252,33 @@ export function DownloadWorkspace({
             </div>
             <Separator />
             <ol className="flex flex-col gap-3 text-sm text-muted-foreground">
-              <DownloadStep icon={Link2} label="粘贴并检测链接" />
+              <DownloadStep icon={Link2} label="粘贴并解析链接" />
               <DownloadStep icon={ListChecks} label="确认要下载的视频" />
               <DownloadStep icon={Download} label="后台下载并处理" />
             </ol>
           </div>
         </CardContent>
+        {probe_result ? (
+          <DownloadSelection
+            probe_result={probe_result}
+            visible_entries={visible_entries}
+            selected_urls={selected_urls}
+            folders={folders}
+            target_folder_id={target_folder_id}
+            video_quality={video_quality}
+            current_source_video_id={current_source_video_id}
+            current_entry_url={current_entry?.url ?? null}
+            entry_filter={entry_filter}
+            is_submitting={is_submitting}
+            on_entry_filter_change={set_entry_filter}
+            on_toggle_url={on_toggle_url}
+            on_replace_selection={on_replace_selection}
+            on_target_folder_change={on_target_folder_change}
+            on_video_quality_change={on_video_quality_change}
+            on_start_download={on_start_download}
+          />
+        ) : null}
       </Card>
-      {probe_result ? (
-        <DownloadSelection
-          probe_result={probe_result}
-          visible_entries={visible_entries}
-          selected_urls={selected_urls}
-          folders={folders}
-          target_folder_id={target_folder_id}
-          current_source_video_id={current_source_video_id}
-          current_entry_url={current_entry?.url ?? null}
-          entry_filter={entry_filter}
-          is_submitting={is_submitting}
-          on_entry_filter_change={set_entry_filter}
-          on_toggle_url={on_toggle_url}
-          on_replace_selection={on_replace_selection}
-          on_target_folder_change={on_target_folder_change}
-          on_start_download={on_start_download}
-        />
-      ) : null}
       <DownloadActivity
         tasks={download_tasks}
         retrying_task_id={retrying_download_task_id}

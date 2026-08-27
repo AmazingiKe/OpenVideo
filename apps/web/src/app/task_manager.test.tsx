@@ -177,6 +177,7 @@ function download_job(
   return {
     job_id: "job-0123456789abcdef0123456789abcdef",
     asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
+    video_quality: "best",
     stage,
     progress_percent: stage === "complete" ? 100 : 20,
     message: stage,

@@ -192,6 +192,7 @@ describe("api client", () => {
 
     await expect(
       create_download(["https://b23.tv/test"], undefined, {
+        video_quality: "1080p",
         folder_id: null,
         automatic_folder_name: "测试合集",
         assign_folder: true,
@@ -202,6 +203,7 @@ describe("api client", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         source_urls: ["https://b23.tv/test"],
+        video_quality: "1080p",
         folder_id: null,
         automatic_folder_name: "测试合集",
         assign_folder: true,

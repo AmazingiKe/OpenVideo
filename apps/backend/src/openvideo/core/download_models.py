@@ -17,12 +17,22 @@ class DownloadStage(StrEnum):
     FAILED = "failed"
 
 
+class DownloadQuality(StrEnum):
+    BEST = "best"
+    UHD_2160 = "2160p"
+    QHD_1440 = "1440p"
+    FULL_HD_1080 = "1080p"
+    HD_720 = "720p"
+    SD_480 = "480p"
+
+
 TERMINAL_DOWNLOAD_STAGES = {DownloadStage.COMPLETE, DownloadStage.FAILED}
 
 
 class DownloadJob(BaseModel):
     job_id: str
     asset_id: str
+    video_quality: DownloadQuality = DownloadQuality.BEST
     stage: DownloadStage = DownloadStage.PENDING
     progress_percent: float = 0
     message: str = "等待开始"

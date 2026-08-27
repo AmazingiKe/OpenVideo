@@ -323,6 +323,7 @@ export function create_download(
   source_urls: string[],
   signal?: AbortSignal,
   destination: DownloadDestination = {
+    video_quality: "best",
     folder_id: null,
     automatic_folder_name: null,
     assign_folder: false,

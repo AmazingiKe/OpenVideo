@@ -1,8 +1,33 @@
 import httpx
 
+from openvideo.core.download_models import DownloadQuality
 from openvideo.core.media_models import SourcePlatform
 from openvideo.tools import downloader
-from openvideo.tools.downloader import _friendly_failure, parse_playlist_payload, probe_source
+from openvideo.tools.downloader import (
+    _friendly_failure,
+    download_format,
+    parse_playlist_payload,
+    probe_source,
+)
+
+
+def test_download_format_applies_selected_maximum_height():
+    selected_format = download_format(
+        SourcePlatform.YOUTUBE,
+        DownloadQuality.FULL_HD_1080,
+    )
+
+    assert "bestvideo[vcodec^=avc1][height<=1080]" in selected_format
+    assert selected_format.endswith("best[height<=1080]")
+
+
+def test_best_download_format_has_no_height_limit():
+    selected_format = download_format(
+        SourcePlatform.DOUYIN,
+        DownloadQuality.BEST,
+    )
+
+    assert selected_format == "best[ext=mp4]/best"
 
 
 def test_single_video_payload_is_not_playlist():

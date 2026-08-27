@@ -66,7 +66,7 @@ export function DownloadActivity({
             <DownloadEmpty
               icon={Download}
               title="队列还是空的"
-              description="检测链接并选择视频后，任务会显示在这里。"
+              description="解析链接并选择视频后，任务会显示在这里。"
             />
           ) : (
             <ul className="flex flex-col gap-3">

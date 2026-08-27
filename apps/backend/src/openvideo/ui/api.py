@@ -59,7 +59,11 @@ from openvideo.core.transcription_models import (
     TranscriptionOptions,
 )
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
-from openvideo.core.download_models import DownloadStage, DownloadTask
+from openvideo.core.download_models import (
+    DownloadQuality,
+    DownloadStage,
+    DownloadTask,
+)
 from openvideo.core.library import (
     FolderConflictError,
     FolderNotFoundError,
@@ -253,6 +257,7 @@ class ProbeResponse(BaseModel):
 
 class BatchDownloadRequest(BaseModel):
     source_urls: list[str]
+    video_quality: DownloadQuality = DownloadQuality.BEST
     folder_id: str | None = None
     automatic_folder_name: str | None = None
     assign_folder: bool = False
@@ -821,7 +826,12 @@ def create_app(
             assign_ready_folder = request.assign_folder or bool(
                 request.automatic_folder_name
             )
-            jobs = manager.create_batch(matches, folder_id, assign_ready_folder)
+            jobs = manager.create_batch(
+                matches,
+                folder_id,
+                assign_ready_folder,
+                request.video_quality,
+            )
         except (FolderNotFoundError, ValueError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         for job in jobs:

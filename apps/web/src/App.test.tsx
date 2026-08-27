@@ -31,7 +31,11 @@ import {
   save_download_account,
   test_download_account,
 } from "./shared/api";
-import type { DownloadAccountLoginSession, MediaAsset } from "./shared/types";
+import type {
+  DownloadAccountLoginSession,
+  MediaAsset,
+  ProbeResponse,
+} from "./shared/types";
 
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
@@ -220,13 +224,13 @@ describe("App", () => {
       screen.queryByRole("button", { name: "开始分析" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "检测链接" }),
+      screen.getByRole("button", { name: "解析链接" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("视频或播放列表地址"), {
       target: { value: "https://www.bilibili.com/video/BV1xx411c7mD" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "检测链接" }));
+    fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "已检测的视频" }),
@@ -279,6 +283,70 @@ describe("App", () => {
     expect(screen.getByText("时间线")).toBeInTheDocument();
   });
 
+  it("clears the previous list when a new link parse starts", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    const first_probe: ProbeResponse = {
+      platform: "youtube",
+      is_playlist: false,
+      title: "第一次解析结果",
+      entries: [
+        {
+          source_video_id: "BaW_jenozKc",
+          url: "https://www.youtube.com/watch?v=BaW_jenozKc",
+          title: "第一次解析结果",
+          duration_seconds: 60,
+          uploader: "示例作者",
+        },
+      ],
+      truncated: false,
+      total_count: 1,
+    };
+    const second_probe: ProbeResponse = {
+      ...first_probe,
+      title: "第二次解析结果",
+      entries: [
+        {
+          ...first_probe.entries[0],
+          title: "第二次解析结果",
+        },
+      ],
+    };
+    let resolve_second_probe!: (probe: ProbeResponse) => void;
+    vi.mocked(probe_source)
+      .mockResolvedValueOnce(first_probe)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolve_second_probe = resolve;
+        }),
+      );
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
+      target: { value: first_probe.entries[0].url },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
+    expect(
+      await screen.findByRole("heading", { name: "第一次解析结果" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "第一次解析结果" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: /正在解析/ })).toBeDisabled();
+
+    resolve_second_probe(second_probe);
+    expect(
+      await screen.findByRole("heading", { name: "第二次解析结果" }),
+    ).toBeInTheDocument();
+  });
+
   it("selects the Douyin video opened from a search result", async () => {
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
@@ -308,7 +376,7 @@ describe("App", () => {
     fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
       target: { value: source_url },
     });
-    fireEvent.click(screen.getByRole("button", { name: "检测链接" }));
+    fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
 
     await waitFor(() => expect(probe_source).toHaveBeenCalledWith(source_url));
     expect(await screen.findByRole("checkbox")).toBeChecked();
@@ -351,7 +419,7 @@ describe("App", () => {
     fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
       target: { value: source_url },
     });
-    fireEvent.click(screen.getByRole("button", { name: "检测链接" }));
+    fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
 
     await waitFor(() => expect(probe_source).toHaveBeenCalledWith(source_url));
     const entries = await screen.findAllByRole("checkbox");

@@ -170,6 +170,27 @@ def test_download_folder_assignment_defaults_and_preserves_duplicates(
     assert by_id[uncategorized.json()[0]["asset_id"]]["folder_id"] is None
 
 
+def test_download_persists_selected_video_quality(monkeypatch, tmp_path):
+    monkeypatch.setattr(application.DownloadManager, "start", lambda *_: None)
+    app = api.create_app(Settings(library_path=tmp_path))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": [
+                    "https://www.youtube.com/watch?v=BaW_jenozKc"
+                ],
+                "video_quality": "1080p",
+            },
+        )
+        history = client.get("/api/downloads?limit=50")
+
+    assert response.status_code == 202
+    assert response.json()[0]["video_quality"] == "1080p"
+    assert history.json()[0]["video_quality"] == "1080p"
+
+
 def test_playlist_download_automatically_creates_and_reuses_folder(
     monkeypatch,
     tmp_path,
@@ -291,7 +312,8 @@ def test_failed_download_can_be_retried_by_job_id(monkeypatch, tmp_path):
             json={
                 "source_urls": [
                     "https://www.bilibili.com/video/BV1xx411c7mD"
-                ]
+                ],
+                "video_quality": "720p",
             },
         ).json()[0]
         app.state.download_manager._fail(first_job["job_id"], "测试下载失败")
@@ -310,6 +332,7 @@ def test_failed_download_can_be_retried_by_job_id(monkeypatch, tmp_path):
     assert retry_response.status_code == 202
     assert retry_job["job_id"] != first_job["job_id"]
     assert retry_job["asset_id"] == first_job["asset_id"]
+    assert retry_job["video_quality"] == "720p"
     assert retry_job["stage"] == "pending"
     assert invalid_response.status_code == 409
     assert invalid_response.json()["detail"] == "只有失败的下载任务可以重新下载"

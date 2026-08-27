@@ -44,7 +44,11 @@ export type ProbeResponse = {
 
 export type DownloadFolderSelection = string | null | undefined;
 
+export type DownloadQuality =
+  "best" | "2160p" | "1440p" | "1080p" | "720p" | "480p";
+
 export type DownloadDestination = {
+  video_quality: DownloadQuality;
   folder_id: string | null;
   automatic_folder_name: string | null;
   assign_folder: boolean;
@@ -174,6 +178,7 @@ export type DownloadEvent = {
 export type DownloadJob = {
   job_id: string;
   asset_id: string;
+  video_quality: DownloadQuality;
   stage: DownloadStage;
   progress_percent: number;
   message: string;

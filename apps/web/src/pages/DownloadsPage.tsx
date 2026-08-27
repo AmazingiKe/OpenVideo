@@ -22,6 +22,7 @@ import type {
   DownloadAccount,
   DownloadCookieBrowser,
   DownloadFolderSelection,
+  DownloadQuality,
   HealthResponse,
   ProbeEntry,
   ProbeResponse,
@@ -64,6 +65,7 @@ export function DownloadsPage() {
   const [selected_urls, set_selected_urls] = useState<Set<string>>(new Set());
   const [target_folder_id, set_target_folder_id] =
     useState<DownloadFolderSelection>(undefined);
+  const [video_quality, set_video_quality] = useState<DownloadQuality>("best");
   const [is_submitting, set_is_submitting] = useState(false);
   const [retrying_download_task_id, set_retrying_download_task_id] = useState<
     string | null
@@ -105,6 +107,9 @@ export function DownloadsPage() {
 
   async function submit_source_probe(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    set_probe_result(null);
+    set_selected_urls(new Set());
+
     const normalized_url = source_url.trim();
     if (!normalized_url) {
       set_page_error("请先粘贴 Bilibili、抖音或 YouTube 视频地址");
@@ -140,6 +145,7 @@ export function DownloadsPage() {
           ? probe_result.title
           : null;
       const final_jobs = await start_downloads(urls, {
+        video_quality,
         folder_id: target_folder_id ?? null,
         automatic_folder_name,
         assign_folder:
@@ -369,6 +375,7 @@ export function DownloadsPage() {
       selected_urls={selected_urls}
       folders={folders_query.data ?? []}
       target_folder_id={target_folder_id}
+      video_quality={video_quality}
       current_source_video_id={
         current_probe_entry(probe_result?.entries ?? [], source_url)
           ?.source_video_id ?? null
@@ -389,6 +396,7 @@ export function DownloadsPage() {
       on_toggle_url={toggle_url}
       on_replace_selection={(urls) => set_selected_urls(new Set(urls))}
       on_target_folder_change={set_target_folder_id}
+      on_video_quality_change={set_video_quality}
       on_start_download={() => void start_selected_downloads()}
       on_retry_download={(task_id) => void retry_failed_download(task_id)}
       on_save_download_account={save_platform_account}

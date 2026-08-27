@@ -193,7 +193,7 @@ export function DownloadAccountsCard({
                 平台账号
               </CardTitle>
               <CardDescription>
-                登录状态会自动用于链接检测和高清资源下载。
+                登录状态会自动用于链接解析和高清资源下载。
               </CardDescription>
             </div>
           </div>
