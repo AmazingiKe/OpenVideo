@@ -7,7 +7,7 @@ import * as media_api from "@/shared/api";
 import { error_message } from "@/shared/errors";
 import type { MediaMarker, MediaMarkerUpdate } from "@/shared/types";
 
-const MARKER_TIME_PRECISION = 10;
+const MARKER_TIME_PRECISION = 20;
 
 type MarkerMutationState = {
   confirmed: MediaMarker;

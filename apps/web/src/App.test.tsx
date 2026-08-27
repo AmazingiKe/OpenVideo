@@ -279,8 +279,6 @@ describe("App", () => {
       "aria-current",
       "page",
     );
-
-    expect(screen.getByText("时间线")).toBeInTheDocument();
   });
 
   it("clears the previous list when a new link parse starts", async () => {

@@ -45,7 +45,11 @@ type VideoWorkspaceProps = {
   markers: MediaMarker[];
   transcript: Transcript | null;
   player_ref: RefObject<PlayerHandle | null>;
+  is_paused: boolean;
+  playback_rate: number;
   on_time_change: (seconds: number) => void;
+  on_pause_change: (paused: boolean) => void;
+  on_playback_rate_change: (rate: number) => void;
 };
 
 export function VideoWorkspace({
@@ -53,12 +57,14 @@ export function VideoWorkspace({
   markers,
   transcript,
   player_ref,
+  is_paused,
+  playback_rate,
   on_time_change,
+  on_pause_change,
+  on_playback_rate_change,
 }: VideoWorkspaceProps) {
-  const [is_paused, set_is_paused] = useState(true);
   const [volume, set_volume] = useState(1);
   const [is_muted, set_is_muted] = useState(false);
-  const [playback_rate, set_playback_rate] = useState(1);
   const [is_picture_in_picture, set_is_picture_in_picture] = useState(false);
   const [is_fullscreen, set_is_fullscreen] = useState(false);
   const [can_picture_in_picture, set_can_picture_in_picture] = useState(false);
@@ -66,10 +72,8 @@ export function VideoWorkspace({
 
   useEffect(() => {
     transport_time_ref.current = null;
-    set_is_paused(true);
     set_volume(1);
     set_is_muted(false);
-    set_playback_rate(1);
     set_is_picture_in_picture(false);
     set_is_fullscreen(false);
     set_can_picture_in_picture(false);
@@ -118,6 +122,11 @@ export function VideoWorkspace({
               key={asset.asset_id}
               ref={player_ref}
               src={media_url(asset.playback_url)}
+              scrub_src={
+                asset.scrub_preview_url
+                  ? media_url(asset.scrub_preview_url)
+                  : null
+              }
               subtitles={transcript?.segments ?? []}
               markers={markers.map((marker) => ({
                 start_seconds: marker.start_seconds,
@@ -128,13 +137,13 @@ export function VideoWorkspace({
                 transport_time_ref.current = seconds;
                 on_time_change(seconds);
               }}
-              on_pause_change={set_is_paused}
+              on_pause_change={on_pause_change}
               on_volume_change={(next_volume, muted) => {
                 set_volume(next_volume);
                 set_is_muted(muted);
               }}
               on_presentation_change={(state) => {
-                set_playback_rate(state.playback_rate);
+                on_playback_rate_change(state.playback_rate);
                 set_is_picture_in_picture(state.picture_in_picture);
                 set_is_fullscreen(state.fullscreen);
                 set_can_picture_in_picture(state.can_picture_in_picture);

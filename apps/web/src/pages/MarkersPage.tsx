@@ -60,6 +60,8 @@ export function MarkersPage() {
     error: analysis_resources_error,
   } = use_analysis_resources();
   const [current_time, set_current_time] = useState(0);
+  const [is_paused, set_is_paused] = useState(true);
+  const [playback_rate, set_playback_rate] = useState(1);
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
   const [page_error, set_page_error] = useState<string | null>(null);
@@ -101,6 +103,8 @@ export function MarkersPage() {
 
   useEffect(() => {
     set_current_time(0);
+    set_is_paused(true);
+    set_playback_rate(1);
     set_selected_transcript_indices([]);
     set_candidate_markers([]);
     set_analysis_proposal(null);
@@ -129,6 +133,11 @@ export function MarkersPage() {
   function seek_player(seconds: number) {
     set_current_time(seconds);
     player_ref.current?.seek_to(seconds);
+  }
+
+  function preview_player(seconds: number) {
+    set_current_time(seconds);
+    player_ref.current?.preview_to(seconds);
   }
 
   async function run_analysis(
@@ -241,7 +250,11 @@ export function MarkersPage() {
       markers={markers}
       transcript={transcript}
       player_ref={player_ref}
+      is_paused={is_paused}
+      playback_rate={playback_rate}
       on_time_change={set_current_time}
+      on_pause_change={set_is_paused}
+      on_playback_rate_change={set_playback_rate}
     />
   );
   const tool_panel = (
@@ -366,15 +379,23 @@ export function MarkersPage() {
         )}
       </div>
       <MediaTimeline
+        asset_id={selected_asset_id}
         duration_seconds={selected_asset?.duration_seconds ?? null}
         current_time={current_time}
+        is_paused={is_paused}
+        playback_rate={playback_rate}
         transcript={transcript}
         segments={segments}
         markers={markers}
         candidate_markers={candidate_markers}
         analysis_strategy={analysis_strategy}
         marker_error={marker_error}
+        on_scrub={preview_player}
         on_seek={seek_player}
+        on_toggle_playback={() => player_ref.current?.toggle_playback()}
+        on_playback_rate_change={(rate) =>
+          player_ref.current?.set_playback_rate(rate)
+        }
         on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_add_marker={add_marker}
         on_update_marker={update_marker}

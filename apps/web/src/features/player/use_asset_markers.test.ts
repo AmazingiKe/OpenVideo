@@ -38,7 +38,7 @@ describe("use_asset_markers", () => {
     vi.mocked(create_marker).mockResolvedValueOnce({
       marker_id: "marker-new",
       asset_id: ASSET_ID,
-      start_seconds: 12.9,
+      start_seconds: 12.95,
       end_seconds: null,
       importance: 0,
     });
@@ -47,15 +47,15 @@ describe("use_asset_markers", () => {
     });
     await waitFor(() => expect(result.current.markers).toHaveLength(1));
 
-    await act(async () => result.current.add_marker(12.9));
+    await act(async () => result.current.add_marker(12.93));
 
     expect(create_marker).toHaveBeenCalledWith(ASSET_ID, {
-      start_seconds: 12.9,
+      start_seconds: 12.95,
       end_seconds: null,
     });
     expect(
       result.current.markers.map((marker) => marker.start_seconds),
-    ).toEqual([8, 12.9]);
+    ).toEqual([8, 12.95]);
   });
 
   it("partially updates and deletes markers through the media API", async () => {

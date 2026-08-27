@@ -5,206 +5,156 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { forwardRef, type ReactNode, useState } from "react";
+import { forwardRef, useImperativeHandle, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  TimelineEditor,
+  TimelineState,
+} from "@xzdarcy/react-timeline-editor";
 
-import { MediaTimeline } from "./MediaTimeline";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
-import type { MediaMarker } from "@/shared/types";
+import type { MediaMarker, MediaMarkerUpdate } from "@/shared/types";
+import { MediaTimeline } from "./MediaTimeline";
 
-type MockClip = {
-  id: string;
-  label: string;
-  timelineStart: number;
-  timelineEnd: number;
-  color?: string;
-  opacity?: number;
-  metadata: {
-    kind: string;
-    source_id?: string;
-    source_index?: number;
-    marker_shape?: "default" | "manual";
-    marker_anchor_seconds?: number;
-    rendered_start_seconds?: number;
+type MockTimelineAction =
+  TimelineEditor["editorData"][number]["actions"][number] & {
+    data: {
+      kind: "marker" | "candidate" | "transcript" | "event";
+      source_id?: string;
+      source_index?: number;
+      marker_shape?: "point" | "range";
+      marker_anchor_seconds?: number;
+      rendered_start_seconds?: number;
+    };
   };
-};
-
-type MockTrack = {
-  id: string;
-  name?: string;
-  kind?: string;
-  locked?: boolean;
-  clips: MockClip[];
-};
 
 const timeline_mock = vi.hoisted(() => ({
-  create_engine: vi.fn(),
-  emit_event: vi.fn(),
+  current_props: null as TimelineEditor | null,
+  set_time: vi.fn(),
   set_scroll_left: vi.fn(),
-  set_zoom_scale: vi.fn(),
-  get_clip_at_point: vi.fn(),
+  set_scroll_top: vi.fn(),
 }));
 
-vi.mock("@techsquidtv/canvas-timeline", () => {
-  const mock_state: { engine?: MockTimelineEngine } = {};
-
-  class MockTimelineEngine {
-    tracks: MockTrack[];
-    playhead_time: number;
-    scrollLeft = 0;
-    scrollTop = 0;
-    zoomScale = 74;
-    listeners = new Map<string, Set<(payload: unknown) => void>>();
-
-    constructor(state: {
-      tracks: MockTrack[];
-      playheadTime: number;
-      zoomScale?: number;
-      scrollLeft?: number;
-      scrollTop?: number;
-    }) {
-      this.tracks = state.tracks;
-      this.playhead_time = state.playheadTime;
-      this.zoomScale = state.zoomScale ?? 74;
-      this.scrollLeft = state.scrollLeft ?? 0;
-      this.scrollTop = state.scrollTop ?? 0;
-      mock_state.engine = this;
-      timeline_mock.create_engine(state);
-      timeline_mock.emit_event.mockImplementation((event, payload) =>
-        this.emit(String(event), payload),
+vi.mock("@xzdarcy/react-timeline-editor", () => ({
+  Timeline: forwardRef<TimelineState, TimelineEditor>(
+    function MockTimeline(props, ref) {
+      timeline_mock.current_props = props;
+      useImperativeHandle(
+        ref,
+        () =>
+          ({
+            setTime: timeline_mock.set_time,
+            setScrollLeft: timeline_mock.set_scroll_left,
+            setScrollTop: timeline_mock.set_scroll_top,
+          }) as unknown as TimelineState,
       );
-    }
 
-    getTime() {
-      return this.playhead_time;
-    }
-
-    setTime(time: number) {
-      this.playhead_time = time;
-      this.emit("playhead:scrub", time);
-    }
-
-    pixelToTime(pixel: number) {
-      return pixel;
-    }
-
-    timeToPixel(time: number) {
-      return time * this.zoomScale - this.scrollLeft;
-    }
-
-    getClipAtPoint(input: unknown) {
-      return timeline_mock.get_clip_at_point(input);
-    }
-
-    setZoomScale(zoom_scale: number) {
-      this.zoomScale = zoom_scale;
-      timeline_mock.set_zoom_scale(zoom_scale);
-    }
-
-    setScrollLeft(scroll_left: number) {
-      this.scrollLeft = scroll_left;
-      timeline_mock.set_scroll_left(scroll_left);
-    }
-
-    on(event: string, listener: (payload: unknown) => void) {
-      const listeners = this.listeners.get(event) ?? new Set();
-      listeners.add(listener);
-      this.listeners.set(event, listeners);
-      return () => listeners.delete(listener);
-    }
-
-    emit(event: string, payload: unknown) {
-      this.listeners.get(event)?.forEach((listener) => listener(payload));
-    }
-  }
-
-  function current_engine() {
-    if (!mock_state.engine)
-      throw new Error("Timeline engine is not initialized");
-    return mock_state.engine;
-  }
-
-  const passthrough = forwardRef<
-    HTMLDivElement,
-    { children?: ReactNode } & React.HTMLAttributes<HTMLDivElement>
-  >(({ children, ...props }, ref) => (
-    <div ref={ref} {...props}>
-      {children}
-    </div>
-  ));
-
-  return {
-    CanvasRenderer: () => null,
-    TimelineEngine: MockTimelineEngine,
-    TimelineProvider: ({ children }: { children?: ReactNode }) => children,
-    fromSeconds: (seconds: number) => seconds,
-    toSeconds: (seconds: number) => seconds,
-    useTimeline: () => ({
-      engine: current_engine(),
-      state: { tracks: current_engine().tracks },
-    }),
-    Timeline: {
-      Root: passthrough,
-      PlayheadArea: () => null,
-      PlayheadGrabber: () => null,
-      TrackList: passthrough,
-      Track: () => null,
-      TrackHeaderList: passthrough,
-      TrackHeader: ({
-        children,
-        trackId,
-        ...props
-      }: {
-        children?: ReactNode;
-        trackId: string;
-      }) => {
-        void trackId;
-        return <div {...props}>{children}</div>;
-      },
-      RangeSelector: () => null,
-      ViewportScrollbar: passthrough,
-      ViewportScrollbarThumb: passthrough,
-      ViewportScrollbarHandle: () => null,
-      ClipInteractionLayer: ({
-        onClipDoubleClick,
-      }: {
-        onClipDoubleClick: (hit: { clip: MockClip }) => void;
-      }) => (
-        <>
-          {current_engine().tracks.flatMap((track) =>
-            track.clips.map((clip) => (
+      return (
+        <div data-testid="timeline-editor-instance">
+          {props.editorData.map((row) => (
+            <div key={row.id} data-row-id={row.id}>
+              {row.actions.map((action) => (
+                <div
+                  key={action.id}
+                  data-action-id={action.id}
+                  onClick={(event) =>
+                    props.onClickActionOnly?.(event, {
+                      action,
+                      row,
+                      time: action.start,
+                    })
+                  }
+                  onDoubleClick={(event) =>
+                    props.onDoubleClickAction?.(event, {
+                      action,
+                      row,
+                      time: action.start,
+                    })
+                  }
+                  onContextMenu={(event) =>
+                    props.onContextMenuAction?.(event, {
+                      action,
+                      row,
+                      time: action.start,
+                    })
+                  }
+                >
+                  {props.getActionRender?.(action, row)}
+                </div>
+              ))}
               <button
-                key={clip.id}
                 type="button"
-                aria-label={`canvas-item-${clip.metadata.kind}`}
-                onClick={() =>
-                  current_engine().emit("clip:select", {
-                    clip,
-                    clipId: clip.id,
-                  })
+                aria-label={`${row.id} 空白处`}
+                onDoubleClick={(event) =>
+                  props.onDoubleClickRow?.(event, { row, time: 22.027 })
                 }
-                onDoubleClick={() => onClipDoubleClick({ clip })}
               />
-            )),
-          )}
-        </>
-      ),
+            </div>
+          ))}
+        </div>
+      );
     },
-  };
-});
+  ),
+}));
 
 const ASSET_ID = "asset-0198d12345677890abcdef1234567890";
+const POINT_MARKER: MediaMarker = {
+  marker_id: "marker-0198d12345677890abcdef1234567890",
+  asset_id: ASSET_ID,
+  start_seconds: 20,
+  end_seconds: null,
+  importance: 3,
+};
+const RANGE_MARKER: MediaMarker = {
+  marker_id: "marker-0198d12345677890abcdef1234567891",
+  asset_id: ASSET_ID,
+  start_seconds: 32,
+  end_seconds: 36,
+  importance: 5,
+};
+const CANDIDATE_MARKER: MediaMarker = {
+  marker_id: "marker-0198d12345677890abcdef1234567892",
+  asset_id: ASSET_ID,
+  start_seconds: 70,
+  end_seconds: 75,
+  importance: 2,
+};
+
+function timeline_props(): TimelineEditor {
+  if (!timeline_mock.current_props) {
+    throw new Error("Timeline has not rendered");
+  }
+  return timeline_mock.current_props;
+}
+
+function action_by_kind(kind: MockTimelineAction["data"]["kind"]) {
+  for (const row of timeline_props().editorData) {
+    const action = row.actions.find(
+      (item) => (item as MockTimelineAction).data.kind === kind,
+    );
+    if (action) return action as MockTimelineAction;
+  }
+  throw new Error(`Missing ${kind} action`);
+}
 
 function render_timeline(options?: {
   added_marker?: MediaMarker;
   candidate_markers?: MediaMarker[];
+  update_marker?: (
+    marker_id: string,
+    update: MediaMarkerUpdate,
+  ) => Promise<void>;
 }) {
-  let replace_rendered_markers: (markers: MediaMarker[]) => void = () =>
-    undefined;
+  let replace_markers: (markers: MediaMarker[]) => void = () => undefined;
+  let replace_asset_id: (asset_id: string) => void = () => undefined;
   const callbacks = {
+    scrub_to: vi.fn(),
     seek_to: vi.fn(),
+    toggle_playback: vi.fn(),
+    change_playback_rate: vi.fn(),
     add_marker: vi.fn().mockResolvedValue(options?.added_marker),
-    update_marker: vi.fn().mockResolvedValue(undefined),
+    update_marker:
+      options?.update_marker ?? vi.fn().mockResolvedValue(undefined),
     delete_marker: vi.fn().mockResolvedValue(undefined),
     update_transcript: vi.fn().mockResolvedValue(undefined),
     change_selected_transcript_indices: vi.fn(),
@@ -240,36 +190,32 @@ function render_timeline(options?: {
       tags: ["公式"],
     },
   ];
-  const markers: MediaMarker[] = [
-    {
-      marker_id: "marker-0198d12345677890abcdef1234567890",
-      asset_id: ASSET_ID,
-      start_seconds: 20,
-      end_seconds: null,
-      importance: 3,
-    },
-  ];
 
   function TimelineHarness() {
-    const [, set_selected_transcript_indices] = useState<number[]>([]);
-    const [rendered_markers, set_rendered_markers] = useState(markers);
-    replace_rendered_markers = set_rendered_markers;
-
+    const [asset_id, set_asset_id] = useState(ASSET_ID);
+    const [markers, set_markers] = useState([POINT_MARKER, RANGE_MARKER]);
+    replace_markers = set_markers;
+    replace_asset_id = set_asset_id;
     return (
       <MediaTimeline
+        asset_id={asset_id}
         duration_seconds={120}
-        current_time={30}
+        current_time={30.023}
+        is_paused
+        playback_rate={1}
         transcript={transcript}
         segments={segments}
-        markers={rendered_markers}
+        markers={markers}
         candidate_markers={options?.candidate_markers}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={null}
+        on_scrub={callbacks.scrub_to}
         on_seek={callbacks.seek_to}
-        on_selected_transcript_indices_change={(segment_indices) => {
-          callbacks.change_selected_transcript_indices(segment_indices);
-          set_selected_transcript_indices(segment_indices);
-        }}
+        on_toggle_playback={callbacks.toggle_playback}
+        on_playback_rate_change={callbacks.change_playback_rate}
+        on_selected_transcript_indices_change={
+          callbacks.change_selected_transcript_indices
+        }
         on_add_marker={callbacks.add_marker}
         on_update_marker={callbacks.update_marker}
         on_delete_marker={callbacks.delete_marker}
@@ -278,459 +224,307 @@ function render_timeline(options?: {
     );
   }
 
-  render(<TimelineHarness />);
-
-  return { ...callbacks, replace_rendered_markers };
+  const result = render(<TimelineHarness />);
+  return { ...callbacks, replace_markers, replace_asset_id, result };
 }
 
 describe("MediaTimeline", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    timeline_mock.get_clip_at_point.mockReturnValue(null);
+    timeline_mock.current_props = null;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 
-  it("maps media data to official canvas timeline tracks", () => {
-    const { seek_to } = render_timeline();
-
-    expect(screen.getByText("时间线")).toBeInTheDocument();
-    expect(
-      screen.getByRole("separator", { name: "调整轨道标题栏宽度" }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("canvas-item-marker")).toBeInTheDocument();
-    expect(screen.getByLabelText("canvas-item-transcript")).toBeInTheDocument();
-    expect(screen.getByLabelText("canvas-item-event")).toBeInTheDocument();
-    const marker_clip =
-      timeline_mock.create_engine.mock.calls[0]?.[0].tracks[0].clips[0];
-    expect(marker_clip).toMatchObject({ opacity: 0 });
-    expect(marker_clip).not.toHaveProperty("color");
-    expect(
-      screen.getByRole("complementary", { name: "时间线轨道" }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("M1 标记")).toBeInTheDocument();
-    expect(screen.getByLabelText("T1 转写，只读")).toBeInTheDocument();
-    expect(screen.getByLabelText("E1 分析事件，只读")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByLabelText("canvas-item-event"));
-    fireEvent.keyDown(screen.getByLabelText(/时间线画布/).parentElement!, {
-      key: "ArrowRight",
-    });
-
-    expect(seek_to).toHaveBeenNthCalledWith(1, 45);
-    expect(seek_to).toHaveBeenNthCalledWith(2, 31);
-  });
-
-  it("edits transcript data", async () => {
-    const { change_selected_transcript_indices, update_transcript } =
-      render_timeline();
-
-    fireEvent.doubleClick(screen.getByLabelText("canvas-item-transcript"));
-    expect(change_selected_transcript_indices).toHaveBeenCalledWith([0]);
-    fireEvent.change(screen.getByLabelText("编辑转写文字"), {
-      target: { value: "修正后的转写" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-
-    await waitFor(() =>
-      expect(update_transcript).toHaveBeenCalledWith(0, "修正后的转写"),
+  it("maps four action kinds without exposing mutable business objects", () => {
+    const source_markers = [POINT_MARKER, RANGE_MARKER, CANDIDATE_MARKER].map(
+      (marker) => ({ ...marker }),
     );
+    const source_snapshot = structuredClone(source_markers);
+    render_timeline({ candidate_markers: [source_markers[2]] });
+
+    expect(timeline_props().editorData).toHaveLength(3);
+    expect(timeline_props().editorData.map((row) => row.id)).toEqual([
+      "timeline-marker-track",
+      "timeline-transcript-track",
+      "timeline-event-track",
+    ]);
+    const marker_action = action_by_kind("marker");
+    const candidate_action = action_by_kind("candidate");
+    const transcript_action = action_by_kind("transcript");
+    const event_action = action_by_kind("event");
+    expect(marker_action).toMatchObject({ movable: true, flexible: false });
+    expect(candidate_action).toMatchObject({ movable: false, flexible: false });
+    expect(transcript_action).toMatchObject({
+      movable: false,
+      flexible: false,
+    });
+    expect(event_action).toMatchObject({ movable: false, flexible: false });
+
+    marker_action.start = 99;
+    candidate_action.end = 100;
+    expect(source_markers).toEqual(source_snapshot);
+    expect(screen.getByLabelText("标记，可编辑")).toBeInTheDocument();
+    expect(screen.getByLabelText("转写，只读")).toBeInTheDocument();
+    expect(screen.getByLabelText("分析事件，只读")).toBeInTheDocument();
   });
 
-  it("edits marker time beside the pointer without resetting transcript selection", async () => {
-    const { change_selected_transcript_indices, update_marker } =
-      render_timeline();
-    const timeline = screen.getByRole("region", { name: "剪辑时间轴" });
-    const marker_clip = screen.getByLabelText("canvas-item-marker");
+  it("shares playback controls and timecode with the player state", async () => {
+    const { toggle_playback, change_playback_rate } = render_timeline();
 
-    fireEvent.pointerDown(marker_clip, { clientX: 240, clientY: 360 });
-    fireEvent.click(marker_clip);
-
-    expect(screen.queryByLabelText("开始时间（秒）")).toBeNull();
-    expect(
-      screen.getByRole("img", {
-        name: "★★★ · 00:20：默认范围，向前 10 秒，向后 20 秒",
-      }),
-    ).toHaveAttribute("data-selected", "true");
-
-    timeline_mock.get_clip_at_point.mockReturnValue({
-      clip: { id: "existing-marker" },
-    });
-    fireEvent.doubleClick(marker_clip, { clientX: 240, clientY: 360 });
-
-    const start_input = screen.getByLabelText("开始时间（秒）");
-    const marker_editor = start_input.closest("form");
-    const marker_anchor = document.querySelector(
-      ".timeline-marker-editor-anchor",
+    expect(screen.getByLabelText("当前播放时间和总时长")).toHaveTextContent(
+      "00:30 / 02:00",
     );
-    expect(marker_editor).not.toBeNull();
-    expect(timeline).not.toContainElement(marker_editor);
-    expect(marker_anchor).toHaveStyle({ left: "240px", top: "360px" });
-    expect(change_selected_transcript_indices).not.toHaveBeenCalled();
-    fireEvent.change(start_input, { target: { value: "22" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-
-    await waitFor(() =>
-      expect(update_marker).toHaveBeenCalledWith(
-        "marker-0198d12345677890abcdef1234567890",
-        {
-          start_seconds: 22,
-          end_seconds: null,
-        },
-      ),
+    fireEvent.click(screen.getByRole("button", { name: "播放" }));
+    fireEvent.keyDown(
+      screen.getByRole("combobox", { name: "播放倍速，当前 1 倍" }),
+      { key: "Enter" },
     );
-    expect(screen.queryByLabelText("开始时间（秒）")).toBeNull();
+    fireEvent.click(await screen.findByRole("option", { name: "1.5×" }));
+
+    expect(toggle_playback).toHaveBeenCalledOnce();
+    expect(change_playback_rate).toHaveBeenCalledWith(1.5);
   });
 
-  it("adds markers only through deliberate actions", () => {
-    const { add_marker } = render_timeline();
-    const canvas = screen.getByLabelText(/时间线画布/);
+  it("previews while dragging and seeks the source only after release", () => {
+    const { scrub_to, seek_to } = render_timeline();
 
-    fireEvent.click(canvas, { clientX: 60, clientY: 48 });
-    fireEvent.contextMenu(canvas, {
-      clientX: 60,
-      clientY: 48,
-    });
-    fireEvent.pointerDown(canvas, { button: 0, clientX: 40, clientY: 48 });
-    fireEvent.pointerUp(canvas, { clientX: 64, clientY: 48 });
+    act(() => timeline_props().onCursorDrag?.(42.027));
+    expect(scrub_to).toHaveBeenCalledWith(42.027);
+    expect(seek_to).not.toHaveBeenCalled();
 
-    expect(add_marker).not.toHaveBeenCalled();
+    act(() => timeline_props().onCursorDragEnd?.(42.027));
+    expect(seek_to).toHaveBeenCalledWith(42.027);
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "在 00:30 添加标记" }));
+  it("adds markers from the toolbar, shortcut, and marker row", async () => {
+    const added_marker = { ...POINT_MARKER, marker_id: "marker-added" };
+    const { add_marker } = render_timeline({ added_marker });
+
+    fireEvent.click(screen.getByRole("button", { name: /添加标记/ }));
     fireEvent.keyDown(window, { key: "m", ctrlKey: true });
+    fireEvent.doubleClick(
+      screen.getByRole("button", {
+        name: "timeline-marker-track 空白处",
+      }),
+    );
 
+    await waitFor(() => expect(add_marker).toHaveBeenCalledTimes(3));
     expect(add_marker).toHaveBeenNthCalledWith(1, 30, null);
     expect(add_marker).toHaveBeenNthCalledWith(2, 30, null);
+    expect(add_marker).toHaveBeenNthCalledWith(3, 22.05, null);
   });
 
-  it("selects a newly created marker and rates it with number shortcuts", async () => {
-    const added_marker: MediaMarker = {
-      marker_id: "marker-new",
-      asset_id: ASSET_ID,
-      start_seconds: 30,
-      end_seconds: null,
-      importance: 0,
-    };
-    const { update_marker } = render_timeline({ added_marker });
-
-    fireEvent.click(screen.getByRole("button", { name: "在 00:30 添加标记" }));
-    await waitFor(() =>
-      expect(timeline_mock.create_engine).toHaveBeenCalledTimes(2),
-    );
-    fireEvent.keyDown(window, { key: "5" });
-
-    expect(update_marker).toHaveBeenCalledWith("marker-new", { importance: 5 });
-  });
-
-  it("ignores rating shortcuts without a user marker selection or during text input", () => {
-    const candidate: MediaMarker = {
-      marker_id: "marker-candidate",
-      asset_id: ASSET_ID,
-      start_seconds: 40,
-      end_seconds: 50,
-      importance: 0,
-    };
-    const { update_marker } = render_timeline({
-      candidate_markers: [candidate],
+  it("selects, seeks, edits, and saves transcript actions", async () => {
+    const { seek_to, change_selected_transcript_indices, update_transcript } =
+      render_timeline();
+    const transcript_button = screen.getByRole("button", {
+      name: /转写：原始转写/,
     });
 
-    fireEvent.keyDown(window, { key: "5" });
-    fireEvent.click(screen.getByLabelText("canvas-item-candidate"));
-    fireEvent.keyDown(window, { key: "4" });
-    expect(update_marker).not.toHaveBeenCalled();
-
-    const marker_clip = screen.getByLabelText("canvas-item-marker");
-    fireEvent.click(marker_clip);
-    fireEvent.doubleClick(marker_clip);
-    const start_input = screen.getByLabelText("开始时间（秒）");
-    fireEvent.keyDown(start_input, { key: "3" });
-    fireEvent.keyDown(window, { key: "2", ctrlKey: true });
-    fireEvent.keyDown(window, { key: "1", altKey: true });
-    expect(update_marker).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    fireEvent.keyDown(window, { key: "0" });
-    expect(update_marker).toHaveBeenCalledWith(
-      "marker-0198d12345677890abcdef1234567890",
-      { importance: 0 },
-    );
-  });
-
-  it("opens an accessible importance context menu and updates its selected marker", async () => {
-    const { update_marker } = render_timeline();
-    const marker_clip =
-      timeline_mock.create_engine.mock.calls.at(-1)?.[0].tracks[0].clips[0];
-    timeline_mock.get_clip_at_point.mockReturnValue({ clip: marker_clip });
-    const canvas = screen.getByLabelText(/时间线画布/);
-
-    fireEvent.contextMenu(canvas, { clientX: 20, clientY: 48 });
-
-    const current_item = await screen.findByRole("menuitemradio", {
-      name: /★★★.*3/,
+    fireEvent.click(transcript_button);
+    fireEvent.doubleClick(transcript_button);
+    fireEvent.change(screen.getByLabelText("编辑转写文字"), {
+      target: { value: " 修订后的转写 " },
     });
-    expect(current_item).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("menuitemradio", { name: /★★★★★.*5/ }));
-    expect(update_marker).toHaveBeenCalledWith(
-      "marker-0198d12345677890abcdef1234567890",
-      { importance: 5 },
-    );
-  });
-
-  it("updates marker ratings without rebuilding timeline geometry", () => {
-    const { replace_rendered_markers } = render_timeline();
-
-    expect(timeline_mock.create_engine).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByLabelText("canvas-item-marker"));
-    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(2);
-
-    act(() =>
-      replace_rendered_markers([
-        {
-          marker_id: "marker-0198d12345677890abcdef1234567890",
-          asset_id: ASSET_ID,
-          start_seconds: 20,
-          end_seconds: null,
-          importance: 5,
-        },
-      ]),
-    );
-
-    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(2);
-    expect(
-      screen.getByRole("img", {
-        name: "★★★★★ · 00:20：默认范围，向前 10 秒，向后 20 秒",
-      }),
-    ).toBeInTheDocument();
-
-    act(() =>
-      replace_rendered_markers([
-        {
-          marker_id: "marker-0198d12345677890abcdef1234567890",
-          asset_id: ASSET_ID,
-          start_seconds: 24,
-          end_seconds: null,
-          importance: 5,
-        },
-      ]),
-    );
-    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(3);
-  });
-
-  it("opens the selected marker menu with Shift+F10", async () => {
-    render_timeline();
-    fireEvent.click(screen.getByLabelText("canvas-item-marker"));
-    const canvas = screen.getByLabelText(/时间线画布/);
-    canvas.focus();
-
-    fireEvent.keyDown(canvas, { key: "F10", code: "F10", shiftKey: true });
-
-    expect(
-      await screen.findByRole("menuitemradio", { name: /★★★.*3/ }),
-    ).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("clears selection after deleting a marker", async () => {
-    const { delete_marker, update_marker } = render_timeline();
-    const marker_clip = screen.getByLabelText("canvas-item-marker");
-    fireEvent.click(marker_clip);
-    fireEvent.doubleClick(marker_clip);
-    fireEvent.click(screen.getByRole("button", { name: "删除" }));
-    fireEvent.click(screen.getByRole("button", { name: "删除标记" }));
-    await waitFor(() => expect(delete_marker).toHaveBeenCalledOnce());
-
-    fireEvent.keyDown(window, { key: "5" });
-    expect(update_marker).not.toHaveBeenCalled();
-  });
-
-  it("keeps the marker editor and draft open after a save failure", async () => {
-    const { update_marker } = render_timeline();
-    update_marker.mockRejectedValueOnce(new Error("request failed"));
-    const marker_clip = screen.getByLabelText("canvas-item-marker");
-    fireEvent.click(marker_clip);
-    timeline_mock.get_clip_at_point.mockReturnValue({
-      clip: { id: "existing-marker" },
-    });
-    fireEvent.doubleClick(marker_clip);
-    const start_input = screen.getByLabelText("开始时间（秒）");
-    fireEvent.change(start_input, { target: { value: "24" } });
-
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "标记保存失败，请稍后重试",
-    );
-    expect(start_input).toHaveValue(24);
-    expect(screen.getByText("编辑标记")).toBeInTheDocument();
-  });
-
-  it("creates a point marker by double-clicking empty marker track space", () => {
-    const { add_marker } = render_timeline();
-    const canvas = screen.getByLabelText(/时间线画布/);
-
-    fireEvent.doubleClick(canvas, { clientX: 24, clientY: 48 });
-
-    expect(add_marker).toHaveBeenCalledOnce();
-    expect(add_marker).toHaveBeenCalledWith(24, null);
-  });
-
-  it("does not create a marker when double-clicking an existing clip", () => {
-    const { add_marker } = render_timeline();
-    timeline_mock.get_clip_at_point.mockReturnValue({
-      clip: { id: "existing-marker" },
-    });
-
-    fireEvent.doubleClick(screen.getByLabelText(/时间线画布/), {
-      clientX: 24,
-      clientY: 48,
-    });
-
-    expect(add_marker).not.toHaveBeenCalled();
-  });
-
-  it("persists moved and resized range bounds", () => {
-    const { update_marker } = render_timeline();
-    const clip = {
-      id: "marker-clip",
-      label: "重点",
-      timelineStart: 25,
-      timelineEnd: 35,
-      metadata: {
-        kind: "marker",
-        source_id: "marker-0198d12345677890abcdef1234567890",
-        marker_shape: "manual",
-        marker_anchor_seconds: 25,
-        rendered_start_seconds: 25,
-      },
-    };
-
-    timeline_mock.emit_event("clip:move", { clip, phase: "commit" });
-    timeline_mock.emit_event("clip:resize", {
-      clip: { ...clip, timelineEnd: 40 },
-    });
-    timeline_mock.emit_event("state:settled", {});
-
-    expect(update_marker).toHaveBeenNthCalledWith(
-      1,
-      "marker-0198d12345677890abcdef1234567890",
-      {
-        start_seconds: 25,
-        end_seconds: 35,
-      },
-    );
-    expect(update_marker).toHaveBeenNthCalledWith(
-      2,
-      "marker-0198d12345677890abcdef1234567890",
-      {
-        start_seconds: 25,
-        end_seconds: 40,
-      },
-    );
-  });
-
-  it("moves a default marker without turning it into a range", () => {
-    const { update_marker } = render_timeline();
-    const clip = {
-      id: "default-marker-clip",
-      label: "重点",
-      timelineStart: 15,
-      timelineEnd: 45,
-      metadata: {
-        kind: "marker",
-        source_id: "marker-0198d12345677890abcdef1234567890",
-        marker_shape: "default",
-        marker_anchor_seconds: 20,
-        rendered_start_seconds: 10,
-      },
-    };
-
-    timeline_mock.emit_event("clip:move", { clip, phase: "commit" });
-
-    expect(update_marker).toHaveBeenCalledWith(
-      "marker-0198d12345677890abcdef1234567890",
-      {
-        start_seconds: 25,
-        end_seconds: null,
-      },
-    );
-  });
-
-  it("turns a default marker into a manual range after handle resizing", () => {
-    const { update_marker } = render_timeline();
-    const clip = {
-      id: "default-marker-clip",
-      label: "重点",
-      timelineStart: 12,
-      timelineEnd: 44,
-      metadata: {
-        kind: "marker",
-        source_id: "marker-0198d12345677890abcdef1234567890",
-        marker_shape: "default",
-        marker_anchor_seconds: 20,
-        rendered_start_seconds: 10,
-      },
-    };
-
-    timeline_mock.emit_event("clip:resize", { clip });
-    timeline_mock.emit_event("state:settled", {});
-
-    expect(update_marker).toHaveBeenCalledWith(
-      "marker-0198d12345677890abcdef1234567890",
-      {
-        start_seconds: 12,
-        end_seconds: 44,
-      },
-    );
-  });
-
-  it("zooms around the pointer with Alt and the mouse wheel", () => {
-    render_timeline();
-
-    fireEvent.wheel(screen.getByLabelText(/时间线画布/), {
-      altKey: true,
-      clientX: 60,
-      deltaY: -100,
-    });
-
-    expect(timeline_mock.set_zoom_scale).toHaveBeenCalledWith(81.4);
-    expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(4824);
-  });
-
-  it("preserves the viewport when selecting a marker", () => {
-    render_timeline();
-    const timeline_canvas = screen.getByLabelText(/时间线画布/);
-
-    fireEvent.wheel(timeline_canvas, {
-      altKey: true,
-      clientX: 60,
-      deltaY: -100,
-    });
-    fireEvent.click(screen.getByLabelText("canvas-item-marker"));
-
-    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(2);
-    expect(timeline_mock.create_engine.mock.calls[1]?.[0]).toMatchObject({
-      zoomScale: 81.4,
-      scrollLeft: 4824,
-      scrollTop: 0,
-    });
-  });
-
-  it("keeps the engine and viewport stable when selecting a transcript clip", () => {
-    const { change_selected_transcript_indices } = render_timeline();
-    const timeline_canvas = screen.getByLabelText(/时间线画布/);
-
-    fireEvent.wheel(timeline_canvas, {
-      altKey: true,
-      clientX: 60,
-      deltaY: -100,
-    });
-    fireEvent.click(screen.getByLabelText("canvas-item-transcript"));
-    fireEvent.wheel(timeline_canvas, {
-      altKey: true,
-      clientX: 60,
-      deltaY: -100,
-    });
-
+    expect(seek_to).toHaveBeenCalledWith(5);
     expect(change_selected_transcript_indices).toHaveBeenCalledWith([0]);
-    expect(timeline_mock.create_engine).toHaveBeenCalledTimes(1);
-    expect(timeline_mock.set_zoom_scale).toHaveBeenNthCalledWith(1, 81.4);
-    expect(timeline_mock.set_zoom_scale.mock.calls[1]?.[0]).toBeCloseTo(89.54);
+    await waitFor(() =>
+      expect(update_transcript).toHaveBeenCalledWith(0, "修订后的转写"),
+    );
+  });
+
+  it("opens marker editing with Enter and preserves rating and deletion", async () => {
+    const { update_marker, delete_marker } = render_timeline();
+    const marker_button = screen.getAllByRole("button", {
+      name: /点标记/,
+    })[0];
+
+    fireEvent.keyDown(marker_button, { key: "Enter" });
+    fireEvent.change(screen.getByLabelText("开始时间（秒）"), {
+      target: { value: "21.13" },
+    });
+    fireEvent.submit(screen.getByLabelText("开始时间（秒）").closest("form")!);
+    await waitFor(() =>
+      expect(update_marker).toHaveBeenCalledWith(POINT_MARKER.marker_id, {
+        start_seconds: 21.15,
+        end_seconds: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByLabelText("开始时间（秒）")).not.toBeInTheDocument(),
+    );
+
+    const current_marker_button = screen.getAllByRole("button", {
+      name: /点标记/,
+    })[0];
+    fireEvent.keyDown(current_marker_button, { key: "F10", shiftKey: true });
+    fireEvent.click(
+      await screen.findByRole("menuitemradio", {
+        name: /★★★★★/,
+      }),
+    );
+    await waitFor(() =>
+      expect(update_marker).toHaveBeenCalledWith(POINT_MARKER.marker_id, {
+        importance: 5,
+      }),
+    );
+
+    fireEvent.keyDown(current_marker_button, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    fireEvent.click(await screen.findByRole("button", { name: "删除标记" }));
+    await waitFor(() =>
+      expect(delete_marker).toHaveBeenCalledWith(POINT_MARKER.marker_id),
+    );
+  });
+
+  it("persists move and resize only at interaction end with fixed precision", async () => {
+    const { update_marker } = render_timeline();
+    fireEvent.click(screen.getAllByRole("button", { name: /点标记/ })[0]);
+    const point_action = action_by_kind("marker");
+    expect(point_action).toMatchObject({
+      selected: true,
+      flexible: true,
+      start: 10,
+      end: 40,
+    });
+
+    expect(update_marker).not.toHaveBeenCalled();
+    act(() => {
+      timeline_props().onActionMoveEnd?.({
+        action: point_action,
+        row: timeline_props().editorData[0],
+        start: 11.023,
+        end: 31.023,
+      });
+    });
+    await waitFor(() => expect(update_marker).toHaveBeenCalledOnce());
+    expect(update_marker).toHaveBeenLastCalledWith(POINT_MARKER.marker_id, {
+      start_seconds: 21,
+      end_seconds: null,
+    });
+
+    act(() => {
+      timeline_props().onActionResizeEnd?.({
+        action: point_action,
+        row: timeline_props().editorData[0],
+        start: 12.02,
+        end: 31.07,
+        dir: "right",
+      });
+    });
+    await waitFor(() => expect(update_marker).toHaveBeenCalledTimes(2));
+    expect(update_marker).toHaveBeenLastCalledWith(POINT_MARKER.marker_id, {
+      start_seconds: 12,
+      end_seconds: 31.05,
+    });
+
+    act(() => {
+      timeline_props().onActionMoveEnd?.({
+        action: action_by_kind("transcript"),
+        row: timeline_props().editorData[1],
+        start: 9,
+        end: 12,
+      });
+    });
+    expect(update_marker).toHaveBeenCalledTimes(2);
+  });
+
+  it("rolls back a failed drag while keeping the editor and viewport", async () => {
+    const update_marker = vi.fn().mockRejectedValue(new Error("保存失败"));
+    const { result } = render_timeline({ update_marker });
+    const editor_instance = screen.getByTestId("timeline-editor-instance");
+    act(() => {
+      timeline_props().onScroll?.({
+        clientHeight: 144,
+        clientWidth: 800,
+        scrollHeight: 144,
+        scrollLeft: 200,
+        scrollTop: 0,
+        scrollWidth: 9600,
+      });
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: /点标记/ })[0]);
+    const original_action = action_by_kind("marker");
+
+    act(() => {
+      timeline_props().onActionMoveEnd?.({
+        action: original_action,
+        row: timeline_props().editorData[0],
+        start: 13,
+        end: 33,
+      });
+    });
+
+    expect(
+      await screen.findByText("标记时间保存失败，已恢复原位置"),
+    ).toBeInTheDocument();
+    expect(action_by_kind("marker").start).toBe(10);
+    expect(screen.getByTestId("timeline-editor-instance")).toBe(
+      editor_instance,
+    );
+    expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(200);
+    expect(result.container).toContainElement(editor_instance);
+  });
+
+  it("keeps pointer time anchored while zooming and resets only for a new asset", () => {
+    const { replace_markers, replace_asset_id } = render_timeline();
+    const editor_instance = screen.getByTestId("timeline-editor-instance");
+    const host = screen.getByLabelText(/时间线画布/);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      x: 16,
+      y: 0,
+      left: 16,
+      top: 0,
+      right: 816,
+      bottom: 176,
+      width: 800,
+      height: 176,
+      toJSON: () => undefined,
+    });
+    act(() => {
+      timeline_props().onScroll?.({
+        clientHeight: 144,
+        clientWidth: 800,
+        scrollHeight: 144,
+        scrollLeft: 200,
+        scrollTop: 0,
+        scrollWidth: 9600,
+      });
+    });
+    const pointer_time_before = (200 + 400 - 16) / 80;
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 416,
+      deltaY: -100,
+    });
+
+    const zoom =
+      (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1);
+    const scroll_left = timeline_mock.set_scroll_left.mock.calls.at(-1)?.[0];
+    const pointer_time_after = (scroll_left + 400 - 16) / zoom;
+    expect(zoom).toBeCloseTo(88);
+    expect(
+      Math.abs(pointer_time_after - pointer_time_before),
+    ).toBeLessThanOrEqual(0.01);
+
+    act(() => {
+      replace_markers([{ ...POINT_MARKER, importance: 5 }, RANGE_MARKER]);
+    });
+    expect(screen.getByTestId("timeline-editor-instance")).toBe(
+      editor_instance,
+    );
+    expect(
+      (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
+    ).toBeCloseTo(88);
+    expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(scroll_left);
+
+    act(() => replace_asset_id("asset-new"));
+    expect(
+      (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
+    ).toBe(80);
+    expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(0);
   });
 });

@@ -17,6 +17,7 @@ const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 describe("VideoWorkspace", () => {
   it("keeps transport controls below the video", () => {
     const seek_to = vi.fn();
+    const preview_to = vi.fn();
     const toggle_playback = vi.fn();
     const set_volume = vi.fn();
     const toggle_muted = vi.fn();
@@ -27,6 +28,7 @@ describe("VideoWorkspace", () => {
     player_ref.current = {
       current_time: () => 20,
       seek_to,
+      preview_to,
       toggle_playback,
       set_volume,
       toggle_muted,
@@ -40,7 +42,11 @@ describe("VideoWorkspace", () => {
         transcript={null}
         markers={[]}
         player_ref={player_ref}
+        is_paused
+        playback_rate={1}
         on_time_change={vi.fn()}
+        on_pause_change={vi.fn()}
+        on_playback_rate_change={vi.fn()}
       />,
     );
 
@@ -98,6 +104,7 @@ function create_asset(): MediaAsset {
     status: "ready",
     error_message: null,
     playback_url: "/stream",
+    scrub_preview_url: "/scrub-preview",
     thumbnail_url: null,
     thumbnail_storyboard: null,
     created_at: "2026-01-01T00:00:00Z",
