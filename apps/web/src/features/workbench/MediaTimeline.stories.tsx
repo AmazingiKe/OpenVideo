@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
-import { userEvent, within } from "storybook/test";
+import { expect, userEvent, within } from "storybook/test";
 
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
@@ -246,5 +246,12 @@ export const TwoThousandActions: Story = {
     initial_markers: [],
     transcript_segments: STRESS_TRANSCRIPT_SEGMENTS,
     analysis_segments: [],
+  },
+  play: async ({ canvasElement }) => {
+    const transcript_actions = await within(canvasElement).findAllByRole(
+      "button",
+      { name: /^转写：/ },
+    );
+    expect(transcript_actions.length).toBeLessThanOrEqual(100);
   },
 };

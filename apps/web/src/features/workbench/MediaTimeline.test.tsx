@@ -13,7 +13,12 @@ import type {
 } from "@xzdarcy/react-timeline-editor";
 
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
-import type { MediaMarker, MediaMarkerUpdate } from "@/shared/types";
+import type {
+  MediaMarker,
+  MediaMarkerUpdate,
+  MediaSegment,
+  TranscriptSegment,
+} from "@/shared/types";
 import { MediaTimeline } from "./MediaTimeline";
 
 type MockTimelineAction =
@@ -137,9 +142,51 @@ function action_by_kind(kind: MockTimelineAction["data"]["kind"]) {
   throw new Error(`Missing ${kind} action`);
 }
 
+function transcript_actions(): MockTimelineAction[] {
+  const row = timeline_props().editorData.find(
+    (candidate) => candidate.id === "timeline-transcript-track",
+  );
+  if (!row) throw new Error("Missing transcript row");
+  return row.actions as MockTimelineAction[];
+}
+
+function install_animation_frame_mock() {
+  let next_frame_id = 1;
+  const frames = new Map<number, FrameRequestCallback>();
+  const request_frame = vi
+    .spyOn(window, "requestAnimationFrame")
+    .mockImplementation((callback) => {
+      const frame_id = next_frame_id;
+      next_frame_id += 1;
+      frames.set(frame_id, callback);
+      return frame_id;
+    });
+  const cancel_frame = vi
+    .spyOn(window, "cancelAnimationFrame")
+    .mockImplementation((frame_id) => {
+      frames.delete(frame_id);
+    });
+
+  return {
+    request_frame,
+    cancel_frame,
+    frames,
+    run_next_frame() {
+      const next_frame = frames.entries().next().value as
+        [number, FrameRequestCallback] | undefined;
+      if (!next_frame) throw new Error("Missing animation frame");
+      frames.delete(next_frame[0]);
+      act(() => next_frame[1](performance.now()));
+    },
+  };
+}
+
 function render_timeline(options?: {
   added_marker?: MediaMarker;
   candidate_markers?: MediaMarker[];
+  duration_seconds?: number;
+  transcript_segments?: TranscriptSegment[];
+  analysis_segments?: MediaSegment[];
   update_marker?: (
     marker_id: string,
     update: MediaMarkerUpdate,
@@ -147,6 +194,7 @@ function render_timeline(options?: {
 }) {
   let replace_markers: (markers: MediaMarker[]) => void = () => undefined;
   let replace_asset_id: (asset_id: string) => void = () => undefined;
+  let refresh_parent: () => void = () => undefined;
   const callbacks = {
     scrub_to: vi.fn(),
     seek_to: vi.fn(),
@@ -159,26 +207,21 @@ function render_timeline(options?: {
     update_transcript: vi.fn().mockResolvedValue(undefined),
     change_selected_transcript_indices: vi.fn(),
   };
-  const transcript = {
-    asset_id: ASSET_ID,
-    language: "zh",
-    created_at: "2026-01-01T00:00:00Z",
-    segments: [
-      {
-        start_seconds: 5,
-        end_seconds: 8,
-        text: "原始转写",
-        emotion: null,
-        audio_events: [],
-      },
-    ],
-  };
-  const segments = [
+  const default_transcript_segments: TranscriptSegment[] = [
+    {
+      start_seconds: 5,
+      end_seconds: 8,
+      text: "原始转写",
+      emotion: null,
+      audio_events: [],
+    },
+  ];
+  const default_analysis_segments: MediaSegment[] = [
     {
       segment_id: "segment-0198d12345677890abcdef1234567890",
       asset_id: ASSET_ID,
-      start_seconds: 45,
-      end_seconds: 60,
+      start_seconds: 12,
+      end_seconds: 18,
       title: "矩阵推导",
       detailed_summary: null,
       transcript_text: null,
@@ -194,17 +237,24 @@ function render_timeline(options?: {
   function TimelineHarness() {
     const [asset_id, set_asset_id] = useState(ASSET_ID);
     const [markers, set_markers] = useState([POINT_MARKER, RANGE_MARKER]);
+    const [, set_refresh_revision] = useState(0);
     replace_markers = set_markers;
     replace_asset_id = set_asset_id;
+    refresh_parent = () => set_refresh_revision((current) => current + 1);
     return (
       <MediaTimeline
         asset_id={asset_id}
-        duration_seconds={120}
+        duration_seconds={options?.duration_seconds ?? 120}
         current_time={30.023}
         is_paused
         playback_rate={1}
-        transcript={transcript}
-        segments={segments}
+        transcript={{
+          asset_id: ASSET_ID,
+          language: "zh",
+          created_at: "2026-01-01T00:00:00Z",
+          segments: options?.transcript_segments ?? default_transcript_segments,
+        }}
+        segments={options?.analysis_segments ?? default_analysis_segments}
         markers={markers}
         candidate_markers={options?.candidate_markers}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
@@ -225,11 +275,18 @@ function render_timeline(options?: {
   }
 
   const result = render(<TimelineHarness />);
-  return { ...callbacks, replace_markers, replace_asset_id, result };
+  return {
+    ...callbacks,
+    replace_markers,
+    replace_asset_id,
+    refresh_parent,
+    result,
+  };
 }
 
 describe("MediaTimeline", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
     timeline_mock.current_props = null;
     HTMLElement.prototype.scrollIntoView = vi.fn();
@@ -266,6 +323,106 @@ describe("MediaTimeline", () => {
     expect(screen.getByLabelText("标记，可编辑")).toBeInTheDocument();
     expect(screen.getByLabelText("转写，只读")).toBeInTheDocument();
     expect(screen.getByLabelText("分析事件，只读")).toBeInTheDocument();
+  });
+
+  it("limits two thousand transcript actions to the initial render window", () => {
+    const segments: TranscriptSegment[] = Array.from(
+      { length: 2_000 },
+      (_, index) => ({
+        start_seconds: index,
+        end_seconds: index + 1,
+        text: `转写 ${index}`,
+        emotion: null,
+        audio_events: [],
+      }),
+    );
+
+    render_timeline({
+      duration_seconds: segments.length,
+      transcript_segments: segments,
+      analysis_segments: [],
+    });
+
+    const actions = transcript_actions();
+    expect(actions.length).toBeLessThan(100);
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions.length).not.toBe(segments.length);
+  });
+
+  it("moves the render window across a boundary without changing source indices", () => {
+    const segments: TranscriptSegment[] = Array.from(
+      { length: 2_000 },
+      (_, index) => ({
+        start_seconds: index,
+        end_seconds: index + 1,
+        text: `转写 ${index}`,
+        emotion: null,
+        audio_events: [],
+      }),
+    );
+    render_timeline({
+      duration_seconds: segments.length,
+      transcript_segments: segments,
+      analysis_segments: [],
+    });
+    const initial_actions = transcript_actions();
+    const initial_by_source_index = new Map(
+      initial_actions.map((action) => [action.data.source_index, action]),
+    );
+
+    act(() => {
+      timeline_props().onScroll?.({
+        clientHeight: 144,
+        clientWidth: 1024,
+        scrollHeight: 144,
+        scrollLeft: 1600,
+        scrollTop: 0,
+        scrollWidth: segments.length * 80,
+      });
+    });
+
+    const moved_actions = transcript_actions();
+    expect(moved_actions[0]?.data.source_index).toBe(13);
+    expect(moved_actions.at(-1)?.data.source_index).toBe(39);
+    for (const action of moved_actions) {
+      expect(action.id).toBe(`transcript-${action.data.source_index}`);
+    }
+    expect(
+      moved_actions.find((action) => action.data.source_index === 15),
+    ).toBe(initial_by_source_index.get(15));
+  });
+
+  it("keeps editor data and viewport stable inside the buffered window", () => {
+    const { refresh_parent } = render_timeline();
+    const editor_instance = screen.getByTestId("timeline-editor-instance");
+    const initial_editor_data = timeline_props().editorData;
+    const initial_zoom =
+      (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1);
+
+    act(() => {
+      timeline_props().onScroll?.({
+        clientHeight: 144,
+        clientWidth: 1024,
+        scrollHeight: 144,
+        scrollLeft: 80,
+        scrollTop: 0,
+        scrollWidth: 9600,
+      });
+    });
+    expect(timeline_props().editorData).toBe(initial_editor_data);
+
+    fireEvent.click(screen.getByRole("button", { name: /转写：原始转写/ }));
+    expect(timeline_props().editorData).toBe(initial_editor_data);
+
+    act(() => refresh_parent());
+    expect(timeline_props().editorData).toBe(initial_editor_data);
+    expect(screen.getByTestId("timeline-editor-instance")).toBe(
+      editor_instance,
+    );
+    expect(
+      (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
+    ).toBe(initial_zoom);
+    expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(80);
   });
 
   it("shares playback controls and timecode with the player state", async () => {
@@ -468,7 +625,8 @@ describe("MediaTimeline", () => {
     expect(result.container).toContainElement(editor_instance);
   });
 
-  it("keeps pointer time anchored while zooming and resets only for a new asset", () => {
+  it("batches Alt wheel zoom while preserving each event pointer anchor", () => {
+    const animation_frames = install_animation_frame_mock();
     const { replace_markers, replace_asset_id } = render_timeline();
     const editor_instance = screen.getByTestId("timeline-editor-instance");
     const host = screen.getByLabelText(/时间线画布/);
@@ -493,21 +651,38 @@ describe("MediaTimeline", () => {
         scrollWidth: 9600,
       });
     });
-    const pointer_time_before = (200 + 400 - 16) / 80;
+    timeline_mock.set_scroll_left.mockClear();
 
     fireEvent.wheel(host, {
       altKey: true,
       clientX: 416,
       deltaY: -100,
     });
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 216,
+      deltaY: -50,
+    });
+
+    expect(animation_frames.request_frame).toHaveBeenCalledOnce();
+    expect(
+      (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
+    ).toBe(80);
+    expect(timeline_mock.set_scroll_left).not.toHaveBeenCalled();
+
+    animation_frames.run_next_frame();
 
     const zoom =
       (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1);
     const scroll_left = timeline_mock.set_scroll_left.mock.calls.at(-1)?.[0];
-    const pointer_time_after = (scroll_left + 400 - 16) / zoom;
-    expect(zoom).toBeCloseTo(88);
+    const first_zoom = 88;
+    const first_scroll_left = ((200 + 400 - 16) / 80) * first_zoom + 16 - 400;
+    const second_pointer_time = (first_scroll_left + 200 - 16) / first_zoom;
+    const pointer_time_after = (scroll_left + 200 - 16) / zoom;
+    expect(zoom).toBeCloseTo(92.4);
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
     expect(
-      Math.abs(pointer_time_after - pointer_time_before),
+      Math.abs(pointer_time_after - second_pointer_time),
     ).toBeLessThanOrEqual(0.01);
 
     act(() => {
@@ -518,7 +693,7 @@ describe("MediaTimeline", () => {
     );
     expect(
       (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
-    ).toBeCloseTo(88);
+    ).toBeCloseTo(92.4);
     expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(scroll_left);
 
     act(() => replace_asset_id("asset-new"));
@@ -526,5 +701,61 @@ describe("MediaTimeline", () => {
       (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
     ).toBe(80);
     expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(0);
+  });
+
+  it("cancels pending wheel frames for tools, asset switches, and unmount", () => {
+    const animation_frames = install_animation_frame_mock();
+    const { replace_asset_id, result } = render_timeline();
+    const host = screen.getByLabelText(/时间线画布/);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 176,
+      width: 800,
+      height: 176,
+      toJSON: () => undefined,
+    });
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: -100,
+    });
+    const tool_cancelled_frame = [...animation_frames.frames.keys()][0];
+    fireEvent.click(screen.getByRole("button", { name: "放大时间线" }));
+    expect(animation_frames.cancel_frame).toHaveBeenCalledWith(
+      tool_cancelled_frame,
+    );
+    expect(animation_frames.frames.size).toBe(0);
+    expect(
+      (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
+    ).toBe(100);
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: -100,
+    });
+    const asset_cancelled_frame = [...animation_frames.frames.keys()][0];
+    act(() => replace_asset_id("asset-new"));
+    expect(animation_frames.cancel_frame).toHaveBeenCalledWith(
+      asset_cancelled_frame,
+    );
+    expect(animation_frames.frames.size).toBe(0);
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: -100,
+    });
+    const unmount_cancelled_frame = [...animation_frames.frames.keys()][0];
+    result.unmount();
+    expect(animation_frames.cancel_frame).toHaveBeenCalledWith(
+      unmount_cancelled_frame,
+    );
+    expect(animation_frames.frames.size).toBe(0);
   });
 });
