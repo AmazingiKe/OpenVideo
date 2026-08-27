@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect } from "storybook/test";
 
 import { Bubble, Message, MessageComposer, MessageScroller } from "./chat";
 
@@ -49,4 +50,34 @@ export const Streaming: Story = {
       />
     </div>
   ),
+};
+
+export const OverflowingConversation: Story = {
+  args: { children: null },
+  render: () => (
+    <div className="flex h-64 w-80 flex-col overflow-hidden rounded-lg border bg-card">
+      <MessageScroller className="flex-1">
+        {Array.from({ length: 6 }, (_, index) => (
+          <Message key={index} role="assistant">
+            <Bubble role="assistant">
+              第 {index + 1}{" "}
+              条较长回复：消息保持自然高度，并由会话区域统一滚动。
+            </Bubble>
+          </Message>
+        ))}
+      </MessageScroller>
+      <MessageComposer
+        value=""
+        on_change={() => undefined}
+        on_submit={() => undefined}
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const viewport = canvasElement.querySelector<HTMLElement>(
+      '[data-slot="message-scroller-viewport"]',
+    );
+    if (!viewport) throw new Error("未找到消息滚动区域");
+    await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+  },
 };

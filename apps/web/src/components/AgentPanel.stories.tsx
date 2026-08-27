@@ -5,7 +5,7 @@ import {
   AgentArtifactCard,
   AgentReasoning,
   AgentRunBadge,
-  AgentToolStatusCard,
+  AgentToolActivity,
 } from "./AgentPanel";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import type { AgentArtifact, AgentEvent } from "@/shared/types";
@@ -125,7 +125,57 @@ const FAILED_TOOL_EVENT: AgentEvent = {
 };
 
 export const ToolFailure: Story = {
-  render: () => <AgentToolStatusCard event={FAILED_TOOL_EVENT} />,
+  render: () => <AgentToolActivity events={[FAILED_TOOL_EVENT]} />,
+};
+
+export const ToolActivity: Story = {
+  render: () => (
+    <AgentToolActivity
+      events={[
+        {
+          ...FAILED_TOOL_EVENT,
+          event_id: "event-01890f4c7a2b7cc298c4dc0c0c073990",
+          sequence: 2,
+          payload: {
+            call_id: "tool-01890f4c7a2b7cc298c4dc0c0c073990",
+            name: "search_evidence",
+            stage: "completed",
+            result: { matches: 6 },
+          },
+        },
+        {
+          ...FAILED_TOOL_EVENT,
+          event_id: "event-01890f4c7a2b7cc298c4dc0c0c073991",
+          sequence: 3,
+          payload: {
+            call_id: "tool-01890f4c7a2b7cc298c4dc0c0c073991",
+            name: "inspect_frames",
+            stage: "completed",
+            result: { frames: 4 },
+          },
+        },
+        {
+          ...FAILED_TOOL_EVENT,
+          event_id: "event-01890f4c7a2b7cc298c4dc0c0c073992",
+          sequence: 4,
+          payload: {
+            call_id: "tool-01890f4c7a2b7cc298c4dc0c0c073992",
+            name: "propose_marker_changes",
+            stage: "completed",
+            result: { changes: 3 },
+          },
+        },
+      ]}
+    />
+  ),
+  play: async ({ canvas, userEvent }) => {
+    const trigger = canvas.getByRole("button", {
+      name: /工具活动 · 检索视频证据等 3 项/,
+    });
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(trigger);
+    await expect(canvas.getByText("生成标记变更预览")).toBeVisible();
+  },
 };
 
 export const DisconnectedRecovery: Story = {

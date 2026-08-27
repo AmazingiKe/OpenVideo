@@ -30,17 +30,24 @@ export function MessageScroller({
   }, [children, is_at_latest]);
 
   return (
-    <div className={cn("relative min-h-0", className)}>
+    <div
+      data-slot="message-scroller"
+      className={cn("relative min-h-0", className)}
+    >
       <div
         ref={viewport_ref}
-        className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4"
+        data-slot="message-scroller-viewport"
+        className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-focus-strong [&>*]:shrink-0"
         onScroll={(event) => {
           const target = event.currentTarget;
           set_is_at_latest(
             target.scrollHeight - target.scrollTop - target.clientHeight < 24,
           );
         }}
+        role="log"
+        aria-label="对话消息"
         aria-live="polite"
+        tabIndex={0}
       >
         {children}
       </div>
@@ -81,7 +88,7 @@ export function Message({
       data-slot="message"
       data-role={role}
       className={cn(
-        "flex w-full data-[role=assistant]:justify-start data-[role=user]:justify-end",
+        "flex w-full flex-col gap-2 data-[role=assistant]:items-start data-[role=user]:items-end",
         className,
       )}
       {...props}
@@ -146,7 +153,10 @@ export function MessageComposer({
   }
 
   return (
-    <form className="flex items-end gap-2 border-t p-3" onSubmit={submit}>
+    <form
+      className="flex items-end gap-2 border-t bg-surface-background-soft p-3"
+      onSubmit={submit}
+    >
       <Textarea
         value={value}
         onChange={(event) => on_change(event.target.value)}

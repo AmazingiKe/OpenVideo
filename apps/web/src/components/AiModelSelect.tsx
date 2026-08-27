@@ -43,7 +43,7 @@ export function AiModelSelect({
         }
         disabled={disabled || !has_options}
       >
-        <SelectTrigger id={id} className="w-full">
+        <SelectTrigger id={id} className="w-full min-w-0">
           <SelectValue placeholder="没有可用模型" />
         </SelectTrigger>
         <SelectContent>

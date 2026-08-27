@@ -1,5 +1,14 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { Bot, Brain, RotateCcw, ShieldCheck, Wrench } from "lucide-react";
+import {
+  Bot,
+  Brain,
+  CheckCircle2,
+  CircleX,
+  History,
+  RotateCcw,
+  ShieldCheck,
+  Wrench,
+} from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
 import {
@@ -33,6 +42,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -55,6 +65,7 @@ import {
 import { error_message, is_abort_error } from "@/shared/errors";
 import { format_time } from "@/shared/format";
 import { uuid7 } from "@/shared/identifiers";
+import { cn } from "@/lib/utils";
 import type {
   AgentArtifact,
   AgentCapability,
@@ -216,8 +227,11 @@ export function AgentPanel({
   }
 
   return (
-    <Card className={className} data-slot="agent-panel">
-      <CardHeader className="border-b">
+    <Card
+      className={cn("min-h-0 gap-0 py-0", className)}
+      data-slot="agent-panel"
+    >
+      <CardHeader className="min-w-0 shrink-0 gap-3 border-b px-4 py-4">
         <div className="flex min-w-0 items-start justify-between gap-4">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2">
@@ -234,60 +248,83 @@ export function AgentPanel({
             <Badge variant="outline">未开始</Badge>
           )}
         </div>
-        <div className="grid gap-2 md:grid-cols-2">
-          <AiModelSelect
-            id={`${agent_id}-agent-model`}
-            label="运行模型"
-            models={compatible_models}
-            value={model_id}
-            on_change={set_model_id}
-          />
-          <Select
-            value={state?.session.session_id ?? ""}
-            onValueChange={(session_id) => void select_session(session_id)}
-            disabled={sessions.length === 0}
-          >
-            <SelectTrigger className="w-full" aria-label="Agent 历史会话">
-              <SelectValue placeholder="首次发送时创建会话" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {sessions.map((session) => (
-                  <SelectItem
-                    key={session.session_id}
-                    value={session.session_id}
-                  >
-                    {session.title}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+        <FieldGroup
+          className="min-w-0 flex-row flex-wrap items-start gap-3"
+          aria-label="Agent 设置"
+        >
           {run_options.length > 0 ? (
+            <Field className="min-w-0 flex-1 basis-40 gap-1.5">
+              <FieldLabel htmlFor={`${agent_id}-agent-mode`}>
+                工作方式
+              </FieldLabel>
+              <Select
+                value={run_option_value}
+                onValueChange={set_run_option_value}
+              >
+                <SelectTrigger
+                  id={`${agent_id}-agent-mode`}
+                  className="w-full min-w-0"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {run_options.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
+          <div className="min-w-0 flex-1 basis-40">
+            <AiModelSelect
+              id={`${agent_id}-agent-model`}
+              label="模型"
+              models={compatible_models}
+              value={model_id}
+              on_change={set_model_id}
+            />
+          </div>
+        </FieldGroup>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1 basis-40">
             <Select
-              value={run_option_value}
-              onValueChange={set_run_option_value}
+              value={state?.session.session_id ?? ""}
+              onValueChange={(session_id) => void select_session(session_id)}
+              disabled={sessions.length === 0}
             >
-              <SelectTrigger className="w-full" aria-label="Agent 操作模式">
-                <SelectValue />
+              <SelectTrigger
+                id={`${agent_id}-agent-session`}
+                size="sm"
+                className="w-full min-w-0"
+                aria-label="Agent 历史会话"
+              >
+                <History />
+                <SelectValue placeholder="发送时创建新会话" />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  {run_options.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
+                  {sessions.map((session) => (
+                    <SelectItem
+                      key={session.session_id}
+                      value={session.session_id}
+                    >
+                      {session.title}
                     </SelectItem>
                   ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
+          </div>
+          {selected_run_option ? (
+            <p className="min-w-0 flex-1 basis-40 text-xs leading-relaxed text-muted-foreground">
+              {selected_run_option.description}
+            </p>
           ) : null}
         </div>
-        {selected_run_option ? (
-          <p className="text-sm text-muted-foreground">
-            {selected_run_option.description}
-          </p>
-        ) : null}
         {definition && compatible_models.length === 0 ? (
           <Alert variant="destructive">
             <AlertTitle>没有兼容模型</AlertTitle>
@@ -303,7 +340,7 @@ export function AgentPanel({
         ) : null}
       </CardHeader>
       <CardContent className="min-h-0 flex-1 p-0">
-        <MessageScroller className="h-full min-h-72">
+        <MessageScroller className="h-full">
           {events.length === 0 && artifacts.length === 0 ? (
             <Empty className="border-0">
               <EmptyHeader>
@@ -330,7 +367,7 @@ export function AgentPanel({
                 </Message>
               );
             }
-            return <AgentToolStatusCard key={item.id} event={item.event} />;
+            return <AgentToolActivity key={item.id} events={item.events} />;
           })}
           {stream_text || stream_reasoning ? (
             <Message role="assistant">
@@ -664,7 +701,7 @@ type TimelineItem =
       content: string;
       reasoning?: string;
     }
-  | { type: "tool"; id: string; event: AgentEvent };
+  | { type: "tools"; id: string; events: AgentEvent[] };
 
 function timeline(events: AgentEvent[]): TimelineItem[] {
   const items: TimelineItem[] = [];
@@ -689,11 +726,18 @@ function timeline(events: AgentEvent[]): TimelineItem[] {
           ? String(event.payload.reasoning_content)
           : undefined,
       });
-    } else if (
-      event.event_type === "tool.status" &&
-      event.payload.stage !== "started"
-    ) {
-      items.push({ type: "tool", id: event.event_id, event });
+    } else if (event.event_type === "tool.status") {
+      const previous = items.at(-1);
+      if (previous?.type === "tools") {
+        const call_id = String(event.payload.call_id ?? event.event_id);
+        const previous_index = previous.events.findIndex(
+          (item) => String(item.payload.call_id ?? item.event_id) === call_id,
+        );
+        if (previous_index >= 0) previous.events[previous_index] = event;
+        else previous.events.push(event);
+      } else {
+        items.push({ type: "tools", id: event.event_id, events: [event] });
+      }
     }
   }
   return items;
@@ -721,32 +765,89 @@ export function AgentReasoning({
   );
 }
 
-export function AgentToolStatusCard({ event }: { event: AgentEvent }) {
-  const name = String(event.payload.name ?? "tool");
-  const failed = event.payload.stage === "failed";
+export function AgentToolActivity({ events }: { events: AgentEvent[] }) {
+  const failed_count = events.filter(
+    (event) => event.payload.stage === "failed",
+  ).length;
+  const running_count = events.filter(
+    (event) => event.payload.stage === "started",
+  ).length;
+  const first_tool_name = tool_label(events[0]);
+  const activity_summary =
+    events.length === 1
+      ? first_tool_name
+      : `${first_tool_name}等 ${events.length} 项`;
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm">
+    <Accordion type="single" collapsible>
+      <AccordionItem value="tool-activity">
+        <AccordionTrigger className="py-2">
           <Wrench />
-          {TOOL_LABELS[name] ?? name}
-        </CardTitle>
-        <CardDescription>
-          {failed ? "工具调用失败，可查看详情后重试" : "工具调用已完成"}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <details>
-          <summary className="cursor-pointer text-sm text-muted-foreground">
-            开发详情
-          </summary>
-          <pre className="mt-2 overflow-auto rounded-md bg-muted p-3 text-xs">
-            {JSON.stringify(event.payload.result, null, 2)}
-          </pre>
-        </details>
-      </CardContent>
-    </Card>
+          <span className="min-w-0 flex-1 truncate">
+            工具活动 · {activity_summary}
+          </span>
+          <Badge variant={failed_count > 0 ? "destructive" : "outline"}>
+            {failed_count > 0
+              ? `${failed_count} 项失败`
+              : running_count > 0
+                ? "调用中"
+                : "已完成"}
+          </Badge>
+        </AccordionTrigger>
+        <AccordionContent>
+          <ul className="flex flex-col" aria-label="工具调用详情">
+            {events.map((event) => (
+              <AgentToolCall
+                key={String(event.payload.call_id ?? event.event_id)}
+                event={event}
+              />
+            ))}
+          </ul>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
+}
+
+function AgentToolCall({ event }: { event: AgentEvent }) {
+  const failed = event.payload.stage === "failed";
+  const running = event.payload.stage === "started";
+  const result = event.payload.result;
+  return (
+    <li className="flex min-w-0 items-start gap-2 border-b py-2 last:border-b-0">
+      {running ? (
+        <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      ) : failed ? (
+        <CircleX className="mt-0.5 size-4 shrink-0 text-destructive" />
+      ) : (
+        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-sm font-medium">
+            {tool_label(event)}
+          </span>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {failed ? "失败" : running ? "调用中" : "完成"}
+          </span>
+        </div>
+        {result !== undefined ? (
+          <details className="mt-1">
+            <summary className="cursor-pointer text-xs text-muted-foreground">
+              查看返回数据
+            </summary>
+            <pre className="mt-2 max-h-56 overflow-auto rounded-md bg-muted p-3 text-xs">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </details>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function tool_label(event: AgentEvent | undefined): string {
+  const name = String(event?.payload.name ?? "tool");
+  return TOOL_LABELS[name] ?? name;
 }
 
 export function AgentArtifactCard({
