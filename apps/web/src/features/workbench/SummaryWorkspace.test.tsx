@@ -20,7 +20,8 @@ import {
 } from "@/shared/api";
 import { ApplicationQueryProvider } from "@/app/query_cache";
 import type { MediaAsset, SummaryDocument, Transcript } from "@/shared/types";
-import { reorder_document_ids, SummaryWorkspace } from "./SummaryWorkspace";
+import { SummaryWorkspace } from "./SummaryWorkspace";
+import { reorder_document_ids } from "./SummaryWorkspacePanels";
 
 function render(element: ReactElement) {
   return testing_render(element, { wrapper: ApplicationQueryProvider });

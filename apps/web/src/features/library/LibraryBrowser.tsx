@@ -13,49 +13,19 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft,
-  Check,
   CheckSquare,
-  CircleAlert,
-  Clock3,
-  Folder,
   FolderInput,
   FolderOpen,
   FolderPlus,
-  Grid2X2,
   Library,
-  List,
-  Maximize2,
   Pencil,
   Play,
   Search,
   Trash2,
-  Video,
-  X,
 } from "lucide-react";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -67,35 +37,12 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Slider } from "@/components/ui/slider";
-import { Spinner } from "@/components/ui/spinner";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { MoveToFolderDialog } from "@/features/library/MoveToFolderDialog";
 import { cn } from "@/lib/utils";
 import {
   create_folder,
@@ -103,16 +50,35 @@ import {
   delete_folder,
   list_assets,
   list_folders,
-  media_url,
   move_assets,
   move_folder,
   rename_folder,
 } from "@/shared/api";
 import { error_message } from "@/shared/errors";
-import { format_duration } from "@/shared/format";
 import type { LibraryFolder, MediaAsset } from "@/shared/types";
-
-export type LibraryViewMode = "grid" | "list";
+import {
+  FolderItem,
+  LibraryBrowserSkeleton,
+  VideoItem,
+  type LibraryViewMode,
+} from "./LibraryBrowserItems";
+import {
+  LibraryBrowserDialogs,
+  type FolderEditor,
+  type MoveTarget,
+} from "./LibraryBrowserDialogs";
+import {
+  DEFAULT_THUMBNAIL_SIZE_PX,
+  LibraryBrowserToolbar,
+  type SortValue,
+} from "./LibraryBrowserToolbar";
+import {
+  folder_ancestors,
+  has_descendants,
+  normalized_rectangle,
+  rectangles_intersect,
+  type SelectionRectangle,
+} from "./library_browser_geometry";
 
 type LibraryBrowserProps = {
   current_video_id?: string | null;
@@ -122,31 +88,10 @@ type LibraryBrowserProps = {
   on_open_video: (asset: MediaAsset) => void | Promise<void>;
 };
 
-type SortValue =
-  "created_at_desc" | "created_at_asc" | "title_asc" | "duration_desc";
-
-type FolderEditor = {
-  mode: "create" | "rename";
-  folder: LibraryFolder | null;
-  parent_id: string | null;
-};
-
-type MoveTarget =
-  | { kind: "assets"; asset_ids: string[]; initial_folder_id: string | null }
-  | { kind: "folder"; folder: LibraryFolder }
-  | null;
-
 type FocusedItem =
   { kind: "folder"; id: string } | { kind: "video"; id: string } | null;
 
 type ContextTarget = "background" | FocusedItem;
-
-type SelectionRectangle = {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-};
 
 type MarqueeGesture = {
   pointer_id: number;
@@ -161,10 +106,6 @@ const SEARCH_INPUT_SELECTOR =
   'input, textarea, select, [contenteditable="true"]';
 const LIBRARY_ITEM_SELECTOR = '[data-library-item="true"]';
 const MARQUEE_DRAG_THRESHOLD_PX = 3;
-const THUMBNAIL_SIZE_MIN_PX = 144;
-const THUMBNAIL_SIZE_MAX_PX = 320;
-const THUMBNAIL_SIZE_STEP_PX = 16;
-const DEFAULT_THUMBNAIL_SIZE_PX = 208;
 const COMPACT_THUMBNAIL_SIZE_PX = 160;
 
 const SORT_PARAMETERS: Record<
@@ -175,14 +116,6 @@ const SORT_PARAMETERS: Record<
   created_at_asc: ["created_at", "asc"],
   title_asc: ["title", "asc"],
   duration_desc: ["duration", "desc"],
-};
-
-const STATUS_LABELS: Record<MediaAsset["status"], string> = {
-  pending: "等待中",
-  downloading: "下载中",
-  processing: "处理中",
-  ready: "可用",
-  failed: "失败",
 };
 
 export function LibraryBrowser({
@@ -772,171 +705,28 @@ export function LibraryBrowser({
         </Alert>
       ) : null}
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="ghost"
-          disabled={current_folder_id === null || Boolean(deferred_search)}
-          onClick={navigate_to_parent}
-          aria-label="返回上级文件夹"
-        >
-          <ArrowLeft />
-        </Button>
-        <Breadcrumb className="min-w-0 flex-1 overflow-hidden">
-          <BreadcrumbList className="flex-nowrap overflow-hidden">
-            <BreadcrumbItem className="shrink-0">
-              {current_folder_id === null && !deferred_search ? (
-                <BreadcrumbPage>视频库</BreadcrumbPage>
-              ) : (
-                <button type="button" onClick={() => navigate_to_folder(null)}>
-                  视频库
-                </button>
-              )}
-            </BreadcrumbItem>
-            {breadcrumbs.map((folder) => (
-              <BreadcrumbFolder
-                key={folder.folder_id}
-                folder={folder}
-                current={
-                  folder.folder_id === current_folder_id && !deferred_search
-                }
-                on_select={navigate_to_folder}
-              />
-            ))}
-            {deferred_search ? (
-              <>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>搜索结果</BreadcrumbPage>
-                </BreadcrumbItem>
-              </>
-            ) : null}
-          </BreadcrumbList>
-        </Breadcrumb>
-        <Button
-          type="button"
-          size={compact ? "icon-sm" : "sm"}
-          variant="outline"
-          onClick={() =>
-            open_folder_editor({
-              mode: "create",
-              folder: null,
-              parent_id: current_folder_id,
-            })
-          }
-          aria-label="新建文件夹"
-        >
-          <FolderPlus data-icon={compact ? undefined : "inline-start"} />
-          {compact ? null : "新建文件夹"}
-        </Button>
-      </div>
-
-      <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border bg-card p-2">
-        <div className="relative min-w-40 flex-1">
-          <Search
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            type="search"
-            className="pl-9 select-text"
-            value={search}
-            onChange={(event) => {
-              set_search(event.target.value);
-              clear_selection();
-            }}
-            placeholder="搜索全部视频"
-            aria-label="搜索全部视频"
-          />
-        </div>
-        <Select
-          value={sort_value}
-          onValueChange={(value) => set_sort_value(value as SortValue)}
-        >
-          <SelectTrigger
-            size="sm"
-            className={cn(compact ? "w-28" : "w-32")}
-            aria-label="项目排序"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent position="popper">
-            <SelectGroup>
-              <SelectItem value="created_at_desc">最新创建</SelectItem>
-              <SelectItem value="created_at_asc">最早创建</SelectItem>
-              <SelectItem value="title_asc">标题 A–Z</SelectItem>
-              <SelectItem value="duration_desc">时长降序</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <ToggleGroup
-          type="single"
-          value={view_mode}
-          onValueChange={(value) => {
-            if (value) set_view_mode(value as LibraryViewMode);
-          }}
-          aria-label="项目显示方式"
-        >
-          <ToggleGroupItem value="grid" aria-label="网格视图">
-            <Grid2X2 />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="list" aria-label="列表视图">
-            <List />
-          </ToggleGroupItem>
-        </ToggleGroup>
-        {view_mode === "grid" ? (
-          <div className="flex min-w-28 flex-1 items-center gap-2 sm:max-w-40">
-            <Maximize2 className="size-4 shrink-0 text-muted-foreground" />
-            <Slider
-              value={[thumbnail_size]}
-              min={THUMBNAIL_SIZE_MIN_PX}
-              max={THUMBNAIL_SIZE_MAX_PX}
-              step={THUMBNAIL_SIZE_STEP_PX}
-              onValueChange={(value) =>
-                set_thumbnail_size(value[0] ?? DEFAULT_THUMBNAIL_SIZE_PX)
-              }
-              aria-label="缩略图尺寸"
-            />
-          </div>
-        ) : null}
-        <Badge variant="secondary">{visible_item_count} 项</Badge>
-      </div>
-
-      {selected_asset_ids.size > 1 ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border bg-card px-3 py-2">
-          <span className="mr-auto text-sm text-muted-foreground">
-            已选择 {selected_asset_ids.size} 个视频
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => open_assets_move([...selected_asset_ids])}
-          >
-            <FolderInput data-icon="inline-start" />
-            移动
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="destructive"
-            onClick={() => set_asset_ids_to_delete([...selected_asset_ids])}
-          >
-            <Trash2 data-icon="inline-start" />
-            删除
-          </Button>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            onClick={clear_selection}
-            aria-label="取消选择"
-          >
-            <X />
-          </Button>
-        </div>
-      ) : null}
+      <LibraryBrowserToolbar
+        breadcrumbs={breadcrumbs}
+        compact={compact}
+        current_folder_id={current_folder_id}
+        deferred_search={deferred_search}
+        search={search}
+        selected_asset_ids={selected_asset_ids}
+        sort_value={sort_value}
+        thumbnail_size={thumbnail_size}
+        view_mode={view_mode}
+        visible_item_count={visible_item_count}
+        clear_selection={clear_selection}
+        navigate_to_folder={navigate_to_folder}
+        navigate_to_parent={navigate_to_parent}
+        open_assets_move={open_assets_move}
+        open_folder_editor={open_folder_editor}
+        set_asset_ids_to_delete={set_asset_ids_to_delete}
+        set_search={set_search}
+        set_sort_value={set_sort_value}
+        set_thumbnail_size={set_thumbnail_size}
+        set_view_mode={set_view_mode}
+      />
 
       <ContextMenu>
         <ContextMenuTrigger asChild>
@@ -1168,492 +958,28 @@ export function LibraryBrowser({
         </ContextMenuContent>
       </ContextMenu>
 
-      <Dialog
-        open={folder_editor !== null}
-        onOpenChange={(open) => {
-          if (!open && !submitting) set_folder_editor(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {folder_editor?.mode === "rename" ? "重命名文件夹" : "新建文件夹"}
-            </DialogTitle>
-            <DialogDescription>
-              文件夹只用于整理视频，不会创建或移动真实目录。
-            </DialogDescription>
-          </DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={submit_folder}>
-            <FieldGroup>
-              <Field data-disabled={submitting}>
-                <FieldLabel htmlFor="library_folder_name">
-                  文件夹名称
-                </FieldLabel>
-                <Input
-                  id="library_folder_name"
-                  className="select-text"
-                  value={folder_name}
-                  onChange={(event) => set_folder_name(event.target.value)}
-                  maxLength={100}
-                  autoFocus
-                  disabled={submitting}
-                />
-              </Field>
-            </FieldGroup>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={submitting}
-                onClick={() => set_folder_editor(null)}
-              >
-                取消
-              </Button>
-              <Button
-                type="submit"
-                disabled={submitting || !folder_name.trim()}
-              >
-                {submitting ? <Spinner data-icon="inline-start" /> : null}
-                保存
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <MoveToFolderDialog
-        open={move_target !== null}
-        title={move_target?.kind === "folder" ? "移动文件夹" : "移动视频"}
-        description={
-          move_target?.kind === "folder"
-            ? "选择新的父文件夹，所有后代会保持原有层级。"
-            : `将 ${move_target?.asset_ids.length ?? 0} 个视频归入同一文件夹。`
-        }
+      <LibraryBrowserDialogs
+        folder_editor={folder_editor}
+        folder_name={folder_name}
+        move_target={move_target}
         folders={folders}
-        initial_folder_id={
-          move_target?.kind === "folder"
-            ? move_target.folder.parent_id
-            : (move_target?.initial_folder_id ?? null)
-        }
-        excluded_folder_ids={
-          move_target?.kind === "folder"
-            ? new Set(
-                folders
-                  .filter((folder) =>
-                    folder.materialized_path.startsWith(
-                      move_target.folder.materialized_path,
-                    ),
-                  )
-                  .map((folder) => folder.folder_id),
-              )
-            : new Set()
-        }
-        root_label={move_target?.kind === "folder" ? "根目录" : "未分类"}
+        asset_ids_to_delete={asset_ids_to_delete}
+        delete_assets={delete_assets}
+        folder_to_delete={folder_to_delete}
+        folder_requires_confirmation={folder_requires_confirmation}
+        folder_confirmation={folder_confirmation}
         submitting={submitting}
-        on_open_change={(open) => {
-          if (!open && !submitting) set_move_target(null);
-        }}
-        on_submit={(folder_id) => void submit_move(folder_id)}
+        set_folder_editor={set_folder_editor}
+        set_folder_name={set_folder_name}
+        set_move_target={set_move_target}
+        set_asset_ids_to_delete={set_asset_ids_to_delete}
+        set_folder_to_delete={set_folder_to_delete}
+        set_folder_confirmation={set_folder_confirmation}
+        submit_folder={submit_folder}
+        submit_move={submit_move}
+        confirm_asset_delete={confirm_asset_delete}
+        confirm_folder_delete={confirm_folder_delete}
       />
-
-      <AlertDialog
-        open={asset_ids_to_delete.length > 0}
-        onOpenChange={(open) => {
-          if (!open && !submitting) set_asset_ids_to_delete([]);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia>
-              <Trash2 />
-            </AlertDialogMedia>
-            <AlertDialogTitle>
-              永久删除 {asset_ids_to_delete.length} 个视频？
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {delete_assets.length === 1
-                ? `“${delete_assets[0]?.title}”及其转录、标记和分析成果都会永久删除。`
-                : "所选视频及其转录、标记和分析成果都会永久删除。"}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={submitting}>取消</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={submitting}
-              onClick={(event) => {
-                event.preventDefault();
-                void confirm_asset_delete();
-              }}
-            >
-              {submitting ? <Spinner data-icon="inline-start" /> : null}
-              永久删除
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={folder_to_delete !== null}
-        onOpenChange={(open) => {
-          if (!open && !submitting) set_folder_to_delete(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia>
-              <Trash2 />
-            </AlertDialogMedia>
-            <AlertDialogTitle>递归永久删除文件夹？</AlertDialogTitle>
-            <AlertDialogDescription>
-              将删除 {folder_to_delete?.recursive_asset_count ?? 0}{" "}
-              个视频及所有后代文件夹，此操作无法撤销。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {folder_to_delete && folder_requires_confirmation ? (
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="library_folder_delete_confirmation">
-                  输入“{folder_to_delete.name}”确认
-                </FieldLabel>
-                <Input
-                  id="library_folder_delete_confirmation"
-                  className="select-text"
-                  value={folder_confirmation}
-                  onChange={(event) =>
-                    set_folder_confirmation(event.target.value)
-                  }
-                  disabled={submitting}
-                />
-              </Field>
-            </FieldGroup>
-          ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={submitting}>取消</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={
-                submitting ||
-                Boolean(
-                  folder_to_delete &&
-                  folder_requires_confirmation &&
-                  folder_confirmation !== folder_to_delete.name,
-                )
-              }
-              onClick={(event) => {
-                event.preventDefault();
-                void confirm_folder_delete();
-              }}
-            >
-              {submitting ? <Spinner data-icon="inline-start" /> : null}
-              递归永久删除
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
-  );
-}
-
-function BreadcrumbFolder({
-  folder,
-  current,
-  on_select,
-}: {
-  folder: LibraryFolder;
-  current: boolean;
-  on_select: (folder_id: string) => void;
-}) {
-  return (
-    <>
-      <BreadcrumbSeparator />
-      <BreadcrumbItem className="min-w-0">
-        {current ? (
-          <BreadcrumbPage className="truncate">{folder.name}</BreadcrumbPage>
-        ) : (
-          <button
-            type="button"
-            className="truncate"
-            onClick={() => on_select(folder.folder_id)}
-          >
-            {folder.name}
-          </button>
-        )}
-      </BreadcrumbItem>
-    </>
-  );
-}
-
-function FolderItem({
-  folder,
-  view_mode,
-  selected,
-  drop_active,
-  on_click,
-  on_focus,
-  on_open,
-  on_drag_over,
-  on_drag_leave,
-  on_drop,
-}: {
-  folder: LibraryFolder;
-  view_mode: LibraryViewMode;
-  selected: boolean;
-  drop_active: boolean;
-  on_click: (folder_id: string) => void;
-  on_focus: () => void;
-  on_open: (folder_id: string) => void;
-  on_drag_over: (
-    event: DragEvent<HTMLButtonElement>,
-    folder_id: string,
-  ) => void;
-  on_drag_leave: () => void;
-  on_drop: (event: DragEvent<HTMLButtonElement>, folder_id: string) => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        "group min-w-0 rounded-xl border bg-card text-left transition-[border-color,box-shadow,background-color] hover:bg-muted focus-visible:ring-3 focus-visible:ring-focus-ring focus-visible:outline-none",
-        selected && "border-primary ring-2 ring-primary-selected",
-        drop_active && "bg-primary-muted ring-2 ring-primary-selected",
-        view_mode === "grid"
-          ? "flex min-h-28 flex-col justify-between gap-4 p-4"
-          : "flex min-h-16 items-center gap-3 p-3",
-      )}
-      aria-label={`${folder.name}，${folder.recursive_asset_count} 个视频`}
-      aria-pressed={selected}
-      data-library-item="true"
-      data-library-kind="folder"
-      data-library-id={folder.folder_id}
-      onClick={() => on_click(folder.folder_id)}
-      onFocus={on_focus}
-      onDoubleClick={() => on_open(folder.folder_id)}
-      onDragOver={(event) => on_drag_over(event, folder.folder_id)}
-      onDragLeave={on_drag_leave}
-      onDrop={(event) => void on_drop(event, folder.folder_id)}
-    >
-      <span
-        className={cn(
-          "flex shrink-0 items-center justify-center rounded-lg bg-secondary text-secondary-foreground",
-          view_mode === "grid" ? "size-12" : "size-10",
-        )}
-      >
-        <Folder className={view_mode === "grid" ? "size-7" : "size-5"} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <strong className="block truncate text-sm font-medium">
-          {folder.name}
-        </strong>
-        <span className="block text-xs text-muted-foreground">
-          {folder.recursive_asset_count} 个视频
-        </span>
-      </span>
-      {selected ? <Check className="size-4 shrink-0 text-primary" /> : null}
-    </button>
-  );
-}
-
-function VideoItem({
-  asset,
-  view_mode,
-  compact,
-  current,
-  selected,
-  dragging,
-  on_click,
-  on_focus,
-  on_open,
-  on_drag_start,
-  on_drag_end,
-}: {
-  asset: MediaAsset;
-  view_mode: LibraryViewMode;
-  compact: boolean;
-  current: boolean;
-  selected: boolean;
-  dragging: boolean;
-  on_click: (event: MouseEvent<HTMLButtonElement>) => void;
-  on_focus: () => void;
-  on_open: () => void;
-  on_drag_start: (event: DragEvent<HTMLButtonElement>) => void;
-  on_drag_end: () => void;
-}) {
-  const status_variant =
-    asset.status === "failed" ? "destructive" : "secondary";
-  return (
-    <button
-      type="button"
-      className={cn(
-        "group min-w-0 overflow-hidden rounded-xl border bg-card text-left transition-[border-color,box-shadow,opacity] hover:border-primary focus-visible:ring-3 focus-visible:ring-focus-ring focus-visible:outline-none",
-        selected && "border-primary ring-2 ring-primary-selected",
-        dragging && "opacity-60",
-        view_mode === "list" && "flex min-h-20 items-center",
-      )}
-      aria-label={`${asset.title}，${STATUS_LABELS[asset.status]}${current ? "，当前视频" : ""}`}
-      aria-pressed={selected}
-      aria-disabled={asset.status !== "ready"}
-      data-library-item="true"
-      data-library-kind="video"
-      data-library-id={asset.asset_id}
-      draggable
-      onClick={on_click}
-      onFocus={on_focus}
-      onDoubleClick={on_open}
-      onDragStart={on_drag_start}
-      onDragEnd={on_drag_end}
-    >
-      <span
-        className={cn(
-          "relative grid shrink-0 place-items-center overflow-hidden bg-muted text-muted-foreground",
-          view_mode === "grid" ? "aspect-video w-full" : "aspect-video h-20",
-          compact && view_mode === "list" && "h-16",
-        )}
-      >
-        {asset.thumbnail_url ? (
-          <img
-            className="size-full object-cover"
-            src={media_url(asset.thumbnail_url)}
-            alt=""
-            loading="lazy"
-          />
-        ) : (
-          <Video className="size-8" />
-        )}
-        <Badge className="absolute right-2 bottom-2" variant="secondary">
-          {format_duration(asset.duration_seconds)}
-        </Badge>
-        {selected ? (
-          <span className="absolute top-2 left-2 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Check className="size-4" />
-          </span>
-        ) : null}
-      </span>
-      <span
-        className={cn(
-          "flex min-w-0 flex-1 flex-col gap-2 p-3",
-          view_mode === "grid" && "pt-3",
-        )}
-      >
-        <span className="flex min-w-0 items-start gap-2">
-          <strong className="line-clamp-2 min-w-0 flex-1 text-sm font-medium">
-            {asset.title}
-          </strong>
-          {current ? <Badge variant="default">当前</Badge> : null}
-        </span>
-        <span className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant={status_variant}>{STATUS_LABELS[asset.status]}</Badge>
-          <span className="truncate">{asset.author_name ?? "未知作者"}</span>
-          {view_mode === "list" && !compact ? (
-            <span className="flex items-center gap-1">
-              <Clock3 className="size-3" />
-              <time dateTime={asset.created_at}>
-                {new Intl.DateTimeFormat("zh-CN", {
-                  dateStyle: "medium",
-                }).format(new Date(asset.created_at))}
-              </time>
-            </span>
-          ) : null}
-        </span>
-        {asset.status !== "ready" ? (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <CircleAlert className="size-3" />
-            {asset.status === "failed"
-              ? (asset.error_message ?? "处理失败，仍可移动或删除。")
-              : "处理完成后才能打开。"}
-          </span>
-        ) : null}
-      </span>
-    </button>
-  );
-}
-
-function LibraryBrowserSkeleton({
-  view_mode,
-  compact,
-}: {
-  view_mode: LibraryViewMode;
-  compact: boolean;
-}) {
-  const item_count = compact ? 4 : 8;
-  return (
-    <div
-      className={cn(
-        view_mode === "grid"
-          ? "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
-          : "flex flex-col gap-2",
-      )}
-      role="status"
-      aria-label="正在加载视频库"
-    >
-      {Array.from({ length: item_count }, (_, index) => (
-        <Skeleton
-          key={index}
-          className={cn(view_mode === "grid" ? "h-52" : "h-20")}
-        />
-      ))}
-    </div>
-  );
-}
-
-function folder_ancestors(
-  folder: LibraryFolder | null,
-  folders: LibraryFolder[],
-): LibraryFolder[] {
-  if (!folder) return [];
-  const folders_by_id = new Map(
-    folders.map((candidate) => [candidate.folder_id, candidate]),
-  );
-  const ancestors = [folder];
-  let parent_id = folder.parent_id;
-  while (parent_id) {
-    const parent = folders_by_id.get(parent_id);
-    if (!parent) break;
-    ancestors.unshift(parent);
-    parent_id = parent.parent_id;
-  }
-  return ancestors;
-}
-
-function has_descendants(
-  folder: LibraryFolder,
-  folders: LibraryFolder[],
-): boolean {
-  return folders.some(
-    (candidate) =>
-      candidate.folder_id !== folder.folder_id &&
-      candidate.materialized_path.startsWith(folder.materialized_path),
-  );
-}
-
-function normalized_rectangle(
-  start_x: number,
-  start_y: number,
-  end_x: number,
-  end_y: number,
-): SelectionRectangle & { right: number; bottom: number } {
-  const left = Math.min(start_x, end_x);
-  const top = Math.min(start_y, end_y);
-  const right = Math.max(start_x, end_x);
-  const bottom = Math.max(start_y, end_y);
-  return {
-    left,
-    top,
-    right,
-    bottom,
-    width: right - left,
-    height: bottom - top,
-  };
-}
-
-function rectangles_intersect(
-  first: { left: number; top: number; right: number; bottom: number },
-  second: { left: number; top: number; right: number; bottom: number },
-) {
-  return !(
-    first.right < second.left ||
-    first.left > second.right ||
-    first.bottom < second.top ||
-    first.top > second.bottom
   );
 }

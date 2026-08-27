@@ -6,7 +6,7 @@ from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAsset, MediaAssetStatus, SourcePlatform
 from openvideo.core.thumbnails import SCRUB_PROXY_FILE_NAME
 from openvideo.settings import Settings
-from openvideo.ui import api as api_module
+from openvideo.ui import media_routes
 from openvideo.ui.api import create_app
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
@@ -85,7 +85,7 @@ def test_generates_and_streams_scrub_preview(monkeypatch, tmp_path: Path):
         proxy_file.write_bytes(generated_content)
         return proxy_file
 
-    monkeypatch.setattr(api_module, "generate_scrub_proxy", generate_proxy)
+    monkeypatch.setattr(media_routes, "generate_scrub_proxy", generate_proxy)
 
     with create_client(tmp_path) as client:
         asset_response = client.get(f"/api/media/assets/{ASSET_ID}")

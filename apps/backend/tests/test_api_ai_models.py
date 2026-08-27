@@ -10,7 +10,7 @@ from openvideo.llm.probe_cache import ProbeCache
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
 from openvideo.tools.llm import LlmCompletionError
-from openvideo.ui import api
+from openvideo.ui import ai_routes, api
 
 
 MODEL_ID = "model-01890f4c7a2b7cc298c4dc0c0c07398f"
@@ -43,7 +43,7 @@ def pass_tool_probes(monkeypatch) -> None:
         "probe_reasoning_tools",
         "probe_vision_tools",
     ):
-        monkeypatch.setattr(api, probe_name, lambda *_args: None)
+        monkeypatch.setattr(ai_routes, probe_name, lambda *_args: None)
 
 
 def create_client(tmp_path: Path) -> TestClient:
@@ -81,9 +81,9 @@ def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
         return "OK"
 
     timestamps = iter([10.0, 10.086])
-    monkeypatch.setattr(api, "complete_text", complete_model)
+    monkeypatch.setattr(ai_routes, "complete_text", complete_model)
     pass_tool_probes(monkeypatch)
-    monkeypatch.setattr(api, "perf_counter", lambda: next(timestamps))
+    monkeypatch.setattr(ai_routes, "perf_counter", lambda: next(timestamps))
 
     with create_client(tmp_path) as client:
         response = client.post("/api/ai/models/test", json=MODEL_REQUEST)
@@ -116,8 +116,8 @@ def test_ai_model_returns_provider_failure_as_test_result(tmp_path: Path, monkey
         raise LlmCompletionError("模型请求失败：密钥 secret 无法识别 LiteLLM 供应商")
 
     timestamps = iter([20.0, 20.024])
-    monkeypatch.setattr(api, "complete_text", reject_model)
-    monkeypatch.setattr(api, "perf_counter", lambda: next(timestamps))
+    monkeypatch.setattr(ai_routes, "complete_text", reject_model)
+    monkeypatch.setattr(ai_routes, "perf_counter", lambda: next(timestamps))
 
     with create_client(tmp_path) as client:
         response = client.post("/api/ai/models/test", json=MODEL_REQUEST)
@@ -139,10 +139,12 @@ def test_ai_model_probes_declared_vision_and_reports_tool_failure(
         **MODEL_REQUEST,
         "input_modalities": ["text", "image"],
     }
-    monkeypatch.setattr(api, "complete_text", lambda *_args, **_kwargs: "OK")
+    monkeypatch.setattr(
+        ai_routes, "complete_text", lambda *_args, **_kwargs: "OK"
+    )
     pass_tool_probes(monkeypatch)
     monkeypatch.setattr(
-        api,
+        ai_routes,
         "probe_basic_tools",
         lambda *_args: (_ for _ in ()).throw(
             ToolCallingUnsupportedError("供应商不支持 tools")
@@ -150,7 +152,7 @@ def test_ai_model_probes_declared_vision_and_reports_tool_failure(
     )
     vision_calls = []
     monkeypatch.setattr(
-        api,
+        ai_routes,
         "probe_image_input",
         lambda model, timeout: vision_calls.append((model.model_id, timeout)),
     )

@@ -1,107 +1,55 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from enum import StrEnum
 from pathlib import Path
 from threading import Event
-from time import perf_counter
 from uuid import UUID
 import asyncio
-import json
 import os
 import re
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import (
     BaseModel,
-    ConfigDict,
     Field,
     SecretStr,
-    ValidationError,
     field_validator,
-    model_validator,
 )
 
 from openvideo.agent_service import (
-    AgentConflictError,
-    AgentNotFoundError,
     AgentService,
-    AgentServiceError,
 )
-from openvideo.analysis_manager import (
-    AnalysisError,
-    AnalysisManager,
-    AnalysisPrerequisiteError,
-)
+from openvideo.analysis_manager import AnalysisManager
 from openvideo.download_manager import DownloadManager
-from openvideo.summary_manager import (
-    SummaryError,
-    SummaryManager,
-    SummaryNotFoundError,
-    SummaryRevisionConflictError,
-)
-from openvideo.core.agent_runtime_models import (
-    AgentArtifact,
-    AgentDefinitionAvailability,
-    AgentRun,
-    AgentRunCreate,
-    AgentSession,
-    AgentSessionCreate,
-    AgentSessionState,
-    TERMINAL_AGENT_RUN_STAGES,
-)
+from openvideo.summary_manager import SummaryManager
 from openvideo.core.ai_models import (
     AiModelCollection,
-    AiModelConfiguration,
-    IMAGE_INPUT_MODALITY,
-    InputModality,
-)
-from openvideo.core.analysis_models import (
-    ANALYSIS_STRATEGY_PRESETS,
-    AnalysisJob,
-    AnalysisMode,
-    AnalysisStrategy,
-    AnalysisStrategyPresetDescriptor,
 )
 from openvideo.core.transcription_models import (
-    Transcript,
-    TranscriptionComputeType,
-    TranscriptionDevice,
     TranscriptionEngine,
     TranscriptionModelDownloadJob,
     TranscriptionModelState,
     TranscriptionOptions,
 )
-from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
 from openvideo.core.download_models import (
     DownloadQuality,
     DownloadStage,
     DownloadTask,
 )
 from openvideo.core.library import (
-    FolderConflictError,
     FolderNotFoundError,
     LibraryDescription,
     LibraryError,
     MediaLibrary,
 )
-from openvideo.core.folder_models import FolderResponse
 from openvideo.core.identifiers import uuid7
-from openvideo.core.media_models import (
-    MarkerImportance,
-    MediaAssetResponse,
-    MediaAssetStatus,
-    MediaMarker,
-    MediaSegment,
-    SourcePlatform,
-)
+from openvideo.core.media_models import SourcePlatform
 from openvideo.core.page_settings import (
     LEGACY_PAGE_SETTINGS_FILE_NAME,
-    MarkersPageSettings,
     PageSettingsStore,
 )
-from openvideo.core.thumbnails import SCRUB_PROXY_RELATIVE_PATH
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import (
     AI_MODELS_FIELD,
@@ -112,16 +60,6 @@ from openvideo.settings import (
     Settings,
     load_settings,
     preferences_from_settings,
-)
-from openvideo.core.summary_models import (
-    SummaryDocument,
-    SummaryDocumentCreate,
-    SummaryDocumentReorder,
-    SummaryDocumentUpdate,
-    SummaryExportResult,
-    SummaryGenerationRequest,
-    SummaryMediaArtifact,
-    SummaryMediaCreate,
 )
 from openvideo.download_accounts import (
     DownloadAccount,
@@ -139,74 +77,33 @@ from openvideo.tools.downloader import (
     is_authentication_failure,
     probe_source,
     read_download_metadata,
-    yt_dlp_available,
-)
-from openvideo.tools.media import media_tool_status
-from openvideo.tools.llm import (
-    LlmCompletionError,
-    complete_text,
-    probe_image_input,
 )
 from openvideo.llm.capability_resolver import CapabilityResolver
-from openvideo.llm.errors import LlmRuntimeError, ToolCallingUnsupportedError
-from openvideo.llm.model_profile import (
-    CAPABILITY_NAMES,
-    CapabilityName,
-    CapabilityOverride,
-    CapabilitySource,
-    ModelCapabilityOverrides,
-    ModelProfile,
-    Support,
-)
-from openvideo.llm.probes import (
-    probe_basic_tools,
-    probe_named_tool_choice,
-    probe_parallel_tools,
-    probe_reasoning_tools,
-    probe_streaming_tools,
-    probe_vision_tools,
-)
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
-from openvideo.tools.thumbnails import generate_scrub_proxy
 from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
     TranscriptionModelManager,
 )
 from openvideo.ui.directory_picker import DirectoryPickerError, select_directory
+from openvideo.ui.media_routes import register_media_routes
+from openvideo.ui.page_settings_routes import register_page_settings_routes
+from openvideo.ui.analysis_routes import register_analysis_routes
+from openvideo.ui.agent_routes import register_agent_routes
+from openvideo.ui.ai_routes import register_ai_routes
+from openvideo.ui.library_routes import register_library_routes
+from openvideo.ui.health_routes import register_health_routes
+from openvideo.ui.summary_routes import register_summary_routes
 
 
-STREAM_CHUNK_SIZE = 1024 * 1024
-VIDEO_MEDIA_TYPE = "video/mp4"
 MAX_BATCH_DOWNLOADS = 100
 DEFAULT_DOWNLOAD_HISTORY_LIMIT = 50
 MAX_DOWNLOAD_HISTORY_LIMIT = 100
-MILLISECONDS_PER_SECOND = 1_000
-MODEL_TEST_MAX_TOKENS = 8
-MODEL_TEST_PROMPT = "Reply only with OK."
-MODEL_TEST_REDACTED_SECRET = "[已隐藏]"
-MODEL_TEST_SUCCESS_MESSAGE = "模型响应正常"
-MODEL_TEST_TIMEOUT_SECONDS = 30
-SUMMARY_DOCUMENT_EVENT_POLL_SECONDS = 0.5
-SUMMARY_DOCUMENT_EVENT_KEEPALIVE_SECONDS = 15
-AGENT_EVENT_POLL_SECONDS = 0.05
-AGENT_EVENT_KEEPALIVE_SECONDS = 15
 DOWNLOAD_ACCOUNT_TEST_URLS = {
     SourcePlatform.BILIBILI: "https://www.bilibili.com/video/BV1xx411c7mD",
     SourcePlatform.DOUYIN: "https://www.douyin.com/video/6961737553342991651",
     SourcePlatform.YOUTUBE: "https://www.youtube.com/watch?v=BaW_jenozKc",
 }
 DOWNLOAD_ACCOUNT_LOGIN_ID_PATTERN = re.compile(r"^login-[0-9a-f]{32}$")
-
-
-class DependencyStatus(BaseModel):
-    yt_dlp: bool
-    ffmpeg: bool
-    ffprobe: bool
-
-
-class HealthResponse(BaseModel):
-    status: str
-    dependencies: DependencyStatus
 
 
 class ProbeRequest(BaseModel):
@@ -292,75 +189,6 @@ class BatchDownloadRequest(BaseModel):
     assign_folder: bool = False
 
 
-class FolderCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    parent_id: str | None = None
-
-
-class FolderRenameRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-
-
-class FolderMoveRequest(BaseModel):
-    parent_id: str | None = None
-
-
-class FolderDeleteRequest(BaseModel):
-    confirmation_name: str | None = None
-
-
-class AssetMoveRequest(BaseModel):
-    asset_ids: list[str] = Field(min_length=1, max_length=100)
-    folder_id: str | None = None
-
-
-class MarkerCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    start_seconds: float = Field(ge=0)
-    end_seconds: float | None = Field(default=None, ge=0)
-    importance: MarkerImportance = 0
-
-
-class MarkerUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    start_seconds: float | None = Field(default=None, ge=0)
-    end_seconds: float | None = Field(default=None, ge=0)
-    importance: MarkerImportance | None = None
-
-    @model_validator(mode="after")
-    def validate_partial_update(self) -> "MarkerUpdateRequest":
-        if not self.model_fields_set:
-            raise ValueError("至少需要提交一个标记字段")
-        if "start_seconds" in self.model_fields_set and self.start_seconds is None:
-            raise ValueError("开始时间不能为 null")
-        if "importance" in self.model_fields_set and self.importance is None:
-            raise ValueError("重要程度不能为 null")
-        return self
-
-
-class TranscriptSegmentUpdateRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=10_000)
-
-
-class AnalysisCreateRequest(BaseModel):
-    mode: AnalysisMode = AnalysisMode.FULL
-    marker_ids: list[str] = Field(default_factory=list)
-    force: bool = False
-    ai_model_id: str | None = None
-    strategy: AnalysisStrategy = Field(default_factory=AnalysisStrategy)
-
-
-class TranscriptionCreateRequest(BaseModel):
-    force: bool = False
-    engine: TranscriptionEngine | None = None
-    model: str | None = None
-    language: str | None = None
-    device: TranscriptionDevice | None = None
-    compute_type: TranscriptionComputeType | None = None
-
-
 class LibraryCreateRequest(BaseModel):
     path: str
 
@@ -387,55 +215,6 @@ class PreferencesResponse(AiModelCollection):
     library_path_managed: bool
 
 
-class AiModelSummary(BaseModel):
-    model_id: str
-    name: str
-    litellm_model: str
-    input_modalities: list[InputModality]
-    capabilities: ModelCapabilityOverrides
-    profile: ModelProfile
-
-
-class AiModelCapabilityTest(BaseModel):
-    support: Support
-    source: CapabilitySource
-    tested: bool
-    message: str
-
-
-class AiModelTestResponse(BaseModel):
-    available: bool
-    latency_ms: int
-    message: str
-    capabilities: dict[str, AiModelCapabilityTest]
-    profile: ModelProfile
-
-
-class SummaryMediaCreateResponse(BaseModel):
-    artifact: SummaryMediaArtifact
-    document: SummaryDocument
-
-
-def _redact_model_test_error(message: str, api_key: str | None) -> str:
-    if not api_key:
-        return message
-    return message.replace(api_key, MODEL_TEST_REDACTED_SECRET)
-
-
-def _run_model_probe(
-    probe: Callable[[AiModelConfiguration, int], None],
-    model: AiModelConfiguration,
-    label: str,
-) -> tuple[Support, str]:
-    try:
-        probe(model, MODEL_TEST_TIMEOUT_SECONDS)
-    except ToolCallingUnsupportedError as error:
-        message = _redact_model_test_error(str(error), model.api_key)
-        return Support.NO, f"{label}已确认不支持：{message}"
-    except LlmRuntimeError as error:
-        message = _redact_model_test_error(str(error), model.api_key)
-        return Support.UNKNOWN, f"{label}探测未确认：{message}"
-    return Support.YES, f"{label}正常"
 
 
 def create_app(
@@ -625,23 +404,6 @@ def create_app(
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
         allow_headers=["Content-Type", "Range"],
     )
-
-    @app.get("/api/health", response_model=HealthResponse)
-    def health() -> HealthResponse:
-        tools = media_tool_status(
-            resolved_settings.ffmpeg_path,
-            resolved_settings.ffprobe_path,
-            resolved_settings.ffmpeg_bin_dir,
-        )
-        dependencies = DependencyStatus(
-            yt_dlp=yt_dlp_available(),
-            ffmpeg=tools.ffmpeg_available,
-            ffprobe=tools.ffprobe_available,
-        )
-        service_status = (
-            "ready" if dependencies.yt_dlp and dependencies.ffmpeg else "degraded"
-        )
-        return HealthResponse(status=service_status, dependencies=dependencies)
 
     @app.post("/api/downloads/probe", response_model=ProbeResponse)
     async def probe_download(request: ProbeRequest) -> ProbeResponse:
@@ -920,174 +682,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="重新下载任务不存在")
         return task
 
-    @app.get("/api/library/folders", response_model=list[FolderResponse])
-    def list_folders() -> list[FolderResponse]:
-        return library.list_folders()
 
-    @app.post(
-        "/api/library/folders",
-        response_model=FolderResponse,
-        status_code=status.HTTP_201_CREATED,
-    )
-    def create_folder(request: FolderCreateRequest) -> FolderResponse:
-        try:
-            return library.create_folder(request.name, request.parent_id)
-        except FolderNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except FolderConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.patch("/api/library/folders/{folder_id}", response_model=FolderResponse)
-    def rename_folder(folder_id: str, request: FolderRenameRequest) -> FolderResponse:
-        try:
-            return library.rename_folder(folder_id, request.name)
-        except FolderNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except FolderConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.put("/api/library/folders/{folder_id}/parent", response_model=FolderResponse)
-    def move_folder(folder_id: str, request: FolderMoveRequest) -> FolderResponse:
-        try:
-            return library.move_folder(folder_id, request.parent_id)
-        except FolderNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except FolderConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.post("/api/media/assets/move", response_model=list[MediaAssetResponse])
-    def move_assets(request: AssetMoveRequest) -> list[MediaAssetResponse]:
-        try:
-            assets = library.move_assets(request.asset_ids, request.folder_id)
-        except FolderNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        return [library.response_for(asset) for asset in assets]
-
-    @app.delete("/api/media/assets/{asset_id}", status_code=204)
-    async def delete_asset(asset_id: str) -> Response:
-        try:
-            asset = library.get(asset_id)
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail="媒体资源不存在") from error
-        if asset is None:
-            raise HTTPException(status_code=404, detail="媒体资源不存在")
-        await _stop_asset_tasks(
-            {asset_id},
-            manager,
-            analysis_manager,
-            agent_service,
-        )
-        try:
-            library.delete_asset(asset_id)
-        except (OSError, ValueError) as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.delete("/api/library/folders/{folder_id}", status_code=204)
-    async def delete_folder(
-        folder_id: str,
-        request: FolderDeleteRequest | None = None,
-    ) -> Response:
-        try:
-            folder = library.get_folder(folder_id)
-            asset_ids = library.folder_asset_ids(folder_id)
-            has_descendants = any(
-                candidate.folder_id != folder_id
-                and candidate.materialized_path.startswith(folder.materialized_path)
-                for candidate in library.list_folders()
-            )
-        except FolderNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        if (asset_ids or has_descendants) and (
-            request is None or request.confirmation_name != folder.name
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail="非空文件夹必须输入完整名称确认永久删除",
-            )
-        await _stop_asset_tasks(
-            set(asset_ids),
-            manager,
-            analysis_manager,
-            agent_service,
-        )
-        try:
-            for asset_id in asset_ids:
-                library.delete_asset(asset_id)
-            library.delete_folder(folder_id)
-        except (FolderConflictError, OSError, ValueError) as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.get("/api/media/assets", response_model=list[MediaAssetResponse])
-    def list_assets(
-        folder_id: str | None = None,
-        uncategorized: bool = False,
-        search: str | None = Query(default=None, max_length=200),
-        sort_by: str = "created_at",
-        sort_order: str = "desc",
-    ) -> list[MediaAssetResponse]:
-        try:
-            assets = library.list(
-                folder_id=folder_id,
-                uncategorized=uncategorized,
-                search=search,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
-        except FolderNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        return [library.response_for(asset) for asset in assets]
-
-    @app.get("/api/media/assets/{asset_id}", response_model=MediaAssetResponse)
-    def get_asset(asset_id: str) -> MediaAssetResponse:
-        asset = _ready_asset(library, asset_id)
-        return library.response_for(asset)
-
-    @app.post(
-        "/api/media/assets/{asset_id}/analyze",
-        response_model=AnalysisJob,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def analyze_asset(
-        asset_id: str,
-        request: AnalysisCreateRequest = AnalysisCreateRequest(),
-    ) -> AnalysisJob:
-        try:
-            job = analysis_manager.create_analysis(
-                asset_id,
-                request.mode,
-                request.marker_ids,
-                request.ai_model_id,
-                request.strategy,
-                request.force,
-            )
-        except AnalysisPrerequisiteError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except AnalysisError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        if job.stage.value == "pending":
-            analysis_manager.start(job.job_id)
-        return job
-
-    @app.get(
-        "/api/analysis-strategies",
-        response_model=list[AnalysisStrategyPresetDescriptor],
-    )
-    def list_analysis_strategies() -> list[AnalysisStrategyPresetDescriptor]:
-        return [preset.model_copy(deep=True) for preset in ANALYSIS_STRATEGY_PRESETS]
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException):
@@ -1289,751 +884,29 @@ def create_app(
             raise HTTPException(status_code=404, detail="模型下载任务不存在")
         return job
 
-    @app.get("/api/ai/models", response_model=list[AiModelSummary])
-    def list_ai_models() -> list[AiModelSummary]:
-        return [
-            AiModelSummary(
-                model_id=model.model_id,
-                name=model.name,
-                litellm_model=model.litellm_model,
-                input_modalities=model.input_modalities,
-                capabilities=model.capabilities,
-                profile=resolved_capability_resolver.resolve(model),
-            )
-            for model in resolved_settings.ai_models
-        ]
 
-    @app.post("/api/ai/models/test", response_model=AiModelTestResponse)
-    def test_ai_model(request: AiModelConfiguration) -> AiModelTestResponse:
-        started_at = perf_counter()
-        capabilities: dict[str, AiModelCapabilityTest] = {}
-        profile = resolved_capability_resolver.resolve(request, refresh_models_dev=True)
-        try:
-            complete_text(
-                request,
-                [{"role": "user", "content": MODEL_TEST_PROMPT}],
-                timeout_seconds=MODEL_TEST_TIMEOUT_SECONDS,
-                max_tokens=MODEL_TEST_MAX_TOKENS,
-                disable_thinking=True,
-            )
-        except LlmCompletionError as error:
-            error_message = _redact_model_test_error(str(error), request.api_key)
-            capabilities["text"] = AiModelCapabilityTest(
-                support=Support.NO,
-                source=CapabilitySource.RUNTIME_PROBE,
-                tested=True,
-                message=error_message,
-            )
-            for capability in CAPABILITY_NAMES:
-                capabilities[capability.value] = AiModelCapabilityTest(
-                    support=profile.support(capability),
-                    source=profile.source(capability),
-                    tested=False,
-                    message="文本连接失败，未执行能力探测",
-                )
-            return AiModelTestResponse(
-                available=False,
-                latency_ms=round(
-                    (perf_counter() - started_at) * MILLISECONDS_PER_SECOND
-                ),
-                message=error_message,
-                capabilities=capabilities,
-                profile=profile,
-            )
-        capabilities["text"] = AiModelCapabilityTest(
-            support=Support.YES,
-            source=CapabilitySource.RUNTIME_PROBE,
-            tested=True,
-            message="文本响应正常",
-        )
-        probe_results: dict[CapabilityName, Support] = {}
-        tool_probe_specs = (
-            (CapabilityName.TOOLS, probe_basic_tools, "基础工具调用"),
-            (CapabilityName.STREAMING_TOOLS, probe_streaming_tools, "流式工具调用"),
-            (CapabilityName.TOOL_CHOICE_NAMED, probe_named_tool_choice, "指定工具调用"),
-            (CapabilityName.PARALLEL_TOOLS, probe_parallel_tools, "并行工具调用"),
-        )
-        if request.capabilities.tools == CapabilityOverride.DISABLED:
-            for capability, _, label in tool_probe_specs:
-                capabilities[capability.value] = AiModelCapabilityTest(
-                    support=Support.NO,
-                    source=CapabilitySource.USER_OVERRIDE,
-                    tested=False,
-                    message=f"模型配置已禁用{label}",
-                )
-        else:
-            for capability, probe, label in tool_probe_specs:
-                support, message = _run_model_probe(
-                    probe,
-                    request,
-                    label,
-                )
-                probe_results[capability] = support
-                capabilities[capability.value] = AiModelCapabilityTest(
-                    support=support,
-                    source=CapabilitySource.RUNTIME_PROBE,
-                    tested=True,
-                    message=message,
-                )
-                if capability == CapabilityName.TOOLS and support != Support.YES:
-                    break
-        profile = resolved_capability_resolver.record_probe(request, probe_results)
-        if IMAGE_INPUT_MODALITY not in request.input_modalities:
-            capabilities["vision"] = AiModelCapabilityTest(
-                support=profile.support(CapabilityName.VISION),
-                source=profile.source(CapabilityName.VISION),
-                tested=False,
-                message="模型配置未声明图片输入",
-            )
-        else:
-            try:
-                probe_image_input(request, MODEL_TEST_TIMEOUT_SECONDS)
-            except LlmCompletionError as error:
-                capabilities["vision"] = AiModelCapabilityTest(
-                    support=Support.UNKNOWN,
-                    source=CapabilitySource.RUNTIME_PROBE,
-                    tested=True,
-                    message=_redact_model_test_error(str(error), request.api_key),
-                )
-            else:
-                probe_results[CapabilityName.VISION] = Support.YES
-                capabilities["vision"] = AiModelCapabilityTest(
-                    support=Support.YES,
-                    source=CapabilitySource.RUNTIME_PROBE,
-                    tested=True,
-                    message="图片输入正常",
-                )
-                if probe_results.get(CapabilityName.TOOLS) == Support.YES:
-                    support, message = _run_model_probe(
-                        probe_vision_tools,
-                        request,
-                        "图片与工具组合",
-                    )
-                    probe_results[CapabilityName.VISION_TOOLS] = support
-                    capabilities[CapabilityName.VISION_TOOLS.value] = (
-                        AiModelCapabilityTest(
-                            support=support,
-                            source=CapabilitySource.RUNTIME_PROBE,
-                            tested=True,
-                            message=message,
-                        )
-                    )
-        if (
-            profile.support(CapabilityName.REASONING) == Support.YES
-            and probe_results.get(CapabilityName.TOOLS) == Support.YES
-        ):
-            support, message = _run_model_probe(
-                probe_reasoning_tools,
-                request,
-                "推理与工具组合",
-            )
-            probe_results[CapabilityName.REASONING_TOOLS] = support
-            capabilities[CapabilityName.REASONING_TOOLS.value] = AiModelCapabilityTest(
-                support=support,
-                source=CapabilitySource.RUNTIME_PROBE,
-                tested=True,
-                message=message,
-            )
-        if probe_results.get(CapabilityName.TOOLS) == Support.YES:
-            probe_results[CapabilityName.TOOL_CHOICE_AUTO] = Support.YES
-        profile = resolved_capability_resolver.record_probe(request, probe_results)
-        for capability in CAPABILITY_NAMES:
-            capabilities.setdefault(
-                capability.value,
-                AiModelCapabilityTest(
-                    support=profile.support(capability),
-                    source=profile.source(capability),
-                    tested=False,
-                    message="未执行该项独立探测",
-                ),
-            )
-        return AiModelTestResponse(
-            available=True,
-            latency_ms=round((perf_counter() - started_at) * MILLISECONDS_PER_SECOND),
-            message=MODEL_TEST_SUCCESS_MESSAGE,
-            capabilities=capabilities,
-            profile=profile,
-        )
+    register_page_settings_routes(app, require_page_settings_store)
 
-    @app.get(
-        "/api/page-settings/markers",
-        response_model=MarkersPageSettings,
+    register_health_routes(app, resolved_settings)
+    register_analysis_routes(
+        app,
+        lambda: library,
+        lambda: analysis_manager,
+        resolved_settings,
     )
-    def get_markers_page_settings() -> MarkersPageSettings:
-        return require_page_settings_store().load_markers()
 
-    @app.put(
-        "/api/page-settings/markers",
-        response_model=MarkersPageSettings,
+    register_ai_routes(app, resolved_settings, resolved_capability_resolver)
+    register_summary_routes(app, lambda: summary_manager)
+    register_agent_routes(app, lambda: agent_service)
+    register_library_routes(
+        app,
+        lambda: library,
+        lambda: manager,
+        lambda: analysis_manager,
+        lambda: agent_service,
     )
-    def update_markers_page_settings(
-        request: MarkersPageSettings,
-    ) -> MarkersPageSettings:
-        return require_page_settings_store().save_markers(request)
 
-    @app.post(
-        "/api/media/assets/{asset_id}/transcribe",
-        response_model=AnalysisJob,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def transcribe_asset(
-        asset_id: str,
-        request: TranscriptionCreateRequest = TranscriptionCreateRequest(),
-    ) -> AnalysisJob:
-        try:
-            option_values = request.model_dump(
-                exclude={"force"},
-                exclude_unset=True,
-            )
-            option_values = {
-                field: value
-                for field, value in option_values.items()
-                if value is not None or field == "language"
-            }
-            default_values = resolved_settings.default_transcription.model_dump()
-            options = TranscriptionOptions.model_validate(
-                {**default_values, **option_values}
-            )
-            job = analysis_manager.create_transcription(
-                asset_id,
-                options,
-                request.force,
-            )
-        except ValidationError as error:
-            message = (
-                error.errors()[0]
-                .get("ctx", {})
-                .get(
-                    "error",
-                    error.errors()[0]["msg"],
-                )
-            )
-            raise HTTPException(status_code=422, detail=str(message)) from error
-        except AnalysisPrerequisiteError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except AnalysisError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        if job.stage.value != "complete":
-            analysis_manager.start(job.job_id)
-        return job
-
-    @app.get("/api/analysis/{job_id}", response_model=AnalysisJob)
-    def get_analysis(job_id: str) -> AnalysisJob:
-        job = analysis_manager.get(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="分析任务不存在")
-        return job
-
-    @app.post("/api/analysis/{job_id}/approve", response_model=AnalysisJob)
-    def approve_analysis(job_id: str) -> AnalysisJob:
-        try:
-            return analysis_manager.approve_proposal(job_id)
-        except AnalysisError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-
-    @app.post("/api/analysis/{job_id}/reject", response_model=AnalysisJob)
-    def reject_analysis(job_id: str) -> AnalysisJob:
-        try:
-            return analysis_manager.reject_proposal(job_id)
-        except AnalysisError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-
-    @app.get(
-        "/api/media/assets/{asset_id}/transcript",
-        response_model=Transcript,
-    )
-    def get_transcript(asset_id: str) -> Transcript:
-        transcript = analysis_manager.transcript(asset_id)
-        if not transcript:
-            raise HTTPException(status_code=404, detail="该视频还没有转写结果")
-        return transcript
-
-    @app.patch(
-        "/api/media/assets/{asset_id}/transcript/segments/{segment_index}",
-        response_model=Transcript,
-    )
-    def update_transcript_segment(
-        asset_id: str,
-        segment_index: int,
-        request: TranscriptSegmentUpdateRequest,
-    ) -> Transcript:
-        _ready_asset(library, asset_id)
-        normalized_text = request.text.strip()
-        if not normalized_text:
-            raise HTTPException(status_code=422, detail="转写文字不能为空")
-        try:
-            return analysis_manager.update_transcript_segment(
-                asset_id,
-                segment_index,
-                normalized_text,
-            )
-        except AnalysisError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.get(
-        "/api/media/assets/{asset_id}/segments",
-        response_model=list[MediaSegment],
-    )
-    def get_segments(asset_id: str) -> list[MediaSegment]:
-        return analysis_manager.segments(asset_id)
-
-    @app.get(
-        "/api/media/assets/{asset_id}/markers",
-        response_model=list[MediaMarker],
-    )
-    def get_markers(asset_id: str) -> list[MediaMarker]:
-        _ready_asset(library, asset_id)
-        return library.load_markers(asset_id)
-
-    @app.post(
-        "/api/media/assets/{asset_id}/markers",
-        response_model=MediaMarker,
-        status_code=status.HTTP_201_CREATED,
-    )
-    def create_marker(asset_id: str, request: MarkerCreateRequest) -> MediaMarker:
-        asset = _ready_asset(library, asset_id)
-        _validate_marker_bounds(
-            request.start_seconds, request.end_seconds, asset.duration_seconds
-        )
-        marker = MediaMarker(
-            marker_id=f"marker-{uuid7().hex}",
-            asset_id=asset_id,
-            start_seconds=request.start_seconds,
-            end_seconds=request.end_seconds,
-            importance=request.importance,
-        )
-        return library.create_marker(marker)
-
-    @app.patch(
-        "/api/media/assets/{asset_id}/markers/{marker_id}",
-        response_model=MediaMarker,
-    )
-    def update_marker(
-        asset_id: str,
-        marker_id: str,
-        request: MarkerUpdateRequest,
-    ) -> MediaMarker:
-        asset = _ready_asset(library, asset_id)
-        try:
-            current = next(
-                marker
-                for marker in library.load_markers(asset_id)
-                if marker.marker_id == marker_id
-            )
-        except (StopIteration, ValueError) as error:
-            raise HTTPException(status_code=404, detail="标记不存在") from error
-        changes = request.model_dump(exclude_unset=True)
-        start_seconds = changes.get("start_seconds", current.start_seconds)
-        end_seconds = changes.get("end_seconds", current.end_seconds)
-        assert isinstance(start_seconds, int | float)
-        assert end_seconds is None or isinstance(end_seconds, int | float)
-        _validate_marker_bounds(
-            start_seconds, end_seconds, asset.duration_seconds
-        )
-        try:
-            marker = library.update_marker(
-                asset_id,
-                marker_id,
-                changes=changes,
-            )
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail="标记不存在") from error
-        if marker is None:
-            raise HTTPException(status_code=404, detail="标记不存在")
-        return marker
-
-    @app.delete(
-        "/api/media/assets/{asset_id}/markers/{marker_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-    )
-    def delete_marker(asset_id: str, marker_id: str) -> Response:
-        _ready_asset(library, asset_id)
-        try:
-            deleted = library.delete_marker(asset_id, marker_id)
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail="标记不存在") from error
-        if not deleted:
-            raise HTTPException(status_code=404, detail="标记不存在")
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.get(
-        "/api/media/assets/{asset_id}/summary-documents",
-        response_model=list[SummaryDocument],
-    )
-    def list_summary_documents(asset_id: str) -> list[SummaryDocument]:
-        try:
-            return summary_manager.documents(asset_id)
-        except SummaryError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.get("/api/media/assets/{asset_id}/summary-documents/events")
-    async def summary_document_events(
-        asset_id: str,
-        request: Request,
-    ) -> StreamingResponse:
-        try:
-            initial_documents = summary_manager.documents(asset_id)
-        except SummaryError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-        async def stream_events():
-            documents = initial_documents
-            previous_signature: tuple[tuple[str, int], ...] | None = None
-            idle_seconds = 0.0
-            while not await request.is_disconnected():
-                signature = tuple(
-                    (document.document_id, document.revision) for document in documents
-                )
-                if signature != previous_signature:
-                    payload = [
-                        document.model_dump(mode="json") for document in documents
-                    ]
-                    yield _sse_event("documents", payload)
-                    previous_signature = signature
-                    idle_seconds = 0.0
-                elif idle_seconds >= SUMMARY_DOCUMENT_EVENT_KEEPALIVE_SECONDS:
-                    yield ": keep-alive\n\n"
-                    idle_seconds = 0.0
-                await asyncio.sleep(SUMMARY_DOCUMENT_EVENT_POLL_SECONDS)
-                idle_seconds += SUMMARY_DOCUMENT_EVENT_POLL_SECONDS
-                documents = summary_manager.documents(asset_id)
-
-        return StreamingResponse(
-            stream_events(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @app.post(
-        "/api/media/assets/{asset_id}/summary-documents/generate",
-        response_model=list[SummaryDocument],
-        status_code=status.HTTP_201_CREATED,
-    )
-    def generate_summary_documents(
-        asset_id: str,
-        request: SummaryGenerationRequest,
-    ) -> list[SummaryDocument]:
-        try:
-            return summary_manager.generate(asset_id, request)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except SummaryError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-
-    @app.post(
-        "/api/summary-documents/{root_document_id}/children",
-        response_model=SummaryDocument,
-        status_code=status.HTTP_201_CREATED,
-    )
-    def create_summary_child(
-        root_document_id: str,
-        request: SummaryDocumentCreate,
-    ) -> SummaryDocument:
-        try:
-            return summary_manager.create_child(root_document_id, request)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except (SummaryError, ValueError) as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-
-    @app.patch(
-        "/api/summary-documents/{document_id}",
-        response_model=SummaryDocument,
-    )
-    def update_summary_document(
-        document_id: str,
-        request: SummaryDocumentUpdate,
-    ) -> SummaryDocument:
-        try:
-            return summary_manager.update_document(document_id, request)
-        except SummaryRevisionConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.put(
-        "/api/summary-documents/{root_document_id}/children/order",
-        response_model=list[SummaryDocument],
-    )
-    def reorder_summary_children(
-        root_document_id: str,
-        request: SummaryDocumentReorder,
-    ) -> list[SummaryDocument]:
-        try:
-            return summary_manager.reorder_children(
-                root_document_id, request.document_ids
-            )
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.delete(
-        "/api/summary-documents/{document_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-    )
-    def delete_summary_document(document_id: str) -> Response:
-        try:
-            summary_manager.delete_child(document_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.get(
-        "/api/agent-definitions",
-        response_model=list[AgentDefinitionAvailability],
-    )
-    def list_agent_definitions() -> list[AgentDefinitionAvailability]:
-        return agent_service.definitions()
-
-    @app.get("/api/agent-sessions", response_model=list[AgentSession])
-    def list_agent_sessions(
-        agent_id: str | None = None,
-        asset_id: str | None = None,
-    ) -> list[AgentSession]:
-        try:
-            return agent_service.sessions(agent_id=agent_id, asset_id=asset_id)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-
-    @app.post(
-        "/api/agent-sessions",
-        response_model=AgentSession,
-        status_code=status.HTTP_201_CREATED,
-    )
-    def create_agent_session(request: AgentSessionCreate) -> AgentSession:
-        try:
-            return agent_service.create_session(request)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-
-    @app.get("/api/agent-sessions/{session_id}", response_model=AgentSessionState)
-    def get_agent_session(session_id: str) -> AgentSessionState:
-        try:
-            return agent_service.session_state(session_id)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-
-    @app.post(
-        "/api/agent-sessions/{session_id}/runs",
-        response_model=AgentRun,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def create_agent_run(session_id: str, request: AgentRunCreate) -> AgentRun:
-        try:
-            return agent_service.create_run(session_id, request)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-
-    @app.get("/api/agent-runs/{run_id}", response_model=AgentRun)
-    def get_agent_run(run_id: str) -> AgentRun:
-        try:
-            return agent_service.run(run_id)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-
-    @app.get("/api/agent-runs/{run_id}/events")
-    async def agent_run_events(
-        run_id: str,
-        request: Request,
-        after_sequence: int = Query(default=0, ge=0),
-        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    ) -> StreamingResponse:
-        try:
-            agent_service.run(run_id)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-        if last_event_id:
-            try:
-                after_sequence = max(after_sequence, int(last_event_id))
-            except ValueError:
-                raise HTTPException(
-                    status_code=422, detail="Last-Event-ID 必须是事件序号"
-                )
-
-        async def stream_events():
-            sequence = after_sequence
-            idle_seconds = 0.0
-            while not await request.is_disconnected():
-                events = agent_service.run_events(run_id, sequence)
-                for event in events:
-                    sequence = event.sequence
-                    yield _sse_event(
-                        event.event_type.value,
-                        {
-                            "event_id": event.event_id,
-                            "sequence": event.sequence,
-                            **event.payload,
-                        },
-                        str(event.sequence),
-                    )
-                run_state = agent_service.run(run_id)
-                if run_state.stage in TERMINAL_AGENT_RUN_STAGES and not events:
-                    break
-                if not events:
-                    idle_seconds += AGENT_EVENT_POLL_SECONDS
-                    if idle_seconds >= AGENT_EVENT_KEEPALIVE_SECONDS:
-                        yield ": keep-alive\n\n"
-                        idle_seconds = 0.0
-                else:
-                    idle_seconds = 0.0
-                await asyncio.sleep(AGENT_EVENT_POLL_SECONDS)
-
-        return StreamingResponse(
-            stream_events(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    @app.post("/api/agent-runs/{run_id}/cancel", response_model=AgentRun)
-    async def cancel_agent_run(run_id: str) -> AgentRun:
-        try:
-            return await agent_service.cancel(run_id)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-
-    @app.post(
-        "/api/agent-artifacts/{artifact_id}/approve",
-        response_model=AgentArtifact,
-    )
-    def approve_agent_artifact(artifact_id: str) -> AgentArtifact:
-        try:
-            return agent_service.approve(artifact_id)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-
-    @app.post(
-        "/api/agent-artifacts/{artifact_id}/reject",
-        response_model=AgentArtifact,
-    )
-    def reject_agent_artifact(artifact_id: str) -> AgentArtifact:
-        try:
-            return agent_service.reject(artifact_id)
-        except AgentServiceError as error:
-            raise _agent_http_error(error) from error
-
-    @app.post(
-        "/api/summary-media",
-        response_model=SummaryMediaCreateResponse,
-        status_code=status.HTTP_201_CREATED,
-    )
-    async def create_summary_media(
-        request: SummaryMediaCreate,
-    ) -> SummaryMediaCreateResponse:
-        try:
-            artifact, document = await summary_manager.create_media(request)
-            return SummaryMediaCreateResponse(artifact=artifact, document=document)
-        except SummaryRevisionConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except SummaryError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.get("/api/summary-media/{media_id}")
-    def get_summary_media(media_id: str) -> FileResponse:
-        try:
-            return FileResponse(summary_manager.media_path(media_id))
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.get("/assets/{media_file}")
-    def get_relative_summary_media(media_file: str) -> FileResponse:
-        file_name = Path(media_file)
-        if file_name.name != media_file or file_name.suffix not in {".jpg", ".gif"}:
-            raise HTTPException(status_code=404, detail="总结媒体不存在")
-        try:
-            media_path = summary_manager.media_path(file_name.stem)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        if media_path.suffix != file_name.suffix:
-            raise HTTPException(status_code=404, detail="总结媒体不存在")
-        return FileResponse(media_path)
-
-    @app.post(
-        "/api/media/assets/{asset_id}/summary-exports",
-        response_model=SummaryExportResult,
-        status_code=status.HTTP_201_CREATED,
-    )
-    def export_summary(asset_id: str) -> SummaryExportResult:
-        try:
-            return summary_manager.export(asset_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except SummaryError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-
-    @app.get("/api/media/assets/{asset_id}/frames/{frame_path:path}")
-    def get_frame(asset_id: str, frame_path: str) -> FileResponse:
-        asset = _ready_asset(library, asset_id)
-        frame_file = library.resolve_asset_file(asset, frame_path)
-        if not frame_file:
-            raise HTTPException(status_code=404, detail="关键帧不存在")
-        return FileResponse(frame_file, media_type="image/jpeg")
-
-    @app.api_route(
-        "/api/media/assets/{asset_id}/stream",
-        methods=["GET", "HEAD"],
-    )
-    def stream_asset(
-        request: Request,
-        asset_id: str,
-        range_header: str | None = Header(default=None, alias="Range"),
-    ) -> Response:
-        asset = _ready_asset(library, asset_id)
-        media_file = library.resolve_asset_file(asset, asset.playback_path)
-        if not media_file:
-            raise HTTPException(status_code=404, detail="视频文件不存在")
-        return _stream_video_file(request, media_file, range_header)
-
-    @app.api_route(
-        "/api/media/assets/{asset_id}/scrub-preview",
-        methods=["GET", "HEAD"],
-    )
-    def scrub_preview(
-        request: Request,
-        asset_id: str,
-        range_header: str | None = Header(default=None, alias="Range"),
-    ) -> Response:
-        asset = _ready_asset(library, asset_id)
-        preview_file = library.resolve_asset_file(asset, SCRUB_PROXY_RELATIVE_PATH)
-        if not preview_file:
-            playback_file = library.resolve_asset_file(asset, asset.playback_path)
-            if not playback_file:
-                raise HTTPException(status_code=404, detail="视频文件不存在")
-            generated_file = generate_scrub_proxy(
-                playback_file,
-                library.media_directory(asset.asset_id),
-                resolved_settings.ffmpeg_path,
-                resolved_settings.ffmpeg_bin_dir,
-            )
-            preview_file = library.resolve_asset_file(
-                asset, SCRUB_PROXY_RELATIVE_PATH
-            )
-            if generated_file is None or not preview_file:
-                raise HTTPException(status_code=404, detail="拖动预览视频生成失败")
-        return _stream_video_file(request, preview_file, range_header)
-
-    @app.get("/api/media/assets/{asset_id}/thumbnail")
-    def thumbnail(asset_id: str) -> FileResponse:
-        asset = _ready_asset(library, asset_id)
-        thumbnail_file = library.resolve_asset_file(asset, asset.thumbnail_path)
-        if not thumbnail_file:
-            raise HTTPException(status_code=404, detail="视频封面不存在")
-        return FileResponse(thumbnail_file)
-
-    @app.get("/api/media/assets/{asset_id}/thumbnail-sprite")
-    def thumbnail_sprite(asset_id: str) -> FileResponse:
-        asset = _ready_asset(library, asset_id)
-        sprite_file = library.resolve_asset_file(asset, asset.thumbnail_sprite_path)
-        if not sprite_file:
-            raise HTTPException(status_code=404, detail="预览图拼板不存在")
-        return FileResponse(sprite_file, media_type="image/jpeg")
+    register_media_routes(app, lambda: library, resolved_settings)
 
     return app
 
@@ -2093,36 +966,6 @@ def _ensure_switch_allowed(
         )
 
 
-async def _stop_asset_tasks(
-    asset_ids: set[str],
-    manager: DownloadManager | None,
-    analysis_manager: AnalysisManager | None,
-    agent_service: AgentService | None,
-) -> None:
-    """永久删除只能在所有关联执行器确认停止后继续，避免后台写回已删除目录。"""
-    if not asset_ids:
-        return
-    cancellers = [
-        candidate.cancel_assets(asset_ids)
-        for candidate in (
-            manager,
-            analysis_manager,
-            agent_service,
-        )
-        if candidate is not None
-    ]
-    try:
-        results = await asyncio.gather(*cancellers)
-    except Exception as error:
-        raise HTTPException(
-            status_code=409,
-            detail="关联任务无法停止，未删除任何内容",
-        ) from error
-    if not all(results):
-        raise HTTPException(
-            status_code=409,
-            detail="关联任务无法停止，未删除任何内容",
-        )
 
 
 def _preferences_response(settings: Settings) -> PreferencesResponse:
@@ -2149,117 +992,6 @@ def _entry_download_url(platform: SourcePlatform, video_id: str, raw_url: str) -
     if platform == SourcePlatform.YOUTUBE:
         return f"https://www.youtube.com/watch?v={video_id}"
     return raw_url
-
-
-def _ready_asset(library: MediaLibrary, asset_id: str):
-    try:
-        asset = library.get(asset_id)
-    except ValueError as error:
-        raise HTTPException(status_code=404, detail="媒体资源不存在") from error
-    if not asset or asset.status != MediaAssetStatus.READY:
-        raise HTTPException(status_code=404, detail="媒体资源不存在")
-    return asset
-
-
-def _validate_marker_bounds(
-    start_seconds: float,
-    end_seconds: float | None,
-    duration_seconds: float | None,
-) -> None:
-    if end_seconds is not None and end_seconds <= start_seconds:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="范围标记的结束时间必须晚于开始时间",
-        )
-    if duration_seconds is not None and (
-        start_seconds > duration_seconds
-        or (end_seconds is not None and end_seconds > duration_seconds)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="标记时间必须位于视频时长内",
-        )
-
-
-def _read_file_range(file_path: Path, start: int, length: int) -> Iterator[bytes]:
-    remaining = length
-    with file_path.open("rb") as media_file:
-        media_file.seek(start)
-        while remaining > 0:
-            chunk = media_file.read(min(STREAM_CHUNK_SIZE, remaining))
-            if not chunk:
-                break
-            remaining -= len(chunk)
-            yield chunk
-
-
-def _stream_video_file(
-    request: Request,
-    media_file: Path,
-    range_header: str | None,
-) -> Response:
-    total_size = media_file.stat().st_size
-    common_headers = {
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "private, max-age=0",
-    }
-    if range_header:
-        try:
-            byte_range = parse_byte_range(range_header, total_size)
-        except InvalidByteRange:
-            return Response(
-                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
-                headers={
-                    **common_headers,
-                    "Content-Range": f"bytes */{total_size}",
-                },
-            )
-        headers = {
-            **common_headers,
-            "Content-Range": byte_range.content_range,
-            "Content-Length": str(byte_range.length),
-        }
-        if request.method == "HEAD":
-            return Response(
-                status_code=206,
-                media_type=VIDEO_MEDIA_TYPE,
-                headers=headers,
-            )
-        return StreamingResponse(
-            _read_file_range(media_file, byte_range.start, byte_range.length),
-            status_code=206,
-            media_type=VIDEO_MEDIA_TYPE,
-            headers=headers,
-        )
-    headers = {**common_headers, "Content-Length": str(total_size)}
-    if request.method == "HEAD":
-        return Response(status_code=200, media_type=VIDEO_MEDIA_TYPE, headers=headers)
-    return StreamingResponse(
-        _read_file_range(media_file, 0, total_size),
-        status_code=200,
-        media_type=VIDEO_MEDIA_TYPE,
-        headers=headers,
-    )
-
-
-def _agent_http_error(error: AgentServiceError) -> HTTPException:
-    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
-    if isinstance(error, AgentNotFoundError):
-        status_code = status.HTTP_404_NOT_FOUND
-    elif isinstance(error, AgentConflictError):
-        status_code = status.HTTP_409_CONFLICT
-    return HTTPException(
-        status_code=status_code,
-        detail={"code": error.code, "message": str(error)},
-    )
-
-
-def _sse_event(event: str, payload: object, event_id: str | None = None) -> str:
-    identifier = f"id: {event_id}\n" if event_id else ""
-    return (
-        f"{identifier}event: {event}\n"
-        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-    )
 
 
 app = create_app()
