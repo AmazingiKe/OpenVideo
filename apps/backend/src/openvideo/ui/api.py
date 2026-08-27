@@ -101,6 +101,7 @@ from openvideo.core.page_settings import (
     MarkersPageSettings,
     PageSettingsStore,
 )
+from openvideo.core.thumbnails import SCRUB_PROXY_RELATIVE_PATH
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import (
     AI_MODELS_FIELD,
@@ -166,6 +167,7 @@ from openvideo.llm.probes import (
     probe_vision_tools,
 )
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
+from openvideo.tools.thumbnails import generate_scrub_proxy
 from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
     TranscriptionModelManager,
@@ -1987,48 +1989,35 @@ def create_app(
         media_file = library.resolve_asset_file(asset, asset.playback_path)
         if not media_file:
             raise HTTPException(status_code=404, detail="视频文件不存在")
-        total_size = media_file.stat().st_size
-        common_headers = {
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "private, max-age=0",
-        }
-        if range_header:
-            try:
-                byte_range = parse_byte_range(range_header, total_size)
-            except InvalidByteRange:
-                return Response(
-                    status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
-                    headers={
-                        **common_headers,
-                        "Content-Range": f"bytes */{total_size}",
-                    },
-                )
-            headers = {
-                **common_headers,
-                "Content-Range": byte_range.content_range,
-                "Content-Length": str(byte_range.length),
-            }
-            if request.method == "HEAD":
-                return Response(
-                    status_code=206, media_type=VIDEO_MEDIA_TYPE, headers=headers
-                )
-            return StreamingResponse(
-                _read_file_range(media_file, byte_range.start, byte_range.length),
-                status_code=206,
-                media_type=VIDEO_MEDIA_TYPE,
-                headers=headers,
+        return _stream_video_file(request, media_file, range_header)
+
+    @app.api_route(
+        "/api/media/assets/{asset_id}/scrub-preview",
+        methods=["GET", "HEAD"],
+    )
+    def scrub_preview(
+        request: Request,
+        asset_id: str,
+        range_header: str | None = Header(default=None, alias="Range"),
+    ) -> Response:
+        asset = _ready_asset(library, asset_id)
+        preview_file = library.resolve_asset_file(asset, SCRUB_PROXY_RELATIVE_PATH)
+        if not preview_file:
+            playback_file = library.resolve_asset_file(asset, asset.playback_path)
+            if not playback_file:
+                raise HTTPException(status_code=404, detail="视频文件不存在")
+            generated_file = generate_scrub_proxy(
+                playback_file,
+                library.media_directory(asset.asset_id),
+                resolved_settings.ffmpeg_path,
+                resolved_settings.ffmpeg_bin_dir,
             )
-        headers = {**common_headers, "Content-Length": str(total_size)}
-        if request.method == "HEAD":
-            return Response(
-                status_code=200, media_type=VIDEO_MEDIA_TYPE, headers=headers
+            preview_file = library.resolve_asset_file(
+                asset, SCRUB_PROXY_RELATIVE_PATH
             )
-        return StreamingResponse(
-            _read_file_range(media_file, 0, total_size),
-            status_code=200,
-            media_type=VIDEO_MEDIA_TYPE,
-            headers=headers,
-        )
+            if generated_file is None or not preview_file:
+                raise HTTPException(status_code=404, detail="拖动预览视频生成失败")
+        return _stream_video_file(request, preview_file, range_header)
 
     @app.get("/api/media/assets/{asset_id}/thumbnail")
     def thumbnail(asset_id: str) -> FileResponse:
@@ -2202,6 +2191,55 @@ def _read_file_range(file_path: Path, start: int, length: int) -> Iterator[bytes
                 break
             remaining -= len(chunk)
             yield chunk
+
+
+def _stream_video_file(
+    request: Request,
+    media_file: Path,
+    range_header: str | None,
+) -> Response:
+    total_size = media_file.stat().st_size
+    common_headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=0",
+    }
+    if range_header:
+        try:
+            byte_range = parse_byte_range(range_header, total_size)
+        except InvalidByteRange:
+            return Response(
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                headers={
+                    **common_headers,
+                    "Content-Range": f"bytes */{total_size}",
+                },
+            )
+        headers = {
+            **common_headers,
+            "Content-Range": byte_range.content_range,
+            "Content-Length": str(byte_range.length),
+        }
+        if request.method == "HEAD":
+            return Response(
+                status_code=206,
+                media_type=VIDEO_MEDIA_TYPE,
+                headers=headers,
+            )
+        return StreamingResponse(
+            _read_file_range(media_file, byte_range.start, byte_range.length),
+            status_code=206,
+            media_type=VIDEO_MEDIA_TYPE,
+            headers=headers,
+        )
+    headers = {**common_headers, "Content-Length": str(total_size)}
+    if request.method == "HEAD":
+        return Response(status_code=200, media_type=VIDEO_MEDIA_TYPE, headers=headers)
+    return StreamingResponse(
+        _read_file_range(media_file, 0, total_size),
+        status_code=200,
+        media_type=VIDEO_MEDIA_TYPE,
+        headers=headers,
+    )
 
 
 def _agent_http_error(error: AgentServiceError) -> HTTPException:

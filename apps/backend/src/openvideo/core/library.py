@@ -70,6 +70,7 @@ FOLDER_MANIFEST_FILE_NAME = "folders.json"
 AGENT_CHECKPOINT_DATABASE_FILE_NAME = "agent_checkpoints.sqlite3"
 LOCK_FILE_NAME = ".openvideo.lock"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
+SCRUB_PREVIEW_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/scrub-preview"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
 SPRITE_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail-sprite"
 HEX_IDENTIFIER_LENGTH = 32
@@ -587,6 +588,11 @@ class MediaLibrary:
             **asset.model_dump(exclude=excluded_fields),
             playback_url=(
                 PLAYBACK_ROUTE_TEMPLATE.format(asset_id=asset.asset_id)
+                if playback_file
+                else None
+            ),
+            scrub_preview_url=(
+                SCRUB_PREVIEW_ROUTE_TEMPLATE.format(asset_id=asset.asset_id)
                 if playback_file
                 else None
             ),

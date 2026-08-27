@@ -1,12 +1,13 @@
 import math
 from dataclasses import dataclass
 
-
 SPRITE_TILE_WIDTH = 320
 SPRITE_TILE_HEIGHT = 180
 SPRITE_COLUMNS = 10
 SPRITE_INTERVAL_SECONDS = 5
 SPRITE_FILE_NAME = "thumbnails.jpg"
+SCRUB_PROXY_FILE_NAME = "scrub-proxy.mp4"
+SCRUB_PROXY_RELATIVE_PATH = f"media/{SCRUB_PROXY_FILE_NAME}"
 
 
 @dataclass(frozen=True)

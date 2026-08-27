@@ -442,6 +442,7 @@ export type MediaAsset = {
   status: "pending" | "downloading" | "processing" | "ready" | "failed";
   error_message: string | null;
   playback_url: string | null;
+  scrub_preview_url: string | null;
   thumbnail_url: string | null;
   thumbnail_storyboard: ThumbnailStoryboard | null;
   created_at: string;
