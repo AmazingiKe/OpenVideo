@@ -27,6 +27,7 @@ import {
   update_markers_page_settings,
   update_marker,
 } from "./api";
+import { DEFAULT_MODEL_CAPABILITY_OVERRIDES } from "./types";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -81,11 +82,11 @@ describe("api client", () => {
       model_id: "model-0198d12345677890abcdef1234567890",
       name: "测试模型",
       litellm_model: "openai/test-model",
-      tool_calling_mode: "auto" as const,
       api_key: "secret",
       api_base: "https://example.com/v1",
       api_version: null,
       input_modalities: ["text" as const],
+      capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
     };
     const result = {
       available: true,

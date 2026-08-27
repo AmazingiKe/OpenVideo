@@ -144,15 +144,14 @@ def test_ai_model_list_does_not_expose_credentials(tmp_path: Path):
         response = client.get("/api/ai/models")
 
     assert response.status_code == 200
-    assert response.json() == [
-        {
-            "model_id": MODEL_ID,
-            "name": "测试模型",
-            "litellm_model": "openai/test-model",
-            "input_modalities": ["text", "image"],
-            "tool_calling_mode": "auto",
-        }
-    ]
+    payload = response.json()[0]
+    assert payload["model_id"] == MODEL_ID
+    assert payload["name"] == "测试模型"
+    assert payload["litellm_model"] == "openai/test-model"
+    assert payload["input_modalities"] == ["text", "image"]
+    assert payload["capabilities"]["tools"] == "auto"
+    assert payload["profile"]["capabilities"]["tools"] == "unknown"
+    assert "api_key" not in payload
 
 
 def test_analyze_creates_job(tmp_path: Path):

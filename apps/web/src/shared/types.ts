@@ -89,30 +89,114 @@ export const AI_INPUT_MODALITIES = ["text", "image", "audio", "video"] as const;
 export type AiInputModality = (typeof AI_INPUT_MODALITIES)[number];
 export const IMAGE_INPUT_MODALITY: AiInputModality = "image";
 
-export type AiModelSummary = {
+const MODEL_CAPABILITY_NAMES = [
+  "tools",
+  "reasoning",
+  "vision",
+  "structured_output",
+  "streaming_tools",
+  "reasoning_tools",
+  "tool_choice_auto",
+  "tool_choice_required",
+  "tool_choice_named",
+  "parallel_tools",
+  "vision_tools",
+] as const;
+
+export type ModelCapabilityName = (typeof MODEL_CAPABILITY_NAMES)[number];
+export type ModelCapabilitySupport = "yes" | "no" | "unknown";
+export type ModelCapabilityOverride = "auto" | "enabled" | "disabled";
+export type ModelCapabilitySource =
+  | "user_override"
+  | "runtime_probe"
+  | "local_override"
+  | "models_dev"
+  | "litellm_metadata"
+  | "unknown";
+
+export type ModelCapabilityOverrides = Record<
+  ModelCapabilityName,
+  ModelCapabilityOverride
+>;
+
+export const DEFAULT_MODEL_CAPABILITY_OVERRIDES: ModelCapabilityOverrides =
+  Object.fromEntries(
+    MODEL_CAPABILITY_NAMES.map((capability) => [capability, "auto"]),
+  ) as ModelCapabilityOverrides;
+
+export type ModelProfile = {
+  provider: string;
+  model: string;
+  capabilities: Record<ModelCapabilityName, ModelCapabilitySupport>;
+  quirks: {
+    disable_named_tool_choice_when_reasoning: boolean;
+    omit_tool_choice_when_reasoning: boolean;
+    preserve_reasoning_content: boolean;
+    require_assistant_content: boolean;
+  };
+  limits: {
+    context_tokens: number | null;
+    max_output_tokens: number | null;
+  };
+  capability_sources: Partial<
+    Record<ModelCapabilityName, ModelCapabilitySource>
+  >;
+};
+
+export function unknown_model_profile(
+  provider: string,
+  model: string,
+): ModelProfile {
+  const capabilities = Object.fromEntries(
+    MODEL_CAPABILITY_NAMES.map((capability) => [capability, "unknown"]),
+  ) as Record<ModelCapabilityName, ModelCapabilitySupport>;
+  return {
+    provider,
+    model,
+    capabilities,
+    quirks: {
+      disable_named_tool_choice_when_reasoning: false,
+      omit_tool_choice_when_reasoning: false,
+      preserve_reasoning_content: false,
+      require_assistant_content: false,
+    },
+    limits: { context_tokens: null, max_output_tokens: null },
+    capability_sources: {},
+  };
+}
+
+export type AiModelConfiguration = {
   model_id: string;
   name: string;
   litellm_model: string;
-  tool_calling_mode: "auto" | "enabled" | "disabled";
   input_modalities: AiInputModality[];
-};
-
-export type AiModelConfiguration = AiModelSummary & {
+  capabilities: ModelCapabilityOverrides;
   api_key: string | null;
   api_base: string | null;
   api_version: string | null;
 };
 
+export type AiModelSummary = Pick<
+  AiModelConfiguration,
+  "model_id" | "name" | "litellm_model" | "input_modalities" | "capabilities"
+> & { profile: ModelProfile };
+
 export type AiModelTestResult = {
   available: boolean;
   latency_ms: number;
   message: string;
-  capabilities?: Partial<
+  capabilities: Partial<
     Record<
-      "text" | "tools" | "vision",
-      { available: boolean; tested: boolean; message: string }
+      "text" | ModelCapabilityName,
+      {
+        support: ModelCapabilitySupport;
+        source: ModelCapabilitySource;
+        tested: boolean;
+        message: string;
+      }
     >
   >;
+  profile: ModelProfile;
 };
 
 export type AnalysisToolSection =
@@ -410,6 +494,7 @@ export type AgentSession = {
 export type AgentEventType =
   | "run.status"
   | "message.delta"
+  | "reasoning.delta"
   | "message.completed"
   | "tool.status"
   | "artifact.created"

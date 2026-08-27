@@ -19,7 +19,6 @@ from openvideo.core.agent_runtime_models import (
     AgentDefinition,
     AgentEvent,
     AgentEventType,
-    AgentModelResponse,
     AgentMode,
     AgentRun,
     AgentSession,
@@ -28,6 +27,12 @@ from openvideo.core.agent_runtime_models import (
 )
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
+from openvideo.llm.events import (
+    AgentExecutionResult,
+    LlmAgentEvent,
+    LlmAgentEventType,
+)
+from openvideo.llm.model_profile import ModelCapabilities, ModelProfile, Support
 
 
 class MemoryRepository:
@@ -99,20 +104,38 @@ class EchoInput(BaseModel):
     note: str | None = None
 
 
-class FakeAdapter:
-    def __init__(self, responses: list[AgentModelResponse]) -> None:
-        self.responses = responses
+class FakeExecutor:
+    def __init__(
+        self,
+        result: AgentExecutionResult,
+        events: list[LlmAgentEvent] | None = None,
+    ) -> None:
+        self.result = result
+        self.events = events or []
         self.messages: list[list[dict[str, Any]]] = []
 
-    async def complete(self, model, messages, tools, on_chunk):
+    async def run(
+        self,
+        model,
+        profile,
+        definition,
+        messages,
+        registry,
+        on_event,
+        **_options,
+    ):
         self.messages.append(messages)
-        response = self.responses.pop(0)
-        if response.content:
-            on_chunk(response.content)
-        return response
+        for event in self.events:
+            on_event(event)
+        return self.result
 
 
-def setup_runtime(responses: list[AgentModelResponse]):
+def setup_runtime(
+    result: AgentExecutionResult,
+    events: list[LlmAgentEvent] | None = None,
+    *,
+    tools_support: Support = Support.UNKNOWN,
+):
     repository = MemoryRepository()
     session = AgentSession(
         session_id=f"session-{uuid7().hex}",
@@ -130,8 +153,8 @@ def setup_runtime(responses: list[AgentModelResponse]):
             handler=lambda parameters: {"ok": True, "text": parameters.text},
         )
     )
-    adapter = FakeAdapter(responses)
-    runtime = AgentRuntime(AgentSessionStore(repository), registry, adapter)
+    executor = FakeExecutor(result, events)
+    runtime = AgentRuntime(AgentSessionStore(repository), registry, executor)
     run = new_agent_run(
         session.session_id,
         f"request-{uuid7().hex}",
@@ -147,16 +170,27 @@ def setup_runtime(responses: list[AgentModelResponse]):
         prompt="测试 Agent",
         tools=[AgentToolDescriptor(name="echo", description="回显")],
     )
-    return repository, adapter, runtime, run, model, definition
+    profile = ModelProfile(
+        provider="openai",
+        model="test",
+        capabilities=ModelCapabilities(tools=tools_support),
+    )
+    return repository, registry, executor, runtime, run, model, profile, definition
 
 
 @pytest.mark.asyncio
 async def test_plain_reply_uses_standardized_events():
-    repository, _, runtime, run, model, definition = setup_runtime(
-        [AgentModelResponse(content="真实回复")]
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(content="真实回复"),
+        [
+            LlmAgentEvent(
+                event_type=LlmAgentEventType.TEXT_DELTA,
+                content="真实回复",
+            )
+        ],
     )
 
-    finished = await runtime.run(run, model, definition, "你好")
+    finished = await runtime.run(run, model, profile, definition, "你好")
 
     assert finished.stage == "complete"
     event_types = [event.event_type for event in repository.events[run.session_id]]
@@ -167,38 +201,27 @@ async def test_plain_reply_uses_standardized_events():
 
 
 @pytest.mark.asyncio
-async def test_invalid_tool_arguments_can_be_retried_within_budget():
-    invalid = AgentToolCall(call_id="call-invalid", name="echo", arguments={})
-    valid = AgentToolCall(call_id="call-valid", name="echo", arguments={"text": "证据"})
-    repository, adapter, runtime, run, model, definition = setup_runtime(
-        [
-            AgentModelResponse(tool_calls=[invalid]),
-            AgentModelResponse(tool_calls=[valid]),
-            AgentModelResponse(content="完成"),
-        ]
+async def test_invalid_tool_arguments_are_retryable_for_agno_loop():
+    _, registry, _, _, _, _, _, definition = setup_runtime(AgentExecutionResult())
+
+    result = await registry.execute(
+        AgentToolCall(call_id="call-invalid", name="echo", arguments={}),
+        definition.allowed_tools,
+        timeout_seconds=1,
     )
 
-    finished = await runtime.run(run, model, definition, "执行工具")
-
-    assert finished.stage == "complete"
-    assert any(message["role"] == "tool" for message in adapter.messages[1])
-    tool_events = [
-        event
-        for event in repository.events[run.session_id]
-        if event.event_type == AgentEventType.TOOL_STATUS
-    ]
-    assert any(event.payload["stage"] == "failed" for event in tool_events)
-    assert any(event.payload["stage"] == "completed" for event in tool_events)
+    assert result["error_code"] == "invalid_arguments"
+    assert result["retryable"] is True
 
 
 @pytest.mark.asyncio
 async def test_required_tool_missing_marks_run_failed():
-    repository, _, runtime, run, model, definition = setup_runtime(
-        [AgentModelResponse(content="跳过工具")]
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(content="跳过工具")
     )
     definition = definition.model_copy(update={"required_tools": {"echo"}})
 
-    finished = await runtime.run(run, model, definition, "必须执行")
+    finished = await runtime.run(run, model, profile, definition, "必须执行")
 
     assert finished.stage == "failed"
     assert finished.error_code == "required_result_missing"
@@ -207,32 +230,60 @@ async def test_required_tool_missing_marks_run_failed():
 
 @pytest.mark.asyncio
 async def test_missing_declared_tool_blocks_run_before_provider_call():
-    repository, adapter, runtime, run, model, definition = setup_runtime([])
+    repository, _, executor, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult()
+    )
     definition = definition.model_copy(
         update={"tools": [AgentToolDescriptor(name="missing", description="不存在")]}
     )
 
     with pytest.raises(Exception, match="不存在的工具"):
-        await runtime.run(run, model, definition, "不能启动")
+        await runtime.run(run, model, profile, definition, "不能启动")
 
-    assert adapter.messages == []
+    assert executor.messages == []
     assert repository.runs[run.run_id].stage == "pending"
 
 
 @pytest.mark.asyncio
 async def test_cancelled_run_does_not_call_provider():
-    repository, adapter, runtime, run, model, definition = setup_runtime(
-        [AgentModelResponse(content="不应返回")]
+    repository, _, executor, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(content="不应返回")
     )
     runtime.cancel(run.run_id)
 
-    finished = await runtime.run(run, model, definition, "取消")
+    finished = await runtime.run(run, model, profile, definition, "取消")
 
     assert finished.stage == "cancelled"
-    assert adapter.messages == []
+    assert executor.messages == []
     assert (
         repository.events[run.session_id][-1].event_type == AgentEventType.RUN_CANCELLED
     )
+
+
+@pytest.mark.asyncio
+async def test_capability_unknown_does_not_block_agent():
+    _, _, executor, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(content="允许尝试"),
+        tools_support=Support.UNKNOWN,
+    )
+
+    finished = await runtime.run(run, model, profile, definition, "执行")
+
+    assert finished.stage == "complete"
+    assert len(executor.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirmed_unsupported_blocks_agent():
+    _, _, executor, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(),
+        tools_support=Support.NO,
+    )
+
+    with pytest.raises(Exception, match="已确认不支持"):
+        await runtime.run(run, model, profile, definition, "执行")
+
+    assert executor.messages == []
 
 
 def test_provider_schema_resolves_references_nullable_and_defaults():

@@ -3,7 +3,28 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 
 import { AiModelConfigurationList } from "./AiModelConfigurationList";
-import type { AiModelTestResult } from "@/shared/types";
+import {
+  DEFAULT_MODEL_CAPABILITY_OVERRIDES,
+  unknown_model_profile,
+  type AiModelTestResult,
+} from "@/shared/types";
+
+const PROFILE = {
+  ...unknown_model_profile("ollama", "qwen2.5-vl"),
+  capabilities: {
+    ...unknown_model_profile("ollama", "qwen2.5-vl").capabilities,
+    tools: "yes" as const,
+    vision: "yes" as const,
+    streaming_tools: "yes" as const,
+    vision_tools: "yes" as const,
+  },
+  capability_sources: {
+    tools: "runtime_probe" as const,
+    vision: "runtime_probe" as const,
+    streaming_tools: "runtime_probe" as const,
+    vision_tools: "runtime_probe" as const,
+  },
+};
 
 const meta = {
   title: "Settings/AiModelConfigurationList",
@@ -14,23 +35,40 @@ const meta = {
         model_id: "model-0198d12345677890abcdef1234567890",
         name: "本地视觉模型",
         litellm_model: "ollama/qwen2.5-vl",
-        tool_calling_mode: "auto",
         api_key: null,
         api_base: "http://127.0.0.1:11434",
         api_version: null,
         input_modalities: ["text", "image", "audio", "video"],
+        capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
       },
     ],
+    profiles: { "model-0198d12345677890abcdef1234567890": PROFILE },
     managed: false,
     on_test_model: async (): Promise<AiModelTestResult> => ({
       available: true,
       latency_ms: 86,
       message: "模型响应正常",
       capabilities: {
-        text: { available: true, tested: true, message: "文本响应正常" },
-        tools: { available: true, tested: true, message: "工具调用正常" },
-        vision: { available: true, tested: true, message: "图片输入正常" },
+        text: {
+          support: "yes",
+          source: "runtime_probe",
+          tested: true,
+          message: "文本响应正常",
+        },
+        tools: {
+          support: "yes",
+          source: "runtime_probe",
+          tested: true,
+          message: "基础工具调用正常",
+        },
+        vision: {
+          support: "yes",
+          source: "runtime_probe",
+          tested: true,
+          message: "图片输入正常",
+        },
       },
+      profile: PROFILE,
     }),
     on_change: () => undefined,
   },
@@ -82,6 +120,15 @@ export const Unavailable: Story = {
       available: false,
       latency_ms: 24,
       message: "无法识别 LiteLLM 供应商",
+      capabilities: {
+        text: {
+          support: "no",
+          source: "runtime_probe",
+          tested: true,
+          message: "文本连接失败",
+        },
+      },
+      profile: unknown_model_profile("unknown", "invalid"),
     }),
   },
   play: async ({ canvasElement }) => {

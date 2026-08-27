@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openvideo.core.identifiers import uuid7
+from openvideo.llm.model_profile import ModelCapabilityOverrides
 
 
 MODEL_ID_PREFIX = "model-"
@@ -24,7 +25,6 @@ LEGACY_VISION_FIELD = "supports_vision"
 INPUT_MODALITIES_FIELD = "input_modalities"
 
 InputModality = Literal["text", "image", "audio", "video"]
-ToolCallingMode = Literal["auto", "enabled", "disabled"]
 
 
 class AiModelConfiguration(BaseModel):
@@ -39,7 +39,9 @@ class AiModelConfiguration(BaseModel):
     input_modalities: list[InputModality] = Field(
         default_factory=lambda: [TEXT_INPUT_MODALITY]
     )
-    tool_calling_mode: ToolCallingMode = "auto"
+    capabilities: ModelCapabilityOverrides = Field(
+        default_factory=ModelCapabilityOverrides
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -60,7 +62,10 @@ class AiModelConfiguration(BaseModel):
     @classmethod
     def validate_model_id(cls, model_id: str) -> str:
         hexadecimal = model_id.removeprefix(MODEL_ID_PREFIX)
-        if not model_id.startswith(MODEL_ID_PREFIX) or len(hexadecimal) != MODEL_ID_HEX_LENGTH:
+        if (
+            not model_id.startswith(MODEL_ID_PREFIX)
+            or len(hexadecimal) != MODEL_ID_HEX_LENGTH
+        ):
             raise ValueError("模型标识无效")
         try:
             parsed_identifier = UUID(hex=hexadecimal)
@@ -97,9 +102,7 @@ class AiModelConfiguration(BaseModel):
         if len(input_modalities) != len(set(input_modalities)):
             raise ValueError("模型输入模态不能重复")
         return [
-            modality
-            for modality in INPUT_MODALITIES
-            if modality in input_modalities
+            modality for modality in INPUT_MODALITIES if modality in input_modalities
         ]
 
 

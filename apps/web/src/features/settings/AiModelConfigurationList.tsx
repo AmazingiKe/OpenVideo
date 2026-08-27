@@ -3,6 +3,7 @@ import {
   Activity,
   Bot,
   CircleCheck,
+  CircleHelp,
   CircleX,
   Pencil,
   Plus,
@@ -56,6 +57,12 @@ import { cn } from "@/lib/utils";
 import { model_id } from "@/shared/identifiers";
 import {
   AI_INPUT_MODALITIES,
+  DEFAULT_MODEL_CAPABILITY_OVERRIDES,
+  type ModelCapabilityName,
+  type ModelCapabilityOverride,
+  type ModelCapabilitySource,
+  type ModelCapabilitySupport,
+  type ModelProfile,
   type AiInputModality,
   type AiModelConfiguration,
   type AiModelTestResult,
@@ -68,8 +75,29 @@ const INPUT_MODALITY_LABELS: Record<AiInputModality, string> = {
   video: "视频",
 };
 
+const CAPABILITY_LABELS: Partial<Record<ModelCapabilityName, string>> = {
+  tools: "工具调用",
+  vision: "图片输入",
+  reasoning: "推理",
+  structured_output: "结构化输出",
+  streaming_tools: "流式工具",
+  reasoning_tools: "推理 + 工具",
+  tool_choice_named: "指定工具",
+  vision_tools: "图片 + 工具",
+};
+
+const CAPABILITY_SOURCE_LABELS: Record<ModelCapabilitySource, string> = {
+  user_override: "用户覆盖",
+  runtime_probe: "已实测",
+  local_override: "本地规则",
+  models_dev: "在线模型目录",
+  litellm_metadata: "LiteLLM 辅助",
+  unknown: "暂无证据",
+};
+
 type AiModelConfigurationListProps = {
   models: AiModelConfiguration[];
+  profiles?: Partial<Record<string, ModelProfile>>;
   managed: boolean;
   on_test_model: (model: AiModelConfiguration) => Promise<AiModelTestResult>;
   on_change: (models: AiModelConfiguration[]) => void;
@@ -87,11 +115,12 @@ const NEW_AI_MODEL: Omit<AiModelConfiguration, "model_id"> = {
   api_base: null,
   api_version: null,
   input_modalities: ["text"],
-  tool_calling_mode: "auto",
+  capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
 };
 
 export function AiModelConfigurationList({
   models,
+  profiles = {},
   managed,
   on_test_model,
   on_change,
@@ -187,6 +216,10 @@ export function AiModelConfigurationList({
             const test_state = test_states[model.model_id];
             const testing = test_state?.phase === "testing";
             const test_status_id = `ai-model-${model.model_id}-test-status`;
+            const profile =
+              test_state?.phase === "complete"
+                ? test_state.result.profile
+                : profiles[model.model_id];
             return (
               <li key={model.model_id}>
                 <Card size="sm">
@@ -196,12 +229,15 @@ export function AiModelConfigurationList({
                       {model.litellm_model}
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="flex flex-wrap gap-1">
-                    {model.input_modalities.map((modality) => (
-                      <Badge key={modality} variant="secondary">
-                        {INPUT_MODALITY_LABELS[modality]}
-                      </Badge>
-                    ))}
+                  <CardContent className="flex flex-col gap-3">
+                    <div className="flex flex-wrap gap-1">
+                      {model.input_modalities.map((modality) => (
+                        <Badge key={modality} variant="secondary">
+                          {INPUT_MODALITY_LABELS[modality]}
+                        </Badge>
+                      ))}
+                    </div>
+                    {profile ? <ModelCapabilityGrid profile={profile} /> : null}
                   </CardContent>
                   <CardFooter className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <ModelTestFeedback id={test_status_id} state={test_state} />
@@ -379,34 +415,33 @@ function AiModelConfigurationDialog({
               />
             </Field>
           </div>
-          <Field>
-            <FieldLabel htmlFor={`${field_prefix}-tool-calling`}>
-              工具调用能力
-            </FieldLabel>
-            <Select
-              value={model.tool_calling_mode}
-              onValueChange={(tool_calling_mode) =>
-                update_model({
-                  tool_calling_mode:
-                    tool_calling_mode as AiModelConfiguration["tool_calling_mode"],
-                })
-              }
-            >
-              <SelectTrigger id={`${field_prefix}-tool-calling`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="auto">自动检测</SelectItem>
-                  <SelectItem value="enabled">强制启用</SelectItem>
-                  <SelectItem value="disabled">禁用</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FieldDescription>
-              自动检测失败时可手动覆盖；禁用后总结 Agent 仍可正常聊天。
-            </FieldDescription>
-          </Field>
+          <div className="grid gap-4 md:grid-cols-3">
+            {(
+              [
+                ["tools", "工具调用"],
+                ["vision", "图片输入"],
+                ["reasoning", "推理"],
+              ] as const
+            ).map(([capability, label]) => (
+              <CapabilityOverrideField
+                key={capability}
+                id={`${field_prefix}-${capability}`}
+                label={label}
+                value={model.capabilities[capability]}
+                on_change={(value) =>
+                  update_model({
+                    capabilities: {
+                      ...model.capabilities,
+                      [capability]: value,
+                    },
+                  })
+                }
+              />
+            ))}
+          </div>
+          <FieldDescription>
+            自动模式综合在线目录、本地规则与真实探测；启用表示允许真实尝试，禁用会明确阻止对应能力。
+          </FieldDescription>
           <Field>
             <FieldLabel id={`${field_prefix}-input-modalities`}>
               输入模态
@@ -457,6 +492,92 @@ function AiModelConfigurationDialog({
   );
 }
 
+function CapabilityOverrideField({
+  id,
+  label,
+  value,
+  on_change,
+}: {
+  id: string;
+  label: string;
+  value: ModelCapabilityOverride;
+  on_change: (value: ModelCapabilityOverride) => void;
+}) {
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Select
+        value={value}
+        onValueChange={(next_value) =>
+          on_change(next_value as ModelCapabilityOverride)
+        }
+      >
+        <SelectTrigger id={id}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            <SelectItem value="auto">自动</SelectItem>
+            <SelectItem value="enabled">启用</SelectItem>
+            <SelectItem value="disabled">禁用</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
+  );
+}
+
+function ModelCapabilityGrid({ profile }: { profile: ModelProfile }) {
+  return (
+    <div
+      className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"
+      aria-label="模型能力"
+    >
+      {Object.entries(CAPABILITY_LABELS).map(([capability, label]) => {
+        const capability_name = capability as ModelCapabilityName;
+        const support = profile.capabilities[capability_name];
+        const source = profile.capability_sources[capability_name] ?? "unknown";
+        return (
+          <div
+            key={capability}
+            className="flex min-w-0 items-center justify-between gap-2 rounded-md border p-2"
+          >
+            <span className="truncate text-xs font-medium">{label}</span>
+            <Badge
+              variant={
+                support === "yes"
+                  ? "secondary"
+                  : support === "no"
+                    ? "destructive"
+                    : "outline"
+              }
+              aria-label={`${label}：${support_label(support)}，${CAPABILITY_SOURCE_LABELS[source]}`}
+              title={CAPABILITY_SOURCE_LABELS[source]}
+            >
+              {support === "yes" ? (
+                <CircleCheck data-icon="inline-start" />
+              ) : support === "no" ? (
+                <CircleX data-icon="inline-start" />
+              ) : (
+                <CircleHelp data-icon="inline-start" />
+              )}
+              {support_label(support)}
+            </Badge>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function support_label(support: ModelCapabilitySupport): string {
+  return {
+    yes: "已确认",
+    no: "不支持",
+    unknown: "未知",
+  }[support];
+}
+
 function ModelTestFeedback({
   id,
   state,
@@ -481,16 +602,19 @@ function ModelTestFeedback({
       </div>
     );
   }
+  if (state.phase === "request_error") {
+    return (
+      <div id={id} role="alert" className="flex flex-col gap-2">
+        <Badge variant="destructive">
+          <CircleX data-icon="inline-start" />
+          请求失败
+        </Badge>
+        <p className="text-sm break-words text-destructive">{state.message}</p>
+      </div>
+    );
+  }
 
-  const result =
-    state.phase === "complete"
-      ? state.result
-      : {
-          available: false,
-          latency_ms: null,
-          message: state.message,
-          capabilities: undefined,
-        };
+  const result = state.result;
   return (
     <div
       id={id}
@@ -507,11 +631,9 @@ function ModelTestFeedback({
           )}
           {result.available ? "可用" : "不可用"}
         </Badge>
-        {result.latency_ms !== null ? (
-          <span className="text-sm text-muted-foreground">
-            延迟 {result.latency_ms} ms
-          </span>
-        ) : null}
+        <span className="text-sm text-muted-foreground">
+          延迟 {result.latency_ms} ms
+        </span>
       </div>
       <p
         className={cn(
@@ -523,45 +645,37 @@ function ModelTestFeedback({
       >
         {result.message}
       </p>
-      {result.capabilities ? (
-        <div className="grid gap-2 sm:grid-cols-3">
-          {(
-            [
-              ["text", "文本"],
-              ["tools", "工具"],
-              ["vision", "图片"],
-            ] as const
-          ).map(([capability, label]) => {
-            const probe = result.capabilities?.[capability];
-            if (!probe) return null;
-            return (
-              <div key={capability} className="rounded-md border p-2 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{label}</span>
-                  <Badge
-                    variant={
-                      probe.available
-                        ? "secondary"
-                        : probe.tested
-                          ? "destructive"
-                          : "outline"
-                    }
-                  >
-                    {probe.available
-                      ? "通过"
-                      : probe.tested
-                        ? "失败"
-                        : "未测试"}
-                  </Badge>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {probe.message}
-                </p>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {Object.entries({
+          text: "文本",
+          ...CAPABILITY_LABELS,
+        }).map(([capability, label]) => {
+          const probe =
+            result.capabilities[capability as keyof typeof result.capabilities];
+          if (!probe) return null;
+          return (
+            <div key={capability} className="rounded-md border p-2 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{label}</span>
+                <Badge
+                  variant={
+                    probe.support === "yes"
+                      ? "secondary"
+                      : probe.support === "no"
+                        ? "destructive"
+                        : "outline"
+                  }
+                >
+                  {support_label(probe.support)}
+                </Badge>
               </div>
-            );
-          })}
-        </div>
-      ) : null}
+              <p className="mt-1 text-xs text-muted-foreground">
+                {probe.message} · {CAPABILITY_SOURCE_LABELS[probe.source]}
+              </p>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -18,7 +18,6 @@ from openvideo.core.agent_runtime_models import (
     AgentDefinition,
     AgentEvent,
     AgentEventType,
-    AgentModelResponse,
     AgentRun,
     AgentRunStage,
     AgentSession,
@@ -26,9 +25,16 @@ from openvideo.core.agent_runtime_models import (
 )
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
+from openvideo.llm.agno_executor import AgentExecutor
+from openvideo.llm.errors import (
+    FeatureCombinationUnsupportedError,
+    ProviderRequestError,
+    ToolCallingUnsupportedError,
+)
+from openvideo.llm.events import LlmAgentEvent, LlmAgentEventType
+from openvideo.llm.model_profile import CapabilityName, ModelProfile, Support
 
 
-MAX_AGENT_STEPS = 8
 MAX_AGENT_TOOL_CALLS = 12
 AGENT_RUN_TIMEOUT_SECONDS = 180
 AGENT_TOOL_TIMEOUT_SECONDS = 60
@@ -128,21 +134,7 @@ class AgentSessionStore:
                     "role": "assistant",
                     "content": str(payload.get("content", "")),
                 }
-                if payload.get("tool_calls"):
-                    message["tool_calls"] = payload["tool_calls"]
                 messages.append(message)
-            elif event.event_type == AgentEventType.TOOL_STATUS and payload.get(
-                "stage"
-            ) in {"completed", "failed"}:
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": str(payload["call_id"]),
-                        "content": json.dumps(
-                            payload.get("result"), ensure_ascii=False
-                        ),
-                    }
-                )
         return messages
 
 
@@ -241,26 +233,16 @@ class AgentToolRegistry:
             return _tool_error("tool_execution_failed", str(error) or "工具执行失败")
 
 
-class AgentModelAdapter(Protocol):
-    async def complete(
-        self,
-        model: AiModelConfiguration,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        on_chunk: Callable[[str], None],
-    ) -> AgentModelResponse: ...
-
-
 class AgentRuntime:
     def __init__(
         self,
         store: AgentSessionStore,
         registry: AgentToolRegistry,
-        model_adapter: AgentModelAdapter,
+        executor: AgentExecutor,
     ) -> None:
         self.store = store
         self.registry = registry
-        self.model_adapter = model_adapter
+        self.executor = executor
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._active_tasks: dict[str, asyncio.Task[Any]] = {}
 
@@ -273,16 +255,21 @@ class AgentRuntime:
         self,
         run: AgentRun,
         model: AiModelConfiguration,
+        profile: ModelProfile,
         definition: AgentDefinition,
         user_content: str,
         *,
-        max_steps: int = MAX_AGENT_STEPS,
         max_tool_calls: int = MAX_AGENT_TOOL_CALLS,
         run_timeout_seconds: float = AGENT_RUN_TIMEOUT_SECONDS,
         tool_timeout_seconds: float = AGENT_TOOL_TIMEOUT_SECONDS,
         max_context_characters: int = MAX_CONTEXT_CHARACTERS,
     ) -> AgentRun:
         self.registry.validate(definition.allowed_tools)
+        if (
+            definition.allowed_tools
+            and profile.support(CapabilityName.TOOLS) == Support.NO
+        ):
+            raise AgentCapabilityError("当前模型已确认不支持 Agent 所需的工具调用")
         cancel_event = self._cancel_events.setdefault(run.run_id, asyncio.Event())
         current_task = asyncio.current_task()
         if current_task is not None:
@@ -304,12 +291,12 @@ class AgentRuntime:
         )
         try:
             return await asyncio.wait_for(
-                self._run_loop(
+                self._run_agent(
                     running,
                     model,
+                    profile,
                     definition,
                     cancel_event,
-                    max_steps,
                     max_tool_calls,
                     tool_timeout_seconds,
                     max_context_characters,
@@ -329,6 +316,27 @@ class AgentRuntime:
             )
         except AgentRuntimeError as error:
             return self._finish(running, AgentRunStage.FAILED, error.code, str(error))
+        except ToolCallingUnsupportedError as error:
+            return self._finish(
+                running,
+                AgentRunStage.FAILED,
+                "tool_calling_unsupported",
+                f"当前模型已确认不支持工具调用：{error}",
+            )
+        except FeatureCombinationUnsupportedError as error:
+            return self._finish(
+                running,
+                AgentRunStage.FAILED,
+                "feature_combination_unsupported",
+                f"当前模型参数组合不受支持：{error}",
+            )
+        except ProviderRequestError as error:
+            return self._finish(
+                running,
+                AgentRunStage.FAILED,
+                "provider_request_error",
+                f"模型服务请求失败：{error}",
+            )
         except Exception as error:
             return self._finish(
                 running,
@@ -340,106 +348,98 @@ class AgentRuntime:
             self._cancel_events.pop(run.run_id, None)
             self._active_tasks.pop(run.run_id, None)
 
-    async def _run_loop(
+    async def _run_agent(
         self,
         run: AgentRun,
         model: AiModelConfiguration,
+        profile: ModelProfile,
         definition: AgentDefinition,
         cancel_event: asyncio.Event,
-        max_steps: int,
         max_tool_calls: int,
         tool_timeout_seconds: float,
         max_context_characters: int,
     ) -> AgentRun:
-        tool_call_count = 0
-        successful_tools: set[str] = set()
-        tools = self.registry.schemas(definition.allowed_tools)
-        for step_number in range(1, max_steps + 1):
-            self._raise_if_cancelled(cancel_event)
-            messages = [
-                {"role": "system", "content": definition.prompt},
-                *self.store.model_context(run.session_id),
-            ]
-            messages = self._compress_context(run, messages, max_context_characters)
-            response = await self.model_adapter.complete(
-                model,
-                messages,
-                tools,
-                lambda chunk: self.store.append(
-                    run.session_id,
-                    run.run_id,
-                    AgentEventType.MESSAGE_DELTA,
-                    {"content": chunk, "step": step_number},
-                ),
+        self._raise_if_cancelled(cancel_event)
+        messages = self._compress_context(
+            run,
+            self.store.model_context(run.session_id),
+            max_context_characters,
+        )
+        result = await self.executor.run(
+            model,
+            profile,
+            definition,
+            messages,
+            self.registry,
+            lambda event: self._append_executor_event(run, event),
+            max_tool_calls=max_tool_calls,
+            tool_timeout_seconds=tool_timeout_seconds,
+        )
+        self._raise_if_cancelled(cancel_event)
+        self.store.append(
+            run.session_id,
+            run.run_id,
+            AgentEventType.MESSAGE_COMPLETED,
+            {
+                "content": result.content,
+                "reasoning_content": result.reasoning_content,
+            },
+        )
+        missing = definition.required_tools - result.successful_tools
+        if missing:
+            raise AgentRuntimeError(
+                f"运行结束前未成功调用必需工具：{', '.join(sorted(missing))}",
+                "required_result_missing",
             )
-            self._raise_if_cancelled(cancel_event)
-            serialized_calls = [
-                {
-                    "id": call.call_id,
-                    "type": "function",
-                    "function": {
-                        "name": call.name,
-                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
-                    },
-                }
-                for call in response.tool_calls
-            ]
+        artifacts = self.store.repository.load_agent_artifacts(run_id=run.run_id)
+        if definition.requires_approval and not artifacts:
+            raise AgentRuntimeError(
+                "运行未生成必需的审批结果", "required_result_missing"
+            )
+        stage = (
+            AgentRunStage.WAITING_FOR_APPROVAL if artifacts else AgentRunStage.COMPLETE
+        )
+        return self._finish(run, stage)
+
+    def _append_executor_event(self, run: AgentRun, event: LlmAgentEvent) -> None:
+        if event.event_type == LlmAgentEventType.TEXT_DELTA:
             self.store.append(
                 run.session_id,
                 run.run_id,
-                AgentEventType.MESSAGE_COMPLETED,
-                {"content": response.content, "tool_calls": serialized_calls},
+                AgentEventType.MESSAGE_DELTA,
+                {"content": event.content},
             )
-            if not response.tool_calls:
-                missing = definition.required_tools - successful_tools
-                if missing:
-                    raise AgentRuntimeError(
-                        f"运行结束前未成功调用必需工具：{', '.join(sorted(missing))}",
-                        "required_result_missing",
-                    )
-                artifacts = self.store.repository.load_agent_artifacts(
-                    run_id=run.run_id
-                )
-                if definition.requires_approval and not artifacts:
-                    raise AgentRuntimeError(
-                        "运行未生成必需的审批结果", "required_result_missing"
-                    )
-                stage = (
-                    AgentRunStage.WAITING_FOR_APPROVAL
-                    if artifacts
-                    else AgentRunStage.COMPLETE
-                )
-                return self._finish(run, stage)
-            tool_call_count += len(response.tool_calls)
-            if tool_call_count > max_tool_calls:
-                raise AgentRuntimeError(
-                    f"单轮工具调用超过上限 {max_tool_calls} 次", "tool_call_limit"
-                )
-            for call in response.tool_calls:
-                self._raise_if_cancelled(cancel_event)
-                self.store.append(
-                    run.session_id,
-                    run.run_id,
-                    AgentEventType.TOOL_STATUS,
-                    {**call.model_dump(mode="json"), "stage": "started"},
-                )
-                result = await self.registry.execute(
-                    call, definition.allowed_tools, tool_timeout_seconds
-                )
-                if result.get("ok") is True:
-                    successful_tools.add(call.name)
-                self.store.append(
-                    run.session_id,
-                    run.run_id,
-                    AgentEventType.TOOL_STATUS,
-                    {
-                        "call_id": call.call_id,
-                        "name": call.name,
-                        "stage": "completed" if result.get("ok") is True else "failed",
-                        "result": result,
-                    },
-                )
-        raise AgentRuntimeError(f"Agent 单轮超过最大 Step 数 {max_steps}", "step_limit")
+        elif event.event_type == LlmAgentEventType.REASONING_DELTA:
+            self.store.append(
+                run.session_id,
+                run.run_id,
+                AgentEventType.REASONING_DELTA,
+                {"content": event.content},
+            )
+        elif event.event_type == LlmAgentEventType.TOOL_CALL_STARTED:
+            self.store.append(
+                run.session_id,
+                run.run_id,
+                AgentEventType.TOOL_STATUS,
+                {
+                    "call_id": event.call_id,
+                    "name": event.name,
+                    "arguments": event.arguments,
+                    "stage": "started",
+                },
+            )
+        elif event.event_type == LlmAgentEventType.TOOL_CALL_COMPLETED:
+            self.store.append(
+                run.session_id,
+                run.run_id,
+                AgentEventType.TOOL_STATUS,
+                {
+                    "call_id": event.call_id,
+                    "name": event.name,
+                    "stage": "failed" if event.failed else "completed",
+                    "result": event.result,
+                },
+            )
 
     def _compress_context(
         self,
@@ -450,14 +450,12 @@ class AgentRuntime:
         lengths = [len(json.dumps(message, ensure_ascii=False)) for message in messages]
         if sum(lengths) <= limit:
             return messages
-        kept = [messages[0]]
-        remaining = limit - lengths[0]
-        for message, length in reversed(
-            list(zip(messages[1:], lengths[1:], strict=True))
-        ):
+        kept: list[dict[str, Any]] = []
+        remaining = limit
+        for message, length in reversed(list(zip(messages, lengths, strict=True))):
             if length > remaining:
                 break
-            kept.insert(1, message)
+            kept.insert(0, message)
             remaining -= length
         self.store.append(
             run.session_id,

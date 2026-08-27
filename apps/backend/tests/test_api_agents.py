@@ -2,7 +2,6 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from openvideo.core.agent_runtime_models import AgentModelResponse
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -12,7 +11,15 @@ from openvideo.core.media_models import (
     SourcePlatform,
 )
 from openvideo.settings import Settings
-from openvideo.tools.llm import LiteLlmAgentAdapter
+from openvideo.llm.agno_executor import AgnoAgentExecutor
+from openvideo.llm.capability_resolver import CapabilityResolver
+from openvideo.llm.events import (
+    AgentExecutionResult,
+    LlmAgentEvent,
+    LlmAgentEventType,
+)
+from openvideo.llm.models_dev import ModelsDevCatalog
+from openvideo.llm.probe_cache import ProbeCache
 from openvideo.ui.api import create_app
 
 
@@ -41,9 +48,18 @@ def create_client(tmp_path: Path) -> TestClient:
         model_id=MODEL_ID,
         name="工具模型",
         litellm_model="openai/test",
-        tool_calling_mode="enabled",
+        capabilities={"tools": "enabled"},
     )
-    return TestClient(create_app(Settings(library_path=tmp_path, ai_models=[model])))
+    resolver = CapabilityResolver(
+        models_dev=ModelsDevCatalog(tmp_path / "config" / "models-dev.json"),
+        probe_cache=ProbeCache(tmp_path / "config" / "probes.json"),
+    )
+    return TestClient(
+        create_app(
+            Settings(library_path=tmp_path, ai_models=[model]),
+            capability_resolver=resolver,
+        )
+    )
 
 
 def test_definitions_and_sessions_use_only_unified_routes(tmp_path: Path):
@@ -70,11 +86,25 @@ def test_definitions_and_sessions_use_only_unified_routes(tmp_path: Path):
 
 
 def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypatch):
-    async def reply_without_required_tool(self, model, messages, tools, on_chunk):
-        on_chunk("处理中")
-        return AgentModelResponse(content="未调用工具")
+    async def reply_without_required_tool(
+        self,
+        model,
+        profile,
+        definition,
+        messages,
+        registry,
+        on_event,
+        **_options,
+    ):
+        on_event(
+            LlmAgentEvent(
+                event_type=LlmAgentEventType.TEXT_DELTA,
+                content="处理中",
+            )
+        )
+        return AgentExecutionResult(content="未调用工具")
 
-    monkeypatch.setattr(LiteLlmAgentAdapter, "complete", reply_without_required_tool)
+    monkeypatch.setattr(AgnoAgentExecutor, "run", reply_without_required_tool)
     with create_client(tmp_path) as client:
         session = client.post(
             "/api/agent-sessions",

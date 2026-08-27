@@ -11,10 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   get_preferences,
   get_transcription_model_download,
+  list_ai_models,
   list_transcription_models,
   test_ai_model,
   update_preferences,
 } from "@/shared/api";
+import { unknown_model_profile } from "@/shared/types";
 import { SettingsPage } from "./SettingsPage";
 
 vi.mock("@/app/library", () => ({
@@ -36,6 +38,7 @@ vi.mock("@/shared/api", () => ({
   download_transcription_model: vi.fn(),
   get_preferences: vi.fn(),
   get_transcription_model_download: vi.fn(),
+  list_ai_models: vi.fn(),
   list_transcription_models: vi.fn(),
   open_library: vi.fn(),
   select_directory: vi.fn(),
@@ -60,6 +63,7 @@ const preferences = {
 
 beforeEach(() => {
   vi.mocked(get_preferences).mockResolvedValue(preferences);
+  vi.mocked(list_ai_models).mockResolvedValue([]);
   vi.mocked(list_transcription_models).mockResolvedValue([
     {
       engine: "faster-whisper",
@@ -109,6 +113,15 @@ beforeEach(() => {
     available: true,
     latency_ms: 86,
     message: "模型响应正常",
+    capabilities: {
+      text: {
+        support: "yes",
+        source: "runtime_probe",
+        tested: true,
+        message: "文本响应正常",
+      },
+    },
+    profile: unknown_model_profile("openai", "test-model"),
   });
   vi.mocked(get_transcription_model_download).mockRejectedValue(
     new Error("不应轮询"),

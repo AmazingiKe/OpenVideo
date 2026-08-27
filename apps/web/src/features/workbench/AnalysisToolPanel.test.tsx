@@ -4,14 +4,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisToolPanel } from "./AnalysisToolPanel";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
-import type {
-  AnalysisMode,
-  AnalysisToolSection,
-  AiModelSummary,
-  MediaAsset,
-  MediaMarker,
-  TranscriptionModelDescriptor,
-  TranscriptionOptions,
+import {
+  DEFAULT_MODEL_CAPABILITY_OVERRIDES,
+  unknown_model_profile,
+  type AnalysisMode,
+  type AnalysisToolSection,
+  type AiModelSummary,
+  type MediaAsset,
+  type MediaMarker,
+  type TranscriptionModelDescriptor,
+  type TranscriptionOptions,
 } from "@/shared/types";
 
 vi.mock("@/components/AgentPanel", () => ({
@@ -47,8 +49,9 @@ const AI_MODELS: AiModelSummary[] = [
     model_id: "model-0198d12345677890abcdef1234567890",
     name: "测试模型",
     litellm_model: "openai/test-model",
-    tool_calling_mode: "auto",
     input_modalities: ["text", "image"],
+    capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
+    profile: unknown_model_profile("openai", "test-model"),
   },
 ];
 

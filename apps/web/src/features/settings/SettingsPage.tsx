@@ -36,12 +36,17 @@ import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurati
 import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
 import {
   get_preferences,
+  list_ai_models,
   list_transcription_models,
   select_directory,
   test_ai_model,
   update_preferences,
 } from "@/shared/api";
-import type { Preferences, TranscriptionModelDescriptor } from "@/shared/types";
+import type {
+  AiModelSummary,
+  Preferences,
+  TranscriptionModelDescriptor,
+} from "@/shared/types";
 
 type EditableField = "tools_directory" | "models_directory";
 
@@ -53,6 +58,9 @@ export function SettingsPage() {
   const [transcription_models, set_transcription_models] = useState<
     TranscriptionModelDescriptor[]
   >([]);
+  const [ai_model_summaries, set_ai_model_summaries] = useState<
+    AiModelSummary[]
+  >([]);
   const [saving, set_saving] = useState(false);
   const [message, set_message] = useState<string | null>(null);
   const saved_preferences_ref = useRef<Preferences | null>(null);
@@ -62,11 +70,13 @@ export function SettingsPage() {
     Promise.all([
       get_preferences(controller.signal),
       list_transcription_models(controller.signal),
+      list_ai_models(controller.signal),
     ])
-      .then(([loaded_preferences, models]) => {
+      .then(([loaded_preferences, models, ai_models]) => {
         set_preferences(loaded_preferences);
         saved_preferences_ref.current = loaded_preferences;
         set_transcription_models(models);
+        set_ai_model_summaries(ai_models);
       })
       .catch((error: unknown) => {
         if (!is_abort_error(error)) set_message(error_message(error));
@@ -90,8 +100,9 @@ export function SettingsPage() {
         },
         controller.signal,
       )
-        .then(() => {
+        .then(async () => {
           saved_preferences_ref.current = preferences;
+          set_ai_model_summaries(await list_ai_models(controller.signal));
         })
         .catch((error: unknown) => {
           if (!is_abort_error(error)) set_message(error_message(error));
@@ -231,6 +242,12 @@ export function SettingsPage() {
             </Alert>
             <AiModelConfigurationList
               models={preferences.ai_models}
+              profiles={Object.fromEntries(
+                ai_model_summaries.map((model) => [
+                  model.model_id,
+                  model.profile,
+                ]),
+              )}
               managed={preferences.managed_fields.includes("ai_models")}
               on_test_model={test_ai_model}
               on_change={(ai_models) =>

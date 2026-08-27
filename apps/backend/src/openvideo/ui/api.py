@@ -48,7 +48,6 @@ from openvideo.core.ai_models import (
     AiModelConfiguration,
     IMAGE_INPUT_MODALITY,
     InputModality,
-    ToolCallingMode,
 )
 from openvideo.core.analysis_models import (
     ANALYSIS_STRATEGY_PRESETS,
@@ -140,7 +139,25 @@ from openvideo.tools.llm import (
     LlmCompletionError,
     complete_text,
     probe_image_input,
-    probe_tool_calling,
+)
+from openvideo.llm.capability_resolver import CapabilityResolver
+from openvideo.llm.errors import LlmRuntimeError, ToolCallingUnsupportedError
+from openvideo.llm.model_profile import (
+    CAPABILITY_NAMES,
+    CapabilityName,
+    CapabilityOverride,
+    CapabilitySource,
+    ModelCapabilityOverrides,
+    ModelProfile,
+    Support,
+)
+from openvideo.llm.probes import (
+    probe_basic_tools,
+    probe_named_tool_choice,
+    probe_parallel_tools,
+    probe_reasoning_tools,
+    probe_streaming_tools,
+    probe_vision_tools,
 )
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
 from openvideo.transcription_model_manager import (
@@ -375,11 +392,13 @@ class AiModelSummary(BaseModel):
     name: str
     litellm_model: str
     input_modalities: list[InputModality]
-    tool_calling_mode: ToolCallingMode
+    capabilities: ModelCapabilityOverrides
+    profile: ModelProfile
 
 
 class AiModelCapabilityTest(BaseModel):
-    available: bool
+    support: Support
+    source: CapabilitySource
     tested: bool
     message: str
 
@@ -389,6 +408,7 @@ class AiModelTestResponse(BaseModel):
     latency_ms: int
     message: str
     capabilities: dict[str, AiModelCapabilityTest]
+    profile: ModelProfile
 
 
 class SummaryMediaCreateResponse(BaseModel):
@@ -402,6 +422,22 @@ def _redact_model_test_error(message: str, api_key: str | None) -> str:
     return message.replace(api_key, MODEL_TEST_REDACTED_SECRET)
 
 
+def _run_model_probe(
+    probe: Callable[[AiModelConfiguration, int], None],
+    model: AiModelConfiguration,
+    label: str,
+) -> tuple[Support, str]:
+    try:
+        probe(model, MODEL_TEST_TIMEOUT_SECONDS)
+    except ToolCallingUnsupportedError as error:
+        message = _redact_model_test_error(str(error), model.api_key)
+        return Support.NO, f"{label}已确认不支持：{message}"
+    except LlmRuntimeError as error:
+        message = _redact_model_test_error(str(error), model.api_key)
+        return Support.UNKNOWN, f"{label}探测未确认：{message}"
+    return Support.YES, f"{label}正常"
+
+
 def create_app(
     settings: Settings | None = None,
     preference_store: PreferenceStore | None = None,
@@ -409,6 +445,7 @@ def create_app(
     download_account_store: DownloadAccountStore | None = None,
     download_account_login_capture: Callable[[SourcePlatform, Event], str]
     | None = None,
+    capability_resolver: CapabilityResolver | None = None,
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
@@ -417,6 +454,7 @@ def create_app(
     analysis_manager: AnalysisManager | None = None
     agent_service: AgentService | None = None
     summary_manager: SummaryManager | None = None
+    resolved_capability_resolver = capability_resolver or CapabilityResolver()
     transcription_model_manager = TranscriptionModelManager(resolved_settings)
     page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
@@ -496,7 +534,12 @@ def create_app(
         manager = DownloadManager(opened_library, resolved_settings, account_store)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
-        agent_service = AgentService(opened_library, resolved_settings, summary_manager)
+        agent_service = AgentService(
+            opened_library,
+            resolved_settings,
+            summary_manager,
+            resolved_capability_resolver,
+        )
         page_settings_store = PageSettingsStore(
             preference_store.path.parent,
             opened_library.manifest.library_id,
@@ -1254,7 +1297,8 @@ def create_app(
                 name=model.name,
                 litellm_model=model.litellm_model,
                 input_modalities=model.input_modalities,
-                tool_calling_mode=model.tool_calling_mode,
+                capabilities=model.capabilities,
+                profile=resolved_capability_resolver.resolve(model),
             )
             for model in resolved_settings.ai_models
         ]
@@ -1263,6 +1307,7 @@ def create_app(
     def test_ai_model(request: AiModelConfiguration) -> AiModelTestResponse:
         started_at = perf_counter()
         capabilities: dict[str, AiModelCapabilityTest] = {}
+        profile = resolved_capability_resolver.resolve(request, refresh_models_dev=True)
         try:
             complete_text(
                 request,
@@ -1274,20 +1319,18 @@ def create_app(
         except LlmCompletionError as error:
             error_message = _redact_model_test_error(str(error), request.api_key)
             capabilities["text"] = AiModelCapabilityTest(
-                available=False,
+                support=Support.NO,
+                source=CapabilitySource.RUNTIME_PROBE,
                 tested=True,
                 message=error_message,
             )
-            capabilities["tools"] = AiModelCapabilityTest(
-                available=False,
-                tested=False,
-                message="文本连接失败，未测试工具调用",
-            )
-            capabilities["vision"] = AiModelCapabilityTest(
-                available=False,
-                tested=False,
-                message="文本连接失败，未测试图片输入",
-            )
+            for capability in CAPABILITY_NAMES:
+                capabilities[capability.value] = AiModelCapabilityTest(
+                    support=profile.support(capability),
+                    source=profile.source(capability),
+                    tested=False,
+                    message="文本连接失败，未执行能力探测",
+                )
             return AiModelTestResponse(
                 available=False,
                 latency_ms=round(
@@ -1295,36 +1338,50 @@ def create_app(
                 ),
                 message=error_message,
                 capabilities=capabilities,
+                profile=profile,
             )
         capabilities["text"] = AiModelCapabilityTest(
-            available=True,
+            support=Support.YES,
+            source=CapabilitySource.RUNTIME_PROBE,
             tested=True,
             message="文本响应正常",
         )
-        if request.tool_calling_mode == "disabled":
-            capabilities["tools"] = AiModelCapabilityTest(
-                available=False,
-                tested=False,
-                message="模型配置已禁用工具调用",
-            )
+        probe_results: dict[CapabilityName, Support] = {}
+        tool_probe_specs = (
+            (CapabilityName.TOOLS, probe_basic_tools, "基础工具调用"),
+            (CapabilityName.STREAMING_TOOLS, probe_streaming_tools, "流式工具调用"),
+            (CapabilityName.TOOL_CHOICE_NAMED, probe_named_tool_choice, "指定工具调用"),
+            (CapabilityName.PARALLEL_TOOLS, probe_parallel_tools, "并行工具调用"),
+        )
+        if request.capabilities.tools == CapabilityOverride.DISABLED:
+            for capability, _, label in tool_probe_specs:
+                capabilities[capability.value] = AiModelCapabilityTest(
+                    support=Support.NO,
+                    source=CapabilitySource.USER_OVERRIDE,
+                    tested=False,
+                    message=f"模型配置已禁用{label}",
+                )
         else:
-            try:
-                probe_tool_calling(request, MODEL_TEST_TIMEOUT_SECONDS)
-            except LlmCompletionError as error:
-                capabilities["tools"] = AiModelCapabilityTest(
-                    available=False,
-                    tested=True,
-                    message=_redact_model_test_error(str(error), request.api_key),
+            for capability, probe, label in tool_probe_specs:
+                support, message = _run_model_probe(
+                    probe,
+                    request,
+                    label,
                 )
-            else:
-                capabilities["tools"] = AiModelCapabilityTest(
-                    available=True,
+                probe_results[capability] = support
+                capabilities[capability.value] = AiModelCapabilityTest(
+                    support=support,
+                    source=CapabilitySource.RUNTIME_PROBE,
                     tested=True,
-                    message="工具调用正常",
+                    message=message,
                 )
+                if capability == CapabilityName.TOOLS and support != Support.YES:
+                    break
+        profile = resolved_capability_resolver.record_probe(request, probe_results)
         if IMAGE_INPUT_MODALITY not in request.input_modalities:
             capabilities["vision"] = AiModelCapabilityTest(
-                available=False,
+                support=profile.support(CapabilityName.VISION),
+                source=profile.source(CapabilityName.VISION),
                 tested=False,
                 message="模型配置未声明图片输入",
             )
@@ -1333,21 +1390,69 @@ def create_app(
                 probe_image_input(request, MODEL_TEST_TIMEOUT_SECONDS)
             except LlmCompletionError as error:
                 capabilities["vision"] = AiModelCapabilityTest(
-                    available=False,
+                    support=Support.UNKNOWN,
+                    source=CapabilitySource.RUNTIME_PROBE,
                     tested=True,
                     message=_redact_model_test_error(str(error), request.api_key),
                 )
             else:
+                probe_results[CapabilityName.VISION] = Support.YES
                 capabilities["vision"] = AiModelCapabilityTest(
-                    available=True,
+                    support=Support.YES,
+                    source=CapabilitySource.RUNTIME_PROBE,
                     tested=True,
                     message="图片输入正常",
                 )
+                if probe_results.get(CapabilityName.TOOLS) == Support.YES:
+                    support, message = _run_model_probe(
+                        probe_vision_tools,
+                        request,
+                        "图片与工具组合",
+                    )
+                    probe_results[CapabilityName.VISION_TOOLS] = support
+                    capabilities[CapabilityName.VISION_TOOLS.value] = (
+                        AiModelCapabilityTest(
+                            support=support,
+                            source=CapabilitySource.RUNTIME_PROBE,
+                            tested=True,
+                            message=message,
+                        )
+                    )
+        if (
+            profile.support(CapabilityName.REASONING) == Support.YES
+            and probe_results.get(CapabilityName.TOOLS) == Support.YES
+        ):
+            support, message = _run_model_probe(
+                probe_reasoning_tools,
+                request,
+                "推理与工具组合",
+            )
+            probe_results[CapabilityName.REASONING_TOOLS] = support
+            capabilities[CapabilityName.REASONING_TOOLS.value] = AiModelCapabilityTest(
+                support=support,
+                source=CapabilitySource.RUNTIME_PROBE,
+                tested=True,
+                message=message,
+            )
+        if probe_results.get(CapabilityName.TOOLS) == Support.YES:
+            probe_results[CapabilityName.TOOL_CHOICE_AUTO] = Support.YES
+        profile = resolved_capability_resolver.record_probe(request, probe_results)
+        for capability in CAPABILITY_NAMES:
+            capabilities.setdefault(
+                capability.value,
+                AiModelCapabilityTest(
+                    support=profile.support(capability),
+                    source=profile.source(capability),
+                    tested=False,
+                    message="未执行该项独立探测",
+                ),
+            )
         return AiModelTestResponse(
             available=True,
             latency_ms=round((perf_counter() - started_at) * MILLISECONDS_PER_SECOND),
             message=MODEL_TEST_SUCCESS_MESSAGE,
             capabilities=capabilities,
+            profile=profile,
         )
 
     @app.get(

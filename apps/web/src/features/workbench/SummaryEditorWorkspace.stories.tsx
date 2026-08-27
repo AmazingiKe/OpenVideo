@@ -1,6 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-import type { MediaAsset, SummaryDocument, Transcript } from "@/shared/types";
+import {
+  DEFAULT_MODEL_CAPABILITY_OVERRIDES,
+  unknown_model_profile,
+  type MediaAsset,
+  type SummaryDocument,
+  type Transcript,
+} from "@/shared/types";
 import { SummaryWorkspace } from "./SummaryWorkspace";
 
 const ASSET_ID = "asset-0198dbf112347abc8123456789abcdef";
@@ -94,8 +100,9 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
           model_id: "model-0198dbf912347abc8123456789abcdef",
           name: "课程总结模型",
           litellm_model: "openai/example",
-          tool_calling_mode: "auto",
           input_modalities: ["text", "image"],
+          capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
+          profile: unknown_model_profile("openai", "example"),
         },
       ]),
     );

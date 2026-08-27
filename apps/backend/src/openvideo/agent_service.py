@@ -49,9 +49,11 @@ from openvideo.core.summary_models import (
 )
 from openvideo.settings import Settings
 from openvideo.tools.frames import extract_frames
-from openvideo.tools.llm import LiteLlmAgentAdapter, supports_tool_calling
 from openvideo.tools.transcript_correction import LiteLlmTranscriptCorrector
 from openvideo.tools.vision import LiteLlmVision
+from openvideo.llm.agno_executor import AgnoAgentExecutor
+from openvideo.llm.capability_resolver import CapabilityResolver
+from openvideo.llm.model_profile import CapabilityName, ModelProfile, Support
 
 
 MARKER_AGENT_ID = "marker"
@@ -238,10 +240,12 @@ class AgentService:
         library: MediaLibrary,
         settings: Settings,
         summary_documents: SummaryDocumentService,
+        capability_resolver: CapabilityResolver | None = None,
     ) -> None:
         self.library = library
         self.settings = settings
         self.summary_documents = summary_documents
+        self.capability_resolver = capability_resolver or CapabilityResolver()
         self.store = AgentSessionStore(library)
         self._tasks: dict[str, asyncio.Task[AgentRun]] = {}
         self._runtimes: dict[str, AgentRuntime] = {}
@@ -305,12 +309,13 @@ class AgentService:
         model = self.settings.ai_model(request.ai_model_id)
         if model is None:
             raise AgentServiceError("所选 AI 模型不存在", "model_not_found")
+        profile = self.capability_resolver.resolve(model)
         definition = (
-            registered.run_definition(registered.definition, request, model)
+            registered.run_definition(registered.definition, request, profile)
             if registered.run_definition is not None
             else registered.definition
         )
-        self._validate_model(definition, model)
+        self._validate_model(definition, profile)
         content = self._run_content(definition, request)
         run = new_agent_run(session_id, request.request_key, request.ai_model_id)
         context = AgentRunContext(self, session, run, model, request.task_input)
@@ -327,11 +332,15 @@ class AgentService:
                     }
                 )
             )
-        runtime = AgentRuntime(self.store, tool_registry, LiteLlmAgentAdapter())
+        runtime = AgentRuntime(self.store, tool_registry, AgnoAgentExecutor())
         self._runtimes[run.run_id] = runtime
-        task = asyncio.create_task(runtime.run(run, model, definition, content))
+        task = asyncio.create_task(
+            runtime.run(run, model, profile, definition, content)
+        )
         self._tasks[run.run_id] = task
-        task.add_done_callback(lambda _: self._discard_run(run.run_id))
+        task.add_done_callback(
+            lambda completed_task: self._complete_run(run.run_id, model, completed_task)
+        )
         return run
 
     def run(self, run_id: str) -> AgentRun:
@@ -425,6 +434,28 @@ class AgentService:
     def _discard_run(self, run_id: str) -> None:
         self._tasks.pop(run_id, None)
         self._runtimes.pop(run_id, None)
+
+    def _complete_run(
+        self,
+        run_id: str,
+        model: AiModelConfiguration,
+        _task: asyncio.Task[AgentRun],
+    ) -> None:
+        run = self.library.load_agent_run(run_id)
+        if run is not None and any(
+            event.event_type == AgentEventType.TOOL_STATUS
+            and event.payload.get("stage") == "completed"
+            for event in self.run_events(run_id)
+        ):
+            self.capability_resolver.record_probe(
+                model,
+                {
+                    CapabilityName.TOOLS: Support.YES,
+                    CapabilityName.STREAMING_TOOLS: Support.YES,
+                    CapabilityName.TOOL_CHOICE_AUTO: Support.YES,
+                },
+            )
+        self._discard_run(run_id)
 
     def _registered_agents(self) -> list[RegisteredAgent]:
         marker = AgentDefinition(
@@ -537,7 +568,7 @@ class AgentService:
         self,
         definition: AgentDefinition,
         request: AgentRunCreate,
-        model: AiModelConfiguration,
+        profile: ModelProfile,
     ) -> AgentDefinition:
         edit_intent = request.task_input.get("intent") == "edit"
         if edit_intent:
@@ -548,7 +579,7 @@ class AgentService:
                     "requires_approval": True,
                 }
             )
-        if supports_tool_calling(model):
+        if profile.support(CapabilityName.TOOLS) != Support.NO:
             return definition
         return definition.model_copy(update={"tools": []})
 
@@ -561,14 +592,16 @@ class AgentService:
             return "执行任务：" + json.dumps(request.task_input, ensure_ascii=False)
         raise AgentServiceError("聊天消息不能为空")
 
-    @staticmethod
     def _availability(
-        definition: AgentDefinition, models: list[AiModelConfiguration]
+        self, definition: AgentDefinition, models: list[AiModelConfiguration]
     ) -> AgentDefinitionAvailability:
+        profiles = {
+            model.model_id: self.capability_resolver.resolve(model) for model in models
+        }
         compatible = [
             model.model_id
             for model in models
-            if AgentService._model_supports(definition, model)
+            if self._model_supports(definition, profiles[model.model_id])
         ]
         return AgentDefinitionAvailability(
             definition=definition,
@@ -576,39 +609,55 @@ class AgentService:
             compatible_model_ids=compatible,
             capability_model_ids={
                 AgentCapability.TOOLS: [
-                    model.model_id for model in models if supports_tool_calling(model)
+                    model.model_id
+                    for model in models
+                    if profiles[model.model_id].support(CapabilityName.TOOLS)
+                    != Support.NO
                 ],
                 AgentCapability.VISION: [
                     model.model_id
                     for model in models
-                    if IMAGE_INPUT_MODALITY in model.input_modalities
+                    if profiles[model.model_id].support(CapabilityName.VISION)
+                    != Support.NO
                 ],
-                AgentCapability.LONG_CONTEXT: [model.model_id for model in models],
+                AgentCapability.LONG_CONTEXT: [
+                    model.model_id
+                    for model in models
+                    if self._has_context_capacity(definition, profiles[model.model_id])
+                ],
             },
             unavailable_reason=None if compatible else "没有满足能力要求的模型",
         )
 
     @staticmethod
-    def _model_supports(
-        definition: AgentDefinition, model: AiModelConfiguration
-    ) -> bool:
+    def _model_supports(definition: AgentDefinition, profile: ModelProfile) -> bool:
         if (
             AgentCapability.TOOLS in definition.required_capabilities
-            and not supports_tool_calling(model)
+            and profile.support(CapabilityName.TOOLS) == Support.NO
         ):
             return False
         if (
             AgentCapability.VISION in definition.required_capabilities
-            and IMAGE_INPUT_MODALITY not in model.input_modalities
+            and profile.support(CapabilityName.VISION) == Support.NO
         ):
             return False
-        return True
+        return AgentService._has_context_capacity(definition, profile)
+
+    @staticmethod
+    def _has_context_capacity(
+        definition: AgentDefinition, profile: ModelProfile
+    ) -> bool:
+        context_tokens = profile.limits.context_tokens
+        return (
+            context_tokens is None
+            or context_tokens >= definition.minimum_context_tokens
+        )
 
     @classmethod
     def _validate_model(
-        cls, definition: AgentDefinition, model: AiModelConfiguration
+        cls, definition: AgentDefinition, profile: ModelProfile
     ) -> None:
-        if not cls._model_supports(definition, model):
+        if not cls._model_supports(definition, profile):
             raise AgentServiceError(
                 "所选模型不满足 Agent 的能力要求", "capability_unavailable"
             )

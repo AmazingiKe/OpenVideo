@@ -1,7 +1,12 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from openvideo.llm.errors import ToolCallingUnsupportedError
+from openvideo.llm.capability_resolver import CapabilityResolver
+from openvideo.llm.models_dev import ModelsDevCatalog
+from openvideo.llm.probe_cache import ProbeCache
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
 from openvideo.tools.llm import LlmCompletionError
@@ -20,12 +25,38 @@ MODEL_REQUEST = {
 }
 
 
+@pytest.fixture(autouse=True)
+def disable_models_dev_network(monkeypatch):
+    monkeypatch.setattr(
+        ModelsDevCatalog,
+        "_download_model",
+        lambda *_args: None,
+    )
+
+
+def pass_tool_probes(monkeypatch) -> None:
+    for probe_name in (
+        "probe_basic_tools",
+        "probe_streaming_tools",
+        "probe_named_tool_choice",
+        "probe_parallel_tools",
+        "probe_reasoning_tools",
+        "probe_vision_tools",
+    ):
+        monkeypatch.setattr(api, probe_name, lambda *_args: None)
+
+
 def create_client(tmp_path: Path) -> TestClient:
     preference_store = PreferenceStore(tmp_path / "config" / "preferences.json")
+    resolver = CapabilityResolver(
+        models_dev=ModelsDevCatalog(tmp_path / "config" / "models-dev.json"),
+        probe_cache=ProbeCache(tmp_path / "config" / "probes.json"),
+    )
     return TestClient(
         api.create_app(
             Settings(models_directory=str(tmp_path / "models")),
             preference_store,
+            capability_resolver=resolver,
         )
     )
 
@@ -51,35 +82,26 @@ def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
 
     timestamps = iter([10.0, 10.086])
     monkeypatch.setattr(api, "complete_text", complete_model)
-    monkeypatch.setattr(api, "probe_tool_calling", lambda *_args: None)
+    pass_tool_probes(monkeypatch)
     monkeypatch.setattr(api, "perf_counter", lambda: next(timestamps))
 
     with create_client(tmp_path) as client:
         response = client.post("/api/ai/models/test", json=MODEL_REQUEST)
 
     assert response.status_code == 200
-    assert response.json() == {
-        "available": True,
-        "latency_ms": 86,
-        "message": "模型响应正常",
-        "capabilities": {
-            "text": {
-                "available": True,
-                "tested": True,
-                "message": "文本响应正常",
-            },
-            "tools": {
-                "available": True,
-                "tested": True,
-                "message": "工具调用正常",
-            },
-            "vision": {
-                "available": False,
-                "tested": False,
-                "message": "模型配置未声明图片输入",
-            },
-        },
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["latency_ms"] == 86
+    assert payload["message"] == "模型响应正常"
+    assert payload["capabilities"]["text"]["support"] == "yes"
+    assert payload["capabilities"]["tools"] == {
+        "support": "yes",
+        "source": "runtime_probe",
+        "tested": True,
+        "message": "基础工具调用正常",
     }
+    assert payload["profile"]["capabilities"]["tools"] == "yes"
+    assert payload["profile"]["capability_sources"]["tools"] == "runtime_probe"
     assert captured_request["model"].litellm_model == "openai/test-model"
     assert captured_request["messages"] == [
         {"role": "user", "content": "Reply only with OK."}
@@ -101,28 +123,13 @@ def test_ai_model_returns_provider_failure_as_test_result(tmp_path: Path, monkey
         response = client.post("/api/ai/models/test", json=MODEL_REQUEST)
 
     assert response.status_code == 200
-    assert response.json() == {
-        "available": False,
-        "latency_ms": 24,
-        "message": "模型请求失败：密钥 [已隐藏] 无法识别 LiteLLM 供应商",
-        "capabilities": {
-            "text": {
-                "available": False,
-                "tested": True,
-                "message": "模型请求失败：密钥 [已隐藏] 无法识别 LiteLLM 供应商",
-            },
-            "tools": {
-                "available": False,
-                "tested": False,
-                "message": "文本连接失败，未测试工具调用",
-            },
-            "vision": {
-                "available": False,
-                "tested": False,
-                "message": "文本连接失败，未测试图片输入",
-            },
-        },
-    }
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["latency_ms"] == 24
+    assert payload["message"] == ("模型请求失败：密钥 [已隐藏] 无法识别 LiteLLM 供应商")
+    assert payload["capabilities"]["text"]["support"] == "no"
+    assert payload["capabilities"]["tools"]["support"] == "unknown"
+    assert payload["capabilities"]["tools"]["tested"] is False
 
 
 def test_ai_model_probes_declared_vision_and_reports_tool_failure(
@@ -133,11 +140,12 @@ def test_ai_model_probes_declared_vision_and_reports_tool_failure(
         "input_modalities": ["text", "image"],
     }
     monkeypatch.setattr(api, "complete_text", lambda *_args, **_kwargs: "OK")
+    pass_tool_probes(monkeypatch)
     monkeypatch.setattr(
         api,
-        "probe_tool_calling",
+        "probe_basic_tools",
         lambda *_args: (_ for _ in ()).throw(
-            LlmCompletionError("工具调用探测失败：供应商不支持 tools")
+            ToolCallingUnsupportedError("供应商不支持 tools")
         ),
     )
     vision_calls = []
@@ -152,11 +160,12 @@ def test_ai_model_probes_declared_vision_and_reports_tool_failure(
 
     assert response.status_code == 200
     assert response.json()["capabilities"]["tools"] == {
-        "available": False,
+        "support": "no",
+        "source": "runtime_probe",
         "tested": True,
-        "message": "工具调用探测失败：供应商不支持 tools",
+        "message": "基础工具调用已确认不支持：供应商不支持 tools",
     }
-    assert response.json()["capabilities"]["vision"]["available"] is True
+    assert response.json()["capabilities"]["vision"]["support"] == "yes"
     assert vision_calls == [(MODEL_ID, 30)]
 
 
@@ -170,15 +179,13 @@ def test_preferences_patch_preserves_typed_ai_models(tmp_path: Path):
 
     assert updated.status_code == 200
     assert listed.status_code == 200
-    assert listed.json() == [
-        {
-            "model_id": MODEL_ID,
-            "name": "测试模型",
-            "litellm_model": "openai/test-model",
-            "input_modalities": ["text"],
-            "tool_calling_mode": "auto",
-        }
-    ]
+    payload = listed.json()[0]
+    assert payload["model_id"] == MODEL_ID
+    assert payload["name"] == "测试模型"
+    assert payload["litellm_model"] == "openai/test-model"
+    assert payload["input_modalities"] == ["text"]
+    assert payload["capabilities"]["tools"] == "auto"
+    assert payload["profile"]["capabilities"]["tools"] == "unknown"
 
 
 def test_transcription_catalog_exposes_available_and_extension_models(tmp_path: Path):

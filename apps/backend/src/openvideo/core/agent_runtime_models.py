@@ -25,6 +25,7 @@ class AgentCapability(StrEnum):
 class AgentEventType(StrEnum):
     RUN_STATUS = "run.status"
     MESSAGE_DELTA = "message.delta"
+    REASONING_DELTA = "reasoning.delta"
     MESSAGE_COMPLETED = "message.completed"
     TOOL_STATUS = "tool.status"
     ARTIFACT_CREATED = "artifact.created"
