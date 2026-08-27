@@ -13,4 +13,5 @@
 
 | 编号 | 标题 | 状态 |
 | --- | --- | --- |
-| [0001](./0001-portable-library.md) | 采用可携带的文件夹资料库 | 提议中 |
+| [0001](./0001-portable-library.md) | 采用可携带的文件夹资料库 | 已接受 |
+| [0002](./0002-model-capabilities-and-agno-runtime.md) | 采用三态模型能力解析与 Agno Agent Runtime | 已接受 |
