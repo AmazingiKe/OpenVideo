@@ -7,20 +7,24 @@ import pytest
 from pydantic import BaseModel
 
 from openvideo.agent_runtime import (
-    AgentPreset,
     AgentRuntime,
     AgentSessionStore,
     AgentTool,
     AgentToolRegistry,
     new_agent_run,
+    provider_json_schema,
 )
 from openvideo.core.agent_runtime_models import (
+    AgentArtifact,
+    AgentDefinition,
     AgentEvent,
     AgentEventType,
     AgentModelResponse,
+    AgentMode,
     AgentRun,
     AgentSession,
     AgentToolCall,
+    AgentToolDescriptor,
 )
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
@@ -31,6 +35,7 @@ class MemoryRepository:
         self.sessions: dict[str, AgentSession] = {}
         self.runs: dict[str, AgentRun] = {}
         self.events: dict[str, list[AgentEvent]] = defaultdict(list)
+        self.artifacts: list[AgentArtifact] = []
 
     def save_agent_session(self, session: AgentSession) -> None:
         self.sessions[session.session_id] = session
@@ -44,8 +49,12 @@ class MemoryRepository:
     def load_agent_run(self, run_id: str) -> AgentRun | None:
         return self.runs.get(run_id)
 
-    def load_agent_runs(self) -> list[AgentRun]:
-        return list(self.runs.values())
+    def load_agent_runs(self, session_id: str | None = None) -> list[AgentRun]:
+        return [
+            run
+            for run in self.runs.values()
+            if session_id is None or run.session_id == session_id
+        ]
 
     def append_agent_event(
         self,
@@ -74,9 +83,20 @@ class MemoryRepository:
             if event.sequence > after_sequence
         ]
 
+    def load_agent_artifacts(
+        self, *, run_id: str | None = None, session_id: str | None = None
+    ) -> list[AgentArtifact]:
+        return [
+            artifact
+            for artifact in self.artifacts
+            if (run_id is None or artifact.run_id == run_id)
+            and (session_id is None or artifact.session_id == session_id)
+        ]
+
 
 class EchoInput(BaseModel):
     text: str
+    note: str | None = None
 
 
 class FakeAdapter:
@@ -95,7 +115,10 @@ class FakeAdapter:
 def setup_runtime(responses: list[AgentModelResponse]):
     repository = MemoryRepository()
     session = AgentSession(
-        session_id=f"session-{uuid7().hex}", agent_type="test", title="测试"
+        session_id=f"session-{uuid7().hex}",
+        agent_id="test",
+        asset_id=str(uuid7()),
+        title="测试",
     )
     repository.save_agent_session(session)
     registry = AgentToolRegistry()
@@ -109,122 +132,114 @@ def setup_runtime(responses: list[AgentModelResponse]):
     )
     adapter = FakeAdapter(responses)
     runtime = AgentRuntime(AgentSessionStore(repository), registry, adapter)
-    run = new_agent_run(session.session_id)
+    run = new_agent_run(
+        session.session_id,
+        f"request-{uuid7().hex}",
+        f"model-{uuid7().hex}",
+    )
     repository.save_agent_run(run)
     model = AiModelConfiguration(name="测试", litellm_model="openai/test")
-    preset = AgentPreset(
-        persona="测试 Agent", dynamic_context=lambda: "", allowed_tools=("echo",)
+    definition = AgentDefinition(
+        agent_id="test",
+        title="测试",
+        description="测试统一生命周期",
+        mode=AgentMode.CHAT,
+        prompt="测试 Agent",
+        tools=[AgentToolDescriptor(name="echo", description="回显")],
     )
-    return repository, adapter, runtime, run, model, preset
+    return repository, adapter, runtime, run, model, definition
 
 
 @pytest.mark.asyncio
-async def test_plain_reply_records_real_assistant_message_without_tool_call():
-    repository, _, runtime, run, model, preset = setup_runtime(
+async def test_plain_reply_uses_standardized_events():
+    repository, _, runtime, run, model, definition = setup_runtime(
         [AgentModelResponse(content="真实回复")]
     )
 
-    finished = await runtime.run(run, model, preset, "你好")
+    finished = await runtime.run(run, model, definition, "你好")
 
     assert finished.stage == "complete"
-    events = repository.events[run.session_id]
-    assert [event.event_type for event in events].count(AgentEventType.TOOL_CALL) == 0
-    assistant = next(
-        event for event in events if event.event_type == AgentEventType.ASSISTANT_MESSAGE
-    )
-    assert assistant.payload["content"] == "真实回复"
+    event_types = [event.event_type for event in repository.events[run.session_id]]
+    assert AgentEventType.RUN_STATUS in event_types
+    assert AgentEventType.MESSAGE_DELTA in event_types
+    assert AgentEventType.MESSAGE_COMPLETED in event_types
+    assert event_types[-1] == AgentEventType.RUN_COMPLETED
 
 
 @pytest.mark.asyncio
-async def test_tool_result_is_added_to_next_model_context():
-    call = AgentToolCall(call_id="call-1", name="echo", arguments={"text": "证据"})
-    repository, adapter, runtime, run, model, preset = setup_runtime(
+async def test_invalid_tool_arguments_can_be_retried_within_budget():
+    invalid = AgentToolCall(call_id="call-invalid", name="echo", arguments={})
+    valid = AgentToolCall(call_id="call-valid", name="echo", arguments={"text": "证据"})
+    repository, adapter, runtime, run, model, definition = setup_runtime(
         [
-            AgentModelResponse(tool_calls=[call]),
-            AgentModelResponse(content="根据证据回答"),
+            AgentModelResponse(tool_calls=[invalid]),
+            AgentModelResponse(tool_calls=[valid]),
+            AgentModelResponse(content="完成"),
         ]
     )
 
-    finished = await runtime.run(run, model, preset, "搜索后回答")
+    finished = await runtime.run(run, model, definition, "执行工具")
 
     assert finished.stage == "complete"
     assert any(message["role"] == "tool" for message in adapter.messages[1])
-    event_types = [event.event_type for event in repository.events[run.session_id]]
-    assert AgentEventType.TOOL_CALL in event_types
-    assert AgentEventType.TOOL_RESULT in event_types
+    tool_events = [
+        event
+        for event in repository.events[run.session_id]
+        if event.event_type == AgentEventType.TOOL_STATUS
+    ]
+    assert any(event.payload["stage"] == "failed" for event in tool_events)
+    assert any(event.payload["stage"] == "completed" for event in tool_events)
 
 
 @pytest.mark.asyncio
-async def test_archive_messages_do_not_enter_model_context():
-    repository, adapter, runtime, run, model, preset = setup_runtime(
-        [AgentModelResponse(content="新回复")]
+async def test_required_tool_missing_marks_run_failed():
+    repository, _, runtime, run, model, definition = setup_runtime(
+        [AgentModelResponse(content="跳过工具")]
     )
-    repository.append_agent_event(
-        run.session_id,
-        None,
-        AgentEventType.ARCHIVE_MESSAGE,
-        {"role": "assistant", "content": "旧写死回复"},
-    )
+    definition = definition.model_copy(update={"required_tools": {"echo"}})
 
-    await runtime.run(run, model, preset, "新问题")
+    finished = await runtime.run(run, model, definition, "必须执行")
 
-    assert all(
-        message.get("content") != "旧写死回复" for message in adapter.messages[0]
-    )
+    assert finished.stage == "failed"
+    assert finished.error_code == "required_result_missing"
+    assert repository.events[run.session_id][-1].event_type == AgentEventType.RUN_FAILED
 
 
 @pytest.mark.asyncio
-async def test_cancelled_run_closes_turn_without_calling_model():
-    repository, adapter, runtime, run, model, preset = setup_runtime(
+async def test_missing_declared_tool_blocks_run_before_provider_call():
+    repository, adapter, runtime, run, model, definition = setup_runtime([])
+    definition = definition.model_copy(
+        update={"tools": [AgentToolDescriptor(name="missing", description="不存在")]}
+    )
+
+    with pytest.raises(Exception, match="不存在的工具"):
+        await runtime.run(run, model, definition, "不能启动")
+
+    assert adapter.messages == []
+    assert repository.runs[run.run_id].stage == "pending"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_run_does_not_call_provider():
+    repository, adapter, runtime, run, model, definition = setup_runtime(
         [AgentModelResponse(content="不应返回")]
     )
     runtime.cancel(run.run_id)
 
-    finished = await runtime.run(run, model, preset, "取消")
+    finished = await runtime.run(run, model, definition, "取消")
 
     assert finished.stage == "cancelled"
     assert adapter.messages == []
-    assert repository.events[run.session_id][-2].event_type == AgentEventType.TURN_END
-
-
-@pytest.mark.asyncio
-async def test_invalid_tool_arguments_are_recorded_as_tool_result():
-    call = AgentToolCall(call_id="call-invalid", name="echo", arguments={})
-    repository, _, runtime, run, model, preset = setup_runtime(
-        [
-            AgentModelResponse(tool_calls=[call]),
-            AgentModelResponse(content="参数无效，请补充内容"),
-        ]
+    assert (
+        repository.events[run.session_id][-1].event_type == AgentEventType.RUN_CANCELLED
     )
 
-    await runtime.run(run, model, preset, "执行工具")
 
-    result = next(
-        event
-        for event in repository.events[run.session_id]
-        if event.event_type == AgentEventType.TOOL_RESULT
-    )
-    assert result.payload["result"]["ok"] is False
-    assert result.payload["result"]["error"] == "工具参数无效"
+def test_provider_schema_resolves_references_nullable_and_defaults():
+    schema = provider_json_schema(EchoInput.model_json_schema())
 
-
-@pytest.mark.asyncio
-async def test_step_limit_fails_with_explicit_reason():
-    calls = [
-        AgentModelResponse(
-            tool_calls=[
-                AgentToolCall(
-                    call_id=f"call-{index}",
-                    name="echo",
-                    arguments={"text": "继续"},
-                )
-            ]
-        )
-        for index in range(2)
-    ]
-    repository, _, runtime, run, model, preset = setup_runtime(calls)
-
-    finished = await runtime.run(run, model, preset, "循环", max_steps=2)
-
-    assert finished.stage == "failed"
-    assert finished.error_message == "Agent 单轮超过最大 Step 数 2"
+    assert "$defs" not in schema
+    assert "$ref" not in str(schema)
+    assert "default" not in str(schema)
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["note"]["nullable"] is True

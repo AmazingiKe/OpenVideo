@@ -34,11 +34,7 @@ def uuid7() -> UUID:
         _last_rand_a = rand_a
         random_b = int.from_bytes(os.urandom(8), "big") & _RANDOM_B_MASK
         value = (
-            (timestamp_ms << 80)
-            | (0x7 << 76)
-            | (rand_a << 64)
-            | (0x2 << 62)
-            | random_b
+            (timestamp_ms << 80) | (0x7 << 76) | (rand_a << 64) | (0x2 << 62) | random_b
         )
         return UUID(int=value)
 
@@ -50,3 +46,17 @@ def is_uuid7(identifier: str) -> bool:
     except (ValueError, AttributeError):
         return False
     return str(parsed_identifier) == identifier and parsed_identifier.version == 7
+
+
+def is_prefixed_uuid7(identifier: str, prefix: str) -> bool:
+    """校验对外标识符，确保语义前缀后只能出现 UUIDv7 的定长十六进制。"""
+    if not identifier.startswith(prefix):
+        return False
+    hexadecimal = identifier[len(prefix) :]
+    if len(hexadecimal) != 32:
+        return False
+    try:
+        parsed_identifier = UUID(hex=hexadecimal)
+    except ValueError:
+        return False
+    return parsed_identifier.version == 7 and parsed_identifier.hex == hexadecimal

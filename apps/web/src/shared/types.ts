@@ -107,48 +107,16 @@ export type AiModelTestResult = {
   available: boolean;
   latency_ms: number;
   message: string;
+  capabilities?: Partial<
+    Record<
+      "text" | "tools" | "vision",
+      { available: boolean; tested: boolean; message: string }
+    >
+  >;
 };
 
 export type AnalysisToolSection =
   "video_information" | "transcription" | "transcript_correction" | "analysis";
-
-export type TranscriptCorrectionScope = "all" | "selection";
-
-export type AgentExecutionMode = "automatic" | "chunked" | "compressed";
-export type AgentStage =
-  | "pending"
-  | "preparing"
-  | "invoking_model"
-  | "validating"
-  | "waiting_for_input"
-  | "applying"
-  | "complete"
-  | "failed"
-  | "cancelled";
-export type AgentQuestionAction =
-  "change_model" | "chunk" | "compress" | "rerun_latest" | "cancel";
-export type AgentQuestion = {
-  question_id: string;
-  question_type: "context_limit" | "transcript_changed";
-  message: string;
-  actions: AgentQuestionAction[];
-};
-export type AgentJob = {
-  job_id: string;
-  asset_id: string;
-  agent_type: "transcript_correction";
-  execution_mode: AgentExecutionMode;
-  stage: AgentStage;
-  progress_percent: number;
-  message: string;
-  ai_model_id: string;
-  segment_indices: number[] | null;
-  transcript_checksum: string;
-  question: AgentQuestion | null;
-  error_message: string | null;
-  created_at: string;
-  updated_at: string;
-};
 
 export type MarkersPageSettings = {
   agent_panel_size_percent: number;
@@ -196,7 +164,9 @@ type AnalysisStage =
   | "building_timeline"
   | "extracting_frames"
   | "describing_visuals"
+  | "waiting_for_approval"
   | "complete"
+  | "rejected"
   | "failed";
 
 export type AnalysisMode = "full" | "markers";
@@ -286,6 +256,8 @@ export type AnalysisJob = {
   progress_percent: number;
   message: string;
   error_message: string | null;
+  proposal_base_digest: string | null;
+  proposed_segments: MediaSegment[];
   created_at: string;
   updated_at: string;
 };
@@ -428,23 +400,23 @@ export type SummaryExportResult = {
 };
 export type AgentSession = {
   session_id: string;
-  agent_type: string;
+  agent_id: string;
+  asset_id: string;
   title: string;
+  context: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
 export type AgentEventType =
-  | "turn/start"
-  | "turn/end"
-  | "step/start"
-  | "step/end"
-  | "user/message"
-  | "assistant/chunk"
-  | "assistant/message"
-  | "tool/call"
-  | "tool/result"
-  | "run/status"
-  | "archive/message";
+  | "run.status"
+  | "message.delta"
+  | "message.completed"
+  | "tool.status"
+  | "artifact.created"
+  | "context.compressed"
+  | "run.completed"
+  | "run.failed"
+  | "run.cancelled";
 export type AgentEvent = {
   event_id: string;
   session_id: string;
@@ -454,78 +426,71 @@ export type AgentEvent = {
   payload: Record<string, unknown>;
   created_at: string;
 };
-export type MarkerRetrievalMode = "transcript" | "auto" | "vision";
-export type MarkerProposalOperation = "create" | "update" | "delete" | "merge";
-export type MarkerProposalChange = {
-  operation: MarkerProposalOperation;
-  before: MediaMarker[];
-  after: MediaMarker | null;
-  reason: string;
-  evidence: string[];
-};
-export type MarkerProposal = {
-  proposal_id: string;
-  session_id: string;
-  asset_id: string;
-  changes: MarkerProposalChange[];
-  status: "pending" | "accepted" | "rejected" | "stale";
-  created_at: string;
-};
-export type MarkerAgentSession = {
-  session: AgentSession;
-  asset_id: string;
-};
-export type MarkerAgentSessionState = MarkerAgentSession & {
-  events: AgentEvent[];
-  proposals: MarkerProposal[];
-};
-export type SummaryAgentSession = {
-  session: AgentSession;
-  asset_id: string;
-  root_document_id: string;
-};
-export type SummaryMediaSuggestion = {
-  suggestion_id: string;
-  media_type: "image" | "gif";
-  start_seconds: number;
-  end_seconds: number | null;
-  insert_after: string | null;
-  caption: string;
-};
-export type SummaryMediaArtifact = {
-  media_id: string;
-  asset_id: string;
-  document_id: string;
-  media_type: "image" | "gif";
-  relative_path: string;
-  caption: string;
-  start_seconds: number;
-  end_seconds: number | null;
-  created_at: string;
-};
-export type SummaryEditProposal = {
-  proposal_id: string;
-  session_id: string;
-  document_id: string;
-  base_revision: number;
-  proposed_markdown: string;
-  explanation: string;
-  diff: string;
-  suggested_subdocuments: { title: string; markdown: string }[];
-  media_suggestions: SummaryMediaSuggestion[];
-  status: "pending" | "accepted" | "rejected" | "stale";
-  created_at: string;
-};
-export type SummaryAgentSessionState = SummaryAgentSession & {
-  events: AgentEvent[];
-  proposals: SummaryEditProposal[];
-};
 export type AgentRun = {
   run_id: string;
   session_id: string;
+  request_key: string;
+  model_id: string;
   stage:
-    "pending" | "running" | "complete" | "failed" | "cancelled" | "interrupted";
+    | "pending"
+    | "running"
+    | "waiting_for_approval"
+    | "complete"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
+  error_code: string | null;
+  error_message: string | null;
+  latest_event_sequence: number;
+  created_at: string;
+  started_at: string | null;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type AgentCapability = "tools" | "vision" | "long_context";
+export type AgentToolDescriptor = {
+  name: string;
+  description: string;
+  prerequisites: string[];
+};
+export type AgentDefinition = {
+  agent_id: string;
+  title: string;
+  description: string;
+  mode: "chat" | "task";
+  prompt: string;
+  required_capabilities: AgentCapability[];
+  minimum_context_tokens: number;
+  tools: AgentToolDescriptor[];
+  required_tools: string[];
+  requires_approval: boolean;
+  result_type: string | null;
+  input_mode: "message" | "task";
+};
+export type AgentDefinitionAvailability = {
+  definition: AgentDefinition;
+  available: boolean;
+  compatible_model_ids: string[];
+  capability_model_ids: Partial<Record<AgentCapability, string[]>>;
+  unavailable_reason: string | null;
+};
+export type AgentArtifact = {
+  artifact_id: string;
+  run_id: string;
+  session_id: string;
+  agent_id: string;
+  asset_id: string;
+  result_type: string;
+  payload: Record<string, unknown>;
+  status: "pending" | "approved" | "rejected" | "stale";
   error_message: string | null;
   created_at: string;
   updated_at: string;
+};
+export type AgentSessionState = {
+  session: AgentSession;
+  runs: AgentRun[];
+  events: AgentEvent[];
+  artifacts: AgentArtifact[];
 };

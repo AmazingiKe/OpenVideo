@@ -159,7 +159,7 @@ export function MessageComposer({
         placeholder={placeholder}
         aria-label="Agent 指令"
         rows={2}
-        disabled={disabled || pending}
+        disabled={disabled}
         className="max-h-32 min-h-16 resize-none"
       />
       <Button

@@ -14,9 +14,21 @@ from openvideo.core.media_models import MediaMarker
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 
-MAX_EVENT_DURATION_SECONDS = 180.0
-MIN_SCENE_SPLIT_DURATION_SECONDS = 45.0
 SPEECH_GAP_SECONDS = 8.0
+SEMANTIC_TRANSITION_PREFIXES = (
+    "接下来",
+    "下面",
+    "然后我们",
+    "现在来看",
+    "最后",
+    "总结一下",
+    "第二",
+    "第三",
+    "next",
+    "now let's",
+    "finally",
+    "in summary",
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +60,15 @@ class TimelineMoment:
     marker_influences: tuple[MarkerInfluence, ...] = ()
 
 
+@dataclass(frozen=True)
+class SemanticChapter:
+    """章节边界引用字幕索引，避免内部窗口时间成为最终事件边界。"""
+
+    start_index: int
+    end_index: int
+    title: str = ""
+
+
 def select_timeline_moments(
     transcript: Transcript,
     mode: AnalysisMode,
@@ -55,24 +76,74 @@ def select_timeline_moments(
     duration_seconds: float | None,
     scene_boundaries: list[float] | None = None,
     strategy: AnalysisStrategy | None = None,
+    semantic_chapters: list[SemanticChapter] | None = None,
 ) -> list[TimelineMoment]:
     """全片按内容边界建事件；标记模式只保留用户主动关注的上下文。"""
     resolved_strategy = strategy or AnalysisStrategy()
-    moments = _full_timeline_moments(transcript.segments, scene_boundaries or [])
+    if mode == AnalysisMode.MARKERS:
+        moments = _precise_marker_moments(
+            transcript.segments,
+            markers,
+            duration_seconds,
+        )
+        return prioritize_timeline_moments(moments, resolved_strategy)
+    moments = _full_timeline_moments(
+        transcript.segments,
+        scene_boundaries or [],
+        semantic_chapters,
+    )
     moments = _attach_markers(
         moments,
         markers,
         duration_seconds,
         resolved_strategy,
     )
-    if mode == AnalysisMode.MARKERS:
-        moments = _marker_moments(
-            moments,
-            markers,
-            duration_seconds,
-            resolved_strategy,
-        )
     return prioritize_timeline_moments(moments, resolved_strategy)
+
+
+def _precise_marker_moments(
+    segments: list[TranscriptSegment],
+    markers: list[MediaMarker],
+    duration_seconds: float | None,
+) -> list[TimelineMoment]:
+    """局部重跑只采用人工标记自身边界，不继承旧事件或策略扩展范围。"""
+
+    moments: list[TimelineMoment] = []
+    for marker in sorted(markers, key=lambda item: item.start_seconds):
+        focus_start = marker.start_seconds
+        focus_end = (
+            marker.end_seconds if marker.end_seconds is not None else focus_start
+        )
+        if focus_end <= focus_start:
+            focus_end = focus_start + 0.1
+        if duration_seconds is not None:
+            focus_end = min(focus_end, duration_seconds)
+        matching = [
+            segment
+            for segment in segments
+            if segment.end_seconds >= focus_start and segment.start_seconds <= focus_end
+        ]
+        influence = MarkerInfluence(
+            marker_id=marker.marker_id,
+            anchor_seconds=(focus_start + focus_end) / 2,
+            focus_start_seconds=focus_start,
+            focus_end_seconds=focus_end,
+            range_before_seconds=0,
+            range_after_seconds=0,
+            event_weight=1,
+        )
+        moments.append(
+            TimelineMoment(
+                start_seconds=focus_start,
+                end_seconds=max(focus_end, focus_start + 0.1),
+                transcript_text=_merge_text(matching),
+                marker_ids=(marker.marker_id,),
+                tags=tuple(dict.fromkeys(marker.tags)),
+                marker_weight=1,
+                marker_influences=(influence,),
+            )
+        )
+    return moments
 
 
 def prioritize_timeline_moments(
@@ -125,13 +196,26 @@ def _score_moment(moment: TimelineMoment, strategy: AnalysisStrategy) -> Timelin
 def _classify_content(moment: TimelineMoment) -> str:
     combined = f"{moment.transcript_text} {' '.join(moment.tags)}".lower()
     signals = (
-        ("formula_derivation", ("公式", "推导", "等于", "方程", "theorem", "proof", "=")),
-        ("case_demonstration", ("案例", "示例", "例如", "演示", "操作", "步骤", "demo")),
-        ("questions_conclusions", ("疑问", "问题", "结论", "总结", "因此", "为什么", "?", "？")),
+        (
+            "formula_derivation",
+            ("公式", "推导", "等于", "方程", "theorem", "proof", "="),
+        ),
+        (
+            "case_demonstration",
+            ("案例", "示例", "例如", "演示", "操作", "步骤", "demo"),
+        ),
+        (
+            "questions_conclusions",
+            ("疑问", "问题", "结论", "总结", "因此", "为什么", "?", "？"),
+        ),
         ("visual_content", ("画面", "图表", "界面", "这里可以看到", "如图")),
     )
     return next(
-        (content_type for content_type, keywords in signals if any(keyword in combined for keyword in keywords)),
+        (
+            content_type
+            for content_type, keywords in signals
+            if any(keyword in combined for keyword in keywords)
+        ),
         "core_concepts",
     )
 
@@ -139,9 +223,15 @@ def _classify_content(moment: TimelineMoment) -> str:
 def _full_timeline_moments(
     segments: list[TranscriptSegment],
     scene_boundaries: list[float],
+    semantic_chapters: list[SemanticChapter] | None = None,
 ) -> list[TimelineMoment]:
     if not segments:
         return []
+    if semantic_chapters:
+        return [
+            _moment_from_segments(segments[chapter.start_index : chapter.end_index + 1])
+            for chapter in semantic_chapters
+        ]
     groups: list[list[TranscriptSegment]] = []
     current: list[TranscriptSegment] = []
     for segment in segments:
@@ -159,74 +249,55 @@ def _starts_new_event(
     next_segment: TranscriptSegment,
     scene_boundaries: list[float],
 ) -> bool:
-    event_start = current[0].start_seconds
     previous_end = current[-1].end_seconds
     if next_segment.start_seconds - previous_end >= SPEECH_GAP_SECONDS:
         return True
-    event_duration = next_segment.end_seconds - event_start
-    if event_duration >= MAX_EVENT_DURATION_SECONDS:
-        return True
-    if event_duration < MIN_SCENE_SPLIT_DURATION_SECONDS:
+    normalized_text = next_segment.text.casefold().lstrip(" ，。！？,.!?:：")
+    if not normalized_text.startswith(SEMANTIC_TRANSITION_PREFIXES):
         return False
     previous_start = current[-1].start_seconds
-    return any(previous_start < boundary <= next_segment.start_seconds for boundary in scene_boundaries)
-
-
-def _marker_moments(
-    moments: list[TimelineMoment],
-    markers: list[MediaMarker],
-    duration_seconds: float | None,
-    strategy: AnalysisStrategy,
-) -> list[TimelineMoment]:
-    selected = [moment for moment in moments if moment.marker_influences]
-    represented_marker_ids = {
-        influence.marker_id
-        for moment in selected
-        for influence in moment.marker_influences
-    }
-    selected.extend(
-        _fallback_marker_moment(marker, duration_seconds, strategy)
-        for marker in markers
-        if marker.marker_id not in represented_marker_ids
+    scene_changed = any(
+        previous_start < boundary <= next_segment.start_seconds
+        for boundary in scene_boundaries
     )
-    return sorted(selected, key=lambda moment: moment.start_seconds)
+    return scene_changed or len(current) >= 2
 
 
-def _fallback_marker_moment(
-    marker: MediaMarker,
-    duration_seconds: float | None,
-    strategy: AnalysisStrategy,
-) -> TimelineMoment:
-    (
-        range_start,
-        range_end,
-        focus_start,
-        focus_end,
-        before_seconds,
-        after_seconds,
-    ) = _resolved_marker_range(marker, strategy, duration_seconds)
-    if range_end <= range_start:
-        range_start = max(0.0, focus_start - 0.1)
-        range_end = max(focus_end, range_start + 0.1)
-    anchor_seconds = (focus_start + focus_end) / 2
-    influence = MarkerInfluence(
-        marker_id=marker.marker_id,
-        anchor_seconds=anchor_seconds,
-        focus_start_seconds=focus_start,
-        focus_end_seconds=focus_end,
-        range_before_seconds=before_seconds,
-        range_after_seconds=after_seconds,
-        event_weight=1,
-    )
-    return TimelineMoment(
-        start_seconds=range_start,
-        end_seconds=range_end,
-        transcript_text="",
-        marker_ids=(marker.marker_id,),
-        tags=tuple(dict.fromkeys(marker.tags)),
-        marker_weight=1,
-        marker_influences=(influence,),
-    )
+def merge_semantic_chapter_candidates(
+    segment_count: int,
+    candidates: list[SemanticChapter],
+) -> list[SemanticChapter]:
+    """把重叠窗口候选归并为一次覆盖全片且互不重叠的最终章节。"""
+
+    if segment_count <= 0:
+        return []
+    valid = [
+        chapter
+        for chapter in candidates
+        if 0 <= chapter.start_index <= chapter.end_index < segment_count
+    ]
+    starts: list[tuple[int, str]] = [(0, valid[0].title if valid else "")]
+    for chapter in sorted(valid, key=lambda item: (item.start_index, item.end_index)):
+        if chapter.start_index == 0:
+            continue
+        if starts and chapter.start_index == starts[-1][0]:
+            if not starts[-1][1] and chapter.title:
+                starts[-1] = (starts[-1][0], chapter.title)
+            continue
+        starts.append((chapter.start_index, chapter.title))
+    chapters = [
+        SemanticChapter(
+            start_index=start,
+            end_index=(
+                starts[index + 1][0] - 1
+                if index + 1 < len(starts)
+                else segment_count - 1
+            ),
+            title=title,
+        )
+        for index, (start, title) in enumerate(starts)
+    ]
+    return [chapter for chapter in chapters if chapter.start_index <= chapter.end_index]
 
 
 def _attach_markers(
@@ -370,4 +441,6 @@ def _moment_from_segments(segments: list[TranscriptSegment]) -> TimelineMoment:
 
 
 def _merge_text(segments: list[TranscriptSegment]) -> str:
-    return " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+    return " ".join(
+        segment.text.strip() for segment in segments if segment.text.strip()
+    )

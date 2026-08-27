@@ -51,6 +51,7 @@ def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
 
     timestamps = iter([10.0, 10.086])
     monkeypatch.setattr(api, "complete_text", complete_model)
+    monkeypatch.setattr(api, "probe_tool_calling", lambda *_args: None)
     monkeypatch.setattr(api, "perf_counter", lambda: next(timestamps))
 
     with create_client(tmp_path) as client:
@@ -61,6 +62,23 @@ def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
         "available": True,
         "latency_ms": 86,
         "message": "模型响应正常",
+        "capabilities": {
+            "text": {
+                "available": True,
+                "tested": True,
+                "message": "文本响应正常",
+            },
+            "tools": {
+                "available": True,
+                "tested": True,
+                "message": "工具调用正常",
+            },
+            "vision": {
+                "available": False,
+                "tested": False,
+                "message": "模型配置未声明图片输入",
+            },
+        },
     }
     assert captured_request["model"].litellm_model == "openai/test-model"
     assert captured_request["messages"] == [
@@ -87,7 +105,59 @@ def test_ai_model_returns_provider_failure_as_test_result(tmp_path: Path, monkey
         "available": False,
         "latency_ms": 24,
         "message": "模型请求失败：密钥 [已隐藏] 无法识别 LiteLLM 供应商",
+        "capabilities": {
+            "text": {
+                "available": False,
+                "tested": True,
+                "message": "模型请求失败：密钥 [已隐藏] 无法识别 LiteLLM 供应商",
+            },
+            "tools": {
+                "available": False,
+                "tested": False,
+                "message": "文本连接失败，未测试工具调用",
+            },
+            "vision": {
+                "available": False,
+                "tested": False,
+                "message": "文本连接失败，未测试图片输入",
+            },
+        },
     }
+
+
+def test_ai_model_probes_declared_vision_and_reports_tool_failure(
+    tmp_path: Path, monkeypatch
+):
+    request = {
+        **MODEL_REQUEST,
+        "input_modalities": ["text", "image"],
+    }
+    monkeypatch.setattr(api, "complete_text", lambda *_args, **_kwargs: "OK")
+    monkeypatch.setattr(
+        api,
+        "probe_tool_calling",
+        lambda *_args: (_ for _ in ()).throw(
+            LlmCompletionError("工具调用探测失败：供应商不支持 tools")
+        ),
+    )
+    vision_calls = []
+    monkeypatch.setattr(
+        api,
+        "probe_image_input",
+        lambda model, timeout: vision_calls.append((model.model_id, timeout)),
+    )
+
+    with create_client(tmp_path) as client:
+        response = client.post("/api/ai/models/test", json=request)
+
+    assert response.status_code == 200
+    assert response.json()["capabilities"]["tools"] == {
+        "available": False,
+        "tested": True,
+        "message": "工具调用探测失败：供应商不支持 tools",
+    }
+    assert response.json()["capabilities"]["vision"]["available"] is True
+    assert vision_calls == [(MODEL_ID, 30)]
 
 
 def test_preferences_patch_preserves_typed_ai_models(tmp_path: Path):

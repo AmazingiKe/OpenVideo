@@ -14,6 +14,10 @@ import type {
   TranscriptionOptions,
 } from "@/shared/types";
 
+vi.mock("@/components/AgentPanel", () => ({
+  AgentPanel: () => <div>字幕纠错 Agent</div>,
+}));
+
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 const MARKERS: MediaMarker[] = [
   {
@@ -197,11 +201,10 @@ describe("AnalysisToolPanel", () => {
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         set_analysis_strategy={vi.fn()}
         on_start_analysis={vi.fn()}
-        selected_transcript_count={0}
-        active_correction_scope={null}
-        correction_agent_job={null}
-        on_start_correction_agent={vi.fn()}
-        on_agent_response={vi.fn()}
+        analysis_proposal={null}
+        on_resolve_analysis={vi.fn()}
+        selected_transcript_indices={[]}
+        on_transcript_changed={vi.fn()}
         open_sections={["video_information"]}
         on_open_sections_change={vi.fn()}
         collapsed
@@ -214,27 +217,14 @@ describe("AnalysisToolPanel", () => {
     expect(change_collapsed).toHaveBeenCalledWith(false);
   });
 
-  it("corrects the full transcript or the selected timeline segment", () => {
-    const start_correction_agent = vi.fn();
+  it("selects the full transcript or the selected timeline segment", () => {
     render_panel(["transcript_correction"], {
-      start_correction_agent,
-      selected_transcript_count: 1,
+      selected_transcript_indices: [1],
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "自动全部修正" }));
-    fireEvent.click(screen.getByRole("button", { name: "选择修正" }));
-
-    expect(start_correction_agent).toHaveBeenNthCalledWith(
-      1,
-      "all",
-      AI_MODELS[0].model_id,
-    );
-    expect(start_correction_agent).toHaveBeenNthCalledWith(
-      2,
-      "selection",
-      AI_MODELS[0].model_id,
-    );
+    fireEvent.click(screen.getByRole("radio", { name: "时间线选择" }));
     expect(screen.getByText("已选择 1 条")).toBeInTheDocument();
+    expect(screen.getByText("字幕纠错 Agent")).toBeInTheDocument();
   });
 
   it("starts transcription with the configured default model", () => {
@@ -290,8 +280,7 @@ function render_panel(
     start_analysis?: (mode: AnalysisMode, marker_ids: string[]) => void;
     start_transcription?: (options: TranscriptionOptions) => void;
     change_sections?: (sections: AnalysisToolSection[]) => void;
-    start_correction_agent?: (scope: "all" | "selection") => void;
-    selected_transcript_count?: number;
+    selected_transcript_indices?: number[];
     has_transcript?: boolean;
     transcription_models?: TranscriptionModelDescriptor[];
   } = {},
@@ -317,11 +306,10 @@ function render_panel(
         analysis_strategy={analysis_strategy}
         set_analysis_strategy={set_analysis_strategy}
         on_start_analysis={options.start_analysis ?? vi.fn()}
-        selected_transcript_count={options.selected_transcript_count ?? 0}
-        active_correction_scope={null}
-        correction_agent_job={null}
-        on_start_correction_agent={options.start_correction_agent ?? vi.fn()}
-        on_agent_response={vi.fn()}
+        analysis_proposal={null}
+        on_resolve_analysis={vi.fn()}
+        selected_transcript_indices={options.selected_transcript_indices ?? []}
+        on_transcript_changed={vi.fn()}
         open_sections={open_sections}
         on_open_sections_change={options.change_sections ?? vi.fn()}
       />

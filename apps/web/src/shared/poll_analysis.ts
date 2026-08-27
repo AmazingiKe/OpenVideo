@@ -3,7 +3,12 @@ import type { AnalysisJob } from "./types";
 
 const analysis_poll_interval_ms = 1000;
 const max_poll_attempts = 60 * 60 * 6;
-const terminal_stages = new Set(["complete", "failed"]);
+const terminal_stages = new Set([
+  "waiting_for_approval",
+  "complete",
+  "rejected",
+  "failed",
+]);
 
 export async function poll_analysis(
   initial_job: AnalysisJob,

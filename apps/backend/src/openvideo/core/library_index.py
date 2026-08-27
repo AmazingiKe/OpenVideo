@@ -19,21 +19,23 @@ from openvideo.core.folder_models import Folder, FolderManifest
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 14
+DATABASE_VERSION = 16
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
     "agent_runs",
-    "summary_agent_sessions",
-    "summary_agent_proposals",
-    "marker_agent_sessions",
-    "marker_agent_proposals",
+    "agent_artifacts",
 }
 LEGACY_AGENT_TABLES = {
+    "agent_jobs",
     "summary_conversations",
     "summary_messages",
     "summary_proposals",
     "summary_agent_runs",
+    "summary_agent_sessions",
+    "summary_agent_proposals",
+    "marker_agent_sessions",
+    "marker_agent_proposals",
 }
 
 
@@ -249,61 +251,6 @@ def replace_asset_projection(
         document_ids,
     )
 
-    for record in bundle.conversations:
-        legacy = record.conversation
-        session_id = f"session-{legacy.conversation_id.removeprefix('conversation-')}"
-        connection.execute(
-            "INSERT INTO agent_sessions "
-            "(session_id, agent_type, title, created_at, updated_at) "
-            "VALUES (?, 'summary', ?, ?, ?) ON CONFLICT(session_id) DO NOTHING",
-            (
-                session_id,
-                legacy.title,
-                legacy.created_at.isoformat(),
-                legacy.updated_at.isoformat(),
-            ),
-        )
-        connection.execute(
-            "INSERT INTO summary_agent_sessions(session_id, asset_id, root_document_id) "
-            "VALUES (?, ?, ?) ON CONFLICT(session_id) DO NOTHING",
-            (session_id, legacy.asset_id, legacy.root_document_id),
-        )
-        for sequence, message in enumerate(record.messages, start=1):
-            event_id = f"event-{message.message_id.removeprefix('message-')}"
-            payload = json.dumps(
-                {
-                    "legacy_message_id": message.message_id,
-                    "role": message.role.value,
-                    "content": message.content,
-                    "created_at": message.created_at.isoformat(),
-                },
-                ensure_ascii=False,
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO agent_events "
-                "(event_id, session_id, sequence, run_id, event_type, payload, created_at) "
-                "VALUES (?, ?, ?, NULL, 'archive/message', ?, ?)",
-                (
-                    event_id,
-                    session_id,
-                    sequence,
-                    payload,
-                    message.created_at.isoformat(),
-                ),
-            )
-        for proposal in record.proposals:
-            proposal_values = {
-                key: _sqlite_value(value)
-                for key, value in proposal.model_dump(mode="json").items()
-            }
-            columns = tuple(proposal_values)
-            connection.execute(
-                f"INSERT OR IGNORE INTO summary_agent_proposals "
-                f"({', '.join(columns)}) VALUES "
-                f"({', '.join('?' for _ in columns)})",
-                tuple(proposal_values[column] for column in columns),
-            )
-
     connection.execute(
         "DELETE FROM summary_media WHERE asset_id = ?", (asset.asset_id,)
     )
@@ -343,9 +290,8 @@ def _database_matches_schema(database_path: Path) -> bool:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        proposal_columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(summary_agent_proposals)")
+        artifact_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(agent_artifacts)")
         }
         asset_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(assets)")
@@ -358,7 +304,7 @@ def _database_matches_schema(database_path: Path) -> bool:
         and healthy
         and REQUIRED_AGENT_TABLES <= tables
         and not LEGACY_AGENT_TABLES & tables
-        and "session_id" in proposal_columns
+        and {"artifact_id", "result_type", "payload"} <= artifact_columns
         and "folders" in tables
         and "folder_id" in asset_columns
     )
@@ -545,14 +491,8 @@ CREATE TABLE analysis_jobs (
     job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, strategy TEXT NOT NULL,
     stage TEXT NOT NULL, progress_percent REAL NOT NULL, message TEXT NOT NULL,
-    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE agent_jobs (
-    job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    agent_type TEXT NOT NULL, execution_mode TEXT NOT NULL, stage TEXT NOT NULL,
-    progress_percent REAL NOT NULL, message TEXT NOT NULL, ai_model_id TEXT NOT NULL,
-    segment_indices TEXT, transcript_checksum TEXT NOT NULL, question TEXT,
-    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    error_message TEXT, proposal_base_digest TEXT, proposed_segments TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE timeline_segments (
     segment_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
@@ -580,21 +520,16 @@ CREATE TABLE summary_documents (
     updated_at TEXT NOT NULL
 );
 CREATE TABLE agent_sessions (
-    session_id TEXT PRIMARY KEY, agent_type TEXT NOT NULL, title TEXT NOT NULL,
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE summary_agent_sessions (
-    session_id TEXT PRIMARY KEY REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
     asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    root_document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE
-);
-CREATE TABLE marker_agent_sessions (
-    session_id TEXT PRIMARY KEY REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
-    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE
+    title TEXT NOT NULL, context TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE agent_runs (
     run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
-    stage TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    request_key TEXT NOT NULL UNIQUE, model_id TEXT NOT NULL, stage TEXT NOT NULL,
+    error_code TEXT, error_message TEXT, latest_event_sequence INTEGER NOT NULL,
+    created_at TEXT NOT NULL, started_at TEXT, updated_at TEXT NOT NULL, completed_at TEXT
 );
 CREATE TABLE agent_events (
     event_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
@@ -602,17 +537,12 @@ CREATE TABLE agent_events (
     event_type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL,
     UNIQUE(session_id, sequence)
 );
-CREATE TABLE summary_agent_proposals (
-    proposal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
-    document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
-    base_revision INTEGER NOT NULL, proposed_markdown TEXT NOT NULL, explanation TEXT NOT NULL,
-    diff TEXT NOT NULL, suggested_subdocuments TEXT NOT NULL, media_suggestions TEXT NOT NULL,
-    status TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE marker_agent_proposals (
-    proposal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
-    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    changes TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
+CREATE TABLE agent_artifacts (
+    artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES agent_runs(run_id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    result_type TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL,
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE summary_media (
     media_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
@@ -634,11 +564,12 @@ CREATE INDEX assets_title_index ON assets(title COLLATE NOCASE);
 CREATE INDEX folders_parent_name_index ON folders(parent_id, name COLLATE NOCASE);
 CREATE INDEX folders_materialized_path_index ON folders(materialized_path);
 CREATE INDEX markers_asset_time_index ON markers(asset_id, start_seconds);
-CREATE INDEX agent_jobs_asset_created_index ON agent_jobs(asset_id, created_at DESC);
 CREATE INDEX download_events_job_created_index ON download_events(job_id, created_at);
 CREATE UNIQUE INDEX summary_documents_root_asset_index ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);
 CREATE INDEX agent_sessions_updated_index ON agent_sessions(updated_at DESC);
+CREATE INDEX agent_sessions_asset_agent_index ON agent_sessions(asset_id, agent_id, updated_at DESC);
 CREATE INDEX agent_runs_session_created_index ON agent_runs(session_id, created_at);
 CREATE INDEX agent_events_session_sequence_index ON agent_events(session_id, sequence);
+CREATE INDEX agent_artifacts_run_created_index ON agent_artifacts(run_id, created_at);
 """

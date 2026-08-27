@@ -31,13 +31,7 @@ from openvideo.core.summary_files import (
     markdown_digest,
     read_markdown,
 )
-from openvideo.core.summary_models import (
-    SummaryConversation,
-    SummaryDocument,
-    SummaryEditProposal,
-    SummaryMediaArtifact,
-    SummaryMessage,
-)
+from openvideo.core.summary_models import SummaryDocument, SummaryMediaArtifact
 
 
 ASSET_METADATA_FILE_NAME = "meta.json"
@@ -46,7 +40,6 @@ TRANSCRIPT_FILE_NAME = "transcript.json"
 TRANSCRIPTION_METADATA_FILE_NAME = "transcription.json"
 TIMELINE_FILE_NAME = "timeline.json"
 MARKERS_FILE_NAME = "markers.json"
-CONVERSATIONS_DIRECTORY_NAME = "conversations"
 DOMAIN_FILE_FORMAT_VERSION = 1
 MARKERS_FILE_FORMAT_VERSION = 2
 
@@ -114,13 +107,6 @@ def migrate_markers_file(path: Path) -> None:
     atomic_write_model(path, MarkersFile.model_validate(values))
 
 
-class SummaryConversationFile(BaseModel):
-    format_version: int = DOMAIN_FILE_FORMAT_VERSION
-    conversation: SummaryConversation
-    messages: list[SummaryMessage] = Field(default_factory=list)
-    proposals: list[SummaryEditProposal] = Field(default_factory=list)
-
-
 @dataclass(frozen=True)
 class AssetFileBundle:
     asset: MediaAsset
@@ -128,7 +114,6 @@ class AssetFileBundle:
     markers: list[MediaMarker]
     summary_documents: list[SummaryDocument]
     summary_media: list[SummaryMediaArtifact]
-    conversations: list[SummaryConversationFile]
     digest: str
 
 
@@ -382,21 +367,6 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
     documents, media = _load_summary(
         asset_directory, asset_id, assets_root.parent, tracked_paths
     )
-    conversations = _load_conversations(
-        asset_directory,
-        asset_id,
-        {document.document_id for document in documents},
-        next(
-            (
-                document.document_id
-                for document in documents
-                if document.parent_document_id is None
-            ),
-            None,
-        ),
-        assets_root.parent,
-        tracked_paths,
-    )
     digest = _business_digest(asset_directory, tracked_paths)
     return AssetFileBundle(
         asset=asset,
@@ -404,17 +374,7 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
         markers=markers,
         summary_documents=documents,
         summary_media=media,
-        conversations=conversations,
         digest=digest,
-    )
-
-
-def conversation_file_path(asset_directory: Path, conversation_id: str) -> Path:
-    return (
-        asset_directory
-        / SUMMARY_DIRECTORY_NAME
-        / CONVERSATIONS_DIRECTORY_NAME
-        / f"{conversation_id}.json"
     )
 
 
@@ -532,80 +492,6 @@ def _load_summary(
             require_file=True,
         )
     return documents, manifest.media
-
-
-def _load_conversations(
-    asset_directory: Path,
-    asset_id: str,
-    document_ids: set[str],
-    root_document_id: str | None,
-    library_root: Path,
-    tracked_paths: list[Path],
-) -> list[SummaryConversationFile]:
-    directory = asset_directory / SUMMARY_DIRECTORY_NAME / CONVERSATIONS_DIRECTORY_NAME
-    if not directory.exists():
-        return []
-    if directory.is_symlink() or not directory.is_dir():
-        _raise_issue(
-            asset_id,
-            directory,
-            library_root,
-            "unsafe_path",
-            "总结对话目录不能是符号链接",
-        )
-    conversations: list[SummaryConversationFile] = []
-    for path in sorted(directory.iterdir(), key=lambda item: item.name):
-        if path.is_symlink() or not path.is_file() or path.suffix != ".json":
-            _raise_issue(
-                asset_id,
-                path,
-                library_root,
-                "invalid_conversation_file",
-                "总结对话目录只允许 JSON 文件",
-            )
-        record = _read_model(
-            path, SummaryConversationFile, asset_id, tracked_paths, library_root
-        )
-        conversation = record.conversation
-        if (
-            record.format_version != DOMAIN_FILE_FORMAT_VERSION
-            or path.stem != conversation.conversation_id
-            or conversation.asset_id != asset_id
-            or conversation.root_document_id != root_document_id
-        ):
-            _raise_issue(
-                asset_id,
-                path,
-                library_root,
-                "cross_asset_reference",
-                "总结对话元数据与当前素材不一致",
-            )
-        if any(
-            message.conversation_id != conversation.conversation_id
-            for message in record.messages
-        ):
-            _raise_issue(
-                asset_id,
-                path,
-                library_root,
-                "cross_asset_reference",
-                "总结消息属于其他对话",
-            )
-        if any(
-            proposal.session_id
-            != f"session-{conversation.conversation_id.removeprefix('conversation-')}"
-            or proposal.document_id not in document_ids
-            for proposal in record.proposals
-        ):
-            _raise_issue(
-                asset_id,
-                path,
-                library_root,
-                "cross_asset_reference",
-                "总结建议引用了其他对话或文档",
-            )
-        conversations.append(record)
-    return conversations
 
 
 def _read_optional_asset_model(

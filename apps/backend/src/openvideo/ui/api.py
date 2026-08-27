@@ -15,12 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
 
-from openvideo.agent_manager import AgentError, AgentManager
-from openvideo.marker_agent_manager import (
-    MarkerAgentError,
-    MarkerAgentManager,
-    MarkerAgentNotFoundError,
-    MarkerProposalConflictError,
+from openvideo.agent_service import (
+    AgentConflictError,
+    AgentNotFoundError,
+    AgentService,
+    AgentServiceError,
 )
 from openvideo.application import (
     AnalysisError,
@@ -34,11 +33,20 @@ from openvideo.summary_manager import (
     SummaryNotFoundError,
     SummaryRevisionConflictError,
 )
-from openvideo.core.agent_models import AgentJob, AgentResponse
-from openvideo.core.agent_runtime_models import AgentEventType, AgentRun, AgentRunStage
+from openvideo.core.agent_runtime_models import (
+    AgentArtifact,
+    AgentDefinitionAvailability,
+    AgentRun,
+    AgentRunCreate,
+    AgentSession,
+    AgentSessionCreate,
+    AgentSessionState,
+    TERMINAL_AGENT_RUN_STAGES,
+)
 from openvideo.core.ai_models import (
     AiModelCollection,
     AiModelConfiguration,
+    IMAGE_INPUT_MODALITY,
     InputModality,
     ToolCallingMode,
 )
@@ -100,15 +108,10 @@ from openvideo.settings import (
     preferences_from_settings,
 )
 from openvideo.core.summary_models import (
-    SummaryAgentMessageRequest,
-    SummaryAgentSession,
-    SummaryAgentSessionState,
-    SummaryAgentSessionCreate,
     SummaryDocument,
     SummaryDocumentCreate,
     SummaryDocumentReorder,
     SummaryDocumentUpdate,
-    SummaryEditProposal,
     SummaryExportResult,
     SummaryGenerationRequest,
     SummaryMediaArtifact,
@@ -124,12 +127,6 @@ from openvideo.download_accounts import (
     capture_cookie_from_dedicated_browser,
     import_cookie_from_browser,
 )
-from openvideo.core.marker_agent_models import (
-    MarkerAgentMessageRequest,
-    MarkerAgentSession,
-    MarkerAgentSessionState,
-    MarkerProposal,
-)
 from openvideo.tools.downloader import (
     DownloadFailure,
     PlaylistProbe,
@@ -139,7 +136,12 @@ from openvideo.tools.downloader import (
     yt_dlp_available,
 )
 from openvideo.tools.media import media_tool_status
-from openvideo.tools.llm import LlmCompletionError, complete_text
+from openvideo.tools.llm import (
+    LlmCompletionError,
+    complete_text,
+    probe_image_input,
+    probe_tool_calling,
+)
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
 from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
@@ -325,11 +327,6 @@ class TranscriptSegmentUpdateRequest(BaseModel):
     text: str = Field(min_length=1, max_length=10_000)
 
 
-class TranscriptCorrectionRequest(BaseModel):
-    segment_indices: list[int] | None = None
-    ai_model_id: str
-
-
 class AnalysisCreateRequest(BaseModel):
     mode: AnalysisMode = AnalysisMode.FULL
     marker_ids: list[str] = Field(default_factory=list)
@@ -381,15 +378,28 @@ class AiModelSummary(BaseModel):
     tool_calling_mode: ToolCallingMode
 
 
+class AiModelCapabilityTest(BaseModel):
+    available: bool
+    tested: bool
+    message: str
+
+
 class AiModelTestResponse(BaseModel):
     available: bool
     latency_ms: int
     message: str
+    capabilities: dict[str, AiModelCapabilityTest]
 
 
 class SummaryMediaCreateResponse(BaseModel):
     artifact: SummaryMediaArtifact
     document: SummaryDocument
+
+
+def _redact_model_test_error(message: str, api_key: str | None) -> str:
+    if not api_key:
+        return message
+    return message.replace(api_key, MODEL_TEST_REDACTED_SECRET)
 
 
 def create_app(
@@ -405,9 +415,8 @@ def create_app(
     library: MediaLibrary | None = None
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
-    agent_manager: AgentManager | None = None
+    agent_service: AgentService | None = None
     summary_manager: SummaryManager | None = None
-    marker_agent_manager: MarkerAgentManager | None = None
     transcription_model_manager = TranscriptionModelManager(resolved_settings)
     page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
@@ -480,29 +489,25 @@ def create_app(
             library, \
             manager, \
             analysis_manager, \
-            agent_manager, \
+            agent_service, \
             summary_manager, \
-            marker_agent_manager, \
             page_settings_store
         library = opened_library
         manager = DownloadManager(opened_library, resolved_settings, account_store)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
-        agent_manager = AgentManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
-        marker_agent_manager = MarkerAgentManager(opened_library, resolved_settings)
+        agent_service = AgentService(opened_library, resolved_settings, summary_manager)
         page_settings_store = PageSettingsStore(
             preference_store.path.parent,
             opened_library.manifest.library_id,
             opened_library.library_path / LEGACY_PAGE_SETTINGS_FILE_NAME,
         )
         analysis_manager.restore()
-        agent_manager.restore()
         app.state.library = opened_library
         app.state.download_manager = manager
         app.state.analysis_manager = analysis_manager
-        app.state.agent_manager = agent_manager
+        app.state.agent_service = agent_service
         app.state.summary_manager = summary_manager
-        app.state.marker_agent_manager = marker_agent_manager
         app.state.page_settings_store = page_settings_store
 
     def require_library() -> MediaLibrary:
@@ -555,12 +560,8 @@ def create_app(
                     *account_login_tasks.values(),
                     return_exceptions=True,
                 )
-            if agent_manager:
-                await agent_manager.close()
-            if summary_manager:
-                await summary_manager.close()
-            if marker_agent_manager:
-                await marker_agent_manager.close()
+            if agent_service:
+                await agent_service.close()
             if library:
                 library.close()
 
@@ -568,9 +569,8 @@ def create_app(
     app.state.library = library
     app.state.download_manager = manager
     app.state.analysis_manager = analysis_manager
-    app.state.agent_manager = agent_manager
+    app.state.agent_service = agent_service
     app.state.summary_manager = summary_manager
-    app.state.marker_agent_manager = marker_agent_manager
     app.state.transcription_model_manager = transcription_model_manager
     app.state.page_settings_store = page_settings_store
     app.state.settings = resolved_settings
@@ -940,9 +940,7 @@ def create_app(
             {asset_id},
             manager,
             analysis_manager,
-            agent_manager,
-            summary_manager,
-            marker_agent_manager,
+            agent_service,
         )
         try:
             library.delete_asset(asset_id)
@@ -978,9 +976,7 @@ def create_app(
             set(asset_ids),
             manager,
             analysis_manager,
-            agent_manager,
-            summary_manager,
-            marker_agent_manager,
+            agent_service,
         )
         try:
             for asset_id in asset_ids:
@@ -1039,7 +1035,7 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        if job.stage.value != "complete":
+        if job.stage.value == "pending":
             analysis_manager.start(job.job_id)
         return job
 
@@ -1065,7 +1061,7 @@ def create_app(
             "/api/downloads",
             "/api/library/folders",
             "/api/analysis",
-            "/api/agent-jobs",
+            "/api/agent-",
             "/api/summary",
             "/api/page-settings",
             "/assets/media-",
@@ -1101,9 +1097,7 @@ def create_app(
         _ensure_switch_allowed(
             manager,
             analysis_manager,
-            agent_manager,
-            summary_manager,
-            marker_agent_manager,
+            agent_service,
         )
         requested_path = _absolute_library_path(request.path)
         try:
@@ -1115,12 +1109,8 @@ def create_app(
                 else "library_create_failed"
             )
             _library_error(422, error_code, str(error))
-        if agent_manager:
-            await agent_manager.close()
-        if summary_manager:
-            await summary_manager.close()
-        if marker_agent_manager:
-            await marker_agent_manager.close()
+        if agent_service:
+            await agent_service.close()
         if library:
             library.close()
         await install_library(opened)
@@ -1139,9 +1129,7 @@ def create_app(
         _ensure_switch_allowed(
             manager,
             analysis_manager,
-            agent_manager,
-            summary_manager,
-            marker_agent_manager,
+            agent_service,
         )
         try:
             opened = MediaLibrary.open(target)
@@ -1150,12 +1138,8 @@ def create_app(
                 error.code if isinstance(error, LibraryError) else "library_open_failed"
             )
             _library_error(422, error_code, str(error))
-        if agent_manager:
-            await agent_manager.close()
-        if summary_manager:
-            await summary_manager.close()
-        if marker_agent_manager:
-            await marker_agent_manager.close()
+        if agent_service:
+            await agent_service.close()
         if library:
             library.close()
         await install_library(opened)
@@ -1168,9 +1152,8 @@ def create_app(
             library, \
             manager, \
             analysis_manager, \
-            agent_manager, \
+            agent_service, \
             summary_manager, \
-            marker_agent_manager, \
             page_settings_store
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
             _library_error(
@@ -1179,31 +1162,23 @@ def create_app(
         _ensure_switch_allowed(
             manager,
             analysis_manager,
-            agent_manager,
-            summary_manager,
-            marker_agent_manager,
+            agent_service,
         )
-        if agent_manager:
-            await agent_manager.close()
-        if summary_manager:
-            await summary_manager.close()
-        if marker_agent_manager:
-            await marker_agent_manager.close()
+        if agent_service:
+            await agent_service.close()
         if library:
             library.close()
         library = None
         manager = None
         analysis_manager = None
-        agent_manager = None
+        agent_service = None
         summary_manager = None
-        marker_agent_manager = None
         page_settings_store = None
         app.state.library = None
         app.state.download_manager = None
         app.state.analysis_manager = None
-        app.state.agent_manager = None
+        app.state.agent_service = None
         app.state.summary_manager = None
-        app.state.marker_agent_manager = None
         app.state.page_settings_store = None
         save_current_path(None)
         return Response(status_code=204)
@@ -1287,6 +1262,7 @@ def create_app(
     @app.post("/api/ai/models/test", response_model=AiModelTestResponse)
     def test_ai_model(request: AiModelConfiguration) -> AiModelTestResponse:
         started_at = perf_counter()
+        capabilities: dict[str, AiModelCapabilityTest] = {}
         try:
             complete_text(
                 request,
@@ -1296,23 +1272,82 @@ def create_app(
                 disable_thinking=True,
             )
         except LlmCompletionError as error:
-            error_message = str(error)
-            if request.api_key:
-                error_message = error_message.replace(
-                    request.api_key,
-                    MODEL_TEST_REDACTED_SECRET,
-                )
+            error_message = _redact_model_test_error(str(error), request.api_key)
+            capabilities["text"] = AiModelCapabilityTest(
+                available=False,
+                tested=True,
+                message=error_message,
+            )
+            capabilities["tools"] = AiModelCapabilityTest(
+                available=False,
+                tested=False,
+                message="文本连接失败，未测试工具调用",
+            )
+            capabilities["vision"] = AiModelCapabilityTest(
+                available=False,
+                tested=False,
+                message="文本连接失败，未测试图片输入",
+            )
             return AiModelTestResponse(
                 available=False,
                 latency_ms=round(
                     (perf_counter() - started_at) * MILLISECONDS_PER_SECOND
                 ),
                 message=error_message,
+                capabilities=capabilities,
             )
+        capabilities["text"] = AiModelCapabilityTest(
+            available=True,
+            tested=True,
+            message="文本响应正常",
+        )
+        if request.tool_calling_mode == "disabled":
+            capabilities["tools"] = AiModelCapabilityTest(
+                available=False,
+                tested=False,
+                message="模型配置已禁用工具调用",
+            )
+        else:
+            try:
+                probe_tool_calling(request, MODEL_TEST_TIMEOUT_SECONDS)
+            except LlmCompletionError as error:
+                capabilities["tools"] = AiModelCapabilityTest(
+                    available=False,
+                    tested=True,
+                    message=_redact_model_test_error(str(error), request.api_key),
+                )
+            else:
+                capabilities["tools"] = AiModelCapabilityTest(
+                    available=True,
+                    tested=True,
+                    message="工具调用正常",
+                )
+        if IMAGE_INPUT_MODALITY not in request.input_modalities:
+            capabilities["vision"] = AiModelCapabilityTest(
+                available=False,
+                tested=False,
+                message="模型配置未声明图片输入",
+            )
+        else:
+            try:
+                probe_image_input(request, MODEL_TEST_TIMEOUT_SECONDS)
+            except LlmCompletionError as error:
+                capabilities["vision"] = AiModelCapabilityTest(
+                    available=False,
+                    tested=True,
+                    message=_redact_model_test_error(str(error), request.api_key),
+                )
+            else:
+                capabilities["vision"] = AiModelCapabilityTest(
+                    available=True,
+                    tested=True,
+                    message="图片输入正常",
+                )
         return AiModelTestResponse(
             available=True,
             latency_ms=round((perf_counter() - started_at) * MILLISECONDS_PER_SECOND),
             message=MODEL_TEST_SUCCESS_MESSAGE,
+            capabilities=capabilities,
         )
 
     @app.get(
@@ -1384,6 +1419,20 @@ def create_app(
             raise HTTPException(status_code=404, detail="分析任务不存在")
         return job
 
+    @app.post("/api/analysis/{job_id}/approve", response_model=AnalysisJob)
+    def approve_analysis(job_id: str) -> AnalysisJob:
+        try:
+            return analysis_manager.approve_proposal(job_id)
+        except AnalysisError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/analysis/{job_id}/reject", response_model=AnalysisJob)
+    def reject_analysis(job_id: str) -> AnalysisJob:
+        try:
+            return analysis_manager.reject_proposal(job_id)
+        except AnalysisError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @app.get(
         "/api/media/assets/{asset_id}/transcript",
         response_model=Transcript,
@@ -1415,60 +1464,6 @@ def create_app(
             )
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.post(
-        "/api/media/assets/{asset_id}/transcript/corrections",
-        response_model=AgentJob,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def create_transcript_correction(
-        asset_id: str,
-        request: TranscriptCorrectionRequest,
-    ) -> AgentJob:
-        _ready_asset(library, asset_id)
-        try:
-            job = agent_manager.create_transcript_correction(
-                asset_id,
-                request.segment_indices,
-                request.ai_model_id,
-            )
-        except AgentError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        if job.stage.value == "pending":
-            agent_manager.start(job.job_id)
-        return job
-
-    @app.get("/api/agent-jobs/{job_id}", response_model=AgentJob)
-    def get_agent_job(job_id: str) -> AgentJob:
-        job = agent_manager.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Agent 任务不存在")
-        return job
-
-    @app.post(
-        "/api/agent-jobs/{job_id}/responses",
-        response_model=AgentJob,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def respond_to_agent_job(
-        job_id: str,
-        request: AgentResponse,
-    ) -> AgentJob:
-        try:
-            return agent_manager.respond(job_id, request)
-        except AgentError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-
-    @app.get(
-        "/api/media/assets/{asset_id}/agent-jobs",
-        response_model=list[AgentJob],
-    )
-    def list_asset_agent_jobs(
-        asset_id: str,
-        active: bool = False,
-    ) -> list[AgentJob]:
-        _ready_asset(library, asset_id)
-        return agent_manager.list_jobs(asset_id, active)
 
     @app.get(
         "/api/media/assets/{asset_id}/segments",
@@ -1680,272 +1675,137 @@ def create_app(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get(
-        "/api/media/assets/{asset_id}/summary-agent-sessions",
-        response_model=list[SummaryAgentSession],
+        "/api/agent-definitions",
+        response_model=list[AgentDefinitionAvailability],
     )
-    def list_summary_agent_sessions(asset_id: str) -> list[SummaryAgentSession]:
+    def list_agent_definitions() -> list[AgentDefinitionAvailability]:
+        return agent_service.definitions()
+
+    @app.get("/api/agent-sessions", response_model=list[AgentSession])
+    def list_agent_sessions(
+        agent_id: str | None = None,
+        asset_id: str | None = None,
+    ) -> list[AgentSession]:
         try:
-            return summary_manager.agent_sessions(asset_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
+            return agent_service.sessions(agent_id=agent_id, asset_id=asset_id)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
 
     @app.post(
-        "/api/media/assets/{asset_id}/summary-agent-sessions",
-        response_model=SummaryAgentSessionState,
+        "/api/agent-sessions",
+        response_model=AgentSession,
         status_code=status.HTTP_201_CREATED,
     )
-    def create_summary_agent_session(
-        asset_id: str, request: SummaryAgentSessionCreate
-    ) -> SummaryAgentSessionState:
+    def create_agent_session(request: AgentSessionCreate) -> AgentSession:
         try:
-            return summary_manager.create_agent_session(asset_id, request)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
+            return agent_service.create_session(request)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
 
-    @app.get(
-        "/api/summary-agent-sessions/{session_id}",
-        response_model=SummaryAgentSessionState,
-    )
-    def get_summary_agent_session(session_id: str) -> SummaryAgentSessionState:
+    @app.get("/api/agent-sessions/{session_id}", response_model=AgentSessionState)
+    def get_agent_session(session_id: str) -> AgentSessionState:
         try:
-            return summary_manager.agent_session_state(session_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.delete(
-        "/api/summary-agent-sessions/{session_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-    )
-    def delete_summary_agent_session(session_id: str) -> Response:
-        try:
-            summary_manager.delete_agent_session(session_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except SummaryError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.get(
-        "/api/media/assets/{asset_id}/marker-agent-sessions",
-        response_model=list[MarkerAgentSession],
-    )
-    def list_marker_agent_sessions(asset_id: str) -> list[MarkerAgentSession]:
-        try:
-            return marker_agent_manager.sessions(asset_id)
-        except MarkerAgentNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
+            return agent_service.session_state(session_id)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
 
     @app.post(
-        "/api/media/assets/{asset_id}/marker-agent-sessions",
-        response_model=MarkerAgentSessionState,
-        status_code=status.HTTP_201_CREATED,
-    )
-    def create_marker_agent_session(asset_id: str) -> MarkerAgentSessionState:
-        try:
-            return marker_agent_manager.create_session(asset_id)
-        except MarkerAgentNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.get(
-        "/api/marker-agent-sessions/{session_id}",
-        response_model=MarkerAgentSessionState,
-    )
-    def get_marker_agent_session(session_id: str) -> MarkerAgentSessionState:
-        try:
-            return marker_agent_manager.session_state(session_id)
-        except MarkerAgentNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.delete(
-        "/api/marker-agent-sessions/{session_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-    )
-    def delete_marker_agent_session(session_id: str) -> Response:
-        try:
-            marker_agent_manager.delete_session(session_id)
-        except MarkerAgentNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except MarkerAgentError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.post(
-        "/api/marker-agent-sessions/{session_id}/messages",
+        "/api/agent-sessions/{session_id}/runs",
         response_model=AgentRun,
         status_code=status.HTTP_202_ACCEPTED,
     )
-    async def create_marker_agent_message(
-        session_id: str, request: MarkerAgentMessageRequest
-    ) -> AgentRun:
+    async def create_agent_run(session_id: str, request: AgentRunCreate) -> AgentRun:
         try:
-            return marker_agent_manager.create_message(session_id, request)
-        except MarkerAgentNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except MarkerAgentError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+            return agent_service.create_run(session_id, request)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
 
-    @app.post(
-        "/api/summary-agent-sessions/{session_id}/messages",
-        response_model=AgentRun,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def create_summary_agent_message(
-        session_id: str, request: SummaryAgentMessageRequest
-    ) -> AgentRun:
+    @app.get("/api/agent-runs/{run_id}", response_model=AgentRun)
+    def get_agent_run(run_id: str) -> AgentRun:
         try:
-            return summary_manager.create_agent_message(session_id, request)
-        except SummaryRevisionConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except SummaryError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+            return agent_service.run(run_id)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
 
     @app.get("/api/agent-runs/{run_id}/events")
     async def agent_run_events(
         run_id: str,
+        request: Request,
+        after_sequence: int = Query(default=0, ge=0),
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     ) -> StreamingResponse:
         try:
-            summary_manager.generic_agent_run(run_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        after_sequence = 0
+            agent_service.run(run_id)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
         if last_event_id:
-            source_event_id = last_event_id.removesuffix("-proposal")
-            previous_event = next(
-                (
-                    event
-                    for event in summary_manager.agent_run_events(run_id)
-                    if event.event_id == source_event_id
-                ),
-                None,
-            )
-            if previous_event is not None:
-                after_sequence = previous_event.sequence
+            try:
+                after_sequence = max(after_sequence, int(last_event_id))
+            except ValueError:
+                raise HTTPException(
+                    status_code=422, detail="Last-Event-ID 必须是事件序号"
+                )
 
         async def stream_events():
             sequence = after_sequence
-            while True:
-                events = summary_manager.agent_run_events(run_id, sequence)
+            idle_seconds = 0.0
+            while not await request.is_disconnected():
+                events = agent_service.run_events(run_id, sequence)
                 for event in events:
                     sequence = event.sequence
-                    event_name, payload = _public_agent_event(event)
-                    if event_name:
-                        yield _sse_event(
-                            event_name,
-                            {
-                                "event_id": event.event_id,
-                                "sequence": event.sequence,
-                                **payload,
-                            },
-                            event.event_id,
-                        )
-                    result = event.payload.get("result")
-                    if (
-                        event.event_type == AgentEventType.TOOL_RESULT
-                        and event.payload.get("name")
-                        in {"propose_summary_change", "propose_marker_changes"}
-                        and isinstance(result, dict)
-                        and result.get("ok") is True
-                    ):
-                        yield _sse_event(
-                            "proposal",
-                            {
-                                "event_id": f"{event.event_id}-proposal",
-                                "sequence": event.sequence,
-                                "proposal": result["proposal"],
-                            },
-                            f"{event.event_id}-proposal",
-                        )
-                run_state = summary_manager.generic_agent_run(run_id)
-                if (
-                    run_state.stage
-                    in {
-                        AgentRunStage.COMPLETE,
-                        AgentRunStage.FAILED,
-                        AgentRunStage.CANCELLED,
-                        AgentRunStage.INTERRUPTED,
-                    }
-                    and not events
-                ):
-                    terminal_event = {
-                        AgentRunStage.COMPLETE: "complete",
-                        AgentRunStage.CANCELLED: "cancelled",
-                    }.get(run_state.stage, "error")
                     yield _sse_event(
-                        terminal_event,
+                        event.event_type.value,
                         {
-                            "event_id": f"{run_id}-{terminal_event}",
-                            "sequence": sequence + 1,
-                            "run_id": run_id,
-                            "message": run_state.error_message,
+                            "event_id": event.event_id,
+                            "sequence": event.sequence,
+                            **event.payload,
                         },
-                        f"{run_id}-{terminal_event}",
+                        str(event.sequence),
                     )
+                run_state = agent_service.run(run_id)
+                if run_state.stage in TERMINAL_AGENT_RUN_STAGES and not events:
                     break
+                if not events:
+                    idle_seconds += 0.1
+                    if idle_seconds >= 15:
+                        yield ": keep-alive\n\n"
+                        idle_seconds = 0.0
+                else:
+                    idle_seconds = 0.0
                 await asyncio.sleep(0.1)
 
-        return StreamingResponse(stream_events(), media_type="text/event-stream")
+        return StreamingResponse(
+            stream_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/api/agent-runs/{run_id}/cancel", response_model=AgentRun)
-    def cancel_agent_run(run_id: str) -> AgentRun:
+    async def cancel_agent_run(run_id: str) -> AgentRun:
         try:
-            run = summary_manager.generic_agent_run(run_id)
-            session = library.load_agent_session(run.session_id)
-            if session and session.agent_type == "marker":
-                return marker_agent_manager.cancel_agent_run(run_id)
-            return summary_manager.cancel_agent_run(run_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except MarkerAgentNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
+            return await agent_service.cancel(run_id)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
 
     @app.post(
-        "/api/marker-proposals/{proposal_id}/accept",
-        response_model=MarkerProposal,
+        "/api/agent-artifacts/{artifact_id}/approve",
+        response_model=AgentArtifact,
     )
-    def accept_marker_proposal(proposal_id: str) -> MarkerProposal:
+    def approve_agent_artifact(artifact_id: str) -> AgentArtifact:
         try:
-            return marker_agent_manager.accept_proposal(proposal_id)
-        except MarkerProposalConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except MarkerAgentNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except MarkerAgentError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+            return agent_service.approve(artifact_id)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
 
     @app.post(
-        "/api/marker-proposals/{proposal_id}/reject",
-        response_model=MarkerProposal,
+        "/api/agent-artifacts/{artifact_id}/reject",
+        response_model=AgentArtifact,
     )
-    def reject_marker_proposal(proposal_id: str) -> MarkerProposal:
+    def reject_agent_artifact(artifact_id: str) -> AgentArtifact:
         try:
-            return marker_agent_manager.reject_proposal(proposal_id)
-        except MarkerAgentNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.post(
-        "/api/summary-edit-proposals/{proposal_id}/accept",
-        response_model=SummaryEditProposal,
-    )
-    def accept_summary_proposal(proposal_id: str) -> SummaryEditProposal:
-        try:
-            return summary_manager.accept_proposal(proposal_id)
-        except SummaryRevisionConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.post(
-        "/api/summary-edit-proposals/{proposal_id}/reject",
-        response_model=SummaryEditProposal,
-    )
-    def reject_summary_proposal(proposal_id: str) -> SummaryEditProposal:
-        try:
-            return summary_manager.reject_proposal(proposal_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
+            return agent_service.reject(artifact_id)
+        except AgentServiceError as error:
+            raise _agent_http_error(error) from error
 
     @app.post(
         "/api/summary-media",
@@ -2124,16 +1984,12 @@ def _absolute_library_path(raw_path: str) -> Path:
 def _ensure_switch_allowed(
     manager: DownloadManager | None,
     analysis_manager: AnalysisManager | None,
-    agent_manager: AgentManager | None,
-    summary_manager: SummaryManager | None,
-    marker_agent_manager: MarkerAgentManager | None,
+    agent_service: AgentService | None,
 ) -> None:
     if (
         (manager and manager.has_active_jobs())
         or (analysis_manager and analysis_manager.has_active_jobs())
-        or (agent_manager and agent_manager.has_active_jobs())
-        or (summary_manager and summary_manager.has_active_jobs())
-        or (marker_agent_manager and marker_agent_manager.has_active_jobs())
+        or (agent_service and agent_service.has_active_jobs())
     ):
         _library_error(
             409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库"
@@ -2144,9 +2000,7 @@ async def _stop_asset_tasks(
     asset_ids: set[str],
     manager: DownloadManager | None,
     analysis_manager: AnalysisManager | None,
-    agent_manager: AgentManager | None,
-    summary_manager: SummaryManager | None,
-    marker_agent_manager: MarkerAgentManager | None,
+    agent_service: AgentService | None,
 ) -> None:
     """永久删除只能在所有关联执行器确认停止后继续，避免后台写回已删除目录。"""
     if not asset_ids:
@@ -2156,9 +2010,7 @@ async def _stop_asset_tasks(
         for candidate in (
             manager,
             analysis_manager,
-            agent_manager,
-            summary_manager,
-            marker_agent_manager,
+            agent_service,
         )
         if candidate is not None
     ]
@@ -2244,15 +2096,16 @@ def _read_file_range(file_path: Path, start: int, length: int) -> Iterator[bytes
             yield chunk
 
 
-def _public_agent_event(event) -> tuple[str | None, dict[str, object]]:
-    event_names = {
-        AgentEventType.RUN_STATUS: "status",
-        AgentEventType.ASSISTANT_CHUNK: "assistant_chunk",
-        AgentEventType.ASSISTANT_MESSAGE: "assistant_message",
-        AgentEventType.TOOL_CALL: "tool_call",
-        AgentEventType.TOOL_RESULT: "tool_result",
-    }
-    return event_names.get(event.event_type), dict(event.payload)
+def _agent_http_error(error: AgentServiceError) -> HTTPException:
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    if isinstance(error, AgentNotFoundError):
+        status_code = status.HTTP_404_NOT_FOUND
+    elif isinstance(error, AgentConflictError):
+        status_code = status.HTTP_409_CONFLICT
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": error.code, "message": str(error)},
+    )
 
 
 def _sse_event(event: str, payload: object, event_id: str | None = None) -> str:

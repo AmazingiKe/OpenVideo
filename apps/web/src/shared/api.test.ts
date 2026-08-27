@@ -3,9 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   analyze_asset,
   ApiError,
-  create_transcript_correction,
-  create_marker_agent_message,
-  create_marker_agent_session,
   create_marker,
   create_download,
   create_download_account_login_session,
@@ -17,15 +14,12 @@ import {
   get_transcription_model_download,
   get_markers_page_settings,
   import_download_account_from_browser,
-  list_marker_agent_sessions,
   list_downloads,
   list_transcription_models,
   media_url,
   probe_source,
   request_download_retry,
-  resolve_marker_proposal,
   save_download_account,
-  respond_to_agent_job,
   select_directory,
   test_ai_model,
   test_download_account,
@@ -483,57 +477,6 @@ describe("api client", () => {
     );
   });
 
-  it("creates and resumes a transcript correction Agent", async () => {
-    const job = {
-      job_id: "agent-019c0000000070008000000000000000",
-      stage: "pending",
-    };
-    const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      Promise.resolve(
-        new Response(JSON.stringify(job), {
-          status: 202,
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
-    );
-
-    await create_transcript_correction("asset-1", [2], "model-1");
-    await respond_to_agent_job(
-      job.job_id,
-      "question-1",
-      "change_model",
-      "model-2",
-    );
-
-    expect(fetch_mock).toHaveBeenNthCalledWith(
-      1,
-      "/api/media/assets/asset-1/transcript/corrections",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          segment_indices: [2],
-          ai_model_id: "model-1",
-        }),
-        signal: undefined,
-      },
-    );
-    expect(fetch_mock).toHaveBeenNthCalledWith(
-      2,
-      `/api/agent-jobs/${job.job_id}/responses`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question_id: "question-1",
-          action: "change_model",
-          ai_model_id: "model-2",
-        }),
-        signal: undefined,
-      },
-    );
-  });
-
   it("keeps relative media paths on the current API origin", () => {
     expect(media_url("/api/media/assets/a/stream")).toBe(
       "/api/media/assets/a/stream",
@@ -619,65 +562,6 @@ describe("api client", () => {
         }),
         signal: undefined,
       },
-    );
-  });
-
-  it("creates marker Agent sessions, messages, and batch resolutions", async () => {
-    const asset_id = "asset-01890f4c7a2b7cc298c4dc0c0c07398f";
-    const session_id = "session-01890f4c7a2b7cc298c4dc0c0c07398f";
-    const proposal_id = "proposal-01890f4c7a2b7cc298c4dc0c0c07398f";
-    const session = {
-      session: { session_id, agent_type: "marker", title: "标记" },
-      asset_id,
-      events: [],
-      proposals: [],
-    };
-    const run = { run_id: "run-01890f4c7a2b7cc298c4dc0c0c07398f" };
-    const proposal = { proposal_id, status: "accepted" };
-    const fetch_mock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify([session])))
-      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
-      .mockResolvedValueOnce(new Response(JSON.stringify(run)))
-      .mockResolvedValueOnce(new Response(JSON.stringify(proposal)));
-
-    await list_marker_agent_sessions(asset_id);
-    await create_marker_agent_session(asset_id);
-    await create_marker_agent_message(session_id, {
-      content: "只看字幕，找出结论",
-      ai_model_id: "model-01890f4c7a2b7cc298c4dc0c0c07398f",
-      retrieval_mode: "transcript",
-    });
-    await resolve_marker_proposal(proposal_id, "accept");
-
-    expect(fetch_mock).toHaveBeenNthCalledWith(
-      1,
-      `/api/media/assets/${asset_id}/marker-agent-sessions`,
-      { signal: undefined },
-    );
-    expect(fetch_mock).toHaveBeenNthCalledWith(
-      2,
-      `/api/media/assets/${asset_id}/marker-agent-sessions`,
-      { method: "POST", signal: undefined },
-    );
-    expect(fetch_mock).toHaveBeenNthCalledWith(
-      3,
-      `/api/marker-agent-sessions/${session_id}/messages`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: "只看字幕，找出结论",
-          ai_model_id: "model-01890f4c7a2b7cc298c4dc0c0c07398f",
-          retrieval_mode: "transcript",
-        }),
-        signal: undefined,
-      },
-    );
-    expect(fetch_mock).toHaveBeenNthCalledWith(
-      4,
-      `/api/marker-proposals/${proposal_id}/accept`,
-      { method: "POST", signal: undefined },
     );
   });
 });

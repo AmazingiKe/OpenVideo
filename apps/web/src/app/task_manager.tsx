@@ -13,14 +13,10 @@ import { use_asset_catalog } from "@/app/asset_catalog";
 import {
   analyze_asset,
   create_download,
-  create_transcript_correction,
-  list_asset_agent_jobs,
   list_downloads,
   request_download_retry,
-  respond_to_agent_job,
   transcribe_asset,
 } from "@/shared/api";
-import { poll_agent_job } from "@/shared/poll_agent_job";
 import { poll_analysis } from "@/shared/poll_analysis";
 import { poll_download } from "@/shared/poll_download";
 import type {
@@ -31,8 +27,6 @@ import type {
   DownloadDestination,
   DownloadJob,
   TranscriptionOptions,
-  AgentJob,
-  AgentQuestionAction,
 } from "@/shared/types";
 import { merge_task_record, type TaskRecord } from "@/features/workbench/tasks";
 
@@ -61,18 +55,6 @@ type TaskManager = {
     asset_id: string,
     operation: AnalysisOperation,
   ) => boolean;
-  agent_job_for_asset: (asset_id: string) => AgentJob | null;
-  start_transcript_correction: (
-    asset_id: string,
-    segment_indices: number[] | null,
-    ai_model_id: string,
-  ) => Promise<AgentJob>;
-  restore_transcript_correction: (asset_id: string) => Promise<AgentJob | null>;
-  respond_to_transcript_correction: (
-    job: AgentJob,
-    action: AgentQuestionAction,
-    ai_model_id?: string | null,
-  ) => Promise<AgentJob>;
 };
 
 const TaskManagerContext = createContext<TaskManager | null>(null);
@@ -83,18 +65,13 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const [active_operations, set_active_operations] = useState<Set<string>>(
     new Set(),
   );
-  const [agent_jobs_by_asset, set_agent_jobs_by_asset] = useState<
-    Map<string, AgentJob>
-  >(new Map());
   const download_controller_ref = useRef<AbortController | null>(null);
   const analysis_controller_ref = useRef<AbortController | null>(null);
-  const agent_controller_ref = useRef<AbortController | null>(null);
 
   useEffect(
     () => () => {
       download_controller_ref.current?.abort();
       analysis_controller_ref.current?.abort();
-      agent_controller_ref.current?.abort();
     },
     [],
   );
@@ -131,28 +108,6 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         error_message: job.error_message,
         created_at: job.created_at,
         name: "素材分析",
-        events: [],
-      });
-    },
-    [record_task],
-  );
-
-  const record_agent_job = useCallback(
-    (job: AgentJob) => {
-      set_agent_jobs_by_asset((current) => {
-        const next = new Map(current);
-        next.set(job.asset_id, job);
-        return next;
-      });
-      record_task({
-        task_id: job.job_id,
-        task_type: "agent",
-        stage: job.stage,
-        message: job.message,
-        progress_percent: job.progress_percent,
-        error_message: job.error_message,
-        created_at: job.created_at,
-        name: "转录修正",
         events: [],
       });
     },
@@ -304,93 +259,6 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [run_analysis_operation],
   );
 
-  const follow_agent_job = useCallback(
-    async (job: AgentJob, controller: AbortController) => {
-      record_agent_job(job);
-      const final_job = await poll_agent_job(
-        job,
-        record_agent_job,
-        controller.signal,
-      );
-      record_agent_job(final_job);
-      if (final_job.stage === "failed") {
-        throw new Error(final_job.error_message ?? "转录修正失败");
-      }
-      return final_job;
-    },
-    [record_agent_job],
-  );
-
-  const with_agent_controller = useCallback(
-    async function run_with_agent_controller<Result>(
-      operation: (controller: AbortController) => Promise<Result>,
-    ): Promise<Result> {
-      agent_controller_ref.current?.abort();
-      const controller = new AbortController();
-      agent_controller_ref.current = controller;
-      try {
-        return await operation(controller);
-      } finally {
-        if (agent_controller_ref.current === controller) {
-          agent_controller_ref.current = null;
-        }
-      }
-    },
-    [],
-  );
-
-  const start_transcript_correction = useCallback(
-    (asset_id: string, segment_indices: number[] | null, ai_model_id: string) =>
-      with_agent_controller(async (controller) => {
-        const job = await create_transcript_correction(
-          asset_id,
-          segment_indices,
-          ai_model_id,
-          controller.signal,
-        );
-        return follow_agent_job(job, controller);
-      }),
-    [follow_agent_job, with_agent_controller],
-  );
-
-  const restore_transcript_correction = useCallback(
-    (asset_id: string) =>
-      with_agent_controller(async (controller) => {
-        const jobs = await list_asset_agent_jobs(
-          asset_id,
-          true,
-          controller.signal,
-        );
-        const job = jobs[0] ?? null;
-        if (!job) {
-          set_agent_jobs_by_asset((current) => {
-            const next = new Map(current);
-            next.delete(asset_id);
-            return next;
-          });
-          return null;
-        }
-        return follow_agent_job(job, controller);
-      }),
-    [follow_agent_job, with_agent_controller],
-  );
-
-  const respond_to_transcript_correction = useCallback(
-    (job: AgentJob, action: AgentQuestionAction, ai_model_id?: string | null) =>
-      with_agent_controller(async (controller) => {
-        if (!job.question) throw new Error("Agent 当前没有待回答的问题");
-        const resumed_job = await respond_to_agent_job(
-          job.job_id,
-          job.question.question_id,
-          action,
-          ai_model_id ?? null,
-          controller.signal,
-        );
-        return follow_agent_job(resumed_job, controller);
-      }),
-    [follow_agent_job, with_agent_controller],
-  );
-
   const value = useMemo<TaskManager>(
     () => ({
       task_records,
@@ -398,24 +266,15 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       retry_download,
       start_analysis,
       start_transcription,
-      start_transcript_correction,
-      restore_transcript_correction,
-      respond_to_transcript_correction,
-      agent_job_for_asset: (asset_id) =>
-        agent_jobs_by_asset.get(asset_id) ?? null,
       is_operation_running: (asset_id, operation) =>
         active_operations.has(`${asset_id}:${operation}`),
     }),
     [
       active_operations,
-      agent_jobs_by_asset,
       start_analysis,
       start_downloads,
       retry_download,
       start_transcription,
-      start_transcript_correction,
-      restore_transcript_correction,
-      respond_to_transcript_correction,
       task_records,
     ],
   );

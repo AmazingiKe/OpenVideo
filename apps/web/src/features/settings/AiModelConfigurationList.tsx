@@ -467,7 +467,7 @@ function ModelTestFeedback({
   if (!state) {
     return (
       <p id={id} className="text-sm text-muted-foreground">
-        测试会发送一条最小文本请求，不会保存当前修改。
+        测试会分别探测文本、工具和已声明的图片输入，不会保存当前修改。
       </p>
     );
   }
@@ -489,6 +489,7 @@ function ModelTestFeedback({
           available: false,
           latency_ms: null,
           message: state.message,
+          capabilities: undefined,
         };
   return (
     <div
@@ -522,6 +523,45 @@ function ModelTestFeedback({
       >
         {result.message}
       </p>
+      {result.capabilities ? (
+        <div className="grid gap-2 sm:grid-cols-3">
+          {(
+            [
+              ["text", "文本"],
+              ["tools", "工具"],
+              ["vision", "图片"],
+            ] as const
+          ).map(([capability, label]) => {
+            const probe = result.capabilities?.[capability];
+            if (!probe) return null;
+            return (
+              <div key={capability} className="rounded-md border p-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{label}</span>
+                  <Badge
+                    variant={
+                      probe.available
+                        ? "secondary"
+                        : probe.tested
+                          ? "destructive"
+                          : "outline"
+                    }
+                  >
+                    {probe.available
+                      ? "通过"
+                      : probe.tested
+                        ? "失败"
+                        : "未测试"}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {probe.message}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

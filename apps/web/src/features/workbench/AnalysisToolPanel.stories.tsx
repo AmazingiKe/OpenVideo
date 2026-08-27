@@ -73,6 +73,46 @@ const ASSET: MediaAsset = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
+function agent_fetch(input: RequestInfo | URL): Promise<Response> {
+  const url = typeof input === "string" ? input : input.toString();
+  if (url.includes("/api/agent-definitions")) {
+    return Promise.resolve(
+      Response.json([
+        {
+          definition: {
+            agent_id: "transcript_correction",
+            title: "字幕纠错",
+            description: "校对选中的字幕片段并生成整批修改预览。",
+            mode: "task",
+            prompt: "字幕校对",
+            required_capabilities: ["tools", "long_context"],
+            minimum_context_tokens: 32000,
+            tools: [
+              {
+                name: "correct_transcript",
+                description: "校对字幕",
+                prerequisites: [],
+              },
+            ],
+            required_tools: ["correct_transcript"],
+            requires_approval: true,
+            result_type: "transcript_correction",
+            input_mode: "task",
+          },
+          available: false,
+          compatible_model_ids: [],
+          capability_model_ids: {},
+          unavailable_reason: "没有满足能力要求的模型",
+        },
+      ]),
+    );
+  }
+  if (url.includes("/api/agent-sessions")) {
+    return Promise.resolve(Response.json([]));
+  }
+  return Promise.resolve(Response.json({}));
+}
+
 function ControlledAnalysisToolPanel(
   props: ComponentProps<typeof AnalysisToolPanel>,
 ) {
@@ -112,16 +152,22 @@ const meta = {
     analysis_strategy: DEFAULT_ANALYSIS_STRATEGY,
     set_analysis_strategy: () => undefined,
     on_start_analysis: () => undefined,
-    selected_transcript_count: 0,
-    active_correction_scope: null,
-    correction_agent_job: null,
-    on_start_correction_agent: () => undefined,
-    on_agent_response: () => undefined,
+    analysis_proposal: null,
+    on_resolve_analysis: () => undefined,
+    selected_transcript_indices: [],
+    on_transcript_changed: () => undefined,
     open_sections: ["video_information"],
     on_open_sections_change: () => undefined,
     on_collapsed_change: () => undefined,
   },
   render: (args) => <ControlledAnalysisToolPanel {...args} />,
+  beforeEach() {
+    const original_fetch = window.fetch;
+    window.fetch = agent_fetch;
+    return () => {
+      window.fetch = original_fetch;
+    };
+  },
   decorators: [
     (StoryComponent) => (
       <div className="dark h-[640px] w-[320px] overflow-hidden bg-background text-foreground">
@@ -139,7 +185,7 @@ export const VideoInformation: Story = {};
 export const AllSections: Story = {
   args: {
     has_transcript: true,
-    selected_transcript_count: 1,
+    selected_transcript_indices: [0],
     open_sections: [
       "video_information",
       "transcription",

@@ -9,12 +9,11 @@ import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  create_summary_agent_session,
   create_summary_export,
   generate_summary_documents,
-  get_summary_agent_session,
+  list_agent_definitions,
+  list_agent_sessions,
   list_ai_models,
-  list_summary_agent_sessions,
   list_summary_documents,
   subscribe_summary_documents,
   update_summary_document,
@@ -58,20 +57,16 @@ vi.mock("@/shared/api", async (import_original) => {
   const actual = await import_original<typeof import("@/shared/api")>();
   return {
     ...actual,
-    create_summary_agent_message: vi.fn(),
+    list_agent_definitions: vi.fn(),
+    list_agent_sessions: vi.fn(),
     create_summary_child: vi.fn(),
-    create_summary_agent_session: vi.fn(),
     create_summary_export: vi.fn(),
     create_summary_media: vi.fn(),
     delete_summary_document: vi.fn(),
     generate_summary_documents: vi.fn(),
-    get_summary_agent_session: vi.fn(),
     list_ai_models: vi.fn(),
-    list_summary_agent_sessions: vi.fn(),
     list_summary_documents: vi.fn(),
     reorder_summary_children: vi.fn(),
-    resolve_summary_proposal: vi.fn(),
-    stream_summary_agent_run: vi.fn(),
     subscribe_summary_documents: vi.fn(),
     update_summary_document: vi.fn(),
   };
@@ -153,33 +148,9 @@ describe("SummaryWorkspace", () => {
       })),
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
+    vi.mocked(list_agent_definitions).mockResolvedValue([]);
+    vi.mocked(list_agent_sessions).mockResolvedValue([]);
     vi.mocked(subscribe_summary_documents).mockReturnValue(() => undefined);
-    vi.mocked(get_summary_agent_session).mockResolvedValue({
-      session: {
-        session_id: "session-01890f4c7a2b7cc298c4dc0c0c07398f",
-        agent_type: "summary",
-        title: "默认对话",
-        created_at: DOCUMENT.created_at,
-        updated_at: DOCUMENT.updated_at,
-      },
-      asset_id: ASSET.asset_id,
-      root_document_id: DOCUMENT.document_id,
-      events: [],
-      proposals: [],
-    });
-    vi.mocked(list_summary_agent_sessions).mockResolvedValue([
-      {
-        session: {
-          session_id: "session-01890f4c7a2b7cc298c4dc0c0c07398f",
-          agent_type: "summary",
-          title: "默认对话",
-          created_at: DOCUMENT.created_at,
-          updated_at: DOCUMENT.updated_at,
-        },
-        asset_id: ASSET.asset_id,
-        root_document_id: DOCUMENT.document_id,
-      },
-    ]);
   });
 
   it("generates the document only after explicit confirmation", async () => {
@@ -288,31 +259,6 @@ describe("SummaryWorkspace", () => {
 
     await waitFor(() => expect(editor).toHaveValue(CHILD_DOCUMENT.markdown));
     expect(screen.getByLabelText("文档标题")).toHaveValue(CHILD_DOCUMENT.title);
-  });
-
-  it("keeps documents available when Agent history cannot load", async () => {
-    vi.mocked(list_summary_documents).mockResolvedValue([
-      DOCUMENT,
-      CHILD_DOCUMENT,
-    ]);
-    vi.mocked(list_summary_agent_sessions).mockRejectedValue(
-      new Error("Agent 服务暂时不可用"),
-    );
-
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        segments={[]}
-        transcript={TRANSCRIPT}
-      />,
-    );
-
-    expect(
-      await screen.findByRole("textbox", { name: "可视化 Markdown" }),
-    ).toHaveValue(DOCUMENT.markdown);
-    expect(
-      screen.queryByRole("button", { name: "生成主文档" }),
-    ).not.toBeInTheDocument();
   });
 
   it("saves pending edits before opening another document", async () => {
@@ -475,43 +421,6 @@ describe("SummaryWorkspace", () => {
     expect(
       screen.queryByRole("link", { name: "导出 ZIP" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("creates a separate Agent history for the selected document", async () => {
-    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
-    vi.mocked(create_summary_agent_session).mockResolvedValue({
-      session: {
-        session_id: "session-01890f4c7a2b7cc298c4dc0c0c073990",
-        agent_type: "summary",
-        title: DOCUMENT.title,
-        created_at: DOCUMENT.created_at,
-        updated_at: DOCUMENT.updated_at,
-      },
-      asset_id: ASSET.asset_id,
-      root_document_id: DOCUMENT.document_id,
-      events: [],
-      proposals: [],
-    });
-
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        segments={[]}
-        transcript={TRANSCRIPT}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "Agent" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "新建 Agent 对话" }),
-    );
-
-    await waitFor(() =>
-      expect(create_summary_agent_session).toHaveBeenCalledWith(
-        ASSET.asset_id,
-        DOCUMENT.document_id,
-      ),
-    );
   });
 
   it("calculates document drop positions without losing identifiers", () => {

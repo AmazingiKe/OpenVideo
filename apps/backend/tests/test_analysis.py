@@ -32,7 +32,7 @@ def test_full_timeline_splits_on_long_speech_gap():
     ]
 
 
-def test_marker_timeline_snaps_to_transcript_and_preserves_tags():
+def test_marker_timeline_uses_exact_point_and_preserves_tags():
     transcript = Transcript(
         asset_id=ASSET_ID,
         segments=[
@@ -50,14 +50,13 @@ def test_marker_timeline_snaps_to_transcript_and_preserves_tags():
     moments = select_timeline_moments(transcript, AnalysisMode.MARKERS, [marker], 60)
 
     assert len(moments) == 1
-    assert moments[0].start_seconds == 10
-    assert moments[0].end_seconds == 40
+    assert moments[0].start_seconds == 30
+    assert moments[0].end_seconds == pytest.approx(30.1)
     assert moments[0].tags == ("公式",)
-    assert "公式定义" in moments[0].transcript_text
-    assert "推导过程" in moments[0].transcript_text
+    assert moments[0].transcript_text == "推导过程"
 
 
-def test_marker_mode_keeps_overlapping_fallback_ranges_separate():
+def test_marker_mode_keeps_exact_point_ranges_separate():
     transcript = Transcript(asset_id=ASSET_ID)
     markers = [
         MediaMarker(
@@ -77,8 +76,8 @@ def test_marker_mode_keeps_overlapping_fallback_ranges_separate():
     moments = select_timeline_moments(transcript, AnalysisMode.MARKERS, markers, 120)
 
     assert [(moment.start_seconds, moment.end_seconds) for moment in moments] == [
-        (20, 50),
-        (40, 70),
+        pytest.approx((30, 30.1)),
+        pytest.approx((50, 50.1)),
     ]
 
 
@@ -99,8 +98,8 @@ def test_scene_boundaries_do_not_change_marker_weight_range():
         scene_boundaries=[45, 72],
     )
 
-    assert moments[0].start_seconds == 50
-    assert moments[0].end_seconds == 80
+    assert moments[0].start_seconds == 60
+    assert moments[0].end_seconds == pytest.approx(60.1)
 
 
 def test_full_timeline_returns_empty_for_no_transcript():
@@ -151,7 +150,7 @@ def test_quick_strategy_keeps_marked_moment_in_detailed_analysis():
     assert next(moment for moment in moments if moment.marker_ids).detailed is True
 
 
-def test_strategy_controls_asymmetric_marker_range():
+def test_local_rerun_does_not_expand_to_strategy_range():
     transcript = Transcript(asset_id=ASSET_ID, segments=[])
     marker = MediaMarker(
         marker_id="marker-0123456789abcdef0123456789abcdef",
@@ -171,8 +170,8 @@ def test_strategy_controls_asymmetric_marker_range():
         strategy=strategy,
     )[0]
 
-    assert moment.start_seconds == 35
-    assert moment.end_seconds == 75
+    assert moment.start_seconds == 50
+    assert moment.end_seconds == pytest.approx(50.1)
 
 
 def test_range_marker_uses_its_exact_bounds():
@@ -198,7 +197,7 @@ def test_range_marker_uses_its_exact_bounds():
     assert moment.marker_influences[0].range_after_seconds == 0
 
 
-def test_range_marker_inherits_tails_and_clips_them_to_video_bounds():
+def test_range_marker_does_not_inherit_strategy_tails():
     marker = MediaMarker(
         marker_id="marker-0123456789abcdef0123456789abcdef",
         asset_id=ASSET_ID,
@@ -213,13 +212,13 @@ def test_range_marker_inherits_tails_and_clips_them_to_video_bounds():
         30,
     )[0]
 
-    assert (moment.start_seconds, moment.end_seconds) == (0, 30)
+    assert (moment.start_seconds, moment.end_seconds) == (5, 15)
     influence = moment.marker_influences[0]
-    assert influence.range_before_seconds == 5
-    assert influence.range_after_seconds == 15
+    assert influence.range_before_seconds == 0
+    assert influence.range_after_seconds == 0
 
 
-def test_marker_overrides_one_side_and_inherits_the_other():
+def test_point_marker_range_configuration_does_not_expand_local_rerun():
     marker = MediaMarker(
         marker_id="marker-0123456789abcdef0123456789abcdef",
         asset_id=ASSET_ID,
@@ -234,9 +233,9 @@ def test_marker_overrides_one_side_and_inherits_the_other():
         100,
     )[0]
 
-    assert (moment.start_seconds, moment.end_seconds) == (20, 40)
+    assert (moment.start_seconds, moment.end_seconds) == pytest.approx((20, 20.1))
     assert moment.marker_influences[0].range_before_seconds == 0
-    assert moment.marker_influences[0].range_after_seconds == 20
+    assert moment.marker_influences[0].range_after_seconds == 0
 
 
 def test_marker_weight_decays_asymmetrically_and_marker_event_is_one():

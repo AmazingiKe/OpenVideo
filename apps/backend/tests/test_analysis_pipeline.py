@@ -48,7 +48,7 @@ def test_marker_event_frames_include_marker_point_and_context(
         SimpleNamespace(ffmpeg_path=None, ffmpeg_bin_dir=None),
     )
 
-    assert captured_time_points == [2, 5, 8, 4]
+    assert captured_time_points == [2.5, 4, 7.5]
 
 
 def test_analysis_prompt_explains_effective_range_and_event_weight():

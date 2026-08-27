@@ -1,6 +1,4 @@
 import type {
-  AgentJob,
-  AgentQuestionAction,
   AnalysisJob,
   AnalysisStrategy,
   AnalysisStrategyPresetDescriptor,
@@ -21,10 +19,6 @@ import type {
   MediaMarker,
   MediaMarkerInput,
   MediaSegment,
-  MarkerAgentSession,
-  MarkerAgentSessionState,
-  MarkerProposal,
-  MarkerRetrievalMode,
   ProbeResponse,
   Transcript,
   TranscriptionOptions,
@@ -32,15 +26,15 @@ import type {
   TranscriptionModelDownloadJob,
   Preferences,
   AgentRun,
-  SummaryAgentSession,
-  SummaryAgentSessionState,
+  AgentArtifact,
+  AgentDefinitionAvailability,
+  AgentEventType,
+  AgentSession,
+  AgentSessionState,
   SummaryDetail,
   SummaryDocument,
   SummaryExportResult,
-  SummaryEditProposal,
-  SummaryMediaArtifact,
   SourcePlatform,
-  SummaryMediaSuggestion,
 } from "./types";
 import { DEFAULT_ANALYSIS_STRATEGY } from "./analysis";
 
@@ -54,6 +48,139 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+}
+
+export function list_agent_definitions(
+  signal?: AbortSignal,
+): Promise<AgentDefinitionAvailability[]> {
+  return request_json("/api/agent-definitions", { signal });
+}
+
+export function list_agent_sessions(
+  filters: { agent_id?: string; asset_id?: string },
+  signal?: AbortSignal,
+): Promise<AgentSession[]> {
+  const query = new URLSearchParams();
+  if (filters.agent_id) query.set("agent_id", filters.agent_id);
+  if (filters.asset_id) query.set("asset_id", filters.asset_id);
+  return request_json(`/api/agent-sessions?${query.toString()}`, { signal });
+}
+
+export function create_agent_session(
+  request: {
+    agent_id: string;
+    asset_id: string;
+    title?: string;
+    context?: Record<string, unknown>;
+  },
+  signal?: AbortSignal,
+): Promise<AgentSession> {
+  return request_json("/api/agent-sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+    signal,
+  });
+}
+
+export function get_agent_session(
+  session_id: string,
+  signal?: AbortSignal,
+): Promise<AgentSessionState> {
+  return request_json(`/api/agent-sessions/${encodeURIComponent(session_id)}`, {
+    signal,
+  });
+}
+
+export function create_agent_run(
+  session_id: string,
+  request: {
+    request_key: string;
+    ai_model_id: string;
+    content?: string;
+    task_input?: Record<string, unknown>;
+  },
+  signal?: AbortSignal,
+): Promise<AgentRun> {
+  return request_json(
+    `/api/agent-sessions/${encodeURIComponent(session_id)}/runs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal,
+    },
+  );
+}
+
+export function get_agent_run(
+  run_id: string,
+  signal?: AbortSignal,
+): Promise<AgentRun> {
+  return request_json(`/api/agent-runs/${encodeURIComponent(run_id)}`, {
+    signal,
+  });
+}
+
+export type UnifiedAgentRunEvent = {
+  event: AgentEventType;
+  data: {
+    event_id: string;
+    sequence: number;
+    [key: string]: unknown;
+  };
+};
+
+export async function stream_unified_agent_run(
+  run_id: string,
+  on_event: (event: UnifiedAgentRunEvent) => void,
+  signal?: AbortSignal,
+  last_sequence = 0,
+): Promise<void> {
+  const response = await fetch(
+    `${api_base_url}/api/agent-runs/${encodeURIComponent(run_id)}/events`,
+    {
+      signal,
+      headers:
+        last_sequence > 0
+          ? { "Last-Event-ID": String(last_sequence) }
+          : undefined,
+    },
+  );
+  if (!response.ok || !response.body) {
+    throw new ApiError(`请求失败（${response.status}）`, response.status);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) {
+      const event_name = block.match(/^event: (.+)$/m)?.[1];
+      const data = block.match(/^data: (.+)$/m)?.[1];
+      if (event_name && data) {
+        on_event({
+          event: event_name as AgentEventType,
+          data: JSON.parse(data),
+        });
+      }
+    }
+    if (done) break;
+  }
+}
+
+export function resolve_agent_artifact(
+  artifact_id: string,
+  action: "approve" | "reject",
+  signal?: AbortSignal,
+): Promise<AgentArtifact> {
+  return request_json(
+    `/api/agent-artifacts/${encodeURIComponent(artifact_id)}/${action}`,
+    { method: "POST", signal },
+  );
 }
 
 async function request_json<T>(path: string, init?: RequestInit): Promise<T> {
@@ -531,6 +658,17 @@ export function get_analysis(
   });
 }
 
+export function resolve_analysis_proposal(
+  job_id: string,
+  action: "approve" | "reject",
+  signal?: AbortSignal,
+): Promise<AnalysisJob> {
+  return request_json(`/api/analysis/${encodeURIComponent(job_id)}/${action}`, {
+    method: "POST",
+    signal,
+  });
+}
+
 export function get_transcript(
   asset_id: string,
   signal?: AbortSignal,
@@ -553,61 +691,6 @@ export function update_transcript_segment(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
-      signal,
-    },
-  );
-}
-
-export function create_transcript_correction(
-  asset_id: string,
-  segment_indices: number[] | null,
-  ai_model_id: string,
-  signal?: AbortSignal,
-): Promise<AgentJob> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/transcript/corrections`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ segment_indices, ai_model_id }),
-      signal,
-    },
-  );
-}
-
-export function get_agent_job(
-  job_id: string,
-  signal?: AbortSignal,
-): Promise<AgentJob> {
-  return request_json(`/api/agent-jobs/${encodeURIComponent(job_id)}`, {
-    signal,
-  });
-}
-
-export function list_asset_agent_jobs(
-  asset_id: string,
-  active: boolean,
-  signal?: AbortSignal,
-): Promise<AgentJob[]> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/agent-jobs?active=${active}`,
-    { signal },
-  );
-}
-
-export function respond_to_agent_job(
-  job_id: string,
-  question_id: string,
-  action: AgentQuestionAction,
-  ai_model_id: string | null,
-  signal?: AbortSignal,
-): Promise<AgentJob> {
-  return request_json(
-    `/api/agent-jobs/${encodeURIComponent(job_id)}/responses`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question_id, action, ai_model_id }),
       signal,
     },
   );
@@ -796,266 +879,12 @@ export async function delete_summary_document(
     throw new ApiError(`请求失败（${response.status}）`, response.status);
 }
 
-export function list_summary_agent_sessions(
-  asset_id: string,
-  signal?: AbortSignal,
-): Promise<SummaryAgentSession[]> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-agent-sessions`,
-    { signal },
-  );
-}
-
-export function create_summary_agent_session(
-  asset_id: string,
-  document_id: string,
-  signal?: AbortSignal,
-): Promise<SummaryAgentSessionState> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-agent-sessions`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ document_id }),
-      signal,
-    },
-  );
-}
-
-export function get_summary_agent_session(
-  session_id: string,
-  signal?: AbortSignal,
-): Promise<SummaryAgentSessionState> {
-  return request_json(
-    `/api/summary-agent-sessions/${encodeURIComponent(session_id)}`,
-    { signal },
-  );
-}
-
-export async function delete_summary_agent_session(
-  session_id: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const response = await fetch(
-    `${api_base_url}/api/summary-agent-sessions/${encodeURIComponent(session_id)}`,
-    { method: "DELETE", signal },
-  );
-  if (!response.ok)
-    throw new ApiError(`请求失败（${response.status}）`, response.status);
-}
-
-export function create_summary_agent_message(
-  session_id: string,
-  request: {
-    document_id: string;
-    expected_revision: number;
-    content: string;
-    ai_model_id: string;
-    selection: { start: number; end: number; text: string } | null;
-  },
-  signal?: AbortSignal,
-): Promise<AgentRun> {
-  return request_json(
-    `/api/summary-agent-sessions/${encodeURIComponent(session_id)}/messages`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-      signal,
-    },
-  );
-}
-
-export type AgentRunEvent<TProposal> =
-  | {
-      event: "status";
-      data: AgentStreamData & { stage: string; message?: string };
-    }
-  | { event: "assistant_chunk"; data: AgentStreamData & { content: string } }
-  | {
-      event: "assistant_message";
-      data: AgentStreamData & { content: string; tool_calls: unknown[] };
-    }
-  | { event: "tool_call"; data: AgentStreamData & AgentToolTrace }
-  | {
-      event: "tool_result";
-      data: AgentStreamData & {
-        call_id: string;
-        name: string;
-        result: unknown;
-      };
-    }
-  | {
-      event: "proposal";
-      data: AgentStreamData & { proposal: TProposal };
-    }
-  | { event: "complete"; data: AgentStreamData & { run_id: string } }
-  | {
-      event: "cancelled";
-      data: AgentStreamData & { run_id: string; message: string };
-    }
-  | {
-      event: "error";
-      data: AgentStreamData & { run_id: string; message: string };
-    };
-
-type AgentStreamData = { event_id: string; sequence: number };
-type AgentToolTrace = {
-  call_id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-};
-
-export async function stream_agent_run<TProposal>(
-  run_id: string,
-  on_event: (event: AgentRunEvent<TProposal>) => void,
-  signal?: AbortSignal,
-  last_event_id?: string,
-): Promise<void> {
-  const response = await fetch(
-    `${api_base_url}/api/agent-runs/${encodeURIComponent(run_id)}/events`,
-    {
-      signal,
-      headers: last_event_id ? { "Last-Event-ID": last_event_id } : undefined,
-    },
-  );
-  if (!response.ok || !response.body) {
-    throw new ApiError(`请求失败（${response.status}）`, response.status);
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const blocks = buffer.split("\n\n");
-    buffer = blocks.pop() ?? "";
-    for (const block of blocks) {
-      const event_name = block.match(/^event: (.+)$/m)?.[1];
-      const data = block.match(/^data: (.+)$/m)?.[1];
-      if (event_name && data) {
-        on_event({
-          event: event_name,
-          data: JSON.parse(data),
-        } as AgentRunEvent<TProposal>);
-      }
-    }
-    if (done) break;
-  }
-}
-
-export function list_marker_agent_sessions(
-  asset_id: string,
-  signal?: AbortSignal,
-): Promise<MarkerAgentSession[]> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/marker-agent-sessions`,
-    { signal },
-  );
-}
-
-export function create_marker_agent_session(
-  asset_id: string,
-  signal?: AbortSignal,
-): Promise<MarkerAgentSessionState> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/marker-agent-sessions`,
-    { method: "POST", signal },
-  );
-}
-
-export function get_marker_agent_session(
-  session_id: string,
-  signal?: AbortSignal,
-): Promise<MarkerAgentSessionState> {
-  return request_json(
-    `/api/marker-agent-sessions/${encodeURIComponent(session_id)}`,
-    { signal },
-  );
-}
-
-export async function delete_marker_agent_session(
-  session_id: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const response = await fetch(
-    `${api_base_url}/api/marker-agent-sessions/${encodeURIComponent(session_id)}`,
-    { method: "DELETE", signal },
-  );
-  if (!response.ok) {
-    throw new ApiError(`请求失败（${response.status}）`, response.status);
-  }
-}
-
-export function create_marker_agent_message(
-  session_id: string,
-  request: {
-    content: string;
-    ai_model_id: string;
-    retrieval_mode: MarkerRetrievalMode;
-  },
-  signal?: AbortSignal,
-): Promise<AgentRun> {
-  return request_json(
-    `/api/marker-agent-sessions/${encodeURIComponent(session_id)}/messages`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-      signal,
-    },
-  );
-}
-
-export function resolve_marker_proposal(
-  proposal_id: string,
-  action: "accept" | "reject",
-  signal?: AbortSignal,
-): Promise<MarkerProposal> {
-  return request_json(
-    `/api/marker-proposals/${encodeURIComponent(proposal_id)}/${action}`,
-    { method: "POST", signal },
-  );
-}
-
 export function cancel_agent_run(
   run_id: string,
   signal?: AbortSignal,
 ): Promise<AgentRun> {
   return request_json(`/api/agent-runs/${encodeURIComponent(run_id)}/cancel`, {
     method: "POST",
-    signal,
-  });
-}
-
-export function resolve_summary_proposal(
-  proposal_id: string,
-  action: "accept" | "reject",
-  signal?: AbortSignal,
-): Promise<SummaryEditProposal> {
-  return request_json(
-    `/api/summary-edit-proposals/${encodeURIComponent(proposal_id)}/${action}`,
-    { method: "POST", signal },
-  );
-}
-
-export function create_summary_media(
-  document: SummaryDocument,
-  suggestion: SummaryMediaSuggestion,
-  signal?: AbortSignal,
-): Promise<{ artifact: SummaryMediaArtifact; document: SummaryDocument }> {
-  return request_json("/api/summary-media", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      document_id: document.document_id,
-      expected_revision: document.revision,
-      media_type: suggestion.media_type,
-      start_seconds: suggestion.start_seconds,
-      end_seconds: suggestion.end_seconds,
-      insert_after: suggestion.insert_after,
-      caption: suggestion.caption,
-    }),
     signal,
   });
 }

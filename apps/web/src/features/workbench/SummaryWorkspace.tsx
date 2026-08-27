@@ -11,8 +11,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowUp,
-  Bot,
-  ChevronDown,
   CircleCheck,
   CircleX,
   Code2,
@@ -22,16 +20,14 @@ import {
   FileText,
   FolderTree,
   GripVertical,
-  History,
-  MessageSquareText,
   MoreVertical,
   PanelLeft,
   PanelRight,
-  Plus,
   Save,
   Trash2,
 } from "lucide-react";
 
+import { AgentPanel } from "@/components/AgentPanel";
 import { AiModelSelect } from "@/components/AiModelSelect";
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -39,13 +35,6 @@ import {
   MarkdownEditor,
   type MarkdownSelection,
 } from "@/components/MarkdownEditor";
-import {
-  Bubble,
-  Marker,
-  Message,
-  MessageComposer,
-  MessageScroller,
-} from "@/components/chat";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,7 +51,6 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -116,19 +104,11 @@ import { cn } from "@/lib/utils";
 import {
   ApiError,
   create_summary_export,
-  create_summary_agent_message,
-  create_summary_agent_session,
   create_summary_child,
-  create_summary_media,
   delete_summary_document,
-  delete_summary_agent_session,
   generate_summary_documents,
-  get_summary_agent_session,
-  list_summary_agent_sessions,
   list_summary_documents,
   reorder_summary_children,
-  resolve_summary_proposal,
-  stream_agent_run,
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
@@ -139,27 +119,12 @@ import type {
   AiModelSummary,
   MediaAsset,
   MediaSegment,
-  AgentEvent,
-  SummaryAgentSessionState,
-  SummaryAgentSession,
   SummaryDetail,
   SummaryDocument,
-  SummaryEditProposal,
-  SummaryMediaSuggestion,
   Transcript,
 } from "@/shared/types";
-import {
-  AgentToolTrace,
-  type AgentToolTraceData,
-} from "./SummaryAgentToolTrace";
 
 const AUTO_SAVE_DELAY_MS = 1_000;
-const SUMMARY_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "numeric",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
 
 type SaveStatus = "saved" | "pending" | "saving" | "failed" | "conflict";
 
@@ -172,14 +137,10 @@ type SummaryWorkspaceProps = {
 
 type SummaryProject = {
   documents: SummaryDocument[];
-  sessions: SummaryAgentSession[];
-  session: SummaryAgentSessionState | null;
 };
 
 const EMPTY_SUMMARY_PROJECT: SummaryProject = {
   documents: [],
-  sessions: [],
-  session: null,
 };
 
 async function load_summary_project(
@@ -187,21 +148,7 @@ async function load_summary_project(
   signal?: AbortSignal,
 ): Promise<SummaryProject> {
   const documents = await list_summary_documents(asset_id, signal);
-  if (documents.length === 0) return EMPTY_SUMMARY_PROJECT;
-  try {
-    const sessions = await list_summary_agent_sessions(asset_id, signal);
-    const active_session = sessions[0];
-    const session = active_session
-      ? await get_summary_agent_session(
-          active_session.session.session_id,
-          signal,
-        )
-      : null;
-    return { documents, sessions, session };
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    return { documents, sessions: [], session: null };
-  }
+  return { documents };
 }
 
 export function SummaryWorkspace({
@@ -229,11 +176,6 @@ export function SummaryWorkspace({
       (document) => document.parent_document_id === null,
     )?.document_id ?? null,
   );
-  const [agent_sessions, set_agent_sessions] = useState<SummaryAgentSession[]>(
-    initial_project.sessions,
-  );
-  const [agent_session, set_agent_session] =
-    useState<SummaryAgentSessionState | null>(initial_project.session);
   const [is_generating, set_is_generating] = useState(false);
   const [detail, set_detail] = useState<SummaryDetail>("standard");
   const [create_subdocuments, set_create_subdocuments] = useState(false);
@@ -243,7 +185,6 @@ export function SummaryWorkspace({
   const [generation_model_id, set_generation_model_id] = useState<
     string | null
   >(null);
-  const [agent_model_id, set_agent_model_id] = useState<string | null>(null);
   const [draft_markdown, set_draft_markdown] = useState("");
   const [draft_title, set_draft_title] = useState("");
   const [dirty, set_dirty] = useState(false);
@@ -259,15 +200,7 @@ export function SummaryWorkspace({
   const [delete_target, set_delete_target] = useState<SummaryDocument | null>(
     null,
   );
-  const [delete_session_target, set_delete_session_target] =
-    useState<SummaryAgentSession | null>(null);
   const [reordering, set_reordering] = useState(false);
-  const [agent_instruction, set_agent_instruction] = useState("");
-  const [agent_pending, set_agent_pending] = useState(false);
-  const [agent_stage, set_agent_stage] = useState<string | null>(null);
-  const [media_pending_id, set_media_pending_id] = useState<string | null>(
-    null,
-  );
   const [export_pending, set_export_pending] = useState(false);
   const [export_relative_path, set_export_relative_path] = useState<
     string | null
@@ -382,38 +315,8 @@ export function SummaryWorkspace({
     return save_promise;
   }, [update_dirty]);
 
-  const load_agent_session = useCallback(
-    async (session_id: string, signal?: AbortSignal) => {
-      set_agent_session(await get_summary_agent_session(session_id, signal));
-    },
-    [],
-  );
-
-  const load_agent_sessions = useCallback(
-    async (
-      asset_id: string,
-      signal?: AbortSignal,
-      preferred_session_id?: string,
-    ) => {
-      const loaded = await list_summary_agent_sessions(asset_id, signal);
-      set_agent_sessions(loaded);
-      const active =
-        loaded.find(
-          (item) => item.session.session_id === preferred_session_id,
-        ) ?? loaded[0];
-      if (active) await load_agent_session(active.session.session_id, signal);
-      else set_agent_session(null);
-      return loaded;
-    },
-    [load_agent_session],
-  );
-
   const load_documents = useCallback(
-    async (
-      asset_id: string,
-      signal?: AbortSignal,
-      preferred_session_id?: string,
-    ) => {
+    async (asset_id: string, signal?: AbortSignal) => {
       const loaded = await list_summary_documents(asset_id, signal);
       set_documents(loaded);
       set_selected_document_id((current) =>
@@ -422,22 +325,15 @@ export function SummaryWorkspace({
           : (loaded.find((document) => document.parent_document_id === null)
               ?.document_id ?? null),
       );
-      if (loaded.length > 0) {
-        await load_agent_sessions(asset_id, signal, preferred_session_id);
-      } else {
-        set_agent_sessions([]);
-        set_agent_session(null);
-      }
       return loaded;
     },
-    [load_agent_sessions],
+    [],
   );
 
   useEffect(() => {
     set_generation_model_id(
       (current) => current ?? models[0]?.model_id ?? null,
     );
-    set_agent_model_id((current) => current ?? models[0]?.model_id ?? null);
   }, [models]);
 
   useEffect(() => {
@@ -455,8 +351,6 @@ export function SummaryWorkspace({
     if (!selected_asset_id) {
       set_documents([]);
       set_selected_document_id(null);
-      set_agent_sessions([]);
-      set_agent_session(null);
     }
   }, [selected_asset_id]);
 
@@ -472,17 +366,13 @@ export function SummaryWorkspace({
             (document) => document.parent_document_id === null,
           )?.document_id ?? null),
     );
-    set_agent_sessions(project.sessions);
-    set_agent_session(project.session);
   }, [project_query.data]);
 
   useEffect(() => {
     project_state_ref.current = {
       documents,
-      sessions: agent_sessions,
-      session: agent_session,
     };
-  }, [agent_session, agent_sessions, documents]);
+  }, [documents]);
 
   useEffect(() => {
     return () => {
@@ -586,7 +476,6 @@ export function SummaryWorkspace({
         generated.find((document) => document.parent_document_id === null) ??
         null;
       set_selected_document_id(root?.document_id ?? null);
-      if (root) await load_agent_sessions(selected_asset.asset_id);
     } catch (error) {
       on_error?.(error_message(error));
     } finally {
@@ -688,205 +577,6 @@ export function SummaryWorkspace({
     void reorder_children(reordered.map((document) => document.document_id));
   }
 
-  async function create_agent_session() {
-    if (!selected_asset || !selected_document || agent_pending) return;
-    try {
-      const created = await create_summary_agent_session(
-        selected_asset.asset_id,
-        selected_document.document_id,
-      );
-      set_agent_sessions((current) => [created, ...current]);
-      set_agent_session(created);
-      set_agent_instruction("");
-      set_agent_stage(null);
-    } catch (error) {
-      on_error?.(error_message(error));
-    }
-  }
-
-  async function select_agent_session(session_id: string) {
-    if (agent_pending || agent_session?.session.session_id === session_id)
-      return;
-    try {
-      await load_agent_session(session_id);
-      set_agent_instruction("");
-      set_agent_stage(null);
-    } catch (error) {
-      on_error?.(error_message(error));
-    }
-  }
-
-  async function remove_agent_session() {
-    if (!delete_session_target || !selected_asset) return;
-    const deleted_id = delete_session_target.session.session_id;
-    try {
-      await delete_summary_agent_session(deleted_id);
-      const remaining = agent_sessions.filter(
-        (item) => item.session.session_id !== deleted_id,
-      );
-      set_delete_session_target(null);
-      await load_agent_sessions(
-        selected_asset.asset_id,
-        undefined,
-        remaining[0]?.session.session_id,
-      );
-    } catch (error) {
-      on_error?.(error_message(error));
-    }
-  }
-
-  async function send_agent_instruction() {
-    if (
-      !agent_session ||
-      !selected_document ||
-      !agent_model_id ||
-      !agent_instruction.trim()
-    )
-      return;
-    set_agent_pending(true);
-    set_agent_stage("正在准备相关分析证据");
-    try {
-      const instruction = agent_instruction.trim();
-      set_agent_instruction("");
-      set_agent_session((current) =>
-        current
-          ? {
-              ...current,
-              events: [
-                ...current.events,
-                optimistic_agent_event(current.session.session_id, instruction),
-              ],
-            }
-          : current,
-      );
-      const run = await create_summary_agent_message(
-        agent_session.session.session_id,
-        {
-          document_id: selected_document.document_id,
-          expected_revision: selected_document.revision,
-          content: instruction,
-          ai_model_id: agent_model_id,
-          selection,
-        },
-      );
-      await stream_agent_run<SummaryEditProposal>(run.run_id, (event) => {
-        if (event.event === "status")
-          set_agent_stage(status_label(event.data.stage));
-        if (
-          event.event === "assistant_chunk" ||
-          event.event === "assistant_message" ||
-          event.event === "tool_call" ||
-          event.event === "tool_result"
-        ) {
-          const event_types = {
-            assistant_chunk: "assistant/chunk",
-            assistant_message: "assistant/message",
-            tool_call: "tool/call",
-            tool_result: "tool/result",
-          } as const;
-          set_agent_session((current) =>
-            current
-              ? {
-                  ...current,
-                  events: append_agent_event(
-                    current.events,
-                    stream_agent_event(
-                      current.session.session_id,
-                      run.run_id,
-                      event.data,
-                      event_types[event.event],
-                    ),
-                  ),
-                }
-              : current,
-          );
-        }
-        if (event.event === "proposal") {
-          set_agent_session((current) =>
-            current
-              ? {
-                  ...current,
-                  proposals: [...current.proposals, event.data.proposal],
-                }
-              : current,
-          );
-        }
-        if (event.event === "error") throw new Error(event.data.message);
-      });
-      await load_agent_sessions(
-        selected_document.asset_id,
-        undefined,
-        agent_session.session.session_id,
-      );
-      set_agent_stage(null);
-    } catch (error) {
-      on_error?.(error_message(error));
-      set_agent_stage("运行失败");
-    } finally {
-      set_agent_pending(false);
-    }
-  }
-
-  async function resolve_proposal(
-    proposal: SummaryEditProposal,
-    action: "accept" | "reject",
-  ) {
-    if (!selected_asset) return;
-    try {
-      await resolve_summary_proposal(proposal.proposal_id, action);
-      const loaded = await load_documents(
-        selected_asset.asset_id,
-        undefined,
-        agent_session?.session.session_id,
-      );
-      const active = loaded.find(
-        (document) => document.document_id === selected_document_id,
-      );
-      if (active) {
-        active_document_id_ref.current = null;
-        set_selected_document_id(active.document_id);
-      }
-    } catch (error) {
-      on_error?.(error_message(error));
-      if (error instanceof ApiError && error.status === 409) {
-        if (agent_session) {
-          await load_agent_session(agent_session.session.session_id);
-        }
-      }
-    }
-  }
-
-  async function generate_suggested_media(
-    suggestion: SummaryMediaSuggestion,
-    document_id: string,
-  ) {
-    const target_document = documents.find(
-      (document) => document.document_id === document_id,
-    );
-    if (!target_document) return;
-    set_media_pending_id(suggestion.suggestion_id);
-    try {
-      const result = await create_summary_media(target_document, suggestion);
-      set_documents((current) =>
-        current.map((document) =>
-          document.document_id === result.document.document_id
-            ? result.document
-            : document,
-        ),
-      );
-      if (result.document.document_id === selected_document_id) {
-        set_draft_markdown(result.document.markdown);
-        draft_markdown_ref.current = result.document.markdown;
-        update_dirty(false);
-        set_save_status("saved");
-      }
-    } catch (error) {
-      on_error?.(error_message(error));
-    } finally {
-      set_media_pending_id(null);
-    }
-  }
-
   if (!selected_asset) {
     return (
       <SummaryEmpty
@@ -939,31 +629,42 @@ export function SummaryWorkspace({
     />
   );
   const agent_panel = (
-    <SummaryAgentPanel
+    <AgentPanel
+      agent_id="summary"
+      asset_id={selected_asset.asset_id}
       models={models}
-      sessions={agent_sessions}
-      session={agent_session}
-      model_id={agent_model_id}
-      on_model_change={set_agent_model_id}
-      selection={selection}
-      documents={documents}
-      selected_document={selected_document}
-      events={agent_session?.events ?? []}
-      proposals={agent_session?.proposals ?? []}
-      stage={agent_stage}
-      instruction={agent_instruction}
-      on_instruction_change={set_agent_instruction}
-      pending={agent_pending}
-      disabled={!agent_session}
-      on_submit={() => void send_agent_instruction()}
-      on_new_session={() => void create_agent_session()}
-      on_select_session={(session_id) => void select_agent_session(session_id)}
-      on_delete_session={set_delete_session_target}
-      on_resolve={(proposal, action) => void resolve_proposal(proposal, action)}
-      media_pending_id={media_pending_id}
-      on_generate_media={(suggestion, document_id) =>
-        void generate_suggested_media(suggestion, document_id)
-      }
+      context={{ document_id: selected_document.document_id }}
+      task_input={{
+        document_id: selected_document.document_id,
+        expected_revision: selected_document.revision,
+        selection,
+      }}
+      run_options={[
+        {
+          value: "chat",
+          label: "文档问答",
+          description: "只回答问题，不修改总结；可使用纯聊天模型。",
+          task_input: { intent: "chat" },
+        },
+        {
+          value: "edit",
+          label: "修改总结",
+          description: "生成整批修改预览，确认后才会写入文档。",
+          task_input: { intent: "edit" },
+          required_capabilities: ["tools"],
+        },
+      ]}
+      on_artifact_change={async (artifact) => {
+        if (artifact.status !== "approved") return;
+        const loaded = await load_documents(selected_asset.asset_id);
+        const active = loaded.find(
+          (document) => document.document_id === selected_document.document_id,
+        );
+        if (active) {
+          active_document_id_ref.current = null;
+          set_selected_document_id(active.document_id);
+        }
+      }}
     />
   );
   const editor = (
@@ -1098,13 +799,6 @@ export function SummaryWorkspace({
           if (!open) set_delete_target(null);
         }}
         on_confirm={() => void remove_child()}
-      />
-      <DeleteAgentSessionDialog
-        session={delete_session_target}
-        on_open_change={(open) => {
-          if (!open) set_delete_session_target(null);
-        }}
-        on_confirm={() => void remove_agent_session()}
       />
     </section>
   );
@@ -1671,463 +1365,6 @@ class MarkdownEditorErrorBoundary extends Component<
   }
 }
 
-type AgentDisplayMessage = {
-  message_id: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at: string;
-};
-
-type AgentTimelineItem =
-  | { type: "message"; created_at: string; message: AgentDisplayMessage }
-  | { type: "tool"; created_at: string; trace: AgentToolTraceData };
-
-function optimistic_agent_event(
-  session_id: string,
-  content: string,
-): AgentEvent {
-  const event_id = `optimistic-${Date.now()}`;
-  return {
-    event_id,
-    session_id,
-    sequence: Number.MAX_SAFE_INTEGER,
-    run_id: null,
-    event_type: "user/message",
-    payload: { content },
-    created_at: new Date().toISOString(),
-  };
-}
-
-function stream_agent_event(
-  session_id: string,
-  run_id: string,
-  data: { event_id: string; sequence: number } & Record<string, unknown>,
-  event_type: AgentEvent["event_type"],
-): AgentEvent {
-  const { event_id, sequence, ...payload } = data;
-  return {
-    event_id,
-    session_id,
-    sequence,
-    run_id,
-    event_type,
-    payload,
-    created_at: new Date().toISOString(),
-  };
-}
-
-function append_agent_event(
-  events: AgentEvent[],
-  event: AgentEvent,
-): AgentEvent[] {
-  if (events.some((item) => item.event_id === event.event_id)) return events;
-  return [...events, event];
-}
-
-function agent_event_timeline(events: AgentEvent[]): AgentTimelineItem[] {
-  const completed_run_ids = new Set(
-    events
-      .filter((event) => event.event_type === "assistant/message")
-      .map((event) => event.run_id),
-  );
-  const streaming_messages = new Map<string, AgentDisplayMessage>();
-  const tool_traces = new Map<
-    string,
-    { created_at: string; trace: AgentToolTraceData }
-  >();
-  const timeline: AgentTimelineItem[] = [];
-
-  for (const event of events) {
-    if (event.event_type === "assistant/chunk" && event.run_id) {
-      if (completed_run_ids.has(event.run_id)) continue;
-      const current = streaming_messages.get(event.run_id);
-      streaming_messages.set(event.run_id, {
-        message_id: `stream-${event.run_id}`,
-        role: "assistant",
-        content: `${current?.content ?? ""}${String(event.payload.content ?? "")}`,
-        created_at: current?.created_at ?? event.created_at,
-      });
-      continue;
-    }
-    if (
-      event.event_type === "user/message" ||
-      event.event_type === "assistant/message" ||
-      event.event_type === "archive/message"
-    ) {
-      const role =
-        event.event_type === "user/message"
-          ? "user"
-          : event.event_type === "assistant/message"
-            ? "assistant"
-            : event.payload.role === "user"
-              ? "user"
-              : "assistant";
-      const content = String(event.payload.content ?? "");
-      if (!content) continue;
-      const created_at =
-        typeof event.payload.created_at === "string"
-          ? event.payload.created_at
-          : event.created_at;
-      timeline.push({
-        type: "message",
-        created_at,
-        message: {
-          message_id: event.event_id,
-          role,
-          content,
-          created_at,
-        },
-      });
-      continue;
-    }
-    if (event.event_type === "tool/call") {
-      const call_id = String(event.payload.call_id ?? "");
-      if (!call_id) continue;
-      tool_traces.set(call_id, {
-        created_at: event.created_at,
-        trace: {
-          call_id,
-          name: String(event.payload.name ?? "unknown_tool"),
-          arguments:
-            typeof event.payload.arguments === "object" &&
-            event.payload.arguments !== null
-              ? (event.payload.arguments as Record<string, unknown>)
-              : {},
-        },
-      });
-      continue;
-    }
-    if (event.event_type === "tool/result") {
-      const call_id = String(event.payload.call_id ?? "");
-      const current = tool_traces.get(call_id);
-      if (current) current.trace.result = event.payload.result;
-    }
-  }
-  for (const message of streaming_messages.values()) {
-    timeline.push({ type: "message", created_at: message.created_at, message });
-  }
-  for (const trace of tool_traces.values()) {
-    timeline.push({ type: "tool", ...trace });
-  }
-  return timeline;
-}
-
-function SummaryAgentPanel({
-  models,
-  sessions,
-  session,
-  model_id,
-  on_model_change,
-  selection,
-  documents,
-  selected_document,
-  events,
-  proposals,
-  stage,
-  instruction,
-  on_instruction_change,
-  pending,
-  disabled,
-  on_submit,
-  on_new_session,
-  on_select_session,
-  on_delete_session,
-  on_resolve,
-  media_pending_id,
-  on_generate_media,
-}: {
-  models: AiModelSummary[];
-  sessions: SummaryAgentSession[];
-  session: SummaryAgentSessionState | null;
-  model_id: string | null;
-  on_model_change: (model_id: string | null) => void;
-  selection: MarkdownSelection | null;
-  documents: SummaryDocument[];
-  selected_document: SummaryDocument;
-  events: AgentEvent[];
-  proposals: SummaryEditProposal[];
-  stage: string | null;
-  instruction: string;
-  on_instruction_change: (instruction: string) => void;
-  pending: boolean;
-  disabled: boolean;
-  on_submit: () => void;
-  on_new_session: () => void;
-  on_select_session: (session_id: string) => void;
-  on_delete_session: (session: SummaryAgentSession) => void;
-  on_resolve: (
-    proposal: SummaryEditProposal,
-    action: "accept" | "reject",
-  ) => void;
-  media_pending_id: string | null;
-  on_generate_media: (
-    suggestion: SummaryMediaSuggestion,
-    document_id: string,
-  ) => void;
-}) {
-  const timeline = [
-    ...agent_event_timeline(events),
-    ...proposals.map((proposal) => ({
-      type: "proposal" as const,
-      created_at: proposal.created_at,
-      proposal,
-    })),
-  ].sort((left, right) => left.created_at.localeCompare(right.created_at));
-
-  return (
-    <aside
-      className="flex h-full min-h-0 flex-col bg-card"
-      aria-label="总结 Agent"
-    >
-      <div className="flex flex-col gap-3 border-b p-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
-            <Bot aria-hidden="true" /> 总结 Agent
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={on_new_session}
-              disabled={pending}
-              aria-label="新建 Agent 对话"
-            >
-              <Plus />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => session && on_delete_session(session)}
-              disabled={pending || sessions.length <= 1 || !session}
-              aria-label="删除当前 Agent 对话"
-            >
-              <Trash2 />
-            </Button>
-          </div>
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full justify-between"
-              disabled={pending || !session}
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <History data-icon="inline-start" />
-                <span className="truncate">
-                  {session?.session.title ?? "选择历史"}
-                </span>
-              </span>
-              <ChevronDown data-icon="inline-end" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuLabel>
-              Agent 历史 · {sessions.length} 条
-            </DropdownMenuLabel>
-            <DropdownMenuGroup>
-              {sessions.map((item) => (
-                <DropdownMenuItem
-                  key={item.session.session_id}
-                  onSelect={() => on_select_session(item.session.session_id)}
-                >
-                  <History />
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate">{item.session.title}</span>
-                    <time className="text-xs text-muted-foreground">
-                      {format_summary_time(item.session.updated_at)}
-                    </time>
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={on_new_session}>
-                <Plus /> 新建对话
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <AiModelSelect
-          id="summary-agent-model"
-          label="对话模型"
-          models={models}
-          value={model_id}
-          on_change={on_model_change}
-          disabled={pending}
-        />
-        <Badge variant="outline" className="max-w-full justify-start truncate">
-          {selected_document.title} ·{" "}
-          {selection ? `已选择 ${selection.text.length} 个字符` : "全文"}
-        </Badge>
-      </div>
-      <MessageScroller className="flex-1">
-        {timeline.length === 0 ? (
-          <Empty className="border-0">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <MessageSquareText />
-              </EmptyMedia>
-              <EmptyTitle>从文档修改开始</EmptyTitle>
-              <EmptyDescription>
-                选择文字或直接描述希望调整的章节。建议确认后才会应用。
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : null}
-        {timeline.map((item) =>
-          item.type === "message" ? (
-            <Message key={item.message.message_id} role={item.message.role}>
-              <div className="flex max-w-[88%] flex-col gap-1">
-                <Bubble role={item.message.role} className="max-w-full">
-                  {item.message.content}
-                </Bubble>
-                <time className="px-1 text-xs text-muted-foreground">
-                  {format_summary_time(item.message.created_at)}
-                </time>
-              </div>
-            </Message>
-          ) : item.type === "tool" ? (
-            <AgentToolTrace key={item.trace.call_id} trace={item.trace} />
-          ) : (
-            <ProposalCard
-              key={item.proposal.proposal_id}
-              proposal={item.proposal}
-              document_title={
-                documents.find(
-                  (document) =>
-                    document.document_id === item.proposal.document_id,
-                )?.title ?? "已删除文档"
-              }
-              on_resolve={on_resolve}
-              media_pending_id={media_pending_id}
-              on_generate_media={on_generate_media}
-            />
-          ),
-        )}
-        {stage ? <Marker>{stage}</Marker> : null}
-      </MessageScroller>
-      <MessageComposer
-        value={instruction}
-        on_change={on_instruction_change}
-        on_submit={on_submit}
-        pending={pending}
-        disabled={disabled || !model_id}
-      />
-    </aside>
-  );
-}
-
-function ProposalCard({
-  proposal,
-  document_title,
-  on_resolve,
-  media_pending_id,
-  on_generate_media,
-}: {
-  proposal: SummaryEditProposal;
-  document_title: string;
-  on_resolve: (
-    proposal: SummaryEditProposal,
-    action: "accept" | "reject",
-  ) => void;
-  media_pending_id: string | null;
-  on_generate_media: (
-    suggestion: SummaryMediaSuggestion,
-    document_id: string,
-  ) => void;
-}) {
-  return (
-    <Card size="sm">
-      <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-sm">修改建议</CardTitle>
-          <Badge
-            variant={proposal.status === "stale" ? "destructive" : "secondary"}
-          >
-            {proposal_status_label(proposal.status)}
-          </Badge>
-        </div>
-        <CardDescription>{proposal.explanation}</CardDescription>
-        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-          <span>{document_title}</span>
-          <span>版本 {proposal.base_revision}</span>
-          <time>{format_summary_time(proposal.created_at)}</time>
-        </div>
-      </CardHeader>
-      {proposal.status === "pending" ? (
-        <CardContent>
-          <pre className="max-h-40 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap">
-            {proposal.diff || "文档内容已重新整理。"}
-          </pre>
-          {proposal.media_suggestions.length > 0 ? (
-            <div className="mt-3 flex flex-col gap-2">
-              {proposal.media_suggestions.map((suggestion) => (
-                <div
-                  className="flex items-center justify-between gap-2 rounded-md border p-2"
-                  key={suggestion.suggestion_id}
-                >
-                  <div className="min-w-0 text-xs">
-                    <strong className="block truncate">
-                      {suggestion.caption}
-                    </strong>
-                    <span className="text-muted-foreground">
-                      {suggestion.media_type === "gif" ? "GIF" : "图片"} ·{" "}
-                      {suggestion.start_seconds.toFixed(1)} 秒
-                    </span>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      on_generate_media(suggestion, proposal.document_id)
-                    }
-                    disabled={media_pending_id !== null}
-                  >
-                    {media_pending_id === suggestion.suggestion_id ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : null}
-                    生成
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </CardContent>
-      ) : null}
-      <CardFooter className="justify-between">
-        <span className="text-xs text-muted-foreground">
-          {proposal.status === "pending" ? "确认后才会写入文档" : "处理完成"}
-        </span>
-        {proposal.status === "pending" ? (
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => on_resolve(proposal, "reject")}
-            >
-              拒绝
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => on_resolve(proposal, "accept")}
-            >
-              接受
-            </Button>
-          </div>
-        ) : null}
-      </CardFooter>
-    </Card>
-  );
-}
-
 function NewDocumentDialog({
   open,
   on_open_change,
@@ -2203,37 +1440,6 @@ function DeleteDocumentDialog({
   );
 }
 
-function DeleteAgentSessionDialog({
-  session,
-  on_open_change,
-  on_confirm,
-}: {
-  session: SummaryAgentSession | null;
-  on_open_change: (open: boolean) => void;
-  on_confirm: () => void;
-}) {
-  return (
-    <Dialog open={session !== null} onOpenChange={on_open_change}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>删除 Agent 历史</DialogTitle>
-          <DialogDescription>
-            “{session?.session.title}”中的消息和修改建议将永久删除。
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="outline">取消</Button>
-          </DialogClose>
-          <Button variant="destructive" onClick={on_confirm}>
-            删除历史
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function SummaryEmpty({
   title,
   description,
@@ -2254,31 +1460,4 @@ function SummaryEmpty({
       </Empty>
     </div>
   );
-}
-
-function status_label(stage: string): string {
-  const labels: Record<string, string> = {
-    pending: "等待 Agent 开始",
-    running: "Agent 正在思考",
-    degraded: "当前模型已降级为纯聊天",
-    cancelled: "运行已取消",
-    interrupted: "运行被应用重启中断",
-  };
-  return labels[stage] ?? stage;
-}
-
-function proposal_status_label(status: SummaryEditProposal["status"]): string {
-  return {
-    pending: "待确认",
-    accepted: "已接受",
-    rejected: "已拒绝",
-    stale: "已过期",
-  }[status];
-}
-
-function format_summary_time(value: string): string {
-  const time = new Date(value);
-  return Number.isNaN(time.getTime())
-    ? value
-    : SUMMARY_TIME_FORMATTER.format(time);
 }

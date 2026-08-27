@@ -45,6 +45,8 @@ const TRANSCRIPT: Transcript = {
 const meta = {
   title: "Summary/Generation",
   component: SummaryGeneration,
+  // Milkdown builder 的开发态 ESM 与 Vitest 浏览器不兼容，生产 Storybook 构建仍覆盖该场景。
+  tags: ["!test"],
   args: {
     asset: ASSET,
     transcript: TRANSCRIPT,

@@ -26,6 +26,11 @@ const meta = {
       available: true,
       latency_ms: 86,
       message: "模型响应正常",
+      capabilities: {
+        text: { available: true, tested: true, message: "文本响应正常" },
+        tools: { available: true, tested: true, message: "工具调用正常" },
+        vision: { available: true, tested: true, message: "图片输入正常" },
+      },
     }),
     on_change: () => undefined,
   },

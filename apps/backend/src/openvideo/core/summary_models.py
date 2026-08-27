@@ -1,11 +1,9 @@
-"""总结文档、对话建议与媒体产物共享的数据契约。"""
+"""总结文档、媒体产物与导出的业务数据契约。"""
 
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
-
-from openvideo.core.agent_runtime_models import AgentEvent, AgentSession
+from pydantic import BaseModel, Field
 
 
 class SummaryDetail(StrEnum):
@@ -51,141 +49,9 @@ class SummaryDocumentReorder(BaseModel):
     document_ids: list[str]
 
 
-class SummaryConversation(BaseModel):
-    conversation_id: str
-    asset_id: str
-    root_document_id: str
-    title: str = Field(min_length=1, max_length=120)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class SummaryAgentSessionCreate(BaseModel):
-    document_id: str
-
-
-class SummaryMessageRole(StrEnum):
-    USER = "user"
-    ASSISTANT = "assistant"
-
-
-class SummaryMessage(BaseModel):
-    message_id: str
-    conversation_id: str
-    role: SummaryMessageRole
-    content: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class SummarySelection(BaseModel):
-    start: int = Field(ge=0)
-    end: int = Field(ge=0)
-    text: str = ""
-
-    @model_validator(mode="after")
-    def validate_range(self) -> "SummarySelection":
-        if self.end < self.start:
-            raise ValueError("选区结束位置不能早于开始位置")
-        return self
-
-
-class SummaryAgentMessageRequest(BaseModel):
-    document_id: str
-    expected_revision: int = Field(ge=1)
-    content: str = Field(min_length=1, max_length=20_000)
-    ai_model_id: str
-    selection: SummarySelection | None = None
-
-
-class SummaryAgentSession(BaseModel):
-    session: AgentSession
-    asset_id: str
-    root_document_id: str
-
-
-class SummaryAgentSessionState(SummaryAgentSession):
-    events: list[AgentEvent] = Field(default_factory=list)
-    proposals: list["SummaryEditProposal"] = Field(default_factory=list)
-
-
 class SummaryMediaType(StrEnum):
     IMAGE = "image"
     GIF = "gif"
-
-
-class SummaryMediaSuggestion(BaseModel):
-    suggestion_id: str
-    media_type: SummaryMediaType
-    start_seconds: float = Field(ge=0)
-    end_seconds: float | None = Field(default=None, ge=0)
-    insert_after: str | None = None
-    caption: str = Field(min_length=1, max_length=500)
-
-    @model_validator(mode="after")
-    def validate_time_range(self) -> "SummaryMediaSuggestion":
-        if self.end_seconds is not None and self.end_seconds <= self.start_seconds:
-            raise ValueError("媒体结束时间必须晚于开始时间")
-        return self
-
-
-class SummaryProposalStatus(StrEnum):
-    PENDING = "pending"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
-    STALE = "stale"
-
-
-class SummaryEditProposal(BaseModel):
-    proposal_id: str
-    session_id: str
-    document_id: str
-    base_revision: int = Field(ge=1)
-    proposed_markdown: str
-    explanation: str
-    diff: str
-    suggested_subdocuments: list[SummaryDocumentCreate] = Field(default_factory=list)
-    media_suggestions: list[SummaryMediaSuggestion] = Field(default_factory=list)
-    status: SummaryProposalStatus = SummaryProposalStatus.PENDING
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_legacy_conversation_id(cls, values: object) -> object:
-        # TODO(删除)：所有 v9 会话文件完成 v10 归档迁移后删除旧字段读取。
-        if not isinstance(values, dict) or "session_id" in values:
-            return values
-        if "conversation_id" not in values:
-            return values
-        migrated = dict(values)
-        legacy_id = str(migrated.pop("conversation_id"))
-        migrated["session_id"] = (
-            f"session-{legacy_id.removeprefix('conversation-')}"
-        )
-        return migrated
-
-
-class SummaryAgentRunStage(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETE = "complete"
-    FAILED = "failed"
-
-
-class SummaryAgentRun(BaseModel):
-    run_id: str
-    conversation_id: str
-    stage: SummaryAgentRunStage = SummaryAgentRunStage.PENDING
-    assistant_message_id: str | None = None
-    proposal_id: str | None = None
-    error_message: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class SummaryConversationState(BaseModel):
-    conversation: SummaryConversation
-    messages: list[SummaryMessage]
-    proposals: list[SummaryEditProposal]
 
 
 class SummaryMediaCreate(BaseModel):

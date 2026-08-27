@@ -27,11 +27,12 @@ import { FloatingError } from "@/components/FloatingError";
 import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
+import { resolve_analysis_proposal } from "@/shared/api";
 import type {
+  AnalysisJob,
   AnalysisMode,
   AnalysisStrategy,
   MediaMarker,
-  TranscriptCorrectionScope,
   TranscriptionOptions,
 } from "@/shared/types";
 
@@ -40,15 +41,8 @@ const PANEL_TOGGLE_TRANSITION_MS = 280;
 
 export function MarkersPage() {
   const { selected_asset, selected_asset_id } = use_asset_catalog();
-  const {
-    start_analysis,
-    start_transcription,
-    start_transcript_correction,
-    restore_transcript_correction,
-    respond_to_transcript_correction,
-    agent_job_for_asset,
-    is_operation_running,
-  } = use_task_manager();
+  const { start_analysis, start_transcription, is_operation_running } =
+    use_task_manager();
   const {
     segments,
     transcript,
@@ -69,6 +63,8 @@ export function MarkersPage() {
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
   const [page_error, set_page_error] = useState<string | null>(null);
+  const [analysis_proposal, set_analysis_proposal] =
+    useState<AnalysisJob | null>(null);
   const [candidate_markers, set_candidate_markers] = useState<MediaMarker[]>(
     [],
   );
@@ -107,6 +103,7 @@ export function MarkersPage() {
     set_current_time(0);
     set_selected_transcript_indices([]);
     set_candidate_markers([]);
+    set_analysis_proposal(null);
   }, [selected_asset_id]);
 
   useEffect(
@@ -129,21 +126,6 @@ export function MarkersPage() {
     }, PANEL_TOGGLE_TRANSITION_MS);
   }
 
-  useEffect(() => {
-    if (!selected_asset_id) return;
-    void restore_transcript_correction(selected_asset_id)
-      .then((job) => {
-        if (job?.stage === "complete" && mounted_ref.current) {
-          return reload_analysis();
-        }
-      })
-      .catch((error: unknown) => {
-        if (mounted_ref.current && !is_abort_error(error)) {
-          set_page_error(error_message(error));
-        }
-      });
-  }, [reload_analysis, restore_transcript_correction, selected_asset_id]);
-
   function seek_player(seconds: number) {
     set_current_time(seconds);
     player_ref.current?.seek_to(seconds);
@@ -158,17 +140,32 @@ export function MarkersPage() {
     if (!selected_asset_id) return;
     set_page_error(null);
     try {
-      await start_analysis(
+      const job = await start_analysis(
         selected_asset_id,
         mode,
         marker_ids,
         ai_model_id,
         strategy,
       );
+      if (job.stage === "waiting_for_approval") set_analysis_proposal(job);
       if (mounted_ref.current) await reload_analysis();
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
         set_page_error(error_message(error));
+    }
+  }
+
+  async function resolve_analysis(action: "approve" | "reject") {
+    if (!analysis_proposal) return;
+    set_page_error(null);
+    try {
+      await resolve_analysis_proposal(analysis_proposal.job_id, action);
+      set_analysis_proposal(null);
+      if (mounted_ref.current) await reload_analysis();
+    } catch (error) {
+      if (mounted_ref.current && !is_abort_error(error)) {
+        set_page_error(error_message(error));
+      }
     }
   }
 
@@ -181,53 +178,6 @@ export function MarkersPage() {
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
         set_page_error(error_message(error));
-    }
-  }
-
-  async function run_transcript_correction(
-    scope: TranscriptCorrectionScope,
-    ai_model_id: string,
-  ) {
-    if (!selected_asset_id) return;
-    const segment_indices =
-      scope === "all" ? null : selected_transcript_indices;
-    if (segment_indices?.length === 0) return;
-    set_page_error(null);
-    try {
-      const job = await start_transcript_correction(
-        selected_asset_id,
-        segment_indices,
-        ai_model_id,
-      );
-      if (job.stage === "complete" && mounted_ref.current) {
-        await reload_analysis();
-      }
-    } catch (error) {
-      if (mounted_ref.current && !is_abort_error(error)) {
-        set_page_error(error_message(error));
-      }
-    }
-  }
-
-  async function respond_to_correction_agent(
-    action: Parameters<typeof respond_to_transcript_correction>[1],
-    ai_model_id?: string | null,
-  ) {
-    if (!correction_agent_job) return;
-    set_page_error(null);
-    try {
-      const job = await respond_to_transcript_correction(
-        correction_agent_job,
-        action,
-        ai_model_id,
-      );
-      if (job.stage === "complete" && mounted_ref.current) {
-        await reload_analysis();
-      }
-    } catch (error) {
-      if (mounted_ref.current && !is_abort_error(error)) {
-        set_page_error(error_message(error));
-      }
     }
   }
 
@@ -268,18 +218,6 @@ export function MarkersPage() {
   const is_analyzing = selected_asset_id
     ? is_operation_running(selected_asset_id, "analysis")
     : false;
-  const correction_agent_job = selected_asset_id
-    ? agent_job_for_asset(selected_asset_id)
-    : null;
-  const correction_is_active =
-    correction_agent_job !== null &&
-    !["complete", "failed", "cancelled"].includes(correction_agent_job.stage);
-  const active_correction_scope: TranscriptCorrectionScope | null =
-    correction_is_active
-      ? correction_agent_job.segment_indices === null
-        ? "all"
-        : "selection"
-      : null;
   const transcription_models = loaded_transcription_models.map(
     (model) =>
       transcription_model_overrides[`${model.engine}:${model.model}`] ?? model,
@@ -329,15 +267,10 @@ export function MarkersPage() {
       on_start_analysis={(mode, marker_ids, ai_model_id, strategy) =>
         void run_analysis(mode, marker_ids, ai_model_id, strategy)
       }
-      selected_transcript_count={selected_transcript_indices.length}
-      active_correction_scope={active_correction_scope}
-      correction_agent_job={correction_agent_job}
-      on_start_correction_agent={(scope, ai_model_id) =>
-        void run_transcript_correction(scope, ai_model_id)
-      }
-      on_agent_response={(action, ai_model_id) =>
-        void respond_to_correction_agent(action, ai_model_id)
-      }
+      analysis_proposal={analysis_proposal}
+      on_resolve_analysis={(action) => void resolve_analysis(action)}
+      selected_transcript_indices={selected_transcript_indices}
+      on_transcript_changed={() => void reload_analysis()}
       open_sections={settings.open_tool_sections}
       on_open_sections_change={(open_tool_sections) =>
         update_settings({ open_tool_sections })

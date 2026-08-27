@@ -6,6 +6,7 @@ from typing import Any
 
 import litellm
 
+from openvideo.agent_runtime import AgentCapabilityError
 from openvideo.core.agent_runtime_models import (
     AgentModelResponse,
     AgentToolCall,
@@ -19,6 +20,13 @@ class LlmCompletionError(RuntimeError):
 
 class LlmContextLengthError(LlmCompletionError):
     """输入超过模型上下文时保留可恢复语义，供 Agent 请求用户决策。"""
+
+
+VISION_PROBE_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
+    "AScY42YAAAAASUVORK5CYII="
+)
 
 
 def complete_text(
@@ -61,7 +69,7 @@ AGENT_MAX_TOKENS = 12_000
 
 
 class LiteLlmAgentAdapter:
-    """只在 Agent 任务中暴露原生工具调用，并保留一次纯聊天降级机会。"""
+    """使用供应商原生流式工具调用；协议不满足时明确失败。"""
 
     async def complete(
         self,
@@ -70,24 +78,14 @@ class LiteLlmAgentAdapter:
         tools: list[dict[str, Any]],
         on_chunk: Callable[[str], None],
     ) -> AgentModelResponse:
-        supports_tools = _supports_tool_calling(model)
-        enabled_tools = tools if supports_tools else []
+        if tools and not supports_tool_calling(model):
+            raise AgentCapabilityError("当前模型不支持 Agent 所需的工具调用")
         try:
-            response = await self._request(
-                model, messages, enabled_tools, on_chunk
-            )
-            if tools and not supports_tools:
-                return response.model_copy(
-                    update={"degraded_reason": "当前模型未启用工具能力，已使用纯聊天"}
-                )
-            return response
+            return await self._request(model, messages, tools, on_chunk)
         except Exception as error:
-            if not enabled_tools or not _is_tool_parameter_rejection(error):
-                raise LlmCompletionError(f"模型请求失败：{error}") from error
-            response = await self._request(model, messages, [], on_chunk)
-            return response.model_copy(
-                update={"degraded_reason": "模型服务拒绝工具参数，已降级为纯聊天"}
-            )
+            if tools and _is_tool_parameter_rejection(error):
+                raise AgentCapabilityError(f"模型服务拒绝工具协议：{error}") from error
+            raise LlmCompletionError(f"模型请求失败：{error}") from error
 
     async def _request(
         self,
@@ -156,7 +154,7 @@ class LiteLlmAgentAdapter:
         return AgentModelResponse(content="".join(content_parts), tool_calls=calls)
 
 
-def _supports_tool_calling(model: AiModelConfiguration) -> bool:
+def supports_tool_calling(model: AiModelConfiguration) -> bool:
     if model.tool_calling_mode == "enabled":
         return True
     if model.tool_calling_mode == "disabled":
@@ -167,9 +165,91 @@ def _supports_tool_calling(model: AiModelConfiguration) -> bool:
         return False
 
 
+def probe_tool_calling(
+    model: AiModelConfiguration,
+    timeout_seconds: int,
+) -> None:
+    """要求供应商实际返回函数调用，避免仅凭模型名称推测 Agent 能力。"""
+
+    request: dict[str, Any] = {
+        "model": model.litellm_model,
+        "messages": [
+            {
+                "role": "user",
+                "content": "Call report_probe with status set to ok.",
+            }
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "report_probe",
+                    "description": "Report the model capability probe result.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"status": {"type": "string", "enum": ["ok"]}},
+                        "required": ["status"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        ],
+        "tool_choice": {
+            "type": "function",
+            "function": {"name": "report_probe"},
+        },
+        "timeout": timeout_seconds,
+        "max_tokens": 32,
+    }
+    if model.api_key:
+        request["api_key"] = model.api_key
+    if model.api_base:
+        request["api_base"] = model.api_base
+    if model.api_version:
+        request["api_version"] = model.api_version
+    try:
+        response = litellm.completion(**request)
+        tool_calls = getattr(response.choices[0].message, "tool_calls", None)
+    except Exception as error:
+        raise LlmCompletionError(f"工具调用探测失败：{error}") from error
+    if not tool_calls:
+        raise LlmCompletionError("工具调用探测失败：模型未返回工具调用")
+
+
+def probe_image_input(
+    model: AiModelConfiguration,
+    timeout_seconds: int,
+) -> None:
+    """发送最小内嵌图片，验证声明的视觉输入可被供应商协议接受。"""
+
+    complete_text(
+        model,
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Reply only with OK."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": VISION_PROBE_DATA_URL},
+                    },
+                ],
+            }
+        ],
+        timeout_seconds=timeout_seconds,
+        max_tokens=8,
+        disable_thinking=True,
+    )
+
+
 def _is_tool_parameter_rejection(error: Exception) -> bool:
     message = str(error).lower()
     return any(
         marker in message
-        for marker in ("tool", "function calling", "tool_choice", "unsupported parameter")
+        for marker in (
+            "tool",
+            "function calling",
+            "tool_choice",
+            "unsupported parameter",
+        )
     )

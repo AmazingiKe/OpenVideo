@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime
 from threading import RLock
 
@@ -10,6 +12,7 @@ from openvideo.core.analysis_models import (
     AnalysisOperation,
     AnalysisStage,
     AnalysisStrategy,
+    INACTIVE_ANALYSIS_STAGES,
     TERMINAL_ANALYSIS_STAGES,
 )
 from openvideo.core.download_models import (
@@ -65,6 +68,20 @@ from openvideo.tools.transcribe import (
 from openvideo.tools.vision import LiteLlmVision
 
 
+def _segments_overlap(first: MediaSegment, second: MediaSegment) -> bool:
+    return (
+        first.start_seconds < second.end_seconds
+        and second.start_seconds < first.end_seconds
+    )
+
+
+def _segment_digest(segments: list[MediaSegment]) -> str:
+    payload = [segment.model_dump(mode="json") for segment in segments]
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
 class DownloadManager:
     """下载任务把长耗时外部进程与短生命周期 HTTP 请求隔离开。"""
 
@@ -104,10 +121,7 @@ class DownloadManager:
                 if active_job:
                     return active_job
                 if existing_asset.status == MediaAssetStatus.READY:
-                    if (
-                        assign_ready_folder
-                        and existing_asset.folder_id != folder_id
-                    ):
+                    if assign_ready_folder and existing_asset.folder_id != folder_id:
                         existing_asset.folder_id = folder_id
                         self.library.save(existing_asset)
                     return self._completed_job(existing_asset, video_quality)
@@ -612,7 +626,7 @@ class AnalysisManager:
         """服务重启后恢复未完成任务，复用已经落盘的转写与事件产物。"""
         for saved_job in self.library.load_analysis_jobs():
             job = saved_job.model_copy(deep=True)
-            if job.stage not in TERMINAL_ANALYSIS_STAGES:
+            if job.stage not in INACTIVE_ANALYSIS_STAGES:
                 job.stage = AnalysisStage.PENDING
                 job.message = "等待恢复分析"
                 job.error_message = None
@@ -635,7 +649,7 @@ class AnalysisManager:
     def has_active_jobs(self) -> bool:
         with self._lock:
             return any(
-                job.stage not in TERMINAL_ANALYSIS_STAGES for job in self._jobs.values()
+                job.stage not in INACTIVE_ANALYSIS_STAGES for job in self._jobs.values()
             )
 
     async def cancel_assets(self, asset_ids: set[str]) -> bool:
@@ -644,7 +658,7 @@ class AnalysisManager:
                 job.model_copy(deep=True)
                 for job in self._jobs.values()
                 if job.asset_id in asset_ids
-                and job.stage not in TERMINAL_ANALYSIS_STAGES
+                and job.stage not in INACTIVE_ANALYSIS_STAGES
             ]
             tasks = [
                 self._tasks[job.job_id] for job in jobs if job.job_id in self._tasks
@@ -690,6 +704,28 @@ class AnalysisManager:
 
     def segments(self, asset_id: str) -> list[MediaSegment]:
         return self.library.load_segments(asset_id)
+
+    def approve_proposal(self, job_id: str) -> AnalysisJob:
+        job = self.get(job_id)
+        if job is None:
+            raise AnalysisError("分析任务不存在")
+        if job.stage != AnalysisStage.WAITING_FOR_APPROVAL:
+            raise AnalysisError("分析任务当前没有待确认结果")
+        current = self.library.load_segments(job.asset_id)
+        if _segment_digest(current) != job.proposal_base_digest:
+            raise AnalysisError("时间轴已发生变化，请重新运行分析")
+        self.library.save_segments(job.asset_id, job.proposed_segments)
+        self._finish_analysis_proposal(job_id, AnalysisStage.COMPLETE, "分析结果已确认")
+        return self.get(job_id) or job
+
+    def reject_proposal(self, job_id: str) -> AnalysisJob:
+        job = self.get(job_id)
+        if job is None:
+            raise AnalysisError("分析任务不存在")
+        if job.stage != AnalysisStage.WAITING_FOR_APPROVAL:
+            raise AnalysisError("分析任务当前没有待确认结果")
+        self._finish_analysis_proposal(job_id, AnalysisStage.REJECTED, "已放弃分析预览")
+        return self.get(job_id) or job
 
     async def _run(self, job_id: str) -> None:
         job = self.get(job_id)
@@ -814,6 +850,9 @@ class AnalysisManager:
                         progress,
                         message,
                     ),
+                    self.settings.ai_model(job.ai_model_id)
+                    if job.ai_model_id
+                    else None,
                 )
                 for segment in segments:
                     segment.key_frame_paths = [
@@ -837,13 +876,17 @@ class AnalysisManager:
                     f"已生成 {len(segments)} 个时间轴事件",
                 )
                 merged_segments = self._merge_segments(job, segments)
-                self.library.save_segments(asset.asset_id, merged_segments)
                 message = (
-                    "分析完成"
+                    "分析预览已生成，等待确认"
                     if describer is not None
-                    else "音频时间轴分析完成（未配置视觉模型）"
+                    else "音频时间轴预览已生成，等待确认（未配置视觉模型）"
                 )
-                self._update_job(job_id, AnalysisStage.COMPLETE, 100, message)
+                self._set_analysis_proposal(
+                    job_id,
+                    _segment_digest(self.library.load_segments(asset.asset_id)),
+                    merged_segments,
+                    message,
+                )
             except Exception as error:
                 if job.operation == AnalysisOperation.TRANSCRIPTION:
                     failed_at = datetime.now(UTC)
@@ -919,17 +962,38 @@ class AnalysisManager:
     ) -> list[MediaSegment]:
         existing = self.library.load_segments(job.asset_id)
         if job.mode == AnalysisMode.FULL:
-            retained = [segment for segment in existing if segment.marker_ids]
+            retained: list[MediaSegment] = []
         else:
             selected_ids = set(job.marker_ids)
             retained = [
                 segment
                 for segment in existing
                 if not selected_ids.intersection(segment.marker_ids)
+                and not any(
+                    _segments_overlap(segment, replacement)
+                    for replacement in new_segments
+                )
             ]
-        return sorted(
+        merged = sorted(
             [*retained, *new_segments], key=lambda segment: segment.start_seconds
         )
+        marker_ids = {
+            marker.marker_id for marker in self.library.load_markers(job.asset_id)
+        }
+        if any(
+            marker_id not in marker_ids
+            for segment in merged
+            for marker_id in segment.marker_ids
+        ):
+            raise AnalysisError("分析结果引用了不存在的人工标记")
+        if len({segment.segment_id for segment in merged}) != len(merged):
+            raise AnalysisError("分析结果包含重复事件")
+        if any(
+            _segments_overlap(previous, current)
+            for previous, current in zip(merged, merged[1:], strict=False)
+        ):
+            raise AnalysisError("分析结果包含重叠事件")
+        return merged
 
     def _add_capability(self, job_id: str, capability: AnalysisCapability) -> None:
         with self._lock:
@@ -937,6 +1001,42 @@ class AnalysisManager:
             if job and capability not in job.capabilities:
                 job.capabilities.append(capability)
                 self.library.save_analysis_job(job)
+
+    def _set_analysis_proposal(
+        self,
+        job_id: str,
+        base_digest: str,
+        proposed_segments: list[MediaSegment],
+        message: str,
+    ) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.stage in TERMINAL_ANALYSIS_STAGES:
+                return
+            job.stage = AnalysisStage.WAITING_FOR_APPROVAL
+            job.progress_percent = 100
+            job.message = message
+            job.proposal_base_digest = base_digest
+            job.proposed_segments = [
+                segment.model_copy(deep=True) for segment in proposed_segments
+            ]
+            job.updated_at = datetime.now(UTC)
+            self.library.save_analysis_job(job)
+
+    def _finish_analysis_proposal(
+        self, job_id: str, stage: AnalysisStage, message: str
+    ) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.stage != AnalysisStage.WAITING_FOR_APPROVAL:
+                return
+            job.stage = stage
+            job.progress_percent = 100
+            job.message = message
+            job.proposal_base_digest = None
+            job.proposed_segments = []
+            job.updated_at = datetime.now(UTC)
+            self.library.save_analysis_job(job)
 
     def _update_job(
         self,

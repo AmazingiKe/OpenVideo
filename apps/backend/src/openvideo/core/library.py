@@ -11,8 +11,8 @@ from uuid import UUID
 import portalocker
 from pydantic import BaseModel
 
-from openvideo.core.agent_models import AgentJob
 from openvideo.core.agent_runtime_models import (
+    AgentArtifact,
     AgentEvent,
     AgentEventType,
     AgentRun,
@@ -37,10 +37,8 @@ from openvideo.core.library_files import (
     TRANSCRIPTION_METADATA_FILE_NAME,
     IndexIssue,
     MarkersFile,
-    SummaryConversationFile,
     TimelineFile,
     atomic_write_model,
-    conversation_file_path,
     metadata_from_asset,
 )
 from openvideo.core.library_index import (
@@ -60,17 +58,9 @@ from openvideo.core.media_models import (
     ThumbnailStoryboardResponse,
     ThumbnailStoryboardTile,
 )
-from openvideo.core.marker_agent_models import MarkerProposal
 from openvideo.core.transcription_models import Transcript, TranscriptionMetadata
 from openvideo.core.summary_files import load_manifest, read_markdown, write_manifest
-from openvideo.core.summary_models import (
-    SummaryAgentRun,
-    SummaryConversation,
-    SummaryDocument,
-    SummaryEditProposal,
-    SummaryMediaArtifact,
-    SummaryMessage,
-)
+from openvideo.core.summary_models import SummaryDocument, SummaryMediaArtifact
 from openvideo.core.thumbnails import ThumbnailStoryboard, build_thumbnail_tiles
 
 
@@ -198,6 +188,7 @@ class MediaLibrary:
         except portalocker.exceptions.LockException as error:
             raise LibraryLockedError("资料库正被另一个 OpenVideo 进程使用") from error
         try:
+            self._remove_legacy_agent_files()
             self._connection = open_index_database(self.library_path, self.assets_path)
             self._file_lock = lock
             self._recover_interrupted_downloads()
@@ -208,6 +199,22 @@ class MediaLibrary:
             self._file_lock = None
             lock.release()
             raise
+
+    def _remove_legacy_agent_files(self) -> None:
+        """旧会话不是业务成果，统一运行时启用后必须避免再次被恢复。"""
+        checkpoint = self.library_path / AGENT_CHECKPOINT_DATABASE_FILE_NAME
+        checkpoint.unlink(missing_ok=True)
+        for asset_directory in self.assets_path.iterdir():
+            if asset_directory.is_symlink() or not asset_directory.is_dir():
+                continue
+            conversations = asset_directory / "summary" / "conversations"
+            if conversations.is_symlink():
+                conversations.unlink(missing_ok=True)
+            elif conversations.is_dir():
+                resolved = conversations.resolve()
+                if self.assets_path.resolve() not in resolved.parents:
+                    raise InvalidLibraryError("旧 Agent 会话目录超出资料库范围")
+                shutil.rmtree(resolved)
 
     @property
     def description(self) -> LibraryDescription:
@@ -678,6 +685,9 @@ class MediaLibrary:
 
     def save_analysis_job(self, job: AnalysisJob) -> None:
         values = job.model_dump(mode="json", exclude={"marker_ids", "capabilities"})
+        values["proposed_segments"] = json.dumps(
+            values["proposed_segments"], ensure_ascii=False
+        )
         with self._lock, self._db():
             self._upsert_runtime_model("analysis_jobs", values, transaction=False)
             self._db().execute(
@@ -698,42 +708,6 @@ class MediaLibrary:
                 ],
             )
 
-    @property
-    def agent_checkpoint_database_path(self) -> Path:
-        return self.library_path / AGENT_CHECKPOINT_DATABASE_FILE_NAME
-
-    def save_agent_job(self, job: AgentJob) -> None:
-        self._validate_identifier(job.job_id, "agent")
-        self._upsert_runtime_model("agent_jobs", job.model_dump(mode="json"))
-
-    def load_agent_job(self, job_id: str) -> AgentJob | None:
-        self._validate_identifier(job_id, "agent")
-        row = (
-            self._db()
-            .execute("SELECT * FROM agent_jobs WHERE job_id = ?", (job_id,))
-            .fetchone()
-        )
-        return _agent_job_from_row(row) if row else None
-
-    def load_agent_jobs(self, asset_id: str | None = None) -> list[AgentJob]:
-        if asset_id is None:
-            rows = (
-                self._db()
-                .execute("SELECT * FROM agent_jobs ORDER BY created_at DESC")
-                .fetchall()
-            )
-        else:
-            self._validate_asset_id(asset_id)
-            rows = (
-                self._db()
-                .execute(
-                    "SELECT * FROM agent_jobs WHERE asset_id = ? ORDER BY created_at DESC",
-                    (asset_id,),
-                )
-                .fetchall()
-            )
-        return [_agent_job_from_row(row) for row in rows]
-
     def load_analysis_jobs(self) -> list[AnalysisJob]:
         rows = (
             self._db()
@@ -744,6 +718,7 @@ class MediaLibrary:
         for row in rows:
             values = dict(row)
             values["strategy"] = json.loads(values["strategy"])
+            values["proposed_segments"] = json.loads(values["proposed_segments"])
             values["marker_ids"] = self._relation_values(
                 "analysis_job_markers",
                 "marker_id",
@@ -963,174 +938,11 @@ class MediaLibrary:
         synchronize_asset(self._db(), self.assets_path, document.asset_id)
         return self.load_summary_document(document_id) is None
 
-    def save_summary_conversation(self, conversation: SummaryConversation) -> None:
-        self._validate_identifier(conversation.conversation_id, "conversation")
-        record = SummaryConversationFile(conversation=conversation)
-        path = conversation_file_path(
-            self.asset_directory(conversation.asset_id), conversation.conversation_id
-        )
-        with self._lock:
-            atomic_write_model(path, record)
-            synchronize_asset(self._db(), self.assets_path, conversation.asset_id)
-
-    def load_summary_conversations(self, asset_id: str) -> list[SummaryConversation]:
-        rows = (
-            self._db()
-            .execute(
-                "SELECT * FROM summary_conversations WHERE asset_id = ? "
-                "ORDER BY updated_at DESC, created_at DESC",
-                (asset_id,),
-            )
-            .fetchall()
-        )
-        return [SummaryConversation.model_validate(dict(row)) for row in rows]
-
-    def load_summary_conversation_by_id(
-        self, conversation_id: str
-    ) -> SummaryConversation | None:
-        self._validate_identifier(conversation_id, "conversation")
-        row = (
-            self._db()
-            .execute(
-                "SELECT * FROM summary_conversations WHERE conversation_id = ?",
-                (conversation_id,),
-            )
-            .fetchone()
-        )
-        return SummaryConversation.model_validate(dict(row)) if row else None
-
-    def update_summary_conversation_title(
-        self, conversation_id: str, title: str, updated_at: datetime
-    ) -> SummaryConversation | None:
-        conversation = self.load_summary_conversation_by_id(conversation_id)
-        if conversation is None:
-            return None
-        record = self._load_conversation_file(conversation)
-        updated = conversation.model_copy(
-            update={"title": title, "updated_at": updated_at}
-        )
-        self._write_conversation_file(
-            record.model_copy(update={"conversation": updated})
-        )
-        return updated
-
-    def delete_summary_conversation(self, conversation_id: str) -> bool:
-        conversation = self.load_summary_conversation_by_id(conversation_id)
-        if conversation is None:
-            return False
-        path = conversation_file_path(
-            self.asset_directory(conversation.asset_id), conversation_id
-        )
-        with self._lock:
-            path.unlink(missing_ok=True)
-            synchronize_asset(self._db(), self.assets_path, conversation.asset_id)
-        return True
-
-    def save_summary_message(self, message: SummaryMessage) -> None:
-        self._validate_identifier(message.message_id, "message")
-        conversation = self.load_summary_conversation_by_id(message.conversation_id)
-        if conversation is None:
-            raise ValueError("总结对话不存在")
-        record = self._load_conversation_file(conversation)
-        if any(item.message_id == message.message_id for item in record.messages):
-            raise sqlite3.IntegrityError("消息标识已存在")
-        updated_conversation = conversation.model_copy(
-            update={"updated_at": message.created_at}
-        )
-        self._write_conversation_file(
-            record.model_copy(
-                update={
-                    "conversation": updated_conversation,
-                    "messages": [*record.messages, message],
-                }
-            )
-        )
-
-    def load_summary_messages(self, conversation_id: str) -> list[SummaryMessage]:
-        rows = (
-            self._db()
-            .execute(
-                "SELECT * FROM summary_messages WHERE conversation_id = ? ORDER BY created_at",
-                (conversation_id,),
-            )
-            .fetchall()
-        )
-        return [SummaryMessage.model_validate(dict(row)) for row in rows]
-
-    def save_summary_proposal(self, proposal: SummaryEditProposal) -> None:
-        self._validate_identifier(proposal.proposal_id, "proposal")
-        conversation = self.load_summary_conversation_by_id(proposal.conversation_id)
-        if conversation is None:
-            raise ValueError("总结对话不存在")
-        record = self._load_conversation_file(conversation)
-        proposals = [
-            proposal if item.proposal_id == proposal.proposal_id else item
-            for item in record.proposals
-        ]
-        if not any(
-            item.proposal_id == proposal.proposal_id for item in record.proposals
-        ):
-            proposals.append(proposal)
-        self._write_conversation_file(
-            record.model_copy(update={"proposals": proposals})
-        )
-
-    def load_summary_proposal(self, proposal_id: str) -> SummaryEditProposal | None:
-        self._validate_identifier(proposal_id, "proposal")
-        row = (
-            self._db()
-            .execute(
-                "SELECT * FROM summary_proposals WHERE proposal_id = ?", (proposal_id,)
-            )
-            .fetchone()
-        )
-        if row is None:
-            return None
-        values = dict(row)
-        values["suggested_subdocuments"] = json.loads(values["suggested_subdocuments"])
-        values["media_suggestions"] = json.loads(values["media_suggestions"])
-        return SummaryEditProposal.model_validate(values)
-
-    def load_summary_proposals(self, conversation_id: str) -> list[SummaryEditProposal]:
-        rows = (
-            self._db()
-            .execute(
-                "SELECT proposal_id FROM summary_proposals WHERE conversation_id = ? "
-                "ORDER BY created_at",
-                (conversation_id,),
-            )
-            .fetchall()
-        )
-        return [
-            proposal
-            for row in rows
-            if (proposal := self.load_summary_proposal(row["proposal_id"])) is not None
-        ]
-
-    def save_summary_agent_run(self, run: SummaryAgentRun) -> None:
-        self._validate_identifier(run.run_id, "run")
-        self._upsert_runtime_model("summary_agent_runs", run.model_dump(mode="json"))
-
-    def load_summary_agent_run(self, run_id: str) -> SummaryAgentRun | None:
-        self._validate_identifier(run_id, "run")
-        row = (
-            self._db()
-            .execute("SELECT * FROM summary_agent_runs WHERE run_id = ?", (run_id,))
-            .fetchone()
-        )
-        return SummaryAgentRun.model_validate(dict(row)) if row else None
-
-    def load_summary_agent_runs(self) -> list[SummaryAgentRun]:
-        rows = (
-            self._db()
-            .execute("SELECT * FROM summary_agent_runs ORDER BY created_at")
-            .fetchall()
-        )
-        return [SummaryAgentRun.model_validate(dict(row)) for row in rows]
-
     def save_agent_session(self, session: AgentSession) -> None:
         self._validate_identifier(session.session_id, "session")
-        self._upsert_runtime_model("agent_sessions", session.model_dump(mode="json"))
+        values = session.model_dump(mode="json")
+        values["context"] = json.dumps(values["context"], ensure_ascii=False)
+        self._upsert_runtime_model("agent_sessions", values)
 
     def load_agent_session(self, session_id: str) -> AgentSession | None:
         self._validate_identifier(session_id, "session")
@@ -1139,85 +951,39 @@ class MediaLibrary:
             .execute("SELECT * FROM agent_sessions WHERE session_id = ?", (session_id,))
             .fetchone()
         )
-        return AgentSession.model_validate(dict(row)) if row else None
+        if row is None:
+            return None
+        values = dict(row)
+        values["context"] = json.loads(values["context"])
+        return AgentSession.model_validate(values)
 
-    def save_summary_agent_session(
-        self, session: AgentSession, asset_id: str, root_document_id: str
-    ) -> None:
-        self.save_agent_session(session)
-        with self._lock, self._db():
-            self._db().execute(
-                "INSERT INTO summary_agent_sessions(session_id, asset_id, root_document_id) "
-                "VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
-                "asset_id=excluded.asset_id, root_document_id=excluded.root_document_id",
-                (session.session_id, asset_id, root_document_id),
-            )
-
-    def load_summary_agent_sessions(self, asset_id: str) -> list[AgentSession]:
-        self._validate_asset_id(asset_id)
+    def load_agent_sessions(
+        self, *, agent_id: str | None = None, asset_id: str | None = None
+    ) -> list[AgentSession]:
+        clauses: list[str] = []
+        parameters: list[str] = []
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            parameters.append(agent_id)
+        if asset_id is not None:
+            self._validate_asset_id(asset_id)
+            clauses.append("asset_id = ?")
+            parameters.append(asset_id)
+        where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = (
             self._db()
             .execute(
-                "SELECT sessions.* FROM agent_sessions AS sessions "
-                "JOIN summary_agent_sessions AS summary "
-                "ON summary.session_id = sessions.session_id "
-                "WHERE summary.asset_id = ? ORDER BY sessions.updated_at DESC",
-                (asset_id,),
+                f"SELECT * FROM agent_sessions{where_clause} ORDER BY updated_at DESC",
+                tuple(parameters),
             )
             .fetchall()
         )
-        return [AgentSession.model_validate(dict(row)) for row in rows]
-
-    def load_summary_agent_session_binding(
-        self, session_id: str
-    ) -> tuple[str, str] | None:
-        self._validate_identifier(session_id, "session")
-        row = (
-            self._db()
-            .execute(
-                "SELECT asset_id, root_document_id FROM summary_agent_sessions "
-                "WHERE session_id = ?",
-                (session_id,),
-            )
-            .fetchone()
-        )
-        return (row["asset_id"], row["root_document_id"]) if row else None
-
-    def save_marker_agent_session(self, session: AgentSession, asset_id: str) -> None:
-        self.save_agent_session(session)
-        with self._lock, self._db():
-            self._db().execute(
-                "INSERT INTO marker_agent_sessions(session_id, asset_id) VALUES (?, ?) "
-                "ON CONFLICT(session_id) DO UPDATE SET asset_id=excluded.asset_id",
-                (session.session_id, asset_id),
-            )
-
-    def load_marker_agent_sessions(self, asset_id: str) -> list[AgentSession]:
-        self._validate_asset_id(asset_id)
-        rows = (
-            self._db()
-            .execute(
-                "SELECT sessions.* FROM agent_sessions AS sessions "
-                "JOIN marker_agent_sessions AS marker_agent "
-                "ON marker_agent.session_id = sessions.session_id "
-                "WHERE marker_agent.asset_id = ? ORDER BY sessions.updated_at DESC",
-                (asset_id,),
-            )
-            .fetchall()
-        )
-        return [AgentSession.model_validate(dict(row)) for row in rows]
-
-    def load_marker_agent_session_binding(self, session_id: str) -> str | None:
-        self._validate_identifier(session_id, "session")
-        row = (
-            self._db()
-            .execute(
-                "SELECT asset_id FROM marker_agent_sessions WHERE session_id = ?",
-                (session_id,),
-            )
-            .fetchone()
-        )
-        return row["asset_id"] if row else None
+        sessions: list[AgentSession] = []
+        for row in rows:
+            values = dict(row)
+            values["context"] = json.loads(values["context"])
+            sessions.append(AgentSession.model_validate(values))
+        return sessions
 
     def delete_agent_session(self, session_id: str) -> bool:
         self._validate_identifier(session_id, "session")
@@ -1240,13 +1006,32 @@ class MediaLibrary:
         )
         return AgentRun.model_validate(dict(row)) if row else None
 
-    def load_agent_runs(self) -> list[AgentRun]:
-        rows = (
-            self._db()
-            .execute("SELECT * FROM agent_runs ORDER BY created_at")
-            .fetchall()
-        )
+    def load_agent_runs(self, session_id: str | None = None) -> list[AgentRun]:
+        if session_id is None:
+            rows = (
+                self._db()
+                .execute("SELECT * FROM agent_runs ORDER BY created_at")
+                .fetchall()
+            )
+        else:
+            self._validate_identifier(session_id, "session")
+            rows = (
+                self._db()
+                .execute(
+                    "SELECT * FROM agent_runs WHERE session_id = ? ORDER BY created_at",
+                    (session_id,),
+                )
+                .fetchall()
+            )
         return [AgentRun.model_validate(dict(row)) for row in rows]
+
+    def load_agent_run_by_request_key(self, request_key: str) -> AgentRun | None:
+        row = (
+            self._db()
+            .execute("SELECT * FROM agent_runs WHERE request_key = ?", (request_key,))
+            .fetchone()
+        )
+        return AgentRun.model_validate(dict(row)) if row else None
 
     def append_agent_event(
         self,
@@ -1330,100 +1115,65 @@ class MediaLibrary:
             self.append_agent_event(
                 run.session_id,
                 run.run_id,
-                AgentEventType.TURN_END,
+                AgentEventType.RUN_FAILED,
                 {"stage": AgentRunStage.INTERRUPTED.value},
             )
 
-    def save_agent_summary_proposal(self, proposal: SummaryEditProposal) -> None:
-        self._validate_identifier(proposal.proposal_id, "proposal")
-        self._validate_identifier(proposal.session_id, "session")
-        values = proposal.model_dump(mode="json")
-        values["suggested_subdocuments"] = json.dumps(
-            values["suggested_subdocuments"], ensure_ascii=False
-        )
-        values["media_suggestions"] = json.dumps(
-            values["media_suggestions"], ensure_ascii=False
-        )
-        self._upsert_runtime_model("summary_agent_proposals", values)
+    def save_agent_artifact(self, artifact: AgentArtifact) -> None:
+        self._validate_identifier(artifact.artifact_id, "artifact")
+        values = artifact.model_dump(mode="json")
+        values["payload"] = json.dumps(values["payload"], ensure_ascii=False)
+        self._upsert_runtime_model("agent_artifacts", values)
 
-    def load_agent_summary_proposal(
-        self, proposal_id: str
-    ) -> SummaryEditProposal | None:
-        self._validate_identifier(proposal_id, "proposal")
+    def load_agent_artifact(self, artifact_id: str) -> AgentArtifact | None:
+        self._validate_identifier(artifact_id, "artifact")
         row = (
             self._db()
             .execute(
-                "SELECT * FROM summary_agent_proposals WHERE proposal_id = ?",
-                (proposal_id,),
+                "SELECT * FROM agent_artifacts WHERE artifact_id = ?", (artifact_id,)
             )
             .fetchone()
         )
-        if row is None:
-            return None
+        return self._agent_artifact_from_row(row) if row else None
+
+    def load_agent_artifacts(
+        self, *, run_id: str | None = None, session_id: str | None = None
+    ) -> list[AgentArtifact]:
+        if run_id is not None and session_id is not None:
+            raise ValueError("运行与会话筛选不能同时提供")
+        if run_id is not None:
+            self._validate_identifier(run_id, "run")
+            rows = (
+                self._db()
+                .execute(
+                    "SELECT * FROM agent_artifacts WHERE run_id = ? ORDER BY created_at",
+                    (run_id,),
+                )
+                .fetchall()
+            )
+        elif session_id is not None:
+            self._validate_identifier(session_id, "session")
+            rows = (
+                self._db()
+                .execute(
+                    "SELECT * FROM agent_artifacts WHERE session_id = ? ORDER BY created_at",
+                    (session_id,),
+                )
+                .fetchall()
+            )
+        else:
+            rows = (
+                self._db()
+                .execute("SELECT * FROM agent_artifacts ORDER BY created_at")
+                .fetchall()
+            )
+        return [self._agent_artifact_from_row(row) for row in rows]
+
+    @staticmethod
+    def _agent_artifact_from_row(row: sqlite3.Row) -> AgentArtifact:
         values = dict(row)
-        values["suggested_subdocuments"] = json.loads(values["suggested_subdocuments"])
-        values["media_suggestions"] = json.loads(values["media_suggestions"])
-        return SummaryEditProposal.model_validate(values)
-
-    def load_agent_summary_proposals(
-        self, session_id: str
-    ) -> list[SummaryEditProposal]:
-        self._validate_identifier(session_id, "session")
-        rows = (
-            self._db()
-            .execute(
-                "SELECT proposal_id FROM summary_agent_proposals "
-                "WHERE session_id = ? ORDER BY created_at",
-                (session_id,),
-            )
-            .fetchall()
-        )
-        return [
-            proposal
-            for row in rows
-            if (proposal := self.load_agent_summary_proposal(row["proposal_id"]))
-            is not None
-        ]
-
-    def save_marker_proposal(self, proposal: MarkerProposal) -> None:
-        self._validate_identifier(proposal.proposal_id, "proposal")
-        self._validate_identifier(proposal.session_id, "session")
-        values = proposal.model_dump(mode="json")
-        values["changes"] = json.dumps(values["changes"], ensure_ascii=False)
-        self._upsert_runtime_model("marker_agent_proposals", values)
-
-    def load_marker_proposal(self, proposal_id: str) -> MarkerProposal | None:
-        self._validate_identifier(proposal_id, "proposal")
-        row = (
-            self._db()
-            .execute(
-                "SELECT * FROM marker_agent_proposals WHERE proposal_id = ?",
-                (proposal_id,),
-            )
-            .fetchone()
-        )
-        if row is None:
-            return None
-        values = dict(row)
-        values["changes"] = json.loads(values["changes"])
-        return MarkerProposal.model_validate(values)
-
-    def load_marker_proposals(self, session_id: str) -> list[MarkerProposal]:
-        self._validate_identifier(session_id, "session")
-        rows = (
-            self._db()
-            .execute(
-                "SELECT proposal_id FROM marker_agent_proposals "
-                "WHERE session_id = ? ORDER BY created_at",
-                (session_id,),
-            )
-            .fetchall()
-        )
-        return [
-            proposal
-            for row in rows
-            if (proposal := self.load_marker_proposal(row["proposal_id"])) is not None
-        ]
+        values["payload"] = json.loads(values["payload"])
+        return AgentArtifact.model_validate(values)
 
     def save_summary_media(self, media: SummaryMediaArtifact) -> None:
         self._validate_identifier(media.media_id, "media")
@@ -1465,28 +1215,6 @@ class MediaLibrary:
                 self.asset_directory(asset_id) / MARKERS_FILE_NAME, output
             )
             synchronize_asset(self._db(), self.assets_path, asset_id)
-
-    def _write_conversation_file(self, record: SummaryConversationFile) -> None:
-        conversation = record.conversation
-        path = conversation_file_path(
-            self.asset_directory(conversation.asset_id), conversation.conversation_id
-        )
-        with self._lock:
-            atomic_write_model(path, record)
-            synchronize_asset(self._db(), self.assets_path, conversation.asset_id)
-
-    def _load_conversation_file(
-        self, conversation: SummaryConversation
-    ) -> SummaryConversationFile:
-        path = conversation_file_path(
-            self.asset_directory(conversation.asset_id), conversation.conversation_id
-        )
-        try:
-            return SummaryConversationFile.model_validate_json(
-                path.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as error:
-            raise ValueError("总结对话文件无效") from error
 
     def _summary_document_from_row(self, row: sqlite3.Row) -> SummaryDocument:
         values = dict(row)
@@ -1767,11 +1495,3 @@ def _insert_model(
         f"VALUES ({', '.join('?' for _ in columns)})",
         tuple(_sqlite_value(values[column]) for column in columns),
     )
-
-
-def _agent_job_from_row(row: sqlite3.Row) -> AgentJob:
-    values = dict(row)
-    for field_name in ("segment_indices", "question"):
-        if values[field_name] is not None:
-            values[field_name] = json.loads(values[field_name])
-    return AgentJob.model_validate(values)

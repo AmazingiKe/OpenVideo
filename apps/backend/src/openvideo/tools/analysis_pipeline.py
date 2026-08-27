@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from openvideo.core.analysis import (
@@ -11,17 +11,21 @@ from openvideo.core.analysis import (
     select_timeline_moments,
 )
 from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, AnalysisStrategy
+from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import MediaMarker, MediaSegment
 from openvideo.core.transcription_models import Transcript
 from openvideo.settings import Settings
 from openvideo.tools.frames import FrameExtractionError, extract_frames
 from openvideo.tools.scenes import detect_scene_boundaries
+from openvideo.tools.chapters import build_global_semantic_chapters
 from openvideo.tools.vision import VisionDescriber, VisionDescriptionError
 
 
 FRAMES_DIRECTORY_NAME = "frames"
-FRAME_POSITIONS = (0.2, 0.5, 0.8)
+MIN_CHAPTER_FRAME_COUNT = 2
+MAX_CHAPTER_FRAME_COUNT = 12
+SECONDS_PER_ADAPTIVE_FRAME = 30
 MAX_PROMPT_TRANSCRIPT_CHARACTERS = 6000
 TITLE_MAX_CHARACTERS = 32
 TAG_ANALYSIS_INSTRUCTIONS = {
@@ -45,12 +49,18 @@ def build_segments(
     markers: list[MediaMarker],
     strategy: AnalysisStrategy,
     progress_callback: AnalysisProgress,
+    chapter_model: AiModelConfiguration | None = None,
 ) -> list[MediaSegment]:
     """基础音频分析始终产出事件，视觉能力缺失或局部失败不会丢失文本结果。"""
     scene_boundaries = detect_scene_boundaries(
         media_path,
         settings.ffmpeg_path,
         settings.ffmpeg_bin_dir,
+    )
+    semantic_chapters = (
+        build_global_semantic_chapters(transcript.segments, chapter_model)
+        if mode == AnalysisMode.FULL
+        else None
     )
     moments = select_timeline_moments(
         transcript,
@@ -59,6 +69,7 @@ def build_segments(
         duration_seconds,
         scene_boundaries,
         strategy,
+        semantic_chapters,
     )
     segments: list[MediaSegment] = []
     progress_span = 20 / max(len(moments), 1)
@@ -69,20 +80,23 @@ def build_segments(
             75 + progress_span * index,
             f"正在提取第 {event_number}/{len(moments)} 个事件的关键帧",
         )
-        segments.append(_build_segment(
-            moment,
-            media_path,
-            asset_id,
-            asset_directory,
-            settings,
-            describer,
-            strategy,
-            lambda: progress_callback(
-                AnalysisStage.DESCRIBING_VISUALS,
-                75 + progress_span * (index + 0.5),
-                f"正在分析第 {event_number}/{len(moments)} 个事件",
-            ),
-        ))
+        segments.append(
+            _build_segment(
+                moment,
+                media_path,
+                asset_id,
+                asset_directory,
+                settings,
+                describer,
+                strategy,
+                scene_boundaries,
+                lambda: progress_callback(
+                    AnalysisStage.DESCRIBING_VISUALS,
+                    75 + progress_span * (index + 0.5),
+                    f"正在分析第 {event_number}/{len(moments)} 个事件",
+                ),
+            )
+        )
     return segments
 
 
@@ -94,6 +108,7 @@ def _build_segment(
     settings: Settings,
     describer: VisionDescriber | None,
     strategy: AnalysisStrategy,
+    scene_boundaries: Sequence[float],
     on_describing_visuals: Callable[[], None],
 ) -> MediaSegment:
     segment_id = f"segment-{uuid7().hex}"
@@ -103,6 +118,7 @@ def _build_segment(
             media_path,
             asset_directory / FRAMES_DIRECTORY_NAME / segment_id,
             settings,
+            scene_boundaries,
         )
         if moment.detailed
         else []
@@ -119,7 +135,9 @@ def _build_segment(
         title=_event_title(moment),
         detailed_summary=visual_description or transcript_text,
         transcript_text=transcript_text,
-        key_frame_paths=[_relative_to_asset(asset_directory, frame) for frame in frames],
+        key_frame_paths=[
+            _relative_to_asset(asset_directory, frame) for frame in frames
+        ],
         visual_description=visual_description,
         marker_ids=list(moment.marker_ids),
         tags=list(moment.tags),
@@ -131,17 +149,33 @@ def _extract_event_frames(
     media_path: Path,
     frames_directory: Path,
     settings: Settings,
+    scene_boundaries: Sequence[float] = (),
 ) -> list[Path]:
     duration = max(moment.end_seconds - moment.start_seconds, 0.1)
+    scene_points = [
+        boundary
+        for boundary in scene_boundaries
+        if moment.start_seconds < boundary < moment.end_seconds
+    ]
+    frame_count = max(
+        MIN_CHAPTER_FRAME_COUNT,
+        min(
+            MAX_CHAPTER_FRAME_COUNT,
+            round(duration / SECONDS_PER_ADAPTIVE_FRAME) + len(scene_points) + 1,
+        ),
+    )
     contextual_time_points = [
-        moment.start_seconds + duration * position for position in FRAME_POSITIONS
+        moment.start_seconds + duration * (index + 0.5) / frame_count
+        for index in range(frame_count)
     ]
     marker_time_points = [
         influence.anchor_seconds
         for influence in moment.marker_influences
         if moment.start_seconds <= influence.anchor_seconds <= moment.end_seconds
     ]
-    time_points = list(dict.fromkeys((*contextual_time_points, *marker_time_points)))
+    time_points = sorted(
+        dict.fromkeys((*contextual_time_points, *scene_points, *marker_time_points))
+    )
     try:
         return extract_frames(
             media_path,
@@ -203,7 +237,7 @@ def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
     return (
         "你正在分析同一视频片段按时间排列的多张画面。"
         f"分析目标：{focus}。策略优先关注：{emphasis or '核心内容'}。"
-        "请结合转写和画面，用中文输出一段可复习的详细笔记；"
+        "请结合转写、画面文字（OCR）和视觉变化，用中文输出一段可复习的详细笔记；"
         "区分视频明确表达的内容与合理推断，不得补造事实。"
         f"{marker_context}"
         f"\n转写：{transcript or '该片段没有可用转写，请只依据画面。'}"

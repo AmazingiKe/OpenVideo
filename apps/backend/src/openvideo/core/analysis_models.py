@@ -9,6 +9,7 @@ from openvideo.core.media_models import (
     MARKER_RANGE_MAX_SECONDS,
     MARKER_RANGE_MIN_SECONDS,
     MARKER_RANGE_STEP_SECONDS,
+    MediaSegment,
 )
 
 
@@ -19,11 +20,21 @@ class AnalysisStage(StrEnum):
     BUILDING_TIMELINE = "building_timeline"
     EXTRACTING_FRAMES = "extracting_frames"
     DESCRIBING_VISUALS = "describing_visuals"
+    WAITING_FOR_APPROVAL = "waiting_for_approval"
     COMPLETE = "complete"
+    REJECTED = "rejected"
     FAILED = "failed"
 
 
-TERMINAL_ANALYSIS_STAGES = {AnalysisStage.COMPLETE, AnalysisStage.FAILED}
+TERMINAL_ANALYSIS_STAGES = {
+    AnalysisStage.COMPLETE,
+    AnalysisStage.REJECTED,
+    AnalysisStage.FAILED,
+}
+INACTIVE_ANALYSIS_STAGES = {
+    *TERMINAL_ANALYSIS_STAGES,
+    AnalysisStage.WAITING_FOR_APPROVAL,
+}
 
 
 class AnalysisMode(StrEnum):
@@ -179,5 +190,7 @@ class AnalysisJob(BaseModel):
     progress_percent: float = 0
     message: str = "等待开始"
     error_message: str | None = None
+    proposal_base_digest: str | None = None
+    proposed_segments: list[MediaSegment] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

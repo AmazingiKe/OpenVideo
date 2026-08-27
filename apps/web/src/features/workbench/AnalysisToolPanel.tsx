@@ -7,9 +7,10 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { Flag, SlidersHorizontal, Sparkles, Wrench } from "lucide-react";
+import { Flag, SlidersHorizontal, Wrench } from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
+import { AgentPanel } from "@/components/AgentPanel";
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
 import {
   Accordion,
@@ -19,6 +20,14 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
@@ -47,8 +56,7 @@ import {
 import { transcription_runtime_profile } from "@/shared/transcription";
 import {
   IMAGE_INPUT_MODALITY,
-  type AgentJob,
-  type AgentQuestionAction,
+  type AnalysisJob,
   type AnalysisMode,
   type AnalysisStrategy,
   type AnalysisStrategyPresetDescriptor,
@@ -57,13 +65,11 @@ import {
   type AiModelSummary,
   type MediaAsset,
   type MediaMarker,
-  type TranscriptCorrectionScope,
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
 } from "@/shared/types";
 import { CollapsiblePanelRail } from "./CollapsiblePanelRail";
 import { WorkbenchPanelHeader } from "./WorkbenchPanelHeader";
-import { TranscriptCorrectionAgentStatus } from "./TranscriptCorrectionAgentStatus";
 
 export const ANALYSIS_TOOL_SECTIONS: AnalysisToolSection[] = [
   "video_information",
@@ -128,17 +134,10 @@ type AnalysisToolPanelProps = {
     ai_model_id: string | null,
     strategy: AnalysisStrategy,
   ) => void;
-  selected_transcript_count: number;
-  active_correction_scope: TranscriptCorrectionScope | null;
-  correction_agent_job: AgentJob | null;
-  on_start_correction_agent: (
-    scope: TranscriptCorrectionScope,
-    ai_model_id: string,
-  ) => void;
-  on_agent_response: (
-    action: AgentQuestionAction,
-    ai_model_id?: string | null,
-  ) => void;
+  analysis_proposal: AnalysisJob | null;
+  on_resolve_analysis: (action: "approve" | "reject") => void;
+  selected_transcript_indices: number[];
+  on_transcript_changed: () => void;
   open_sections: AnalysisToolSection[];
   on_open_sections_change: (sections: AnalysisToolSection[]) => void;
   collapsed?: boolean;
@@ -160,11 +159,10 @@ export function AnalysisToolPanel({
   analysis_strategy,
   set_analysis_strategy,
   on_start_analysis,
-  selected_transcript_count,
-  active_correction_scope,
-  correction_agent_job,
-  on_start_correction_agent,
-  on_agent_response,
+  analysis_proposal,
+  on_resolve_analysis,
+  selected_transcript_indices,
+  on_transcript_changed,
   open_sections,
   on_open_sections_change,
   collapsed = false,
@@ -177,9 +175,9 @@ export function AnalysisToolPanel({
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
     new Set(),
   );
-  const [correction_model_id, set_correction_model_id] = useState<
-    string | null
-  >(null);
+  const [correction_scope, set_correction_scope] = useState<
+    "all" | "selection"
+  >("all");
   const [image_model_id, set_image_model_id] = useState<string | null>(null);
   const image_input_models = useMemo(
     () =>
@@ -229,11 +227,6 @@ export function AnalysisToolPanel({
   }, [asset?.asset_id, default_transcription]);
 
   useEffect(() => {
-    set_correction_model_id((current) =>
-      ai_models.some((model) => model.model_id === current)
-        ? current
-        : (ai_models[0]?.model_id ?? null),
-    );
     set_image_model_id((current) =>
       image_input_models.some((model) => model.model_id === current)
         ? current
@@ -447,82 +440,51 @@ export function AnalysisToolPanel({
               <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>时间线选择</span>
                 <Badge variant="secondary">
-                  {selected_transcript_count > 0
-                    ? `已选择 ${selected_transcript_count} 条`
+                  {selected_transcript_indices.length > 0
+                    ? `已选择 ${selected_transcript_indices.length} 条`
                     : "未选择"}
                 </Badge>
               </div>
-              <AiModelSelect
-                id="transcript-correction-model"
-                label="执行模型"
-                models={ai_models}
-                value={correction_model_id}
-                on_change={set_correction_model_id}
-                disabled={active_correction_scope !== null}
-                description="可在设置中添加 OpenAI、Anthropic、Gemini、Ollama 等模型。"
-              />
-              <Button
-                className="w-full"
-                type="button"
-                onClick={() => {
-                  if (correction_model_id)
-                    on_start_correction_agent("all", correction_model_id);
+              <ToggleGroup
+                type="single"
+                value={correction_scope}
+                onValueChange={(value) => {
+                  if (value === "all" || value === "selection") {
+                    set_correction_scope(value);
+                  }
                 }}
-                disabled={
-                  !has_transcript ||
-                  !correction_model_id ||
-                  is_transcribing ||
-                  is_analyzing ||
-                  active_correction_scope !== null
-                }
-              >
-                {active_correction_scope === "all" ? (
-                  <Spinner data-icon="inline-start" />
-                ) : (
-                  <Sparkles data-icon="inline-start" aria-hidden="true" />
-                )}
-                {active_correction_scope === "all"
-                  ? "正在修正全部…"
-                  : "自动全部修正"}
-              </Button>
-              <Button
                 className="w-full"
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  if (correction_model_id)
-                    on_start_correction_agent("selection", correction_model_id);
-                }}
-                disabled={
-                  !has_transcript ||
-                  !correction_model_id ||
-                  selected_transcript_count === 0 ||
-                  is_transcribing ||
-                  is_analyzing ||
-                  active_correction_scope !== null
-                }
+                aria-label="字幕纠错范围"
               >
-                {active_correction_scope === "selection" ? (
-                  <Spinner data-icon="inline-start" />
-                ) : (
-                  <Sparkles data-icon="inline-start" aria-hidden="true" />
-                )}
-                {active_correction_scope === "selection"
-                  ? "正在修正选择…"
-                  : "选择修正"}
-              </Button>
+                <ToggleGroupItem value="all" className="flex-1">
+                  全部字幕
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="selection"
+                  className="flex-1"
+                  disabled={selected_transcript_indices.length === 0}
+                >
+                  时间线选择
+                </ToggleGroupItem>
+              </ToggleGroup>
               <FieldDescription>
                 正常模式一次提交完整转录，仅写回变化项，时间码保持不变。
               </FieldDescription>
-              {correction_agent_job ? (
-                <TranscriptCorrectionAgentStatus
-                  job={correction_agent_job}
-                  models={ai_models}
-                  replacement_model_id={correction_model_id}
-                  on_replacement_model_change={set_correction_model_id}
-                  on_response={on_agent_response}
-                />
-              ) : null}
+              <AgentPanel
+                agent_id="transcript_correction"
+                asset_id={has_transcript ? (asset?.asset_id ?? null) : null}
+                models={ai_models}
+                task_input={{
+                  segment_indices:
+                    correction_scope === "selection"
+                      ? selected_transcript_indices
+                      : null,
+                  execution_mode: "automatic",
+                }}
+                on_artifact_change={(artifact) => {
+                  if (artifact.status === "approved") on_transcript_changed();
+                }}
+              />
             </div>
           </AccordionContent>
         </AccordionItem>
@@ -698,6 +660,49 @@ export function AnalysisToolPanel({
                 />
                 高级设置
               </Button>
+              {analysis_proposal ? (
+                <Card aria-label="分析替换预览">
+                  <CardHeader>
+                    <CardTitle>分析替换预览</CardTitle>
+                    <CardDescription>
+                      {analysis_proposal.mode === "full"
+                        ? "确认后整体替换机器分析结果，人工标记及引用会保留。"
+                        : "确认后只替换所选人工标记的精确时间范围。"}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ol className="flex max-h-48 flex-col gap-2 overflow-y-auto">
+                      {analysis_proposal.proposed_segments.map((segment) => (
+                        <li
+                          key={segment.segment_id}
+                          className="rounded-md border p-2 text-xs"
+                        >
+                          <p className="font-medium">{segment.title}</p>
+                          <p className="text-muted-foreground">
+                            {format_time(segment.start_seconds)}–
+                            {format_time(segment.end_seconds)}
+                          </p>
+                        </li>
+                      ))}
+                    </ol>
+                  </CardContent>
+                  <CardFooter className="justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => on_resolve_analysis("reject")}
+                    >
+                      拒绝替换
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => on_resolve_analysis("approve")}
+                    >
+                      接受替换
+                    </Button>
+                  </CardFooter>
+                </Card>
+              ) : null}
               {advanced_strategy_open ? (
                 <FieldGroup>
                   <Field>

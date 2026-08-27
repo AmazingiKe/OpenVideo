@@ -6,11 +6,6 @@ import pytest
 
 from openvideo.core.download_models import DownloadEvent, DownloadJob, DownloadStage
 from openvideo.core.library import InvalidLibraryError, MediaLibrary
-from openvideo.core.library_files import (
-    SummaryConversationFile,
-    atomic_write_model,
-    conversation_file_path,
-)
 from openvideo.core.media_models import (
     MediaAsset,
     MediaAssetStatus,
@@ -24,14 +19,7 @@ from openvideo.core.summary_files import (
     markdown_digest,
     write_manifest,
 )
-from openvideo.core.summary_models import (
-    SummaryConversation,
-    SummaryDocument,
-    SummaryEditProposal,
-    SummaryMediaArtifact,
-    SummaryMessage,
-    SummaryMessageRole,
-)
+from openvideo.core.summary_models import SummaryDocument, SummaryMediaArtifact
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 
@@ -40,9 +28,6 @@ SECOND_ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c073990"
 MARKER_ID = "marker-01890f4c7a2b7cc298c4dc0c0c07398f"
 SEGMENT_ID = "segment-01890f4c7a2b7cc298c4dc0c0c07398f"
 DOCUMENT_ID = "document-01890f4c7a2b7cc298c4dc0c0c07398f"
-CONVERSATION_ID = "conversation-01890f4c7a2b7cc298c4dc0c0c07398f"
-MESSAGE_ID = "message-01890f4c7a2b7cc298c4dc0c0c07398f"
-PROPOSAL_ID = "proposal-01890f4c7a2b7cc298c4dc0c0c07398f"
 MEDIA_ID = "media-01890f4c7a2b7cc298c4dc0c0c07398f"
 JOB_ID = "job-01890f4c7a2b7cc298c4dc0c0c07398f"
 
@@ -79,36 +64,6 @@ def _save_summary(library: MediaLibrary) -> None:
     atomic_write_text(asset_directory / "summary" / "index.md", markdown)
     write_manifest(asset_directory, build_manifest(ASSET_ID, [document], []))
     library.create_summary_documents([document])
-    conversation = SummaryConversation(
-        conversation_id=CONVERSATION_ID,
-        asset_id=ASSET_ID,
-        root_document_id=DOCUMENT_ID,
-        title="修改历史",
-    )
-    message = SummaryMessage(
-            message_id=MESSAGE_ID,
-            conversation_id=CONVERSATION_ID,
-            role=SummaryMessageRole.USER,
-            content="请精简正文",
-    )
-    proposal = SummaryEditProposal(
-            proposal_id=PROPOSAL_ID,
-            session_id=f"session-{CONVERSATION_ID.removeprefix('conversation-')}",
-            document_id=DOCUMENT_ID,
-            base_revision=1,
-            proposed_markdown="# 精简总结\n",
-            explanation="删去重复内容",
-            diff="- 用户总结\n+ 精简总结",
-            status="accepted",
-    )
-    atomic_write_model(
-        conversation_file_path(asset_directory, CONVERSATION_ID),
-        SummaryConversationFile(
-            conversation=conversation,
-            messages=[message],
-            proposals=[proposal],
-        ),
-    )
     media_path = asset_directory / "summary" / "assets" / f"{MEDIA_ID}.jpg"
     media_path.parent.mkdir(parents=True, exist_ok=True)
     media_path.write_bytes(b"image")
@@ -218,11 +173,7 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     assert rebuilt.load_markers(ASSET_ID)[0].marker_range_before_seconds == 15
     assert rebuilt.load_markers(ASSET_ID)[0].marker_range_after_seconds == 0
     assert rebuilt.load_summary_document(DOCUMENT_ID).markdown == "# 用户总结\n"
-    session_id = f"session-{CONVERSATION_ID.removeprefix('conversation-')}"
-    assert rebuilt.load_agent_events(session_id)[0].payload["content"] == "请精简正文"
-    migrated_proposal = rebuilt.load_agent_summary_proposal(PROPOSAL_ID)
-    assert migrated_proposal.explanation == "删去重复内容"
-    assert migrated_proposal.status == "accepted"
+    assert rebuilt.load_agent_sessions() == []
     assert rebuilt.load_summary_media(ASSET_ID)[0].media_id == MEDIA_ID
     assert rebuilt.list_download_jobs() == []
     tables = {
@@ -231,11 +182,14 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
     }
-    assert not {
-        "summary_conversations",
-        "summary_messages",
-        "summary_agent_runs",
-    } & tables
+    assert (
+        not {
+            "summary_conversations",
+            "summary_messages",
+            "summary_agent_runs",
+        }
+        & tables
+    )
     assert rebuilt._db().execute("PRAGMA foreign_key_check").fetchall() == []
     marker_columns = {
         row[1] for row in rebuilt._db().execute("PRAGMA table_info(markers)")
@@ -332,7 +286,9 @@ def test_only_changed_asset_gets_new_index_timestamp(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     _save_asset(library, _asset())
     _save_asset(library, _asset(SECOND_ASSET_ID, "第二个素材"))
-    before = dict(library._db().execute("SELECT asset_id, indexed_at FROM index_states"))
+    before = dict(
+        library._db().execute("SELECT asset_id, indexed_at FROM index_states")
+    )
     library.close()
     metadata_path = tmp_path / "assets" / ASSET_ID / "meta.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -340,7 +296,9 @@ def test_only_changed_asset_gets_new_index_timestamp(tmp_path: Path):
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
 
     reopened = MediaLibrary.open(tmp_path)
-    after = dict(reopened._db().execute("SELECT asset_id, indexed_at FROM index_states"))
+    after = dict(
+        reopened._db().execute("SELECT asset_id, indexed_at FROM index_states")
+    )
     assert reopened.get(ASSET_ID).title == "外部标题"
     assert after[SECOND_ASSET_ID] == before[SECOND_ASSET_ID]
     assert after[ASSET_ID] != before[ASSET_ID]
