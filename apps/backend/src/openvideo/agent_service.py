@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Protocol
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openvideo.agent_runtime import (
     AgentRuntime,
@@ -134,12 +134,12 @@ class InspectFramesInput(BaseModel):
 
 
 class ProposedMarkerChangeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     operation: MarkerChangeOperation
     marker_ids: list[str] = Field(default_factory=list, max_length=100)
     start_seconds: float | None = Field(default=None, ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
-    title: str = Field(default="", max_length=200)
-    tags: list[str] = Field(default_factory=list)
     reason: str = Field(min_length=1, max_length=2_000)
     evidence: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
 
@@ -466,6 +466,7 @@ class AgentService:
             prompt=(
                 "你是 OpenVideo 标记 Agent。用户发送消息的目标是生成标记变更预览。"
                 "先读取现有标记并检索相关时间范围证据，必要时检查画面。"
+                "你只能建议时间边界，不能设置或修改用户的重要程度。"
                 "不要在正文叙述计划、搜索步骤、工具选择或内部推理。"
                 "取得证据后必须调用 propose_marker_changes 生成整批待审批结果，"
                 "调用成功前不得结束运行，也不得声称建议已执行。"
@@ -1132,23 +1133,18 @@ def _proposed_marker(
         if requested.operation == MarkerChangeOperation.UPDATE
         else f"marker-{uuid7().hex}"
     )
+    if requested.operation == MarkerChangeOperation.UPDATE:
+        importance = before[0].importance
+    elif requested.operation == MarkerChangeOperation.MERGE:
+        importance = max(marker.importance for marker in before)
+    else:
+        importance = 0
     return MediaMarker(
         marker_id=marker_id,
         asset_id=asset_id,
         start_seconds=requested.start_seconds,
         end_seconds=requested.end_seconds,
-        title=requested.title,
-        tags=requested.tags,
-        marker_range_before_seconds=(
-            before[0].marker_range_before_seconds
-            if requested.operation == MarkerChangeOperation.UPDATE
-            else None
-        ),
-        marker_range_after_seconds=(
-            before[0].marker_range_after_seconds
-            if requested.operation == MarkerChangeOperation.UPDATE
-            else None
-        ),
+        importance=importance,
     )
 
 

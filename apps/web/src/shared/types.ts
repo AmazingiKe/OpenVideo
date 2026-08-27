@@ -403,20 +403,18 @@ export type MediaMarker = {
   asset_id: string;
   start_seconds: number;
   end_seconds: number | null;
-  title: string;
-  tags: string[];
-  marker_range_before_seconds: number | null;
-  marker_range_after_seconds: number | null;
+  importance: MarkerImportance;
 };
 
-export type MediaMarkerInput = Pick<
+export type MarkerImportance = 0 | 1 | 2 | 3 | 4 | 5;
+
+export type MediaMarkerCreate = Pick<
   MediaMarker,
-  | "start_seconds"
-  | "end_seconds"
-  | "title"
-  | "tags"
-  | "marker_range_before_seconds"
-  | "marker_range_after_seconds"
+  "start_seconds" | "end_seconds"
+> & { importance?: MarkerImportance };
+
+export type MediaMarkerUpdate = Partial<
+  Pick<MediaMarker, "start_seconds" | "end_seconds" | "importance">
 >;
 
 type ThumbnailStoryboard = {

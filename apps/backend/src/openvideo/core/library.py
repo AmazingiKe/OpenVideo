@@ -741,22 +741,14 @@ class MediaLibrary:
         rows = (
             self._db()
             .execute(
-                "SELECT marker_id, asset_id, start_seconds, end_seconds, title, "
-                "marker_range_before_seconds, marker_range_after_seconds FROM markers "
+                "SELECT marker_id, asset_id, start_seconds, end_seconds, importance "
+                "FROM markers "
                 "WHERE asset_id = ? ORDER BY start_seconds",
                 (asset_id,),
             )
             .fetchall()
         )
-        return [
-            MediaMarker(
-                **dict(row),
-                tags=self._relation_values(
-                    "marker_tags", "tag_name", "marker_id", row["marker_id"], "tag_name"
-                ),
-            )
-            for row in rows
-        ]
+        return [MediaMarker(**dict(row)) for row in rows]
 
     def create_marker(self, marker: MediaMarker) -> MediaMarker:
         self._validate_identifier(marker.marker_id, "marker")
@@ -774,12 +766,7 @@ class MediaLibrary:
         asset_id: str,
         marker_id: str,
         *,
-        start_seconds: float,
-        end_seconds: float | None,
-        title: str,
-        tags: list[str],
-        marker_range_before_seconds: int | None,
-        marker_range_after_seconds: int | None,
+        changes: dict[str, object],
     ) -> MediaMarker | None:
         self._validate_identifier(marker_id, "marker")
         markers = self.load_markers(asset_id)
@@ -789,12 +776,7 @@ class MediaLibrary:
         updated = MediaMarker.model_validate(
             {
                 **marker.model_dump(),
-                "start_seconds": start_seconds,
-                "end_seconds": end_seconds,
-                "title": title,
-                "tags": tags,
-                "marker_range_before_seconds": marker_range_before_seconds,
-                "marker_range_after_seconds": marker_range_after_seconds,
+                **changes,
             }
         )
         self._write_markers(

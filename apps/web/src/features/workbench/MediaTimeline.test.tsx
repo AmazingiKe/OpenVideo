@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { type ReactNode, useState } from "react";
+import { forwardRef, type ReactNode, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MediaTimeline } from "./MediaTimeline";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
+import type { MediaMarker } from "@/shared/types";
 
 type MockClip = {
   id: string;
@@ -117,9 +118,14 @@ vi.mock("@techsquidtv/canvas-timeline", () => {
     return mock_state.engine;
   }
 
-  const passthrough = ({ children, ...props }: { children?: ReactNode }) => (
-    <div {...props}>{children}</div>
-  );
+  const passthrough = forwardRef<
+    HTMLDivElement,
+    { children?: ReactNode } & React.HTMLAttributes<HTMLDivElement>
+  >(({ children, ...props }, ref) => (
+    <div ref={ref} {...props}>
+      {children}
+    </div>
+  ));
 
   return {
     CanvasRenderer: () => null,
@@ -183,10 +189,13 @@ vi.mock("@techsquidtv/canvas-timeline", () => {
 
 const ASSET_ID = "asset-0198d12345677890abcdef1234567890";
 
-function render_timeline() {
+function render_timeline(options?: {
+  added_marker?: MediaMarker;
+  candidate_markers?: MediaMarker[];
+}) {
   const callbacks = {
     seek_to: vi.fn(),
-    add_marker: vi.fn().mockResolvedValue(undefined),
+    add_marker: vi.fn().mockResolvedValue(options?.added_marker),
     update_marker: vi.fn().mockResolvedValue(undefined),
     delete_marker: vi.fn().mockResolvedValue(undefined),
     update_transcript: vi.fn().mockResolvedValue(undefined),
@@ -223,16 +232,13 @@ function render_timeline() {
       tags: ["公式"],
     },
   ];
-  const markers = [
+  const markers: MediaMarker[] = [
     {
       marker_id: "marker-0198d12345677890abcdef1234567890",
       asset_id: ASSET_ID,
       start_seconds: 20,
       end_seconds: null,
-      title: "重点",
-      tags: ["重点"],
-      marker_range_before_seconds: null,
-      marker_range_after_seconds: null,
+      importance: 3,
     },
   ];
 
@@ -246,6 +252,7 @@ function render_timeline() {
         transcript={transcript}
         segments={segments}
         markers={markers}
+        candidate_markers={options?.candidate_markers}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={null}
         on_seek={callbacks.seek_to}
@@ -318,7 +325,7 @@ describe("MediaTimeline", () => {
     );
   });
 
-  it("edits marker labels beside the pointer without resetting transcript selection", async () => {
+  it("edits marker time beside the pointer without resetting transcript selection", async () => {
     const { change_selected_transcript_indices, update_marker } =
       render_timeline();
     const timeline = screen.getByRole("region", { name: "剪辑时间轴" });
@@ -327,10 +334,10 @@ describe("MediaTimeline", () => {
     fireEvent.pointerDown(marker_clip, { clientX: 240, clientY: 360 });
     fireEvent.click(marker_clip);
 
-    expect(screen.queryByLabelText("编辑标记标签")).toBeNull();
+    expect(screen.queryByLabelText("开始时间（秒）")).toBeNull();
     expect(
       screen.getByRole("img", {
-        name: "重点：默认范围，向前 10 秒，向后 20 秒",
+        name: "★★★ · 00:20：默认范围，向前 10 秒，向后 20 秒",
       }),
     ).toHaveAttribute("data-selected", "true");
 
@@ -339,7 +346,8 @@ describe("MediaTimeline", () => {
     });
     fireEvent.doubleClick(marker_clip, { clientX: 240, clientY: 360 });
 
-    const marker_editor = screen.getByLabelText("编辑标记标签").closest("form");
+    const start_input = screen.getByLabelText("开始时间（秒）");
+    const marker_editor = start_input.closest("form");
     const marker_anchor = document.querySelector(
       ".timeline-marker-editor-anchor",
     );
@@ -347,30 +355,19 @@ describe("MediaTimeline", () => {
     expect(timeline).not.toContainElement(marker_editor);
     expect(marker_anchor).toHaveStyle({ left: "240px", top: "360px" });
     expect(change_selected_transcript_indices).not.toHaveBeenCalled();
-    expect(screen.getAllByText("跟随当前分析策略")).toHaveLength(2);
-    expect(screen.getByText("默认 · 10 秒")).toBeInTheDocument();
-    expect(screen.getByText("默认 · 20 秒")).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText("编辑标记标签"), {
-      target: { value: "重点, 公式" },
-    });
-    fireEvent.click(screen.getByRole("radio", { name: "标记前自定义" }));
+    fireEvent.change(start_input, { target: { value: "22" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() =>
       expect(update_marker).toHaveBeenCalledWith(
         "marker-0198d12345677890abcdef1234567890",
         {
-          start_seconds: 20,
+          start_seconds: 22,
           end_seconds: null,
-          title: "重点",
-          tags: ["重点", "公式"],
-          marker_range_before_seconds: 10,
-          marker_range_after_seconds: null,
         },
       ),
     );
-    expect(screen.queryByLabelText("编辑标记标签")).toBeNull();
+    expect(screen.queryByLabelText("开始时间（秒）")).toBeNull();
   });
 
   it("adds markers only through deliberate actions", () => {
@@ -390,8 +387,107 @@ describe("MediaTimeline", () => {
     fireEvent.click(screen.getByRole("button", { name: "在 00:30 添加标记" }));
     fireEvent.keyDown(window, { key: "m", ctrlKey: true });
 
-    expect(add_marker).toHaveBeenNthCalledWith(1, 30);
-    expect(add_marker).toHaveBeenNthCalledWith(2, 30);
+    expect(add_marker).toHaveBeenNthCalledWith(1, 30, null);
+    expect(add_marker).toHaveBeenNthCalledWith(2, 30, null);
+  });
+
+  it("selects a newly created marker and rates it with number shortcuts", async () => {
+    const added_marker: MediaMarker = {
+      marker_id: "marker-new",
+      asset_id: ASSET_ID,
+      start_seconds: 30,
+      end_seconds: null,
+      importance: 0,
+    };
+    const { update_marker } = render_timeline({ added_marker });
+
+    fireEvent.click(screen.getByRole("button", { name: "在 00:30 添加标记" }));
+    await waitFor(() =>
+      expect(timeline_mock.create_engine).toHaveBeenCalledTimes(2),
+    );
+    fireEvent.keyDown(window, { key: "5" });
+
+    expect(update_marker).toHaveBeenCalledWith("marker-new", { importance: 5 });
+  });
+
+  it("ignores rating shortcuts without a user marker selection or during text input", () => {
+    const candidate: MediaMarker = {
+      marker_id: "marker-candidate",
+      asset_id: ASSET_ID,
+      start_seconds: 40,
+      end_seconds: 50,
+      importance: 0,
+    };
+    const { update_marker } = render_timeline({
+      candidate_markers: [candidate],
+    });
+
+    fireEvent.keyDown(window, { key: "5" });
+    fireEvent.click(screen.getByLabelText("canvas-item-candidate"));
+    fireEvent.keyDown(window, { key: "4" });
+    expect(update_marker).not.toHaveBeenCalled();
+
+    const marker_clip = screen.getByLabelText("canvas-item-marker");
+    fireEvent.click(marker_clip);
+    fireEvent.doubleClick(marker_clip);
+    const start_input = screen.getByLabelText("开始时间（秒）");
+    fireEvent.keyDown(start_input, { key: "3" });
+    fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "1", altKey: true });
+    expect(update_marker).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.keyDown(window, { key: "0" });
+    expect(update_marker).toHaveBeenCalledWith(
+      "marker-0198d12345677890abcdef1234567890",
+      { importance: 0 },
+    );
+  });
+
+  it("opens an accessible importance context menu and updates its selected marker", async () => {
+    const { update_marker } = render_timeline();
+    const marker_clip =
+      timeline_mock.create_engine.mock.calls.at(-1)?.[0].tracks[0].clips[0];
+    timeline_mock.get_clip_at_point.mockReturnValue({ clip: marker_clip });
+    const canvas = screen.getByLabelText(/时间线画布/);
+
+    fireEvent.contextMenu(canvas, { clientX: 20, clientY: 48 });
+
+    const current_item = await screen.findByRole("menuitemradio", {
+      name: /★★★.*3/,
+    });
+    expect(current_item).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /★★★★★.*5/ }));
+    expect(update_marker).toHaveBeenCalledWith(
+      "marker-0198d12345677890abcdef1234567890",
+      { importance: 5 },
+    );
+  });
+
+  it("opens the selected marker menu with Shift+F10", async () => {
+    render_timeline();
+    fireEvent.click(screen.getByLabelText("canvas-item-marker"));
+    const canvas = screen.getByLabelText(/时间线画布/);
+    canvas.focus();
+
+    fireEvent.keyDown(canvas, { key: "F10", code: "F10", shiftKey: true });
+
+    expect(
+      await screen.findByRole("menuitemradio", { name: /★★★.*3/ }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("clears selection after deleting a marker", async () => {
+    const { delete_marker, update_marker } = render_timeline();
+    const marker_clip = screen.getByLabelText("canvas-item-marker");
+    fireEvent.click(marker_clip);
+    fireEvent.doubleClick(marker_clip);
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(delete_marker).toHaveBeenCalledOnce());
+
+    fireEvent.keyDown(window, { key: "5" });
+    expect(update_marker).not.toHaveBeenCalled();
   });
 
   it("keeps the marker editor and draft open after a save failure", async () => {
@@ -403,15 +499,15 @@ describe("MediaTimeline", () => {
       clip: { id: "existing-marker" },
     });
     fireEvent.doubleClick(marker_clip);
-    const tags_input = screen.getByLabelText("编辑标记标签");
-    fireEvent.change(tags_input, { target: { value: "未保存草稿" } });
+    const start_input = screen.getByLabelText("开始时间（秒）");
+    fireEvent.change(start_input, { target: { value: "24" } });
 
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "标记保存失败，请稍后重试",
     );
-    expect(tags_input).toHaveValue("未保存草稿");
+    expect(start_input).toHaveValue(24);
     expect(screen.getByText("编辑标记")).toBeInTheDocument();
   });
 
@@ -422,7 +518,7 @@ describe("MediaTimeline", () => {
     fireEvent.doubleClick(canvas, { clientX: 24, clientY: 48 });
 
     expect(add_marker).toHaveBeenCalledOnce();
-    expect(add_marker).toHaveBeenCalledWith(24);
+    expect(add_marker).toHaveBeenCalledWith(24, null);
   });
 
   it("does not create a marker when double-clicking an existing clip", () => {
@@ -467,10 +563,6 @@ describe("MediaTimeline", () => {
       {
         start_seconds: 25,
         end_seconds: 35,
-        title: "重点",
-        tags: ["重点"],
-        marker_range_before_seconds: null,
-        marker_range_after_seconds: null,
       },
     );
     expect(update_marker).toHaveBeenNthCalledWith(
@@ -479,10 +571,6 @@ describe("MediaTimeline", () => {
       {
         start_seconds: 25,
         end_seconds: 40,
-        title: "重点",
-        tags: ["重点"],
-        marker_range_before_seconds: null,
-        marker_range_after_seconds: null,
       },
     );
   });
@@ -510,10 +598,6 @@ describe("MediaTimeline", () => {
       {
         start_seconds: 25,
         end_seconds: null,
-        title: "重点",
-        tags: ["重点"],
-        marker_range_before_seconds: null,
-        marker_range_after_seconds: null,
       },
     );
   });
@@ -542,10 +626,6 @@ describe("MediaTimeline", () => {
       {
         start_seconds: 12,
         end_seconds: 44,
-        title: "重点",
-        tags: ["重点"],
-        marker_range_before_seconds: null,
-        marker_range_after_seconds: null,
       },
     );
   });

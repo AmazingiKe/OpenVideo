@@ -47,6 +47,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Slider } from "@/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format_duration, format_time } from "@/shared/format";
+import { format_marker_label } from "@/shared/marker_labels";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import {
   MARKER_RANGE_MAX_SECONDS,
@@ -836,14 +837,11 @@ export function AnalysisToolPanel({
                             toggle_marker(current, marker.marker_id),
                           )
                         }
-                        aria-label={`选择 ${format_time(marker.start_seconds)} 标记`}
+                        aria-label={`选择 ${format_marker_label(marker)} 标记`}
                       />
                       <time className="font-mono text-primary">
-                        {format_time(marker.start_seconds)}
+                        {format_marker_label(marker)}
                       </time>
-                      <span className="truncate text-muted-foreground">
-                        {marker.tags.join(" / ") || "未分类标记"}
-                      </span>
                     </label>
                   ))}
                 </div>

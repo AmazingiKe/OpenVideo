@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from openvideo.core.identifiers import is_uuid7
 from openvideo.core.media_models import (
@@ -41,7 +41,7 @@ TRANSCRIPTION_METADATA_FILE_NAME = "transcription.json"
 TIMELINE_FILE_NAME = "timeline.json"
 MARKERS_FILE_NAME = "markers.json"
 DOMAIN_FILE_FORMAT_VERSION = 1
-MARKERS_FILE_FORMAT_VERSION = 2
+MARKERS_FILE_FORMAT_VERSION = 3
 
 
 class IndexIssue(BaseModel):
@@ -67,44 +67,6 @@ class MarkersFile(BaseModel):
     format_version: int = MARKERS_FILE_FORMAT_VERSION
     asset_id: str
     markers: list[MediaMarker] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_v1_markers(cls, values: object) -> object:
-        # TODO(删除)：在 1.0 停止支持 v1 资料库后删除。
-        if not isinstance(values, dict):
-            return values
-        raw_markers = values.get("markers", [])
-        has_legacy_fields = any(
-            isinstance(marker, dict) and "time_seconds" in marker
-            for marker in raw_markers
-        )
-        if values.get("format_version") != 1 and not has_legacy_fields:
-            return values
-        migrated = dict(values)
-        migrated["format_version"] = MARKERS_FILE_FORMAT_VERSION
-        migrated_markers: list[dict[str, object]] = []
-        for raw_marker in raw_markers:
-            marker = dict(raw_marker)
-            marker["start_seconds"] = marker.pop("time_seconds")
-            marker["end_seconds"] = None
-            marker["title"] = ""
-            migrated_markers.append(marker)
-        migrated["markers"] = migrated_markers
-        return migrated
-
-
-def migrate_markers_file(path: Path) -> None:
-    """把 v1 点标记一次性写成 v2，避免兼容字段继续进入业务代码。"""
-    if not path.is_file():
-        return
-    try:
-        values = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if not isinstance(values, dict) or values.get("format_version", 1) != 1:
-        return
-    atomic_write_model(path, MarkersFile.model_validate(values))
 
 
 @dataclass(frozen=True)
@@ -326,7 +288,6 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
             )
 
     markers_path = asset_directory / MARKERS_FILE_NAME
-    migrate_markers_file(markers_path)
     markers_file = _read_optional_model(
         markers_path, MarkersFile, asset_id, tracked_paths, assets_root.parent
     )

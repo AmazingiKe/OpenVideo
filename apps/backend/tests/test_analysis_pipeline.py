@@ -36,6 +36,7 @@ def test_marker_event_frames_include_marker_point_and_context(
                 focus_end_seconds=4,
                 range_before_seconds=4,
                 range_after_seconds=6,
+                importance=5,
                 event_weight=1,
             ),
         ),
@@ -64,6 +65,7 @@ def test_analysis_prompt_explains_effective_range_and_event_weight():
                 focus_end_seconds=4,
                 range_before_seconds=4,
                 range_after_seconds=6,
+                importance=3,
                 event_weight=0.75,
             ),
         ),
@@ -72,6 +74,7 @@ def test_analysis_prompt_explains_effective_range_and_event_weight():
     prompt = _analysis_prompt(moment, AnalysisStrategy())
 
     assert "标记 4.0 秒" in prompt
+    assert "重要程度 3/5" in prompt
     assert "有效向前 4.0 秒、向后 6.0 秒" in prompt
     assert "本事件权重 0.75" in prompt
 
@@ -89,6 +92,7 @@ def test_analysis_prompt_identifies_range_marker_focus():
                 focus_end_seconds=15,
                 range_before_seconds=5,
                 range_after_seconds=5,
+                importance=5,
                 event_weight=1,
             ),
         ),

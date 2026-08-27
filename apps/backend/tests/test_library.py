@@ -130,10 +130,7 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
         asset_id=ASSET_ID,
         start_seconds=2,
         end_seconds=4,
-        title="重点片段",
-        tags=["重点"],
-        marker_range_before_seconds=15,
-        marker_range_after_seconds=0,
+        importance=4,
     )
     library.create_marker(marker)
     library.save_transcript(
@@ -167,11 +164,8 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     assert rebuilt.get(ASSET_ID).title == "测试视频"
     assert rebuilt.load_transcript(ASSET_ID).segments[0].text == "正文"
     assert rebuilt.load_segments(ASSET_ID)[0].marker_ids == [MARKER_ID]
-    assert rebuilt.load_markers(ASSET_ID)[0].tags == ["重点"]
     assert rebuilt.load_markers(ASSET_ID)[0].end_seconds == 4
-    assert rebuilt.load_markers(ASSET_ID)[0].title == "重点片段"
-    assert rebuilt.load_markers(ASSET_ID)[0].marker_range_before_seconds == 15
-    assert rebuilt.load_markers(ASSET_ID)[0].marker_range_after_seconds == 0
+    assert rebuilt.load_markers(ASSET_ID)[0].importance == 4
     assert rebuilt.load_summary_document(DOCUMENT_ID).markdown == "# 用户总结\n"
     assert rebuilt.load_agent_sessions() == []
     assert rebuilt.load_summary_media(ASSET_ID)[0].media_id == MEDIA_ID
@@ -194,17 +188,31 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     marker_columns = {
         row[1] for row in rebuilt._db().execute("PRAGMA table_info(markers)")
     }
-    assert {
+    assert marker_columns == {
+        "marker_id",
+        "asset_id",
         "start_seconds",
         "end_seconds",
-        "title",
-        "marker_range_before_seconds",
-        "marker_range_after_seconds",
-    } <= marker_columns
+        "importance",
+    }
+    assert "marker_tags" not in tables
+    markers_file = json.loads(
+        (rebuilt.asset_directory(ASSET_ID) / "markers.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert markers_file["format_version"] == 3
+    assert set(markers_file["markers"][0]) == {
+        "marker_id",
+        "asset_id",
+        "start_seconds",
+        "end_seconds",
+        "importance",
+    }
     rebuilt.close()
 
 
-def test_old_marker_file_without_ranges_loads_as_inherited(tmp_path: Path):
+def test_old_marker_file_is_rejected_without_migration(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     _save_asset(library, _asset())
     marker_path = library.asset_directory(ASSET_ID) / "markers.json"
@@ -228,16 +236,11 @@ def test_old_marker_file_without_ranges_loads_as_inherited(tmp_path: Path):
     )
 
     rebuilt = MediaLibrary.open(tmp_path)
-    marker = rebuilt.load_markers(ASSET_ID)[0]
-
-    assert marker.start_seconds == 2
-    assert marker.end_seconds is None
-    assert marker.title == ""
-    assert marker.marker_range_before_seconds is None
-    assert marker.marker_range_after_seconds is None
-    migrated = json.loads(marker_path.read_text(encoding="utf-8"))
-    assert migrated["format_version"] == 2
-    assert "time_seconds" not in migrated["markers"][0]
+    assert rebuilt.get(ASSET_ID) is None
+    assert rebuilt.description.index_issues
+    unchanged = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert unchanged["format_version"] == 1
+    assert "time_seconds" in unchanged["markers"][0]
     rebuilt.close()
 
 

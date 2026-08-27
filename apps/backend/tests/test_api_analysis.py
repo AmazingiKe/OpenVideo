@@ -202,8 +202,7 @@ def test_marker_analysis_records_selected_marker_scope(tmp_path: Path):
             json={
                 "start_seconds": 12.5,
                 "end_seconds": None,
-                "title": "公式",
-                "tags": ["公式"],
+                "importance": 5,
             },
         ).json()
         response = client.post(

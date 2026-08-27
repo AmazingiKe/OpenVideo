@@ -491,10 +491,7 @@ describe("api client", () => {
       asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
       start_seconds: 12.5,
       end_seconds: null,
-      title: "重点",
-      tags: ["重点"],
-      marker_range_before_seconds: null,
-      marker_range_after_seconds: null,
+      importance: 0,
     };
     const fetch_mock = vi
       .spyOn(globalThis, "fetch")
@@ -502,7 +499,7 @@ describe("api client", () => {
         new Response(JSON.stringify(marker), { status: 201 }),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ ...marker, tags: ["关键帧"] }), {
+        new Response(JSON.stringify({ ...marker, importance: 5 }), {
           status: 200,
         }),
       );
@@ -511,24 +508,15 @@ describe("api client", () => {
       create_marker(marker.asset_id, {
         start_seconds: marker.start_seconds,
         end_seconds: marker.end_seconds,
-        title: marker.title,
-        tags: marker.tags,
-        marker_range_before_seconds: null,
-        marker_range_after_seconds: null,
       }),
     ).resolves.toEqual(marker);
     await expect(
       update_marker(marker.asset_id, marker.marker_id, {
-        start_seconds: marker.start_seconds,
-        end_seconds: 27.5,
-        title: "关键帧",
-        tags: ["关键帧"],
-        marker_range_before_seconds: 15,
-        marker_range_after_seconds: 0,
+        importance: 5,
       }),
     ).resolves.toEqual({
       ...marker,
-      tags: ["关键帧"],
+      importance: 5,
     });
     expect(fetch_mock).toHaveBeenNthCalledWith(
       1,
@@ -539,10 +527,6 @@ describe("api client", () => {
         body: JSON.stringify({
           start_seconds: 12.5,
           end_seconds: null,
-          title: "重点",
-          tags: ["重点"],
-          marker_range_before_seconds: null,
-          marker_range_after_seconds: null,
         }),
         signal: undefined,
       },
@@ -554,12 +538,7 @@ describe("api client", () => {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          start_seconds: 12.5,
-          end_seconds: 27.5,
-          title: "关键帧",
-          tags: ["关键帧"],
-          marker_range_before_seconds: 15,
-          marker_range_after_seconds: 0,
+          importance: 5,
         }),
         signal: undefined,
       },

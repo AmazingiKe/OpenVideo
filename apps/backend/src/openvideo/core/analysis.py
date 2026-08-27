@@ -41,6 +41,7 @@ class MarkerInfluence:
     focus_end_seconds: float
     range_before_seconds: float
     range_after_seconds: float
+    importance: int
     event_weight: float
 
 
@@ -52,7 +53,6 @@ class TimelineMoment:
     end_seconds: float
     transcript_text: str
     marker_ids: tuple[str, ...] = ()
-    tags: tuple[str, ...] = ()
     content_type: str = "core_concepts"
     priority: float = 0
     detailed: bool = True
@@ -85,6 +85,7 @@ def select_timeline_moments(
             transcript.segments,
             markers,
             duration_seconds,
+            resolved_strategy,
         )
         return prioritize_timeline_moments(moments, resolved_strategy)
     moments = _full_timeline_moments(
@@ -105,8 +106,9 @@ def _precise_marker_moments(
     segments: list[TranscriptSegment],
     markers: list[MediaMarker],
     duration_seconds: float | None,
+    strategy: AnalysisStrategy,
 ) -> list[TimelineMoment]:
-    """局部重跑只采用人工标记自身边界，不继承旧事件或策略扩展范围。"""
+    """点标记取全局上下文，范围标记保持用户明确划定的边界。"""
 
     moments: list[TimelineMoment] = []
     for marker in sorted(markers, key=lambda item: item.start_seconds):
@@ -114,32 +116,40 @@ def _precise_marker_moments(
         focus_end = (
             marker.end_seconds if marker.end_seconds is not None else focus_start
         )
-        if focus_end <= focus_start:
-            focus_end = focus_start + 0.1
-        if duration_seconds is not None:
-            focus_end = min(focus_end, duration_seconds)
+        if marker.end_seconds is None:
+            range_start = max(0, focus_start - strategy.marker_range_before_seconds)
+            range_end = focus_end + strategy.marker_range_after_seconds
+            if duration_seconds is not None:
+                range_end = min(range_end, duration_seconds)
+            before_seconds = focus_start - range_start
+            after_seconds = max(0, range_end - focus_end)
+        else:
+            range_start = focus_start
+            range_end = focus_end
+            before_seconds = 0
+            after_seconds = 0
         matching = [
             segment
             for segment in segments
-            if segment.end_seconds >= focus_start and segment.start_seconds <= focus_end
+            if segment.end_seconds >= range_start and segment.start_seconds <= range_end
         ]
         influence = MarkerInfluence(
             marker_id=marker.marker_id,
             anchor_seconds=(focus_start + focus_end) / 2,
             focus_start_seconds=focus_start,
             focus_end_seconds=focus_end,
-            range_before_seconds=0,
-            range_after_seconds=0,
-            event_weight=1,
+            range_before_seconds=before_seconds,
+            range_after_seconds=after_seconds,
+            importance=marker.importance,
+            event_weight=marker.importance / 5,
         )
         moments.append(
             TimelineMoment(
-                start_seconds=focus_start,
-                end_seconds=max(focus_end, focus_start + 0.1),
+                start_seconds=range_start,
+                end_seconds=max(range_end, range_start + 0.1),
                 transcript_text=_merge_text(matching),
                 marker_ids=(marker.marker_id,),
-                tags=tuple(dict.fromkeys(marker.tags)),
-                marker_weight=1,
+                marker_weight=influence.event_weight,
                 marker_influences=(influence,),
             )
         )
@@ -182,8 +192,6 @@ def _score_moment(moment: TimelineMoment, strategy: AnalysisStrategy) -> Timelin
         raise ValueError("分析策略权重尚未解析")
     score = float(getattr(weights, content_type))
     score += weights.user_markers * moment.marker_weight
-    if moment.tags:
-        score += min(len(moment.tags) * 5, 20)
     return TimelineMoment(
         **{
             **moment.__dict__,
@@ -194,7 +202,7 @@ def _score_moment(moment: TimelineMoment, strategy: AnalysisStrategy) -> Timelin
 
 
 def _classify_content(moment: TimelineMoment) -> str:
-    combined = f"{moment.transcript_text} {' '.join(moment.tags)}".lower()
+    combined = moment.transcript_text.lower()
     signals = (
         (
             "formula_derivation",
@@ -319,21 +327,11 @@ def _attach_markers(
             is not None
         )
         marker_ids = tuple(influence.marker_id for influence in influences)
-        influencing_ids = set(marker_ids)
-        tags = tuple(
-            dict.fromkeys(
-                tag
-                for marker in markers
-                if marker.marker_id in influencing_ids
-                for tag in marker.tags
-            )
-        )
         resolved.append(
             TimelineMoment(
                 **{
                     **moment.__dict__,
                     "marker_ids": marker_ids,
-                    "tags": tags,
                     "marker_weight": max(
                         (influence.event_weight for influence in influences),
                         default=0,
@@ -369,19 +367,18 @@ def _marker_influence_for_moment(
     if not contains_marker and not overlaps_range:
         return None
     if contains_marker:
-        event_weight = 1.0
+        distance_weight = 1.0
     elif moment.end_seconds < focus_start:
-        event_weight = _linear_marker_weight(
+        distance_weight = _linear_marker_weight(
             focus_start - moment.end_seconds,
             before_seconds,
         )
     else:
-        event_weight = _linear_marker_weight(
+        distance_weight = _linear_marker_weight(
             moment.start_seconds - focus_end,
             after_seconds,
         )
-    if event_weight <= 0:
-        return None
+    event_weight = distance_weight * marker.importance / 5
     return MarkerInfluence(
         marker_id=marker.marker_id,
         anchor_seconds=anchor_seconds,
@@ -389,6 +386,7 @@ def _marker_influence_for_moment(
         focus_end_seconds=focus_end,
         range_before_seconds=before_seconds,
         range_after_seconds=after_seconds,
+        importance=marker.importance,
         event_weight=event_weight,
     )
 
@@ -408,16 +406,12 @@ def _resolved_marker_range(
     focus_end = (
         marker.end_seconds if marker.end_seconds is not None else marker.start_seconds
     )
-    requested_before = (
-        marker.marker_range_before_seconds
-        if marker.marker_range_before_seconds is not None
-        else strategy.marker_range_before_seconds
-    )
-    requested_after = (
-        marker.marker_range_after_seconds
-        if marker.marker_range_after_seconds is not None
-        else strategy.marker_range_after_seconds
-    )
+    if marker.end_seconds is None:
+        requested_before = strategy.marker_range_before_seconds
+        requested_after = strategy.marker_range_after_seconds
+    else:
+        requested_before = 0
+        requested_after = 0
     range_start = max(0.0, focus_start - requested_before)
     range_end = focus_end + requested_after
     if duration_seconds is not None:

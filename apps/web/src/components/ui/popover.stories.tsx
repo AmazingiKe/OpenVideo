@@ -17,11 +17,11 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-export const EditMarker: Story = {
+export const EditSegment: Story = {
   render: () => (
     <Popover>
       <PopoverTrigger asChild>
-        <Button>编辑标记</Button>
+        <Button>编辑片段</Button>
       </PopoverTrigger>
       <PopoverContent align="start">
         <form
@@ -30,13 +30,13 @@ export const EditMarker: Story = {
         >
           <FieldGroup className="min-w-0 flex-1">
             <Field>
-              <FieldLabel className="sr-only" htmlFor="story-marker-tags">
-                编辑标记标签
+              <FieldLabel className="sr-only" htmlFor="story-segment-name">
+                编辑片段名称
               </FieldLabel>
               <Input
-                id="story-marker-tags"
-                defaultValue="重点, 公式"
-                placeholder="输入标签，用逗号分隔"
+                id="story-segment-name"
+                defaultValue="矩阵推导"
+                placeholder="输入片段名称"
               />
             </Field>
           </FieldGroup>

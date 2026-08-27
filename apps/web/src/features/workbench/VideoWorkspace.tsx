@@ -32,7 +32,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Player, type PlayerHandle } from "@/features/player/Player";
 import { media_url } from "@/shared/api";
-import { format_time } from "@/shared/format";
+import { format_marker_label } from "@/shared/marker_labels";
 import type { MediaAsset, MediaMarker, Transcript } from "@/shared/types";
 
 const SEEK_STEP_SECONDS = 10;
@@ -121,7 +121,7 @@ export function VideoWorkspace({
               subtitles={transcript?.segments ?? []}
               markers={markers.map((marker) => ({
                 start_seconds: marker.start_seconds,
-                label: marker.title || format_time(marker.start_seconds),
+                label: format_marker_label(marker),
               }))}
               thumbnails={player_storyboard(asset)}
               on_time_change={(seconds) => {

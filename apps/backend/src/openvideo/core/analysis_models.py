@@ -5,12 +5,12 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
-from openvideo.core.media_models import (
-    MARKER_RANGE_MAX_SECONDS,
-    MARKER_RANGE_MIN_SECONDS,
-    MARKER_RANGE_STEP_SECONDS,
-    MediaSegment,
-)
+from openvideo.core.media_models import MediaSegment
+
+
+MARKER_RANGE_MIN_SECONDS = 0
+MARKER_RANGE_MAX_SECONDS = 120
+MARKER_RANGE_STEP_SECONDS = 5
 
 
 class AnalysisStage(StrEnum):

@@ -2,15 +2,14 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 from openvideo.core.transcription_models import TranscriptionStatus
 
 
-MARKER_RANGE_MIN_SECONDS = 0
-MARKER_RANGE_MAX_SECONDS = 120
-MARKER_RANGE_STEP_SECONDS = 5
+MarkerImportance = Literal[0, 1, 2, 3, 4, 5]
 
 
 class SourcePlatform(StrEnum):
@@ -168,36 +167,15 @@ class MediaSegment(BaseModel):
 
 
 class MediaMarker(BaseModel):
-    """点与范围共享同一契约，便于时间轴、Agent 和分析流程交换标记。"""
+    """标记只表达时间边界与用户重要程度，避免混入分析策略配置。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     marker_id: str
     asset_id: str
     start_seconds: float = Field(ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
-    title: str = Field(default="", max_length=200)
-    tags: list[str] = Field(default_factory=list)
-    marker_range_before_seconds: int | None = Field(
-        default=None,
-        ge=MARKER_RANGE_MIN_SECONDS,
-        le=MARKER_RANGE_MAX_SECONDS,
-        multiple_of=MARKER_RANGE_STEP_SECONDS,
-    )
-    marker_range_after_seconds: int | None = Field(
-        default=None,
-        ge=MARKER_RANGE_MIN_SECONDS,
-        le=MARKER_RANGE_MAX_SECONDS,
-        multiple_of=MARKER_RANGE_STEP_SECONDS,
-    )
-
-    @field_validator("title")
-    @classmethod
-    def normalize_title(cls, title: str) -> str:
-        return title.strip()
-
-    @field_validator("tags")
-    @classmethod
-    def normalize_tags(cls, tags: list[str]) -> list[str]:
-        return list(dict.fromkeys(tag.strip() for tag in tags if tag.strip()))
+    importance: MarkerImportance = 0
 
     @model_validator(mode="after")
     def validate_range(self) -> "MediaMarker":

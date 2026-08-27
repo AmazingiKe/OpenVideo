@@ -27,20 +27,14 @@ const MARKERS: MediaMarker[] = [
     asset_id: ASSET_ID,
     start_seconds: 30,
     end_seconds: null,
-    title: "公式",
-    tags: ["公式"],
-    marker_range_before_seconds: null,
-    marker_range_after_seconds: null,
+    importance: 5,
   },
   {
     marker_id: "marker-1123456789abcdef0123456789abcdef",
     asset_id: ASSET_ID,
     start_seconds: 90,
     end_seconds: null,
-    title: "疑问",
-    tags: ["疑问"],
-    marker_range_before_seconds: null,
-    marker_range_after_seconds: null,
+    importance: 0,
   },
 ];
 

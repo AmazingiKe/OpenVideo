@@ -28,12 +28,6 @@ MAX_CHAPTER_FRAME_COUNT = 12
 SECONDS_PER_ADAPTIVE_FRAME = 30
 MAX_PROMPT_TRANSCRIPT_CHARACTERS = 6000
 TITLE_MAX_CHARACTERS = 32
-TAG_ANALYSIS_INSTRUCTIONS = {
-    "重点": "提炼必须记住的核心结论及其依据",
-    "公式": "解释公式、符号、推导步骤和适用条件",
-    "疑问": "指出可能的疑点、缺失前提和需要继续核实的内容",
-    "案例": "说明案例背景、过程、结果以及它证明的观点",
-}
 AnalysisProgress = Callable[[AnalysisStage, float, str], None]
 
 
@@ -140,7 +134,6 @@ def _build_segment(
         ],
         visual_description=visual_description,
         marker_ids=list(moment.marker_ids),
-        tags=list(moment.tags),
     )
 
 
@@ -203,15 +196,6 @@ def _describe_event(
 
 
 def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
-    tag_instructions = [
-        TAG_ANALYSIS_INSTRUCTIONS[tag]
-        for tag in moment.tags
-        if tag in TAG_ANALYSIS_INSTRUCTIONS
-    ]
-    custom_tags = [tag for tag in moment.tags if tag not in TAG_ANALYSIS_INSTRUCTIONS]
-    focus = "；".join(tag_instructions) or "总结这段课程讲解的主题、过程和结论"
-    if custom_tags:
-        focus = f"{focus}；同时关注用户标签：{'、'.join(custom_tags)}"
     transcript = moment.transcript_text[:MAX_PROMPT_TRANSCRIPT_CHARACTERS]
     weights = strategy.weights
     emphasis = ""
@@ -236,7 +220,7 @@ def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
         marker_context = "\n标记范围权重：" + "；".join(marker_lines)
     return (
         "你正在分析同一视频片段按时间排列的多张画面。"
-        f"分析目标：{focus}。策略优先关注：{emphasis or '核心内容'}。"
+        f"分析目标：总结这段课程讲解的主题、过程和结论。策略优先关注：{emphasis or '核心内容'}。"
         "请结合转写、画面文字（OCR）和视觉变化，用中文输出一段可复习的详细笔记；"
         "区分视频明确表达的内容与合理推断，不得补造事实。"
         f"{marker_context}"
@@ -254,6 +238,7 @@ def _marker_influence_prompt(influence: MarkerInfluence) -> str:
         marker_position = f"标记 {influence.anchor_seconds:.1f} 秒，"
     return (
         f"{marker_position}"
+        f"重要程度 {influence.importance}/5，"
         f"有效向前 {influence.range_before_seconds:.1f} 秒、"
         f"向后 {influence.range_after_seconds:.1f} 秒，"
         f"本事件权重 {influence.event_weight:.2f}"
@@ -261,8 +246,6 @@ def _marker_influence_prompt(influence: MarkerInfluence) -> str:
 
 
 def _event_title(moment: TimelineMoment) -> str:
-    if moment.tags:
-        return " / ".join(moment.tags)[:TITLE_MAX_CHARACTERS]
     text = moment.transcript_text.strip()
     if not text:
         return "无转写事件"

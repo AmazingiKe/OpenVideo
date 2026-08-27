@@ -17,7 +17,8 @@ import type {
   MediaAsset,
   LibraryFolder,
   MediaMarker,
-  MediaMarkerInput,
+  MediaMarkerCreate,
+  MediaMarkerUpdate,
   MediaSegment,
   ProbeResponse,
   Transcript,
@@ -718,7 +719,7 @@ export function get_markers(
 
 export function create_marker(
   asset_id: string,
-  marker: MediaMarkerInput,
+  marker: MediaMarkerCreate,
   signal?: AbortSignal,
 ): Promise<MediaMarker> {
   return request_json(
@@ -735,7 +736,7 @@ export function create_marker(
 export function update_marker(
   asset_id: string,
   marker_id: string,
-  update: MediaMarkerInput,
+  update: MediaMarkerUpdate,
   signal?: AbortSignal,
 ): Promise<MediaMarker> {
   return request_json(

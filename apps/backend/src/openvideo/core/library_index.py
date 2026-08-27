@@ -19,7 +19,7 @@ from openvideo.core.folder_models import Folder, FolderManifest
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 16
+DATABASE_VERSION = 17
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -172,21 +172,15 @@ def replace_asset_projection(
     connection.execute("DELETE FROM markers WHERE asset_id = ?", (asset.asset_id,))
     for marker in bundle.markers:
         connection.execute(
-            "INSERT INTO markers(marker_id, asset_id, start_seconds, end_seconds, title, "
-            "marker_range_before_seconds, marker_range_after_seconds) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO markers(marker_id, asset_id, start_seconds, end_seconds, importance) "
+            "VALUES (?, ?, ?, ?, ?)",
             (
                 marker.marker_id,
                 marker.asset_id,
                 marker.start_seconds,
                 marker.end_seconds,
-                marker.title,
-                marker.marker_range_before_seconds,
-                marker.marker_range_after_seconds,
+                marker.importance,
             ),
-        )
-        _replace_tags(
-            connection, "marker_tags", "marker_id", marker.marker_id, marker.tags
         )
     for position, segment in enumerate(bundle.segments):
         connection.execute(
@@ -502,11 +496,10 @@ CREATE TABLE timeline_segments (
 );
 CREATE TABLE markers (
     marker_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    start_seconds REAL NOT NULL, end_seconds REAL, title TEXT NOT NULL,
-    marker_range_before_seconds INTEGER, marker_range_after_seconds INTEGER
+    start_seconds REAL NOT NULL, end_seconds REAL,
+    importance INTEGER NOT NULL CHECK(importance BETWEEN 0 AND 5)
 );
 CREATE TABLE tags (name TEXT PRIMARY KEY);
-CREATE TABLE marker_tags (marker_id TEXT NOT NULL REFERENCES markers(marker_id) ON DELETE CASCADE, tag_name TEXT NOT NULL REFERENCES tags(name), PRIMARY KEY(marker_id, tag_name));
 CREATE TABLE segment_tags (segment_id TEXT NOT NULL REFERENCES timeline_segments(segment_id) ON DELETE CASCADE, tag_name TEXT NOT NULL REFERENCES tags(name), PRIMARY KEY(segment_id, tag_name));
 CREATE TABLE segment_frames (segment_id TEXT NOT NULL REFERENCES timeline_segments(segment_id) ON DELETE CASCADE, position INTEGER NOT NULL, relative_path TEXT NOT NULL, PRIMARY KEY(segment_id, position));
 CREATE TABLE segment_markers (segment_id TEXT NOT NULL REFERENCES timeline_segments(segment_id) ON DELETE CASCADE, marker_id TEXT NOT NULL REFERENCES markers(marker_id) ON DELETE CASCADE, PRIMARY KEY(segment_id, marker_id));

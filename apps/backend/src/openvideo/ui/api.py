@@ -13,7 +13,15 @@ import re
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from openvideo.agent_service import (
     AgentConflictError,
@@ -81,9 +89,7 @@ from openvideo.core.library import (
 from openvideo.core.folder_models import FolderResponse
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import (
-    MARKER_RANGE_MAX_SECONDS,
-    MARKER_RANGE_MIN_SECONDS,
-    MARKER_RANGE_STEP_SECONDS,
+    MarkerImportance,
     MediaAssetResponse,
     MediaAssetStatus,
     MediaMarker,
@@ -307,39 +313,29 @@ class AssetMoveRequest(BaseModel):
 
 
 class MarkerCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     start_seconds: float = Field(ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
-    title: str = Field(default="", max_length=200)
-    tags: list[str] = Field(default_factory=list)
-    marker_range_before_seconds: int | None = Field(
-        default=None,
-        ge=MARKER_RANGE_MIN_SECONDS,
-        le=MARKER_RANGE_MAX_SECONDS,
-        multiple_of=MARKER_RANGE_STEP_SECONDS,
-    )
-    marker_range_after_seconds: int | None = Field(
-        default=None,
-        ge=MARKER_RANGE_MIN_SECONDS,
-        le=MARKER_RANGE_MAX_SECONDS,
-        multiple_of=MARKER_RANGE_STEP_SECONDS,
-    )
+    importance: MarkerImportance = 0
 
 
 class MarkerUpdateRequest(BaseModel):
-    start_seconds: float = Field(ge=0)
+    model_config = ConfigDict(extra="forbid")
+
+    start_seconds: float | None = Field(default=None, ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
-    title: str = Field(default="", max_length=200)
-    tags: list[str] = Field(default_factory=list)
-    marker_range_before_seconds: int | None = Field(
-        ge=MARKER_RANGE_MIN_SECONDS,
-        le=MARKER_RANGE_MAX_SECONDS,
-        multiple_of=MARKER_RANGE_STEP_SECONDS,
-    )
-    marker_range_after_seconds: int | None = Field(
-        ge=MARKER_RANGE_MIN_SECONDS,
-        le=MARKER_RANGE_MAX_SECONDS,
-        multiple_of=MARKER_RANGE_STEP_SECONDS,
-    )
+    importance: MarkerImportance | None = None
+
+    @model_validator(mode="after")
+    def validate_partial_update(self) -> "MarkerUpdateRequest":
+        if not self.model_fields_set:
+            raise ValueError("至少需要提交一个标记字段")
+        if "start_seconds" in self.model_fields_set and self.start_seconds is None:
+            raise ValueError("开始时间不能为 null")
+        if "importance" in self.model_fields_set and self.importance is None:
+            raise ValueError("重要程度不能为 null")
+        return self
 
 
 class TranscriptSegmentUpdateRequest(BaseModel):
@@ -1602,10 +1598,7 @@ def create_app(
             asset_id=asset_id,
             start_seconds=request.start_seconds,
             end_seconds=request.end_seconds,
-            title=request.title,
-            tags=request.tags,
-            marker_range_before_seconds=request.marker_range_before_seconds,
-            marker_range_after_seconds=request.marker_range_after_seconds,
+            importance=request.importance,
         )
         return library.create_marker(marker)
 
@@ -1619,19 +1612,27 @@ def create_app(
         request: MarkerUpdateRequest,
     ) -> MediaMarker:
         asset = _ready_asset(library, asset_id)
+        try:
+            current = next(
+                marker
+                for marker in library.load_markers(asset_id)
+                if marker.marker_id == marker_id
+            )
+        except (StopIteration, ValueError) as error:
+            raise HTTPException(status_code=404, detail="标记不存在") from error
+        changes = request.model_dump(exclude_unset=True)
+        start_seconds = changes.get("start_seconds", current.start_seconds)
+        end_seconds = changes.get("end_seconds", current.end_seconds)
+        assert isinstance(start_seconds, int | float)
+        assert end_seconds is None or isinstance(end_seconds, int | float)
         _validate_marker_bounds(
-            request.start_seconds, request.end_seconds, asset.duration_seconds
+            start_seconds, end_seconds, asset.duration_seconds
         )
         try:
             marker = library.update_marker(
                 asset_id,
                 marker_id,
-                start_seconds=request.start_seconds,
-                end_seconds=request.end_seconds,
-                title=request.title,
-                tags=request.tags,
-                marker_range_before_seconds=request.marker_range_before_seconds,
-                marker_range_after_seconds=request.marker_range_after_seconds,
+                changes=changes,
             )
         except ValueError as error:
             raise HTTPException(status_code=404, detail="标记不存在") from error
