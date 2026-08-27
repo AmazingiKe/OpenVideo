@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from openvideo.core.agent_runtime_models import AgentRunCreate
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -10,7 +11,6 @@ from openvideo.core.media_models import (
     MediaAssetStatus,
     SourcePlatform,
 )
-from openvideo.settings import Settings
 from openvideo.llm.agno_executor import AgnoAgentExecutor
 from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.llm.events import (
@@ -20,6 +20,7 @@ from openvideo.llm.events import (
 )
 from openvideo.llm.models_dev import ModelsDevCatalog
 from openvideo.llm.probe_cache import ProbeCache
+from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
 
@@ -157,3 +158,43 @@ def test_run_rejects_non_uuid7_request_key(tmp_path: Path):
         )
 
         assert response.status_code == 422
+
+
+def test_marker_run_mode_separates_questions_from_change_proposals(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        registered = service.registry.require("marker")
+        profile = service.capability_resolver.resolve(
+            service.settings.ai_model(MODEL_ID)
+        )
+
+        question_definition = registered.run_definition(
+            registered.definition,
+            AgentRunCreate(
+                request_key=f"request-{uuid7().hex}",
+                ai_model_id=MODEL_ID,
+                content="这个课程主要讲什么？",
+            ),
+            profile,
+        )
+        proposal_definition = registered.run_definition(
+            registered.definition,
+            AgentRunCreate(
+                request_key=f"request-{uuid7().hex}",
+                ai_model_id=MODEL_ID,
+                content="找出所有结论并生成范围标记",
+                task_input={"intent": "edit"},
+            ),
+            profile,
+        )
+
+        assert question_definition.allowed_tools == (
+            "search_evidence",
+            "inspect_frames",
+        )
+        assert question_definition.required_tools == {"search_evidence"}
+        assert question_definition.requires_approval is False
+        assert "propose_marker_changes" not in question_definition.allowed_tools
+        assert proposal_definition.allowed_tools == registered.definition.allowed_tools
+        assert proposal_definition.required_tools == {"propose_marker_changes"}
+        assert proposal_definition.requires_approval is True

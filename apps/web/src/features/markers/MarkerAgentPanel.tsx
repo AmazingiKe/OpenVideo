@@ -69,7 +69,23 @@ export function MarkerAgentPanel({
         asset_id={asset_id}
         models={models}
         on_seek={on_seek}
-        placeholder="例如：找出所有结论并生成范围标记预览"
+        placeholder="例如：这个课程主要讲什么？"
+        run_options={[
+          {
+            value: "chat",
+            label: "内容问答",
+            description: "检索视频证据并回答问题，不创建标记建议。",
+            task_input: { intent: "chat" },
+            required_capabilities: ["tools"],
+          },
+          {
+            value: "edit",
+            label: "生成标记建议",
+            description: "生成整批标记变更预览，确认后才会修改标记。",
+            task_input: { intent: "edit" },
+            required_capabilities: ["tools"],
+          },
+        ]}
         on_artifact_change={handle_artifact}
       />
     </aside>

@@ -226,6 +226,78 @@ async def test_stream_deltas_are_coalesced_before_persistence(monkeypatch):
     assert [event.content for event in text_events] == ["字" * 20]
 
 
+@pytest.mark.asyncio
+async def test_required_tool_preface_is_not_published_as_final_answer(monkeypatch):
+    tool = ToolExecution(
+        tool_call_id="call-evidence",
+        tool_name="echo",
+        tool_args={"text": "课程证据"},
+        result='{"ok":true,"text":"课程证据"}',
+    )
+
+    def arun(self, input, **_options):
+        async def events():
+            yield RunContentEvent(content="让我先检索课程内容。")
+            yield ToolCallStartedEvent(tool=tool)
+            yield ToolCallCompletedEvent(tool=tool)
+            yield RunContentEvent(content="这门课程讲解线性代数。")
+            yield RunCompletedEvent(
+                content="让我先检索课程内容。这门课程讲解线性代数。"
+            )
+
+        return events()
+
+    monkeypatch.setattr(Agent, "arun", arun)
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="echo",
+            description="读取课程证据",
+            parameters_model=EchoInput,
+            handler=lambda parameters: {"ok": True, "text": parameters.text},
+        )
+    )
+    definition = AgentDefinition(
+        agent_id="test",
+        title="测试",
+        description="验证工具前置旁白不会进入最终回答",
+        mode=AgentMode.CHAT,
+        prompt="读取证据后直接回答",
+        tools=[AgentToolDescriptor(name="echo", description="读取课程证据")],
+        required_tools={"echo"},
+    )
+    model = AiModelConfiguration(
+        name="实验模型",
+        litellm_model="deepseek/deepseek-v4-flash-vision-exp",
+        api_key="secret",
+    )
+    profile = ModelProfile(
+        provider="deepseek",
+        model="deepseek-v4-flash-vision-exp",
+        capabilities=ModelCapabilities(tools=Support.YES),
+    )
+    captured_events = []
+
+    result = await AgnoAgentExecutor().run(
+        model,
+        profile,
+        definition,
+        [{"role": "user", "content": "这门课程讲什么？"}],
+        registry,
+        captured_events.append,
+        max_tool_calls=4,
+        tool_timeout_seconds=5,
+    )
+
+    text_events = [
+        event.content
+        for event in captured_events
+        if event.event_type == LlmAgentEventType.TEXT_DELTA
+    ]
+    assert result.content == "这门课程讲解线性代数。"
+    assert text_events == ["这门课程讲解线性代数。"]
+
+
 def test_unknown_named_tool_choice_uses_auto_for_required_tool_recovery():
     definition = AgentDefinition(
         agent_id="test",

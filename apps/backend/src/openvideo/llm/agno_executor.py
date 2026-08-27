@@ -251,7 +251,11 @@ class AgnoAgentExecutor:
                     stream_events=True,
                 ),
             )
-            return await self._consume(stream, on_event)
+            return await self._consume(
+                stream,
+                on_event,
+                required_tools=definition.required_tools,
+            )
         except asyncio.CancelledError:
             raise
         except (FeatureCombinationUnsupportedError, ProviderRequestError):
@@ -298,7 +302,10 @@ class AgnoAgentExecutor:
 
     @staticmethod
     async def _consume(
-        stream: AsyncIterator[RunOutputEvent], on_event: AgnoEventHandler
+        stream: AsyncIterator[RunOutputEvent],
+        on_event: AgnoEventHandler,
+        *,
+        required_tools: set[str],
     ) -> AgentExecutionResult:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
@@ -308,6 +315,7 @@ class AgnoAgentExecutor:
         pending_deltas: list[tuple[LlmAgentEventType, str]] = []
         pending_character_count = 0
         last_delta_flush = monotonic()
+        publish_text = not required_tools
 
         def flush_deltas(*, force: bool = False) -> None:
             nonlocal pending_character_count, last_delta_flush
@@ -336,8 +344,9 @@ class AgnoAgentExecutor:
         async for event in stream:
             if isinstance(event, RunContentEvent):
                 if isinstance(event.content, str) and event.content:
-                    content_parts.append(event.content)
-                    queue_delta(LlmAgentEventType.TEXT_DELTA, event.content)
+                    if publish_text:
+                        content_parts.append(event.content)
+                        queue_delta(LlmAgentEventType.TEXT_DELTA, event.content)
                 if event.reasoning_content:
                     reasoning_parts.append(event.reasoning_content)
                     queue_delta(
@@ -372,6 +381,8 @@ class AgnoAgentExecutor:
                 failed = event.tool.tool_call_error is True or result.get("ok") is False
                 if not failed and event.tool.tool_name:
                     successful_tools.add(event.tool.tool_name)
+                    if required_tools <= successful_tools:
+                        publish_text = True
                 on_event(
                     LlmAgentEvent(
                         event_type=LlmAgentEventType.TOOL_CALL_COMPLETED,
@@ -392,6 +403,7 @@ class AgnoAgentExecutor:
             elif isinstance(event, RunCompletedEvent):
                 if (
                     not content_parts
+                    and not successful_tools
                     and isinstance(event.content, str)
                     and event.content
                 ):

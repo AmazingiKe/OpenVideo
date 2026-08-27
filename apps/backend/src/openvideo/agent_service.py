@@ -63,6 +63,9 @@ MARKER_ARTIFACT_TYPE = "marker_changes"
 SUMMARY_ARTIFACT_TYPE = "summary_edit"
 TRANSCRIPT_ARTIFACT_TYPE = "transcript_correction"
 SESSION_TITLE_LENGTH = 60
+AGENT_RUN_INTENT_KEY = "intent"
+AGENT_RUN_EDIT_INTENT = "edit"
+MARKER_EVIDENCE_TOOL_NAMES = frozenset({"search_evidence", "inspect_frames"})
 
 
 class MarkerChangeOperation(StrEnum):
@@ -461,15 +464,12 @@ class AgentService:
         marker = AgentDefinition(
             agent_id=MARKER_AGENT_ID,
             title="标记 Agent",
-            description="依据转录、时间轴和画面证据生成整批标记变更预览。",
+            description="围绕视频证据回答问题，或生成整批标记变更预览。",
             mode=AgentMode.CHAT,
             prompt=(
-                "你是 OpenVideo 标记 Agent。用户发送消息的目标是生成标记变更预览。"
-                "先读取现有标记并检索相关时间范围证据，必要时检查画面。"
-                "你只能建议时间边界，不能设置或修改用户的重要程度。"
+                "你是 OpenVideo 视频内容与标记协作 Agent。"
+                "当前运行配置会明确指定内容问答或生成标记建议；严格遵守配置，"
                 "不要在正文叙述计划、搜索步骤、工具选择或内部推理。"
-                "取得证据后必须调用 propose_marker_changes 生成整批待审批结果，"
-                "调用成功前不得结束运行，也不得声称建议已执行。"
             ),
             required_capabilities={AgentCapability.TOOLS},
             tools=[
@@ -486,8 +486,6 @@ class AgentService:
                     prerequisites=["read_markers", "search_evidence"],
                 ),
             ],
-            required_tools={"propose_marker_changes"},
-            requires_approval=True,
             result_type=MARKER_ARTIFACT_TYPE,
         )
         summary = AgentDefinition(
@@ -539,7 +537,7 @@ class AgentService:
                 self._marker_tools,
                 self._approve_marker_changes,
                 None,
-                None,
+                self._marker_run_definition,
             ),
             RegisteredAgent(
                 summary,
@@ -573,7 +571,9 @@ class AgentService:
         request: AgentRunCreate,
         profile: ModelProfile,
     ) -> AgentDefinition:
-        edit_intent = request.task_input.get("intent") == "edit"
+        edit_intent = (
+            request.task_input.get(AGENT_RUN_INTENT_KEY) == AGENT_RUN_EDIT_INTENT
+        )
         if edit_intent:
             return definition.model_copy(
                 update={
@@ -585,6 +585,50 @@ class AgentService:
         if profile.support(CapabilityName.TOOLS) != Support.NO:
             return definition
         return definition.model_copy(update={"tools": []})
+
+    @staticmethod
+    def _marker_run_definition(
+        definition: AgentDefinition,
+        request: AgentRunCreate,
+        _profile: ModelProfile,
+    ) -> AgentDefinition:
+        edit_intent = (
+            request.task_input.get(AGENT_RUN_INTENT_KEY) == AGENT_RUN_EDIT_INTENT
+        )
+        if edit_intent:
+            return definition.model_copy(
+                update={
+                    "prompt": (
+                        "你是 OpenVideo 标记 Agent。当前运行只生成标记变更预览。"
+                        "先读取现有标记并检索相关时间范围证据，必要时检查画面。"
+                        "你只能建议时间边界，不能设置或修改用户的重要程度。"
+                        "取得证据后必须调用 propose_marker_changes 生成整批待审批结果，"
+                        "调用成功前不得结束运行，也不得声称建议已经执行。"
+                        "不要在正文叙述计划、搜索步骤、工具选择或内部推理。"
+                    ),
+                    "required_tools": {"propose_marker_changes"},
+                    "requires_approval": True,
+                }
+            )
+        evidence_tools = [
+            tool for tool in definition.tools if tool.name in MARKER_EVIDENCE_TOOL_NAMES
+        ]
+        return definition.model_copy(
+            update={
+                "prompt": (
+                    "你是 OpenVideo 视频内容问答 Agent。当前运行只回答用户的问题。"
+                    "必须先调用 search_evidence 检索当前视频的转录与分析证据；"
+                    "回答全片主题、课程内容或整体结构时不要传 query，避免把概览问题误当作关键词过滤；"
+                    "只有问题确实依赖画面时才调用 inspect_frames。"
+                    "根据取得的证据直接、明确地回答；证据不足时说明缺少什么。"
+                    "正文第一句必须直接给出结论，禁止使用‘我来’、‘让我’、‘正在’或‘先’来叙述过程。"
+                    "不要创建、提交或声称创建了标记建议，也不要讨论内部工具步骤。"
+                ),
+                "tools": evidence_tools,
+                "required_tools": {"search_evidence"},
+                "requires_approval": False,
+            }
+        )
 
     @staticmethod
     def _run_content(definition: AgentDefinition, request: AgentRunCreate) -> str:
