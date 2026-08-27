@@ -180,6 +180,8 @@ MODEL_TEST_SUCCESS_MESSAGE = "模型响应正常"
 MODEL_TEST_TIMEOUT_SECONDS = 30
 SUMMARY_DOCUMENT_EVENT_POLL_SECONDS = 0.5
 SUMMARY_DOCUMENT_EVENT_KEEPALIVE_SECONDS = 15
+AGENT_EVENT_POLL_SECONDS = 0.05
+AGENT_EVENT_KEEPALIVE_SECONDS = 15
 DOWNLOAD_ACCOUNT_TEST_URLS = {
     SourcePlatform.BILIBILI: "https://www.bilibili.com/video/BV1xx411c7mD",
     SourcePlatform.DOUYIN: "https://www.douyin.com/video/6961737553342991651",
@@ -1871,13 +1873,13 @@ def create_app(
                 if run_state.stage in TERMINAL_AGENT_RUN_STAGES and not events:
                     break
                 if not events:
-                    idle_seconds += 0.1
-                    if idle_seconds >= 15:
+                    idle_seconds += AGENT_EVENT_POLL_SECONDS
+                    if idle_seconds >= AGENT_EVENT_KEEPALIVE_SECONDS:
                         yield ": keep-alive\n\n"
                         idle_seconds = 0.0
                 else:
                     idle_seconds = 0.0
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(AGENT_EVENT_POLL_SECONDS)
 
         return StreamingResponse(
             stream_events(),

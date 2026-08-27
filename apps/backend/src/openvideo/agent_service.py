@@ -464,9 +464,11 @@ class AgentService:
             description="依据转录、时间轴和画面证据生成整批标记变更预览。",
             mode=AgentMode.CHAT,
             prompt=(
-                "你是 OpenVideo 标记 Agent。先读取现有标记并检索相关时间范围证据，"
-                "必要时检查画面。所有改动必须通过 propose_marker_changes 生成整批待审批结果，"
-                "不得声称建议已执行。"
+                "你是 OpenVideo 标记 Agent。用户发送消息的目标是生成标记变更预览。"
+                "先读取现有标记并检索相关时间范围证据，必要时检查画面。"
+                "不要在正文叙述计划、搜索步骤、工具选择或内部推理。"
+                "取得证据后必须调用 propose_marker_changes 生成整批待审批结果，"
+                "调用成功前不得结束运行，也不得声称建议已执行。"
             ),
             required_capabilities={AgentCapability.TOOLS},
             tools=[

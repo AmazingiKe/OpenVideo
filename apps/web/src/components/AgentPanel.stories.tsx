@@ -1,8 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { fn } from "storybook/test";
+import { expect, fn } from "storybook/test";
 
 import {
   AgentArtifactCard,
+  AgentReasoning,
   AgentRunBadge,
   AgentToolStatusCard,
 } from "./AgentPanel";
@@ -135,5 +136,24 @@ export const DisconnectedRecovery: Story = {
         重连会携带最后事件序号，并从断点继续接收。
       </AlertDescription>
     </Alert>
+  ),
+};
+
+export const CollapsedReasoning: Story = {
+  render: () => (
+    <AgentReasoning content="正在核对标记范围、转录证据与画面信息。" />
+  ),
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByRole("button", { name: "思考过程" }),
+    ).toHaveAttribute("aria-expanded", "false");
+  },
+};
+
+export const CollapsedReasoningDark: Story = {
+  render: () => (
+    <div className="dark bg-background p-4 text-foreground">
+      <AgentReasoning content="正在核对标记范围、转录证据与画面信息。" />
+    </div>
   ),
 };

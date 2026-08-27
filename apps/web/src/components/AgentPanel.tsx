@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { Bot, RotateCcw, ShieldCheck, Wrench } from "lucide-react";
+import { Bot, Brain, RotateCcw, ShieldCheck, Wrench } from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
 import {
@@ -10,6 +10,12 @@ import {
   MessageScroller,
 } from "@/components/chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -131,11 +137,13 @@ export function AgentPanel({
   const [last_content, set_last_content] = useState("");
   const [active_run, set_active_run] = useState<AgentRun | null>(null);
   const [stream_text, set_stream_text] = useState("");
+  const [stream_reasoning, set_stream_reasoning] = useState("");
   const [connection_message, set_connection_message] = useState<string | null>(
     null,
   );
   const [error, set_error] = useState<string | null>(null);
   const connection_ref = useRef<AbortController | null>(null);
+  const run_sequence_ref = useRef(new Map<string, number>());
   const restore_panel_event = useEffectEvent(restore_panel);
 
   const selected_run_option =
@@ -176,6 +184,8 @@ export function AgentPanel({
     set_state(null);
     set_active_run(null);
     set_stream_text("");
+    set_stream_reasoning("");
+    run_sequence_ref.current.clear();
     set_error(null);
     if (!asset_id) return () => controller.abort();
     void restore_panel_event(asset_id, controller.signal);
@@ -311,15 +321,25 @@ export function AgentPanel({
             if (item.type === "message") {
               return (
                 <Message key={item.id} role={item.role}>
-                  <Bubble role={item.role}>{item.content}</Bubble>
+                  {item.reasoning ? (
+                    <AgentReasoning content={item.reasoning} />
+                  ) : null}
+                  {item.content ? (
+                    <Bubble role={item.role}>{item.content}</Bubble>
+                  ) : null}
                 </Message>
               );
             }
             return <AgentToolStatusCard key={item.id} event={item.event} />;
           })}
-          {stream_text ? (
+          {stream_text || stream_reasoning ? (
             <Message role="assistant">
-              <Bubble role="assistant">{stream_text}</Bubble>
+              {stream_reasoning ? (
+                <AgentReasoning content={stream_reasoning} running />
+              ) : null}
+              {stream_text ? (
+                <Bubble role="assistant">{stream_text}</Bubble>
+              ) : null}
             </Message>
           ) : null}
           {artifacts.map((artifact) => (
@@ -443,6 +463,7 @@ export function AgentPanel({
       set_state(selected);
       set_active_run(null);
       set_stream_text("");
+      set_stream_reasoning("");
       set_error(null);
       const running = [...selected.runs]
         .reverse()
@@ -468,6 +489,7 @@ export function AgentPanel({
     set_draft("");
     set_error(null);
     set_stream_text("");
+    set_stream_reasoning("");
     try {
       const current = await ensure_session();
       const run = await create_agent_run(current.session.session_id, {
@@ -499,6 +521,7 @@ export function AgentPanel({
     });
     let last_sequence = Math.max(
       0,
+      run_sequence_ref.current.get(run.run_id) ?? 0,
       ...known_events
         .filter((event) => event.run_id === run.run_id)
         .map((event) => event.sequence),
@@ -508,31 +531,39 @@ export function AgentPanel({
         run.run_id,
         ({ event, data }) => {
           last_sequence = Math.max(last_sequence, data.sequence);
+          run_sequence_ref.current.set(run.run_id, last_sequence);
           if (event === "message.delta") {
             set_stream_text((current) => current + String(data.content ?? ""));
           }
-          set_state((current) => {
-            if (
-              !current ||
-              current.events.some((item) => item.event_id === data.event_id)
-            )
-              return current;
-            return {
-              ...current,
-              events: [
-                ...current.events,
-                {
-                  event_id: data.event_id,
-                  session_id: current.session.session_id,
-                  sequence: data.sequence,
-                  run_id: run.run_id,
-                  event_type: event,
-                  payload: data,
-                  created_at: new Date().toISOString(),
-                },
-              ],
-            };
-          });
+          if (event === "reasoning.delta") {
+            set_stream_reasoning(
+              (current) => current + String(data.content ?? ""),
+            );
+          }
+          if (event !== "message.delta" && event !== "reasoning.delta") {
+            set_state((current) => {
+              if (
+                !current ||
+                current.events.some((item) => item.event_id === data.event_id)
+              )
+                return current;
+              return {
+                ...current,
+                events: [
+                  ...current.events,
+                  {
+                    event_id: data.event_id,
+                    session_id: current.session.session_id,
+                    sequence: data.sequence,
+                    run_id: run.run_id,
+                    event_type: event,
+                    payload: data,
+                    created_at: new Date().toISOString(),
+                  },
+                ],
+              };
+            });
+          }
           if (event === "artifact.created" && data.artifact) {
             const artifact = data.artifact as AgentArtifact;
             set_state((current) =>
@@ -545,7 +576,10 @@ export function AgentPanel({
             );
             void on_artifact_change?.(artifact);
           }
-          if (event === "message.completed") set_stream_text("");
+          if (event === "message.completed") {
+            set_stream_text("");
+            set_stream_reasoning("");
+          }
         },
         controller.signal,
         last_sequence,
@@ -623,7 +657,13 @@ export function AgentRunBadge({ stage }: { stage: AgentRun["stage"] }) {
 }
 
 type TimelineItem =
-  | { type: "message"; id: string; role: "user" | "assistant"; content: string }
+  | {
+      type: "message";
+      id: string;
+      role: "user" | "assistant";
+      content: string;
+      reasoning?: string;
+    }
   | { type: "tool"; id: string; event: AgentEvent };
 
 function timeline(events: AgentEvent[]): TimelineItem[] {
@@ -638,13 +678,16 @@ function timeline(events: AgentEvent[]): TimelineItem[] {
       });
     } else if (
       event.event_type === "message.completed" &&
-      event.payload.content
+      (event.payload.content || event.payload.reasoning_content)
     ) {
       items.push({
         type: "message",
         id: event.event_id,
         role: "assistant",
-        content: String(event.payload.content),
+        content: String(event.payload.content ?? ""),
+        reasoning: event.payload.reasoning_content
+          ? String(event.payload.reasoning_content)
+          : undefined,
       });
     } else if (
       event.event_type === "tool.status" &&
@@ -654,6 +697,28 @@ function timeline(events: AgentEvent[]): TimelineItem[] {
     }
   }
   return items;
+}
+
+export function AgentReasoning({
+  content,
+  running = false,
+}: {
+  content: string;
+  running?: boolean;
+}) {
+  return (
+    <Accordion type="single" collapsible>
+      <AccordionItem value="reasoning">
+        <AccordionTrigger>
+          <Brain />
+          {running ? "正在思考" : "思考过程"}
+        </AccordionTrigger>
+        <AccordionContent>
+          <p className="whitespace-pre-wrap text-muted-foreground">{content}</p>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
 }
 
 export function AgentToolStatusCard({ event }: { event: AgentEvent }) {
