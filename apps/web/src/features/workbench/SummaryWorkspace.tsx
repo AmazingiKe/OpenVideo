@@ -114,6 +114,10 @@ import {
 } from "@/shared/api";
 import { error_message } from "@/shared/errors";
 import { use_compact_summary_layout } from "@/features/summary/use_compact_summary_layout";
+import {
+  load_summary_project,
+  type SummaryProject,
+} from "@/features/summary/load_summary_project";
 import { use_ai_models } from "@/features/analysis/use_analysis_resources";
 import type {
   AiModelSummary,
@@ -135,21 +139,9 @@ type SummaryWorkspaceProps = {
   on_error?: (message: string | null) => void;
 };
 
-type SummaryProject = {
-  documents: SummaryDocument[];
-};
-
 const EMPTY_SUMMARY_PROJECT: SummaryProject = {
   documents: [],
 };
-
-async function load_summary_project(
-  asset_id: string,
-  signal?: AbortSignal,
-): Promise<SummaryProject> {
-  const documents = await list_summary_documents(asset_id, signal);
-  return { documents };
-}
 
 export function SummaryWorkspace({
   selected_asset,

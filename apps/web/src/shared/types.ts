@@ -203,7 +203,9 @@ export type AnalysisToolSection =
   "video_information" | "transcription" | "transcript_correction" | "analysis";
 
 export type MarkersPageSettings = {
-  agent_panel_size_percent: number;
+  left_panel_size_percent: number;
+  left_panel_collapsed: boolean;
+  left_panel_tab: "library" | "agent";
   tool_panel_size_percent: number;
   tool_panel_collapsed: boolean;
   open_tool_sections: AnalysisToolSection[];

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
+import { useNavigate } from "react-router-dom";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { use_task_manager } from "@/app/task_manager";
+import { marker_asset_path } from "@/app/workspace_routes";
 import { use_asset_analysis } from "@/features/analysis/use_asset_analysis";
 import {
   use_ai_models,
@@ -11,6 +13,7 @@ import {
 import { use_compact_markers_layout } from "@/features/markers/use_compact_markers_layout";
 import { use_markers_page_settings } from "@/features/markers/use_markers_page_settings";
 import { MarkerAgentPanel } from "@/features/markers/MarkerAgentPanel";
+import { MarkerLeftPanel } from "@/features/markers/MarkerLeftPanel";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
 import { AnalysisToolPanel } from "@/features/workbench/AnalysisToolPanel";
@@ -40,6 +43,7 @@ import type {
 const PANEL_TOGGLE_TRANSITION_MS = 280;
 
 export function MarkersPage() {
+  const navigate = useNavigate();
   const { selected_asset, selected_asset_id } = use_asset_catalog();
   const { start_analysis, start_transcription, is_operation_running } =
     use_task_manager();
@@ -77,11 +81,9 @@ export function MarkersPage() {
     useState<Record<string, (typeof loaded_transcription_models)[number]>>({});
   const [is_panel_size_transitioning, set_is_panel_size_transitioning] =
     useState(false);
-  const [is_agent_panel_collapsed, set_is_agent_panel_collapsed] =
-    useState(false);
   const panel_transition_timeout_ref = useRef<number | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
-  const agent_panel_ref = useRef<PanelImperativeHandle>(null);
+  const left_panel_ref = useRef<PanelImperativeHandle>(null);
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
   const is_compact_layout = use_compact_markers_layout();
@@ -197,23 +199,23 @@ export function MarkersPage() {
     update_settings({ tool_panel_collapsed: collapsed });
   }
 
-  function set_agent_panel_collapsed(collapsed: boolean) {
+  function set_left_panel_collapsed(collapsed: boolean) {
     animate_panel_size_change();
-    set_is_agent_panel_collapsed(collapsed);
-    if (collapsed) agent_panel_ref.current?.collapse();
-    else
-      agent_panel_ref.current?.resize(`${settings.agent_panel_size_percent}%`);
+    if (collapsed) left_panel_ref.current?.collapse();
+    else left_panel_ref.current?.resize(`${settings.left_panel_size_percent}%`);
+    update_settings({ left_panel_collapsed: collapsed });
   }
 
   function save_desktop_layout(layout: Record<string, number>) {
-    const agent_panel_collapsed =
-      agent_panel_ref.current?.isCollapsed() ?? is_agent_panel_collapsed;
+    const left_panel_collapsed =
+      left_panel_ref.current?.isCollapsed() ?? settings.left_panel_collapsed;
     const tool_panel_collapsed = tool_panel_ref.current?.isCollapsed() ?? false;
     const patch: Parameters<typeof update_settings>[0] = {
+      left_panel_collapsed,
       tool_panel_collapsed,
     };
-    if (!agent_panel_collapsed && layout["agent-panel"] !== undefined) {
-      patch.agent_panel_size_percent = layout["agent-panel"];
+    if (!left_panel_collapsed && layout["left-panel"] !== undefined) {
+      patch.left_panel_size_percent = layout["left-panel"];
     }
     if (!tool_panel_collapsed && layout["tool-panel"] !== undefined) {
       patch.tool_panel_size_percent = layout["tool-panel"];
@@ -238,10 +240,23 @@ export function MarkersPage() {
       on_seek={seek_player}
       on_candidate_markers_change={set_candidate_markers}
       on_markers_changed={reload_markers}
-      collapsed={!is_compact_layout && is_agent_panel_collapsed}
-      on_collapsed_change={
-        is_compact_layout ? undefined : set_agent_panel_collapsed
+    />
+  );
+  const left_panel = (
+    <MarkerLeftPanel
+      active_tab={settings.left_panel_tab}
+      collapsed={!is_compact_layout && settings.left_panel_collapsed}
+      compact={is_compact_layout}
+      current_video_id={selected_asset_id}
+      initial_folder_id={selected_asset ? selected_asset.folder_id : undefined}
+      agent_panel={agent_panel}
+      on_active_tab_change={(left_panel_tab) =>
+        update_settings({ left_panel_tab })
       }
+      on_collapsed_change={
+        is_compact_layout ? undefined : set_left_panel_collapsed
+      }
+      on_open_video={(asset) => navigate(marker_asset_path(asset.asset_id))}
     />
   );
   const video_workspace = (
@@ -318,8 +333,8 @@ export function MarkersPage() {
             正在恢复工作台布局
           </div>
         ) : is_compact_layout ? (
-          <div className="flex min-h-full flex-col [&>[data-slot=analysis-tools]]:min-h-72 [&>[data-slot=analysis-tools]]:shrink-0 [&>[data-slot=analysis-tools]]:border-t [&>[data-slot=marker-agent-panel]]:max-h-96 [&>[data-slot=marker-agent-panel]]:min-h-64 [&>[data-slot=marker-agent-panel]]:shrink-0 [&>[data-slot=marker-agent-panel]]:border-b [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
-            {agent_panel}
+          <div className="flex min-h-full flex-col [&>[data-slot=analysis-tools]]:min-h-72 [&>[data-slot=analysis-tools]]:shrink-0 [&>[data-slot=analysis-tools]]:border-t [&>[data-slot=marker-left-panel]]:h-[32rem] [&>[data-slot=marker-left-panel]]:shrink-0 [&>[data-slot=marker-left-panel]]:border-b [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
+            {left_panel}
             {video_workspace}
             {tool_panel}
           </div>
@@ -332,25 +347,30 @@ export function MarkersPage() {
             }}
           >
             <ResizablePanel
-              id="agent-panel"
-              panelRef={agent_panel_ref}
-              defaultSize={`${settings.agent_panel_size_percent}%`}
+              id="left-panel"
+              panelRef={left_panel_ref}
+              defaultSize={
+                settings.left_panel_collapsed
+                  ? `${PANEL_RAIL_WIDTH_PX}px`
+                  : `${settings.left_panel_size_percent}%`
+              }
               minSize="320px"
               maxSize="40%"
               collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
               collapsible
-              onResize={(size) =>
-                set_is_agent_panel_collapsed(
-                  size.inPixels <= PANEL_RAIL_WIDTH_PX + 1,
-                )
-              }
+              onResize={(size) => {
+                const collapsed = size.inPixels <= PANEL_RAIL_WIDTH_PX + 1;
+                if (collapsed !== settings.left_panel_collapsed) {
+                  update_settings({ left_panel_collapsed: collapsed });
+                }
+              }}
             >
-              {agent_panel}
+              {left_panel}
             </ResizablePanel>
             <ResizableHandle
               className="hover:bg-primary"
               withHandle
-              aria-label="调整 Agent 面板宽度"
+              aria-label="调整左侧面板宽度"
             />
             <ResizablePanel id="video-player" minSize="400px">
               {video_workspace}

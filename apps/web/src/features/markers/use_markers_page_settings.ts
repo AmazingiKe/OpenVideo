@@ -12,7 +12,9 @@ import type { MarkersPageSettings } from "@/shared/types";
 const SETTINGS_SAVE_DELAY_MS = 300;
 
 export const DEFAULT_MARKERS_PAGE_SETTINGS: MarkersPageSettings = {
-  agent_panel_size_percent: 24,
+  left_panel_size_percent: 24,
+  left_panel_collapsed: false,
+  left_panel_tab: "library",
   tool_panel_size_percent: 16,
   tool_panel_collapsed: false,
   open_tool_sections: ["video_information"],

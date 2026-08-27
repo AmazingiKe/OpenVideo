@@ -111,7 +111,9 @@ describe("api client", () => {
 
   it("loads and saves markers page settings", async () => {
     const settings = {
-      agent_panel_size_percent: 24,
+      left_panel_size_percent: 24,
+      left_panel_collapsed: false,
+      left_panel_tab: "library" as const,
       tool_panel_size_percent: 16,
       tool_panel_collapsed: false,
       open_tool_sections: ["video_information" as const],

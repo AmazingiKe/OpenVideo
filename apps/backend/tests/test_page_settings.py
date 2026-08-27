@@ -25,7 +25,9 @@ def test_missing_settings_use_markers_defaults(tmp_path: Path):
 def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
     store = PageSettingsStore(tmp_path, LIBRARY_ID)
     expected = MarkersPageSettings(
-        agent_panel_size_percent=30,
+        left_panel_size_percent=30,
+        left_panel_collapsed=True,
+        left_panel_tab="agent",
         tool_panel_size_percent=24,
         tool_panel_collapsed=False,
         open_tool_sections=["transcription", "transcript_correction", "analysis"],
@@ -35,7 +37,7 @@ def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
 
     assert PageSettingsStore(tmp_path, LIBRARY_ID).load_markers() == expected
     document = json.loads(store.path.read_text(encoding="utf-8"))
-    assert document == {"version": 3, "markers": expected.model_dump()}
+    assert document == {"version": 4, "markers": expected.model_dump()}
 
 
 def test_markers_settings_are_published_with_atomic_replace(
@@ -67,6 +69,12 @@ def test_corrupted_settings_fall_back_to_defaults(tmp_path: Path):
     assert store.load_markers() == MarkersPageSettings()
 
     store.path.write_text(
+        '{"version": 3, "markers": {"agent_panel_size_percent": 30}}',
+        encoding="utf-8",
+    )
+    assert store.load_markers() == MarkersPageSettings()
+
+    store.path.write_text(
         '{"version": 99, "markers": {}}',
         encoding="utf-8",
     )
@@ -78,7 +86,7 @@ def test_failed_atomic_publish_preserves_existing_settings(
     monkeypatch,
 ):
     store = PageSettingsStore(tmp_path, LIBRARY_ID)
-    existing = MarkersPageSettings(agent_panel_size_percent=28)
+    existing = MarkersPageSettings(left_panel_size_percent=28)
     store.save_markers(existing)
 
     def fail_replace(source: Path, destination: Path) -> None:
@@ -88,7 +96,7 @@ def test_failed_atomic_publish_preserves_existing_settings(
 
     with pytest.raises(OSError):
         store.save_markers(
-            MarkersPageSettings(agent_panel_size_percent=30)
+            MarkersPageSettings(left_panel_size_percent=30)
         )
 
     assert store.load_markers() == existing
@@ -102,7 +110,7 @@ def test_library_page_settings_are_moved_to_central_directory(tmp_path: Path):
     legacy_path = library_path / "page_setting.json"
     legacy_path.write_text(
         PageSettingsDocument(
-            markers=MarkersPageSettings(agent_panel_size_percent=30)
+            markers=MarkersPageSettings(left_panel_size_percent=30)
         ).model_dump_json(),
         encoding="utf-8",
     )
@@ -111,5 +119,5 @@ def test_library_page_settings_are_moved_to_central_directory(tmp_path: Path):
 
     assert store.path.parent == config_directory
     assert store.path.is_file()
-    assert store.load_markers().agent_panel_size_percent == 30
+    assert store.load_markers().left_panel_size_percent == 30
     assert not legacy_path.exists()

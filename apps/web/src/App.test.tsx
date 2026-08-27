@@ -24,12 +24,14 @@ import {
   get_segments,
   get_transcript,
   list_assets,
+  list_folders,
   list_ai_models,
   list_analysis_strategies,
   list_transcription_models,
   probe_source,
   save_download_account,
   test_download_account,
+  update_markers_page_settings,
 } from "./shared/api";
 import type {
   DownloadAccountLoginSession,
@@ -41,12 +43,15 @@ const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 vi.mock("./shared/api", () => ({
   analyze_asset: vi.fn(),
+  create_folder: vi.fn(),
   create_download: vi.fn(),
   create_download_account_login_session: vi.fn(),
   create_marker: vi.fn(),
   delete_download_account: vi.fn(),
   delete_download_account_login_session: vi.fn(),
   delete_marker: vi.fn(),
+  delete_asset: vi.fn(),
+  delete_folder: vi.fn(),
   get_health: vi.fn(),
   get_download_accounts: vi.fn(),
   get_download_account_login_session: vi.fn(),
@@ -58,12 +63,16 @@ vi.mock("./shared/api", () => ({
   get_segments: vi.fn(),
   get_transcript: vi.fn(),
   list_assets: vi.fn(),
+  list_folders: vi.fn(),
   list_ai_models: vi.fn(),
   list_analysis_strategies: vi.fn(),
   list_transcription_models: vi.fn(),
   media_url: (path: string) => path,
+  move_assets: vi.fn(),
+  move_folder: vi.fn(),
   probe_source: vi.fn(),
   request_download_retry: vi.fn(),
+  rename_folder: vi.fn(),
   save_download_account: vi.fn(),
   select_directory: vi.fn(),
   test_ai_model: vi.fn(),
@@ -111,7 +120,9 @@ describe("App", () => {
       library_path_managed: false,
     });
     vi.mocked(get_markers_page_settings).mockResolvedValue({
-      agent_panel_size_percent: 24,
+      left_panel_size_percent: 24,
+      left_panel_collapsed: false,
+      left_panel_tab: "library",
       tool_panel_size_percent: 16,
       tool_panel_collapsed: false,
       open_tool_sections: ["video_information"],
@@ -120,6 +131,10 @@ describe("App", () => {
     vi.mocked(list_analysis_strategies).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
     vi.mocked(list_assets).mockResolvedValue([]);
+    vi.mocked(list_folders).mockResolvedValue([]);
+    vi.mocked(update_markers_page_settings).mockImplementation(
+      async (settings) => settings,
+    );
     vi.mocked(get_download_accounts).mockResolvedValue([]);
     vi.mocked(create_download_account_login_session).mockRejectedValue(
       new Error("专用登录窗口不可用"),
@@ -264,14 +279,27 @@ describe("App", () => {
         screen.getByRole("heading", { name: "演示视频" }),
       ).toBeInTheDocument(),
     );
-    expect(screen.queryByLabelText("视频库")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "视频库" })).toHaveAttribute(
+      "data-state",
+      "active",
+    );
     expect(
-      screen.getByRole("button", { name: "选择标记视频" }),
-    ).toHaveTextContent("演示视频");
+      screen.queryByRole("button", { name: "选择标记视频" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
-    expect(screen.queryByText("下载中的视频")).not.toBeInTheDocument();
-    expect(screen.queryByText("失败的视频")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(list_assets).toHaveBeenCalledWith(
+        expect.any(AbortSignal),
+        expect.objectContaining({ uncategorized: true }),
+      ),
+    );
+    expect(screen.getByLabelText("视频库浏览器")).toHaveTextContent(
+      "下载中的视频",
+    );
+    expect(screen.getByLabelText("视频库浏览器")).toHaveTextContent(
+      "失败的视频",
+    );
 
     expect(window.location.pathname).toBe(`/markers/${ASSET_ID}`);
     expect(download_module).not.toHaveAttribute("aria-current");
@@ -343,6 +371,71 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "第二次解析结果" }),
     ).toBeInTheDocument();
+  });
+
+  it("switches marker videos by UUID route and remembers the left panel state", async () => {
+    const first_asset = create_asset({
+      status: "ready",
+      title: "第一段视频",
+      playback_url: "/stream/first",
+    });
+    const second_asset = {
+      ...first_asset,
+      asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c073999",
+      title: "第二段视频",
+      playback_url: "/stream/second",
+    };
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    vi.mocked(list_assets).mockResolvedValue([first_asset, second_asset]);
+    vi.mocked(get_markers).mockResolvedValue([]);
+    vi.mocked(get_segments).mockResolvedValue([]);
+    vi.mocked(get_transcript).mockResolvedValue({
+      asset_id: ASSET_ID,
+      language: "zh",
+      created_at: "2026-01-01T00:00:00Z",
+      segments: [],
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "标记" }));
+    expect(
+      await screen.findByRole("heading", { name: "第一段视频" }),
+    ).toBeInTheDocument();
+    fireEvent.doubleClick(
+      await screen.findByRole("button", { name: /第二段视频/ }),
+    );
+    await waitFor(() =>
+      expect(window.location.pathname).toBe(
+        `/markers/${second_asset.asset_id}`,
+      ),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "第二段视频" }),
+    ).toBeInTheDocument();
+
+    const agent_tab = screen.getByRole("tab", { name: "Agent" });
+    fireEvent.mouseDown(agent_tab, { button: 0 });
+    fireEvent.click(agent_tab);
+    await waitFor(() =>
+      expect(update_markers_page_settings).toHaveBeenCalledWith(
+        expect.objectContaining({ left_panel_tab: "agent" }),
+        expect.any(AbortSignal),
+      ),
+    );
+    vi.mocked(update_markers_page_settings).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "收起左侧面板" }));
+    await waitFor(() =>
+      expect(update_markers_page_settings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          left_panel_tab: "agent",
+          left_panel_collapsed: true,
+        }),
+        expect.any(AbortSignal),
+      ),
+    );
   });
 
   it("selects the Douyin video opened from a search result", async () => {

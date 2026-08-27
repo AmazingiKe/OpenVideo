@@ -7,18 +7,10 @@ import {
   Settings,
 } from "lucide-react";
 import { useEffect } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 
-import {
-  MARKERS_ROUTE_PATH,
-  SETTINGS_ROUTE,
-  WORKSPACE_ROUTES,
-  marker_asset_path,
-  workspace_route,
-} from "@/app/workspace_routes";
-import { MarkerAssetMenu } from "@/features/markers/MarkerAssetMenu";
+import { SETTINGS_ROUTE, WORKSPACE_ROUTES } from "@/app/workspace_routes";
 import { cn } from "@/lib/utils";
-import type { MediaAsset } from "@/shared/types";
 
 const IDLE_PRELOAD_TIMEOUT_MS = 2_000;
 
@@ -34,16 +26,7 @@ const WORKSPACE_ICONS = {
   "/summary": FileText,
 } as const;
 
-type TopbarProps = {
-  assets: MediaAsset[];
-  selected_asset_id: string | null;
-};
-
-export function Topbar({ assets, selected_asset_id }: TopbarProps) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const is_markers_page =
-    workspace_route(location.pathname)?.path === MARKERS_ROUTE_PATH;
+export function Topbar() {
   useEffect(() => {
     const preload_routes = () => {
       for (const route of WORKSPACE_ROUTES) {
@@ -100,13 +83,6 @@ export function Topbar({ assets, selected_asset_id }: TopbarProps) {
         })}
       </nav>
       <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-2 justify-self-end md:col-start-3">
-        {is_markers_page ? (
-          <MarkerAssetMenu
-            assets={assets}
-            selected_asset_id={selected_asset_id}
-            on_select={(asset_id) => navigate(marker_asset_path(asset_id))}
-          />
-        ) : null}
         <NavLink
           className={({ isActive }) =>
             cn(
