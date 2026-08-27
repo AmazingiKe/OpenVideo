@@ -172,6 +172,11 @@ for node in cmds.ls(type="file"):
 - 开始实现 UI 前，先搜索 `apps/web` 现有组件、Storybook 文档和 shadcn registry；已有组件能够组合完成时，禁止重复造组件。
 - 重复出现的 UI 或交互必须抽成单一 reusable component，并为可复用组件维护 Storybook stories。
 - 颜色、间距、圆角、阴影、字号和动效必须使用语义化 Design Tokens，禁止在业务组件中随意 hardcode color/spacing。
+- 所有手写前端代码（包括 CSS、TSX、SVG 和 Canvas 绘制代码）只能使用 `apps/web/src/styles.css` 中集中定义的语义颜色 Token；该文件是前端颜色 Token 的唯一来源。
+- 禁止在组件、页面或局部 CSS 中新增颜色变量、局部 CSS 自定义属性或临时色值，不得以局部变量间接包装颜色来绕过全局 Token 约束。
+- 禁止直接使用十六进制、`rgb()`、`hsl()`、`oklch()` 等颜色值、Tailwind 原始色阶、内联颜色以及手写 `dark:` 配色。
+- 新增颜色需求必须先在全局 Token 系统中定义语义名称，再由组件调用；播放器、时间线等领域颜色也必须定义为集中管理的领域语义 Token。
+- 第三方依赖、生成文件以及图片或视频本身的像素颜色不受上述颜色 Token 规则约束。
 - 布局遵循 8px Grid；仅在紧凑内部对齐且已有 token 时使用 4px 半步。Typography 必须形成清晰的标题、正文、标签和元数据层级。
 - 保持专业 SaaS/Tool UI 的 Visual Hierarchy，突出主任务与状态，弱化次要操作和装饰效果。
 - 所有界面必须设计 Responsive Layout，并验证键盘操作、焦点、语义 HTML、ARIA、对比度及 reduced motion 等 Accessibility 要求。
