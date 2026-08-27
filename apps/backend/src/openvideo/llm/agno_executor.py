@@ -87,6 +87,11 @@ class AgnoAgentExecutor:
         max_tool_calls: int,
         tool_timeout_seconds: float,
     ) -> AgentExecutionResult:
+        required_tool_chain = self._required_tool_chain(definition)
+        recovery_reserve = min(
+            len(required_tool_chain),
+            max(0, max_tool_calls - 1),
+        )
         first_result = await self._run_once(
             model,
             profile,
@@ -94,7 +99,7 @@ class AgnoAgentExecutor:
             messages,
             registry,
             on_event,
-            max_tool_calls=max_tool_calls,
+            max_tool_calls=max_tool_calls - recovery_reserve,
             tool_timeout_seconds=tool_timeout_seconds,
             reasoning_enabled=False,
         )
@@ -152,15 +157,7 @@ class AgnoAgentExecutor:
         successful_tools: set[str],
         profile: ModelProfile,
     ) -> tuple[AgentDefinition, str | None]:
-        tool_by_name = {tool.name: tool for tool in definition.tools}
-        needed_tools = set(missing_tools)
-        pending = list(missing_tools)
-        while pending:
-            tool_name = pending.pop()
-            for prerequisite in tool_by_name[tool_name].prerequisites:
-                if prerequisite not in needed_tools:
-                    needed_tools.add(prerequisite)
-                    pending.append(prerequisite)
+        needed_tools = AgnoAgentExecutor._required_tool_chain(definition, missing_tools)
         remaining_tools = needed_tools - successful_tools
         recovery_tools = [
             tool for tool in definition.tools if tool.name in remaining_tools
@@ -186,6 +183,24 @@ class AgnoAgentExecutor:
             ),
             forced_tool_name,
         )
+
+    @staticmethod
+    def _required_tool_chain(
+        definition: AgentDefinition,
+        required_tools: set[str] | None = None,
+    ) -> set[str]:
+        tool_by_name = {tool.name: tool for tool in definition.tools}
+        needed_tools = set(required_tools or definition.required_tools)
+        pending = list(needed_tools)
+        while pending:
+            descriptor = tool_by_name.get(pending.pop())
+            if descriptor is None:
+                continue
+            for prerequisite in descriptor.prerequisites:
+                if prerequisite not in needed_tools:
+                    needed_tools.add(prerequisite)
+                    pending.append(prerequisite)
+        return needed_tools
 
     async def _run_once(
         self,

@@ -105,9 +105,11 @@ async def test_missing_required_tool_gets_one_forced_recovery(monkeypatch):
         result='{"ok":true,"text":"证据"}',
     )
     tool_choices = []
+    tool_limits = []
 
     def arun(self, input, **_options):
         tool_choices.append(self.tool_choice)
+        tool_limits.append(self.tool_call_limit)
 
         async def events():
             if len(tool_choices) == 1:
@@ -172,6 +174,7 @@ async def test_missing_required_tool_gets_one_forced_recovery(monkeypatch):
         "auto",
         {"type": "function", "function": {"name": "echo"}},
     ]
+    assert tool_limits == [3, 4]
 
 
 @pytest.mark.asyncio
@@ -244,3 +247,29 @@ def test_unknown_named_tool_choice_uses_auto_for_required_tool_recovery():
 
     assert recovery_definition.allowed_tools == ("echo",)
     assert forced_tool_name is None
+
+
+def test_required_tool_chain_reserves_recovery_budget():
+    definition = AgentDefinition(
+        agent_id="test",
+        title="测试",
+        description="验证必需工具前置链预算",
+        mode=AgentMode.CHAT,
+        prompt="读取证据后提交",
+        tools=[
+            AgentToolDescriptor(name="read", description="读取"),
+            AgentToolDescriptor(name="search", description="检索"),
+            AgentToolDescriptor(
+                name="propose",
+                description="提交",
+                prerequisites=["read", "search"],
+            ),
+        ],
+        required_tools={"propose"},
+    )
+
+    assert AgnoAgentExecutor._required_tool_chain(definition) == {
+        "read",
+        "search",
+        "propose",
+    }
