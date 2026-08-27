@@ -180,6 +180,9 @@
   --timeline-color-candidate-background: #3b351b;
   --timeline-color-selection-border: #64b5ff;
   --timeline-color-grid: #f5f5f714;
+  --timeline-ruler-height: 32px;
+  --timeline-ruler-font: 500 10px ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
 
   --browser-theme-color: #0b141a;
   --browser-icon-background: #0b141a;
@@ -698,6 +701,7 @@
 }
 
 .media_timeline_canvas {
+  position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -705,6 +709,18 @@
   overflow: hidden;
   outline: none;
   user-select: none;
+}
+
+.timeline_ruler_canvas {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: var(--timeline-ruler-height);
+  font: var(--timeline-ruler-font);
+  pointer-events: none;
 }
 
 .media_timeline_canvas:focus-visible {
@@ -722,12 +738,13 @@
 }
 
 .media_timeline .timeline-editor-time-area {
-  height: 32px;
+  height: var(--timeline-ruler-height);
   border-bottom: 1px solid var(--timeline-color-border-subtle);
   background: var(--timeline-color-ruler-background);
 }
 
 .media_timeline .timeline-editor-time-unit {
+  visibility: hidden;
   border-color: var(--timeline-color-ruler-tick);
 }
 

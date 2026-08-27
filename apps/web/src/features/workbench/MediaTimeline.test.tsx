@@ -63,13 +63,19 @@ vi.mock("@xzdarcy/react-timeline-editor", () => ({
       );
 
       return (
-        <div data-testid="timeline-editor-instance">
+        <div
+          data-testid="timeline-editor-instance"
+          className="ReactVirtualized__Grid"
+          role="grid"
+          aria-readonly="true"
+        >
           {props.editorData.map((row) => (
-            <div key={row.id} data-row-id={row.id}>
+            <div key={row.id} data-row-id={row.id} role="row">
               {row.actions.map((action) => (
                 <div
                   key={action.id}
                   data-action-id={action.id}
+                  role="gridcell"
                   onClick={(event) =>
                     props.onClickActionOnly?.(event, {
                       action,
@@ -294,6 +300,7 @@ function render_timeline(options?: {
 
 describe("MediaTimeline", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.clearAllMocks();
     timeline_mock.current_props = null;
@@ -338,6 +345,33 @@ describe("MediaTimeline", () => {
     expect(screen.getByLabelText("标记，可编辑")).toBeInTheDocument();
     expect(screen.getByLabelText("转写，只读")).toBeInTheDocument();
     expect(screen.getByLabelText("分析事件，只读")).toBeInTheDocument();
+  });
+
+  it("normalizes accessibility semantics only for newly added subtrees", async () => {
+    render_timeline();
+    const timeline_host = screen.getByLabelText(/时间线画布/);
+    const editor_instance = screen.getByTestId("timeline-editor-instance");
+
+    expect(editor_instance).toHaveAttribute("role", "group");
+    expect(editor_instance).toHaveAttribute("aria-label", "时间线轨道内容");
+    expect(editor_instance).not.toHaveAttribute("aria-readonly");
+    expect(editor_instance.querySelector('[role="row"]')).toBeNull();
+    expect(editor_instance.querySelector('[role="gridcell"]')).toBeNull();
+
+    const host_query = vi.spyOn(timeline_host, "querySelectorAll");
+    const added_grid = document.createElement("div");
+    added_grid.className = "ReactVirtualized__Grid";
+    added_grid.setAttribute("role", "grid");
+    added_grid.setAttribute("aria-readonly", "true");
+    const added_row = document.createElement("div");
+    added_row.setAttribute("role", "row");
+    added_grid.append(added_row);
+    timeline_host.append(added_grid);
+
+    await waitFor(() => expect(added_grid).toHaveAttribute("role", "group"));
+    expect(added_grid).not.toHaveAttribute("aria-readonly");
+    expect(added_row).not.toHaveAttribute("role");
+    expect(host_query).not.toHaveBeenCalled();
   });
 
   it("limits two thousand transcript actions to the initial render window", () => {
@@ -437,7 +471,8 @@ describe("MediaTimeline", () => {
     expect(
       (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
     ).toBe(initial_zoom);
-    expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(80);
+    expect(timeline_mock.set_scroll_left).not.toHaveBeenCalled();
+    expect(timeline_mock.set_scroll_top).not.toHaveBeenCalled();
   });
 
   it("shares playback controls and timecode with the player state", async () => {
@@ -636,8 +671,170 @@ describe("MediaTimeline", () => {
     expect(screen.getByTestId("timeline-editor-instance")).toBe(
       editor_instance,
     );
-    expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(200);
+    expect(timeline_mock.set_scroll_left).not.toHaveBeenCalled();
     expect(result.container).toContainElement(editor_instance);
+  });
+
+  it("keeps third-party scale geometry stable across zoom thresholds", () => {
+    render_timeline();
+
+    function expect_stable_geometry() {
+      expect(timeline_props()).toMatchObject({
+        scale: 1,
+        scaleSplitCount: 1,
+        minScaleCount: 120,
+        maxScaleCount: 120,
+      });
+    }
+
+    expect_stable_geometry();
+    const zoom_out = screen.getByRole("button", { name: "缩小时间线" });
+    for (let index = 0; index < 5; index += 1) {
+      fireEvent.click(zoom_out);
+      expect_stable_geometry();
+    }
+    expect(timeline_props().scaleWidth).toBeLessThan(27.43);
+
+    const zoom_in = screen.getByRole("button", { name: "放大时间线" });
+    for (let index = 0; index < 12; index += 1) {
+      fireEvent.click(zoom_in);
+      expect_stable_geometry();
+    }
+    expect(timeline_props().scaleWidth).toBe(320);
+  });
+
+  it("normalizes wheel units and applies exponential zoom in event order", () => {
+    const animation_frames = install_animation_frame_mock();
+    render_timeline();
+    const host = screen.getByLabelText(/时间线画布/);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 176,
+      width: 800,
+      height: 176,
+      toJSON: () => undefined,
+    });
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: -16,
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+    });
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 300,
+      deltaY: -1,
+      deltaMode: WheelEvent.DOM_DELTA_LINE,
+    });
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 200,
+      deltaY: -16 / 176,
+      deltaMode: WheelEvent.DOM_DELTA_PAGE,
+    });
+
+    expect(animation_frames.request_frame).toHaveBeenCalledOnce();
+    animation_frames.run_next_frame();
+    expect(timeline_props().scaleWidth).toBeCloseTo(80 * Math.exp(0.048));
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
+  });
+
+  it("limits wheel zoom to one viewport commit and 0.8x–1.25x per frame", () => {
+    const animation_frames = install_animation_frame_mock();
+    render_timeline();
+    const host = screen.getByLabelText(/时间线画布/);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 176,
+      width: 800,
+      height: 176,
+      toJSON: () => undefined,
+    });
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: -1_000,
+    });
+    animation_frames.run_next_frame();
+
+    expect(timeline_props().scaleWidth).toBe(100);
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
+    expect(animation_frames.frames.size).toBe(1);
+
+    animation_frames.run_next_frame();
+    expect(timeline_props().scaleWidth).toBe(125);
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
+    timeline_mock.set_scroll_left.mockClear();
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: 1_000,
+    });
+    animation_frames.run_next_frame();
+    expect(timeline_props().scaleWidth).toBe(64);
+    expect(timeline_mock.set_scroll_left).not.toHaveBeenCalled();
+  });
+
+  it("keeps editor data mounted during wheel zoom until idle settlement", () => {
+    vi.useFakeTimers();
+    const animation_frames = install_animation_frame_mock();
+    const segments: TranscriptSegment[] = Array.from(
+      { length: 2_000 },
+      (_, index) => ({
+        start_seconds: index,
+        end_seconds: index + 1,
+        text: `转写 ${index}`,
+        emotion: null,
+        audio_events: [],
+      }),
+    );
+    render_timeline({
+      duration_seconds: segments.length,
+      transcript_segments: segments,
+      analysis_segments: [],
+    });
+    const initial_editor_data = timeline_props().editorData;
+    const editor_instance = screen.getByTestId("timeline-editor-instance");
+    const host = screen.getByLabelText(/时间线画布/);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 176,
+      width: 800,
+      height: 176,
+      toJSON: () => undefined,
+    });
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: -50,
+    });
+    animation_frames.run_next_frame();
+
+    expect(timeline_props().editorData).toBe(initial_editor_data);
+    expect(screen.getByTestId("timeline-editor-instance")).toBe(
+      editor_instance,
+    );
+    act(() => vi.advanceTimersByTime(100));
+    expect(timeline_props().editorData).not.toBe(initial_editor_data);
+    expect(transcript_actions().length).toBeLessThan(100);
+    vi.useRealTimers();
   });
 
   it("batches Alt wheel zoom while preserving each event pointer anchor", () => {
@@ -691,11 +888,11 @@ describe("MediaTimeline", () => {
     const zoom =
       (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1);
     const scroll_left = timeline_mock.set_scroll_left.mock.calls.at(-1)?.[0];
-    const first_zoom = 88;
+    const first_zoom = 80 * Math.exp(0.1);
     const first_scroll_left = ((200 + 400 - 16) / 80) * first_zoom + 16 - 400;
     const second_pointer_time = (first_scroll_left + 200 - 16) / first_zoom;
     const pointer_time_after = (scroll_left + 200 - 16) / zoom;
-    expect(zoom).toBeCloseTo(92.4);
+    expect(zoom).toBeCloseTo(80 * Math.exp(0.15));
     expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
     expect(timeline_mock.viewport_events[0]).toEqual({
       type: "scroll",
@@ -717,7 +914,7 @@ describe("MediaTimeline", () => {
     );
     expect(
       (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
-    ).toBeCloseTo(92.4);
+    ).toBeCloseTo(80 * Math.exp(0.15));
     expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(scroll_left);
 
     act(() => replace_asset_id("asset-new"));
@@ -727,7 +924,7 @@ describe("MediaTimeline", () => {
     expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(0);
   });
 
-  it("cancels pending wheel frames for tools, asset switches, and unmount", () => {
+  it("cancels pending wheel tasks for tools, asset switches, and unmount", () => {
     const animation_frames = install_animation_frame_mock();
     const { replace_asset_id, result } = render_timeline();
     const host = screen.getByLabelText(/时间线画布/);
@@ -769,6 +966,16 @@ describe("MediaTimeline", () => {
       asset_cancelled_frame,
     );
     expect(animation_frames.frames.size).toBe(0);
+
+    const clear_timeout = vi.spyOn(window, "clearTimeout");
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: -100,
+    });
+    animation_frames.run_next_frame();
+    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
+    expect(clear_timeout).toHaveBeenCalled();
 
     fireEvent.wheel(host, {
       altKey: true,
