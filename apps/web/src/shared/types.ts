@@ -87,7 +87,6 @@ export type Preferences = {
 export const AI_INPUT_MODALITIES = ["text", "image", "audio", "video"] as const;
 
 export type AiInputModality = (typeof AI_INPUT_MODALITIES)[number];
-export const IMAGE_INPUT_MODALITY: AiInputModality = "image";
 
 const MODEL_CAPABILITY_NAMES = [
   "tools",
@@ -199,8 +198,7 @@ export type AiModelTestResult = {
   profile: ModelProfile;
 };
 
-export type AnalysisToolSection =
-  "video_information" | "transcription" | "transcript_correction" | "analysis";
+export type ToolPanelSection = "transcription" | "transcript_correction";
 
 export type MarkersPageSettings = {
   left_panel_size_percent: number;
@@ -208,7 +206,7 @@ export type MarkersPageSettings = {
   left_panel_tab: "library" | "agent";
   tool_panel_size_percent: number;
   tool_panel_collapsed: boolean;
-  open_tool_sections: AnalysisToolSection[];
+  open_tool_sections: ToolPanelSection[];
 };
 
 type DownloadStage =
@@ -255,15 +253,15 @@ type AnalysisStage =
   | "rejected"
   | "failed";
 
-export type AnalysisMode = "full";
-export type AnalysisStrategyPreset =
+type AnalysisMode = "full";
+type AnalysisStrategyPreset =
   | "course_notes"
   | "formula_derivation"
   | "operation_tutorial"
   | "case_review"
   | "custom";
-export type AnalysisDepth = "quick" | "balanced" | "deep";
-export type AnalysisWeights = {
+type AnalysisDepth = "quick" | "balanced" | "deep";
+type AnalysisWeights = {
   core_concepts: number;
   formula_derivation: number;
   case_demonstration: number;
@@ -278,13 +276,7 @@ export type AnalysisStrategy = {
   marker_range_before_seconds: number;
   marker_range_after_seconds: number;
 };
-export type AnalysisStrategyPresetDescriptor = {
-  preset: Exclude<AnalysisStrategyPreset, "custom">;
-  name: string;
-  description: string;
-  strategy: AnalysisStrategy;
-};
-export type AnalysisOperation = "transcription" | "analysis";
+type AnalysisOperation = "transcription" | "analysis";
 export type TranscriptionEngine = "faster-whisper" | "qwen3-asr" | "sensevoice";
 export type TranscriptionDevice = "auto" | "cpu" | "cuda";
 export type TranscriptionComputeType = "auto" | "int8" | "float16";
@@ -418,7 +410,7 @@ export type FocusSelection = {
   updated_at: string;
 };
 
-export type EventAnalysisTarget =
+type EventAnalysisTarget =
   | {
       source: "marker";
       marker_id: string;
@@ -432,7 +424,7 @@ export type EventAnalysisTarget =
       end_seconds: number;
     };
 
-export type EventAnalysisEvidence = {
+type EventAnalysisEvidence = {
   start_seconds: number;
   end_seconds: number;
   text: string;
@@ -458,24 +450,6 @@ export type EventAnalysis = {
     timeline_digest: string;
   };
   status: "valid" | "stale";
-  created_at: string;
-  updated_at: string;
-};
-
-export type EventAnalysisJob = {
-  job_id: string;
-  asset_id: string;
-  targets: EventAnalysisTarget[];
-  preset_id: string;
-  preset_version: number;
-  depth: AnalysisDepth;
-  user_input: string | null;
-  ai_model_id: string;
-  stage: "pending" | "running" | "complete" | "failed";
-  progress_percent: number;
-  message: string;
-  result_ids: string[];
-  error_message: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -27,7 +27,6 @@ import {
   list_assets,
   list_folders,
   list_ai_models,
-  list_analysis_strategies,
   list_event_analyses,
   list_transcription_models,
   probe_source,
@@ -44,7 +43,6 @@ import type {
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 vi.mock("./shared/api", () => ({
-  analyze_asset: vi.fn(),
   create_folder: vi.fn(),
   create_download: vi.fn(),
   create_download_account_login_session: vi.fn(),
@@ -68,7 +66,6 @@ vi.mock("./shared/api", () => ({
   list_assets: vi.fn(),
   list_folders: vi.fn(),
   list_ai_models: vi.fn(),
-  list_analysis_strategies: vi.fn(),
   list_event_analyses: vi.fn(),
   list_summary_documents: vi.fn(),
   list_summary_presets: vi.fn(),
@@ -132,10 +129,9 @@ describe("App", () => {
       left_panel_tab: "library",
       tool_panel_size_percent: 16,
       tool_panel_collapsed: false,
-      open_tool_sections: ["video_information"],
+      open_tool_sections: ["transcription"],
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
-    vi.mocked(list_analysis_strategies).mockResolvedValue([]);
     vi.mocked(get_focus_selection).mockResolvedValue(null);
     vi.mocked(list_event_analyses).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
@@ -297,6 +293,13 @@ describe("App", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
+    expect(screen.getByText("转录工具")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "视频信息" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "分析" }),
+    ).not.toBeInTheDocument();
     await waitFor(() =>
       expect(list_assets).toHaveBeenCalledWith(
         expect.any(AbortSignal),

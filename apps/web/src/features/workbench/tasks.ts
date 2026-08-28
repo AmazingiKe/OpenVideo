@@ -2,7 +2,7 @@ import type { DownloadEvent } from "@/shared/types";
 
 export type TaskRecord = {
   task_id: string;
-  task_type: "download" | "analysis" | "agent";
+  task_type: "download" | "transcription" | "agent";
   stage: string;
   message: string;
   progress_percent: number;

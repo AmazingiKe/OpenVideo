@@ -19,7 +19,7 @@ def test_missing_settings_use_markers_defaults(tmp_path: Path):
     settings = PageSettingsStore(tmp_path, LIBRARY_ID).load_markers()
 
     assert settings == MarkersPageSettings()
-    assert settings.open_tool_sections == ["video_information"]
+    assert settings.open_tool_sections == ["transcription"]
 
 
 def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
@@ -30,14 +30,14 @@ def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
         left_panel_tab="agent",
         tool_panel_size_percent=24,
         tool_panel_collapsed=False,
-        open_tool_sections=["transcription", "transcript_correction", "analysis"],
+        open_tool_sections=["transcription", "transcript_correction"],
     )
 
     store.save_markers(expected)
 
     assert PageSettingsStore(tmp_path, LIBRARY_ID).load_markers() == expected
     document = json.loads(store.path.read_text(encoding="utf-8"))
-    assert document == {"version": 4, "markers": expected.model_dump()}
+    assert document == {"version": 5, "markers": expected.model_dump()}
 
 
 def test_markers_settings_are_published_with_atomic_replace(
@@ -56,9 +56,7 @@ def test_markers_settings_are_published_with_atomic_replace(
     store = PageSettingsStore(tmp_path, LIBRARY_ID)
     store.save_markers(MarkersPageSettings())
 
-    assert calls == [
-        (store.path.with_name(f".{store.path.name}.tmp"), store.path)
-    ]
+    assert calls == [(store.path.with_name(f".{store.path.name}.tmp"), store.path)]
     assert not store.path.with_name(f".{store.path.name}.tmp").exists()
 
 
@@ -95,9 +93,7 @@ def test_failed_atomic_publish_preserves_existing_settings(
     monkeypatch.setattr(page_settings.os, "replace", fail_replace)
 
     with pytest.raises(OSError):
-        store.save_markers(
-            MarkersPageSettings(left_panel_size_percent=30)
-        )
+        store.save_markers(MarkersPageSettings(left_panel_size_percent=30))
 
     assert store.load_markers() == existing
     assert not store.path.with_name(f".{store.path.name}.tmp").exists()

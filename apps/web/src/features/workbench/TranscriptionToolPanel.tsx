@@ -1,9 +1,4 @@
-import {
-  type KeyboardEvent,
-  type MouseEvent,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { type KeyboardEvent, type MouseEvent } from "react";
 import { Wrench } from "lucide-react";
 
 import { AgentPanel } from "@/components/AgentPanel";
@@ -32,127 +27,64 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { format_duration } from "@/shared/format";
 import { transcription_runtime_profile } from "@/shared/transcription";
 import {
-  type AnalysisJob,
-  type EventAnalysisJob,
-  type FocusSelection,
-  type AnalysisStrategy,
-  type AnalysisStrategyPresetDescriptor,
-  type AnalysisToolSection,
   type AiModelSummary,
   type MediaAsset,
-  type MediaMarker,
+  type ToolPanelSection,
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
 } from "@/shared/types";
 import { CollapsiblePanelRail } from "./CollapsiblePanelRail";
-import { AnalysisConfigurationSection } from "./AnalysisConfigurationSection";
 import { WorkbenchPanelHeader } from "./WorkbenchPanelHeader";
-import { use_analysis_tool_state } from "./use_analysis_tool_state";
+import { use_transcription_tool_state } from "./use_transcription_tool_state";
 
-const ANALYSIS_TOOL_SECTIONS: AnalysisToolSection[] = [
-  "video_information",
+const TOOL_PANEL_SECTIONS: ToolPanelSection[] = [
   "transcription",
   "transcript_correction",
-  "analysis",
 ];
 
-const SOURCE_LABELS: Record<MediaAsset["source_platform"], string> = {
-  bilibili: "哔哩哔哩",
-  douyin: "抖音",
-  youtube: "YouTube",
-};
-
-type AnalysisToolPanelProps = {
+type TranscriptionToolPanelProps = {
   asset: MediaAsset | null;
-  markers: MediaMarker[];
   has_transcript: boolean;
   is_transcribing: boolean;
   on_start_transcription: (options: TranscriptionOptions) => void;
   transcription_models: TranscriptionModelDescriptor[];
   default_transcription: TranscriptionOptions | null;
   on_transcription_model_change: (model: TranscriptionModelDescriptor) => void;
-  is_analyzing: boolean;
   ai_models: AiModelSummary[];
-  analysis_strategies?: AnalysisStrategyPresetDescriptor[];
-  analysis_strategy: AnalysisStrategy;
-  set_analysis_strategy: Dispatch<SetStateAction<AnalysisStrategy>>;
-  focus_selection: FocusSelection | null;
-  event_analysis_job: EventAnalysisJob | null;
-  selected_marker_ids: Set<string>;
-  set_selected_marker_ids: Dispatch<SetStateAction<Set<string>>>;
-  on_start_analysis: (
-    ai_model_id: string | null,
-    strategy: AnalysisStrategy,
-  ) => void;
-  on_start_event_analysis: (request: {
-    marker_ids: string[];
-    use_focus_selection: boolean;
-    preset_id: string;
-    preset_version: number;
-    depth: AnalysisStrategy["depth"];
-    user_input: string | null;
-    ai_model_id: string;
-  }) => void;
-  analysis_proposal: AnalysisJob | null;
-  on_resolve_analysis: (action: "approve" | "reject") => void;
   selected_transcript_indices: number[];
   on_transcript_changed: () => void;
-  open_sections: AnalysisToolSection[];
-  on_open_sections_change: (sections: AnalysisToolSection[]) => void;
+  open_sections: ToolPanelSection[];
+  on_open_sections_change: (sections: ToolPanelSection[]) => void;
   collapsed?: boolean;
   on_collapsed_change?: (collapsed: boolean) => void;
 };
 
-export function AnalysisToolPanel({
+export function TranscriptionToolPanel({
   asset,
-  markers,
   has_transcript,
   is_transcribing,
   on_start_transcription,
   transcription_models,
   default_transcription,
   on_transcription_model_change,
-  is_analyzing,
   ai_models,
-  analysis_strategies = [],
-  analysis_strategy,
-  set_analysis_strategy,
-  focus_selection,
-  event_analysis_job,
-  selected_marker_ids,
-  set_selected_marker_ids,
-  on_start_analysis,
-  on_start_event_analysis,
-  analysis_proposal,
-  on_resolve_analysis,
   selected_transcript_indices,
   on_transcript_changed,
   open_sections,
   on_open_sections_change,
   collapsed = false,
   on_collapsed_change,
-}: AnalysisToolPanelProps) {
+}: TranscriptionToolPanelProps) {
   const {
-    advanced_strategy_open,
     available_transcription_models,
     correction_scope,
-    image_input_models,
-    image_model_id,
-    resolved_strategy_presets,
     selected_transcription_model,
-    set_advanced_strategy_open,
     set_correction_scope,
-    set_image_model_id,
     set_transcription_options,
-    strategy_name,
     transcription_options,
-  } = use_analysis_tool_state({
-    ai_models,
-    analysis_strategies,
-    analysis_strategy,
+  } = use_transcription_tool_state({
     asset_id: asset?.asset_id ?? null,
     default_transcription,
     transcription_models,
@@ -162,7 +94,7 @@ export function AnalysisToolPanel({
     return (
       <aside
         className="h-full overflow-hidden bg-card"
-        data-slot="analysis-tools"
+        data-slot="transcription-tools"
         aria-label="工具面板"
       >
         <CollapsiblePanelRail
@@ -177,10 +109,8 @@ export function AnalysisToolPanel({
 
   function toggle_all_sections() {
     const all_sections_open =
-      open_sections.length === ANALYSIS_TOOL_SECTIONS.length;
-    on_open_sections_change(
-      all_sections_open ? [] : [...ANALYSIS_TOOL_SECTIONS],
-    );
+      open_sections.length === TOOL_PANEL_SECTIONS.length;
+    on_open_sections_change(all_sections_open ? [] : [...TOOL_PANEL_SECTIONS]);
   }
 
   function handle_trigger_click(event: MouseEvent<HTMLButtonElement>) {
@@ -197,24 +127,24 @@ export function AnalysisToolPanel({
 
   function handle_sections_change(sections: string[]) {
     const opened_section = sections.find(
-      (section) => !open_sections.includes(section as AnalysisToolSection),
+      (section) => !open_sections.includes(section as ToolPanelSection),
     );
     on_open_sections_change(
       opened_section
-        ? [opened_section as AnalysisToolSection]
-        : (sections as AnalysisToolSection[]),
+        ? [opened_section as ToolPanelSection]
+        : (sections as ToolPanelSection[]),
     );
   }
 
   return (
     <aside
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-l bg-card"
-      data-slot="analysis-tools"
+      data-slot="transcription-tools"
       aria-label="工具面板"
     >
       <WorkbenchPanelHeader
         icon={Wrench}
-        title="分析工具"
+        title="转录工具"
         collapse_label="收起工具面板"
         on_collapse={
           on_collapsed_change ? () => on_collapsed_change(true) : undefined
@@ -226,17 +156,6 @@ export function AnalysisToolPanel({
         onValueChange={handle_sections_change}
         className="min-h-0 overflow-y-auto px-3 pb-3"
       >
-        <AccordionItem value="video_information">
-          <AccordionTrigger
-            onClick={handle_trigger_click}
-            onKeyDown={handle_trigger_key_down}
-          >
-            视频信息
-          </AccordionTrigger>
-          <AccordionContent>
-            <VideoInformation asset={asset} />
-          </AccordionContent>
-        </AccordionItem>
         <AccordionItem value="transcription">
           <AccordionTrigger
             onClick={handle_trigger_click}
@@ -257,9 +176,7 @@ export function AnalysisToolPanel({
                 </Badge>
               </div>
               <FieldGroup>
-                <Field
-                  data-disabled={is_transcribing || is_analyzing || undefined}
-                >
+                <Field data-disabled={is_transcribing || undefined}>
                   <FieldLabel htmlFor="transcription_model">模型</FieldLabel>
                   <Select
                     value={transcription_options?.model ?? ""}
@@ -278,9 +195,7 @@ export function AnalysisToolPanel({
                         compute_type: runtime_profile.recommended_compute_type,
                       });
                     }}
-                    disabled={
-                      !transcription_options || is_transcribing || is_analyzing
-                    }
+                    disabled={!transcription_options || is_transcribing}
                   >
                     <SelectTrigger id="transcription_model" className="w-full">
                       <SelectValue placeholder="正在读取默认模型" />
@@ -317,7 +232,7 @@ export function AnalysisToolPanel({
                       on_start_transcription(transcription_options);
                     }
                   }}
-                  disabled={!asset || is_transcribing || is_analyzing}
+                  disabled={!asset || is_transcribing}
                 />
               ) : (
                 <Button
@@ -327,12 +242,7 @@ export function AnalysisToolPanel({
                     if (transcription_options)
                       on_start_transcription(transcription_options);
                   }}
-                  disabled={
-                    !asset ||
-                    !transcription_options ||
-                    is_transcribing ||
-                    is_analyzing
-                  }
+                  disabled={!asset || !transcription_options || is_transcribing}
                 >
                   {is_transcribing ? (
                     <Spinner data-icon="inline-start" />
@@ -347,7 +257,7 @@ export function AnalysisToolPanel({
               <FieldDescription>
                 {has_transcript
                   ? "重新转录会在成功后替换当前文字；失败时保留现有结果。"
-                  : "转录生成可编辑文字，完成后可继续内容分析。"}
+                  : "转录生成可编辑文字，完成后可继续校正内容。"}
               </FieldDescription>
             </div>
           </AccordionContent>
@@ -412,86 +322,7 @@ export function AnalysisToolPanel({
             </div>
           </AccordionContent>
         </AccordionItem>
-        <AnalysisConfigurationSection
-          advanced_strategy_open={advanced_strategy_open}
-          analysis_proposal={analysis_proposal}
-          analysis_strategy={analysis_strategy}
-          event_analysis_job={event_analysis_job}
-          focus_selection={focus_selection}
-          handle_trigger_click={handle_trigger_click}
-          handle_trigger_key_down={handle_trigger_key_down}
-          has_transcript={has_transcript}
-          image_input_models={image_input_models}
-          models={ai_models}
-          image_model_id={image_model_id}
-          is_analyzing={is_analyzing}
-          is_transcribing={is_transcribing}
-          markers={markers}
-          on_resolve_analysis={on_resolve_analysis}
-          on_start_analysis={on_start_analysis}
-          on_start_event_analysis={on_start_event_analysis}
-          resolved_strategy_presets={resolved_strategy_presets}
-          selected_marker_ids={selected_marker_ids}
-          set_advanced_strategy_open={set_advanced_strategy_open}
-          set_analysis_strategy={set_analysis_strategy}
-          set_image_model_id={set_image_model_id}
-          set_selected_marker_ids={set_selected_marker_ids}
-          strategy_name={strategy_name}
-        />
       </Accordion>
     </aside>
   );
-}
-
-function VideoInformation({ asset }: { asset: MediaAsset | null }) {
-  if (!asset)
-    return <p className="text-xs text-muted-foreground">尚未选择视频。</p>;
-
-  return (
-    <dl className="flex flex-col gap-2 text-xs">
-      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
-        <dt className="text-muted-foreground">简介</dt>
-        <dd className="m-0 min-w-0 leading-relaxed break-words">
-          {asset.description || "暂无简介"}
-        </dd>
-      </div>
-      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
-        <dt className="text-muted-foreground">时长</dt>
-        <dd className="m-0 min-w-0">
-          {format_duration(asset.duration_seconds)}
-        </dd>
-      </div>
-      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
-        <dt className="text-muted-foreground">来源</dt>
-        <dd className="m-0 min-w-0">
-          <a
-            className="text-primary underline-offset-4 hover:underline"
-            href={asset.source_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {SOURCE_LABELS[asset.source_platform]}
-          </a>
-        </dd>
-      </div>
-      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
-        <dt className="text-muted-foreground">分辨率</dt>
-        <dd className="m-0 min-w-0">{format_resolution(asset)}</dd>
-      </div>
-      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
-        <dt className="text-muted-foreground">视频编码</dt>
-        <dd className="m-0 min-w-0">{asset.video_codec || "待探测"}</dd>
-      </div>
-      <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-2">
-        <dt className="text-muted-foreground">音频编码</dt>
-        <dd className="m-0 min-w-0">{asset.audio_codec || "待探测"}</dd>
-      </div>
-    </dl>
-  );
-}
-
-function format_resolution(asset: MediaAsset): string {
-  return asset.width && asset.height
-    ? `${asset.width} × ${asset.height}`
-    : "未知";
 }

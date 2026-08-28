@@ -12,13 +12,11 @@ from openvideo.configuration import migrate_configuration_file
 
 LEGACY_PAGE_SETTINGS_FILE_NAME = "page_setting.json"
 PAGE_SETTINGS_FILE_NAME_TEMPLATE = "page-settings-{library_id}.json"
-PAGE_SETTINGS_VERSION = 4
+PAGE_SETTINGS_VERSION = 5
 
 ToolSection = Literal[
-    "video_information",
     "transcription",
     "transcript_correction",
-    "analysis",
 ]
 LeftPanelTab = Literal["library", "agent"]
 
@@ -32,7 +30,7 @@ class MarkersPageSettings(BaseModel):
     tool_panel_size_percent: float = Field(default=16, ge=14, le=32)
     tool_panel_collapsed: bool = False
     open_tool_sections: list[ToolSection] = Field(
-        default_factory=lambda: ["video_information"]
+        default_factory=lambda: ["transcription"]
     )
 
     @field_validator("open_tool_sections")

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  analyze_asset,
   ApiError,
   create_marker,
   create_download,
@@ -116,7 +115,7 @@ describe("api client", () => {
       left_panel_tab: "library" as const,
       tool_panel_size_percent: 16,
       tool_panel_collapsed: false,
-      open_tool_sections: ["video_information" as const],
+      open_tool_sections: ["transcription" as const],
     };
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       Promise.resolve(
@@ -388,58 +387,7 @@ describe("api client", () => {
     );
   });
 
-  it("submits a full timeline analysis request", async () => {
-    const response = {
-      job_id: "job-1",
-      asset_id: "asset-1",
-      mode: "full",
-      capabilities: [],
-      stage: "pending",
-      progress_percent: 0,
-      message: "等待开始",
-      error_message: null,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    };
-    const fetch_mock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(JSON.stringify(response), { status: 202 }),
-      );
-
-    await expect(analyze_asset("asset-1", "model-1")).resolves.toEqual(
-      response,
-    );
-    expect(fetch_mock).toHaveBeenCalledWith(
-      "/api/media/assets/asset-1/analyze",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "full",
-          ai_model_id: "model-1",
-          strategy: {
-            preset: "course_notes",
-            weights: {
-              core_concepts: 90,
-              formula_derivation: 65,
-              case_demonstration: 60,
-              questions_conclusions: 80,
-              visual_content: 55,
-              user_markers: 100,
-            },
-            depth: "balanced",
-            marker_range_before_seconds: 10,
-            marker_range_after_seconds: 20,
-          },
-          force: true,
-        }),
-        signal: undefined,
-      },
-    );
-  });
-
-  it("starts transcription independently from analysis", async () => {
+  it("starts transcription with the selected runtime options", async () => {
     const response = {
       job_id: "job-1",
       operation: "transcription",

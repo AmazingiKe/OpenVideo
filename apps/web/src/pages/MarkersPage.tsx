@@ -8,15 +8,15 @@ import { marker_asset_path } from "@/app/workspace_routes";
 import { use_asset_analysis } from "@/features/analysis/use_asset_analysis";
 import {
   use_ai_models,
-  use_analysis_resources,
-} from "@/features/analysis/use_analysis_resources";
+  use_transcription_resources,
+} from "@/features/workbench/use_processing_resources";
 import { use_compact_markers_layout } from "@/features/markers/use_compact_markers_layout";
 import { use_markers_page_settings } from "@/features/markers/use_markers_page_settings";
 import { MarkerAgentPanel } from "@/features/markers/MarkerAgentPanel";
 import { MarkerLeftPanel } from "@/features/markers/MarkerLeftPanel";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
-import { AnalysisToolPanel } from "@/features/workbench/AnalysisToolPanel";
+import { TranscriptionToolPanel } from "@/features/workbench/TranscriptionToolPanel";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import {
@@ -31,20 +31,13 @@ import { error_message, is_abort_error } from "@/shared/errors";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import {
   clear_focus_selection,
-  create_event_analysis_job,
   delete_event_analysis,
-  get_event_analysis_job,
   get_focus_selection,
   list_event_analyses,
-  resolve_analysis_proposal,
   update_focus_selection,
 } from "@/shared/api";
 import type {
-  AnalysisDepth,
-  AnalysisJob,
-  AnalysisStrategy,
   EventAnalysis,
-  EventAnalysisJob,
   FocusSelection,
   MediaMarker,
   TranscriptionOptions,
@@ -58,13 +51,11 @@ const MediaTimeline = lazy(() =>
 
 // 比样式表里 220ms 的面板过渡多留一拍，确保过渡结束前过渡类不被移除
 const PANEL_TOGGLE_TRANSITION_MS = 280;
-const EVENT_ANALYSIS_POLL_MS = 500;
 
 export function MarkersPage() {
   const navigate = useNavigate();
   const { selected_asset, selected_asset_id } = use_asset_catalog();
-  const { start_analysis, start_transcription, is_operation_running } =
-    use_task_manager();
+  const { start_transcription, is_transcription_running } = use_task_manager();
   const {
     segments,
     transcript,
@@ -78,31 +69,24 @@ export function MarkersPage() {
   const {
     transcription_models: loaded_transcription_models,
     default_transcription,
-    analysis_strategies,
-    error: analysis_resources_error,
-  } = use_analysis_resources();
+    error: transcription_resources_error,
+  } = use_transcription_resources();
   const [current_time, set_current_time] = useState(0);
   const [is_paused, set_is_paused] = useState(true);
   const [playback_rate, set_playback_rate] = useState(1);
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
   const [page_error, set_page_error] = useState<string | null>(null);
-  const [analysis_proposal, set_analysis_proposal] =
-    useState<AnalysisJob | null>(null);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
   const [event_analyses, set_event_analyses] = useState<EventAnalysis[]>([]);
-  const [event_analysis_job, set_event_analysis_job] =
-    useState<EventAnalysisJob | null>(null);
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
     new Set(),
   );
   const [candidate_markers, set_candidate_markers] = useState<MediaMarker[]>(
     [],
   );
-  const [analysis_strategy, set_analysis_strategy] = useState<AnalysisStrategy>(
-    () => structuredClone(DEFAULT_ANALYSIS_STRATEGY),
-  );
+  const analysis_strategy = DEFAULT_ANALYSIS_STRATEGY;
   const [transcription_model_overrides, set_transcription_model_overrides] =
     useState<Record<string, (typeof loaded_transcription_models)[number]>>({});
   const [is_panel_size_transitioning, set_is_panel_size_transitioning] =
@@ -112,7 +96,6 @@ export function MarkersPage() {
   const left_panel_ref = useRef<PanelImperativeHandle>(null);
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
-  const active_asset_id_ref = useRef<string | null>(selected_asset_id);
   const is_compact_layout = use_compact_markers_layout();
   const {
     markers,
@@ -143,16 +126,13 @@ export function MarkersPage() {
   }, []);
 
   useEffect(() => {
-    active_asset_id_ref.current = selected_asset_id;
     set_current_time(0);
     set_is_paused(true);
     set_playback_rate(1);
     set_selected_transcript_indices([]);
     set_candidate_markers([]);
-    set_analysis_proposal(null);
     set_focus_selection(null);
     set_event_analyses([]);
-    set_event_analysis_job(null);
     set_selected_marker_ids(new Set());
   }, [selected_asset_id]);
 
@@ -216,61 +196,6 @@ export function MarkersPage() {
     player_ref.current?.preview_to(seconds);
   }
 
-  async function run_analysis(
-    ai_model_id: string | null,
-    strategy: AnalysisStrategy,
-  ) {
-    if (!selected_asset_id) return;
-    set_page_error(null);
-    try {
-      const job = await start_analysis(
-        selected_asset_id,
-        ai_model_id,
-        strategy,
-      );
-      if (job.stage === "waiting_for_approval") set_analysis_proposal(job);
-      if (mounted_ref.current) await reload_analysis();
-    } catch (error) {
-      if (mounted_ref.current && !is_abort_error(error))
-        set_page_error(error_message(error));
-    }
-  }
-
-  async function run_event_analysis(request: {
-    marker_ids: string[];
-    use_focus_selection: boolean;
-    preset_id: string;
-    preset_version: number;
-    depth: AnalysisDepth;
-    user_input: string | null;
-    ai_model_id: string;
-  }) {
-    if (!selected_asset_id) return;
-    const asset_id = selected_asset_id;
-    set_page_error(null);
-    try {
-      let job = await create_event_analysis_job(asset_id, request);
-      set_event_analysis_job(job);
-      while (job.stage === "pending" || job.stage === "running") {
-        await new Promise((resolve) =>
-          window.setTimeout(resolve, EVENT_ANALYSIS_POLL_MS),
-        );
-        job = await get_event_analysis_job(job.job_id);
-        if (!mounted_ref.current || active_asset_id_ref.current !== asset_id)
-          return;
-        set_event_analysis_job(job);
-      }
-      if (job.stage === "failed") {
-        throw new Error(job.error_message ?? "事件分析失败");
-      }
-      set_event_analyses(await list_event_analyses(asset_id));
-    } catch (error) {
-      if (mounted_ref.current && !is_abort_error(error)) {
-        set_page_error(error_message(error));
-      }
-    }
-  }
-
   async function set_focus_endpoint(
     endpoint: "in_seconds" | "out_seconds",
     seconds: number,
@@ -308,20 +233,6 @@ export function MarkersPage() {
     } catch (error) {
       set_page_error(error_message(error));
       throw error;
-    }
-  }
-
-  async function resolve_analysis(action: "approve" | "reject") {
-    if (!analysis_proposal) return;
-    set_page_error(null);
-    try {
-      await resolve_analysis_proposal(analysis_proposal.job_id, action);
-      set_analysis_proposal(null);
-      if (mounted_ref.current) await reload_analysis();
-    } catch (error) {
-      if (mounted_ref.current && !is_abort_error(error)) {
-        set_page_error(error_message(error));
-      }
     }
   }
 
@@ -369,10 +280,7 @@ export function MarkersPage() {
   }
 
   const is_transcribing = selected_asset_id
-    ? is_operation_running(selected_asset_id, "transcription")
-    : false;
-  const is_analyzing = selected_asset_id
-    ? is_operation_running(selected_asset_id, "analysis")
+    ? is_transcription_running(selected_asset_id)
     : false;
   const transcription_models = loaded_transcription_models.map(
     (model) =>
@@ -418,9 +326,8 @@ export function MarkersPage() {
     />
   );
   const tool_panel = (
-    <AnalysisToolPanel
+    <TranscriptionToolPanel
       asset={selected_asset}
-      markers={markers}
       has_transcript={transcript !== null}
       is_transcribing={is_transcribing}
       on_start_transcription={(options) => void run_transcription(options)}
@@ -432,21 +339,7 @@ export function MarkersPage() {
           [`${updated_model.engine}:${updated_model.model}`]: updated_model,
         }))
       }
-      is_analyzing={is_analyzing}
       ai_models={ai_models}
-      analysis_strategies={analysis_strategies}
-      analysis_strategy={analysis_strategy}
-      set_analysis_strategy={set_analysis_strategy}
-      focus_selection={focus_selection}
-      event_analysis_job={event_analysis_job}
-      selected_marker_ids={selected_marker_ids}
-      set_selected_marker_ids={set_selected_marker_ids}
-      on_start_analysis={(ai_model_id, strategy) =>
-        void run_analysis(ai_model_id, strategy)
-      }
-      on_start_event_analysis={(request) => void run_event_analysis(request)}
-      analysis_proposal={analysis_proposal}
-      on_resolve_analysis={(action) => void resolve_analysis(action)}
       selected_transcript_indices={selected_transcript_indices}
       on_transcript_changed={() => void reload_analysis()}
       open_sections={settings.open_tool_sections}
@@ -463,7 +356,7 @@ export function MarkersPage() {
   const error =
     page_error ??
     ai_models_error ??
-    analysis_resources_error ??
+    transcription_resources_error ??
     settings_error ??
     analysis_error;
   return (
@@ -483,7 +376,7 @@ export function MarkersPage() {
             正在恢复工作台布局
           </div>
         ) : is_compact_layout ? (
-          <div className="flex min-h-full flex-col [&>[data-slot=analysis-tools]]:min-h-72 [&>[data-slot=analysis-tools]]:shrink-0 [&>[data-slot=analysis-tools]]:border-t [&>[data-slot=marker-left-panel]]:h-[32rem] [&>[data-slot=marker-left-panel]]:shrink-0 [&>[data-slot=marker-left-panel]]:border-b [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
+          <div className="flex min-h-full flex-col [&>[data-slot=marker-left-panel]]:h-[32rem] [&>[data-slot=marker-left-panel]]:shrink-0 [&>[data-slot=marker-left-panel]]:border-b [&>[data-slot=transcription-tools]]:min-h-72 [&>[data-slot=transcription-tools]]:shrink-0 [&>[data-slot=transcription-tools]]:border-t [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
             {left_panel}
             {video_workspace}
             {tool_panel}

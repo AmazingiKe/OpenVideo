@@ -1,9 +1,4 @@
-import type {
-  AnalysisDepth,
-  EventAnalysis,
-  EventAnalysisJob,
-  FocusSelection,
-} from "../types";
+import type { EventAnalysis, FocusSelection } from "../types";
 import { api_base_url, ApiError, request_json } from "./client";
 
 export async function get_focus_selection(
@@ -56,40 +51,6 @@ export function list_event_analyses(
 ): Promise<EventAnalysis[]> {
   return request_json(
     `/api/media/assets/${encodeURIComponent(asset_id)}/event-analyses`,
-    { signal },
-  );
-}
-
-export function create_event_analysis_job(
-  asset_id: string,
-  request: {
-    marker_ids: string[];
-    use_focus_selection: boolean;
-    preset_id: string;
-    preset_version: number;
-    depth: AnalysisDepth;
-    user_input: string | null;
-    ai_model_id: string;
-  },
-  signal?: AbortSignal,
-): Promise<EventAnalysisJob> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/event-analysis-jobs`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-      signal,
-    },
-  );
-}
-
-export function get_event_analysis_job(
-  job_id: string,
-  signal?: AbortSignal,
-): Promise<EventAnalysisJob> {
-  return request_json(
-    `/api/event-analysis-jobs/${encodeURIComponent(job_id)}`,
     { signal },
   );
 }

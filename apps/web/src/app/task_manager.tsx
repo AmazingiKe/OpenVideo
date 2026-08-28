@@ -11,18 +11,15 @@ import {
 
 import { use_asset_catalog } from "@/app/asset_catalog";
 import {
-  analyze_asset,
   create_download,
   list_downloads,
   request_download_retry,
   transcribe_asset,
 } from "@/shared/api";
-import { poll_analysis } from "@/shared/poll_analysis";
+import { poll_transcription_job } from "@/shared/poll_transcription_job";
 import { poll_download } from "@/shared/poll_download";
 import type {
   AnalysisJob,
-  AnalysisOperation,
-  AnalysisStrategy,
   DownloadDestination,
   DownloadJob,
   TranscriptionOptions,
@@ -39,19 +36,11 @@ type TaskManager = {
     destination?: DownloadDestination,
   ) => Promise<DownloadJob[]>;
   retry_download: (job_id: string) => Promise<DownloadJob>;
-  start_analysis: (
-    asset_id: string,
-    ai_model_id: string | null,
-    strategy: AnalysisStrategy,
-  ) => Promise<AnalysisJob>;
   start_transcription: (
     asset_id: string,
     options: TranscriptionOptions,
   ) => Promise<AnalysisJob>;
-  is_operation_running: (
-    asset_id: string,
-    operation: AnalysisOperation,
-  ) => boolean;
+  is_transcription_running: (asset_id: string) => boolean;
 };
 
 const TaskManagerContext = createContext<TaskManager | null>(null);
@@ -59,16 +48,16 @@ const TaskManagerContext = createContext<TaskManager | null>(null);
 export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const { refresh_assets, select_asset } = use_asset_catalog();
   const [task_records, set_task_records] = useState<TaskRecord[]>([]);
-  const [active_operations, set_active_operations] = useState<Set<string>>(
-    new Set(),
-  );
+  const [active_transcriptions, set_active_transcriptions] = useState<
+    Set<string>
+  >(new Set());
   const download_controller_ref = useRef<AbortController | null>(null);
-  const analysis_controller_ref = useRef<AbortController | null>(null);
+  const transcription_controller_ref = useRef<AbortController | null>(null);
 
   useEffect(
     () => () => {
       download_controller_ref.current?.abort();
-      analysis_controller_ref.current?.abort();
+      transcription_controller_ref.current?.abort();
     },
     [],
   );
@@ -94,17 +83,17 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [record_task],
   );
 
-  const record_analysis_job = useCallback(
+  const record_transcription_job = useCallback(
     (job: AnalysisJob) => {
       record_task({
         task_id: job.job_id,
-        task_type: "analysis",
+        task_type: "transcription",
         stage: job.stage,
         message: job.message,
         progress_percent: job.progress_percent,
         error_message: job.error_message,
         created_at: job.created_at,
-        name: "素材分析",
+        name: "素材转录",
         events: [],
       });
     },
@@ -188,63 +177,43 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [track_download_jobs, with_download_controller],
   );
 
-  const run_analysis_operation = useCallback(
-    async (
-      asset_id: string,
-      operation: AnalysisOperation,
-      create_job: (signal: AbortSignal) => Promise<AnalysisJob>,
-    ) => {
-      analysis_controller_ref.current?.abort();
+  const start_transcription = useCallback(
+    async (asset_id: string, options: TranscriptionOptions) => {
+      transcription_controller_ref.current?.abort();
       const controller = new AbortController();
-      analysis_controller_ref.current = controller;
-      const operation_key = `${asset_id}:${operation}`;
-      set_active_operations((current) => new Set(current).add(operation_key));
+      transcription_controller_ref.current = controller;
+      set_active_transcriptions((current) => new Set(current).add(asset_id));
       try {
-        const job = await create_job(controller.signal);
-        record_analysis_job(job);
+        const job = await transcribe_asset(
+          asset_id,
+          options,
+          controller.signal,
+        );
+        record_transcription_job(job);
         const final_job =
           job.stage === "complete"
             ? job
-            : await poll_analysis(job, record_analysis_job, controller.signal);
+            : await poll_transcription_job(
+                job,
+                record_transcription_job,
+                controller.signal,
+              );
         if (final_job.stage === "failed") {
-          throw new Error(
-            final_job.error_message ??
-              (operation === "analysis" ? "分析失败" : "转录失败"),
-          );
+          throw new Error(final_job.error_message ?? "转录失败");
         }
         return final_job;
       } finally {
-        set_active_operations((current) => {
+        set_active_transcriptions((current) => {
           const next = new Set(current);
-          next.delete(operation_key);
+          next.delete(asset_id);
           return next;
         });
-        if (analysis_controller_ref.current === controller) {
-          analysis_controller_ref.current = null;
+        if (transcription_controller_ref.current === controller) {
+          transcription_controller_ref.current = null;
         }
       }
     },
-    [record_analysis_job],
-  );
-
-  const start_analysis = useCallback(
-    (
-      asset_id: string,
-      ai_model_id: string | null,
-      strategy: AnalysisStrategy,
-    ) =>
-      run_analysis_operation(asset_id, "analysis", (signal) =>
-        analyze_asset(asset_id, ai_model_id, strategy, signal),
-      ),
-    [run_analysis_operation],
-  );
-
-  const start_transcription = useCallback(
-    (asset_id: string, options: TranscriptionOptions) =>
-      run_analysis_operation(asset_id, "transcription", (signal) =>
-        transcribe_asset(asset_id, options, signal),
-      ),
-    [run_analysis_operation],
+    [record_transcription_job],
   );
 
   const value = useMemo<TaskManager>(
@@ -252,14 +221,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       task_records,
       start_downloads,
       retry_download,
-      start_analysis,
       start_transcription,
-      is_operation_running: (asset_id, operation) =>
-        active_operations.has(`${asset_id}:${operation}`),
+      is_transcription_running: (asset_id) =>
+        active_transcriptions.has(asset_id),
     }),
     [
-      active_operations,
-      start_analysis,
+      active_transcriptions,
       start_downloads,
       retry_download,
       start_transcription,

@@ -31,7 +31,7 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
             "left_panel_tab": "library",
             "tool_panel_size_percent": 16.0,
             "tool_panel_collapsed": False,
-            "open_tool_sections": ["video_information"],
+            "open_tool_sections": ["transcription"],
         }
 
         payload = {
@@ -40,7 +40,7 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
             "left_panel_tab": "agent",
             "tool_panel_size_percent": 26,
             "tool_panel_collapsed": False,
-            "open_tool_sections": ["transcription", "analysis"],
+            "open_tool_sections": ["transcription", "transcript_correction"],
         }
         saved = client.put("/api/page-settings/markers", json=payload)
         assert saved.status_code == 200
@@ -58,7 +58,7 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
             "/api/page-settings/markers",
             json={
                 **payload,
-                "open_tool_sections": ["analysis", "analysis"],
+                "open_tool_sections": ["transcription", "transcription"],
             },
         )
         invalid_tab = client.put(
@@ -91,23 +91,29 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
     with TestClient(app) as client:
         first_settings = client.get("/api/page-settings/markers").json()
         first_settings["left_panel_size_percent"] = 30
-        assert client.put(
-            "/api/page-settings/markers", json=first_settings
-        ).status_code == 200
+        assert (
+            client.put("/api/page-settings/markers", json=first_settings).status_code
+            == 200
+        )
 
-        assert client.post(
-            "/api/library/open", json={"path": str(second_path)}
-        ).status_code == 200
+        assert (
+            client.post(
+                "/api/library/open", json={"path": str(second_path)}
+            ).status_code
+            == 200
+        )
         second_settings = client.get("/api/page-settings/markers").json()
         assert second_settings["left_panel_size_percent"] == 24
         second_settings["tool_panel_size_percent"] = 28
-        assert client.put(
-            "/api/page-settings/markers", json=second_settings
-        ).status_code == 200
+        assert (
+            client.put("/api/page-settings/markers", json=second_settings).status_code
+            == 200
+        )
 
-        assert client.post(
-            "/api/library/open", json={"path": str(first_path)}
-        ).status_code == 200
+        assert (
+            client.post("/api/library/open", json={"path": str(first_path)}).status_code
+            == 200
+        )
         restored = client.get("/api/page-settings/markers").json()
         assert restored["left_panel_size_percent"] == 30
         assert restored["tool_panel_size_percent"] == 16

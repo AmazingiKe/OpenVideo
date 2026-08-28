@@ -1,41 +1,10 @@
-import { DEFAULT_ANALYSIS_STRATEGY } from "../analysis";
 import type {
   AnalysisJob,
-  AnalysisStrategy,
-  AnalysisStrategyPresetDescriptor,
   MediaSegment,
   Transcript,
   TranscriptionOptions,
 } from "../types";
 import { request_json } from "./client";
-
-export function analyze_asset(
-  asset_id: string,
-  ai_model_id: string | null,
-  strategy: AnalysisStrategy = DEFAULT_ANALYSIS_STRATEGY,
-  signal?: AbortSignal,
-): Promise<AnalysisJob> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/analyze`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        mode: "full",
-        ai_model_id,
-        strategy,
-        force: true,
-      }),
-      signal,
-    },
-  );
-}
-
-export function list_analysis_strategies(
-  signal?: AbortSignal,
-): Promise<AnalysisStrategyPresetDescriptor[]> {
-  return request_json("/api/analysis-strategies", { signal });
-}
 
 export function transcribe_asset(
   asset_id: string,
@@ -58,17 +27,6 @@ export function get_analysis(
   signal?: AbortSignal,
 ): Promise<AnalysisJob> {
   return request_json(`/api/analysis/${encodeURIComponent(job_id)}`, {
-    signal,
-  });
-}
-
-export function resolve_analysis_proposal(
-  job_id: string,
-  action: "approve" | "reject",
-  signal?: AbortSignal,
-): Promise<AnalysisJob> {
-  return request_json(`/api/analysis/${encodeURIComponent(job_id)}/${action}`, {
-    method: "POST",
     signal,
   });
 }

@@ -20,7 +20,6 @@ vi.mock("@/shared/api", () => ({
   list_downloads: vi.fn(),
   request_download_retry: vi.fn(),
   list_assets: vi.fn(),
-  analyze_asset: vi.fn(),
   get_analysis: vi.fn(),
   transcribe_asset: vi.fn(),
   create_transcript_correction: vi.fn(),

@@ -30,7 +30,7 @@ import {
   load_summary_project,
   type SummaryProject,
 } from "@/features/summary/load_summary_project";
-import { use_ai_models } from "@/features/analysis/use_analysis_resources";
+import { use_ai_models } from "@/features/workbench/use_processing_resources";
 import type {
   AgentArtifact,
   AiModelSummary,
