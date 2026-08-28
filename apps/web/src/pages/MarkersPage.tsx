@@ -61,6 +61,12 @@ const MediaTimeline = lazy(() =>
 
 // 比样式表里 220ms 的面板过渡多留一拍，确保过渡结束前过渡类不被移除
 const PANEL_TOGGLE_TRANSITION_MS = 280;
+const PANEL_GROUP_WIDTH_PERCENT = 100;
+const LIBRARY_PANEL_MIN_WIDTH_PX = 320;
+const LIBRARY_PANEL_MAX_WIDTH_PERCENT = 40;
+const VIDEO_PANEL_MIN_WIDTH_PX = 400;
+const AGENT_PANEL_MIN_WIDTH_PX = 360;
+const AGENT_PANEL_MAX_WIDTH_PERCENT = 48;
 
 export function MarkersPage() {
   const navigate = useNavigate();
@@ -300,7 +306,7 @@ export function MarkersPage() {
     }
   }
 
-  function save_desktop_layout(layout: Record<string, number>) {
+  function save_library_layout(layout: Record<string, number>) {
     const left_panel_collapsed =
       left_panel_ref.current?.isCollapsed() ?? settings.left_panel_collapsed;
     const patch: Parameters<typeof update_settings>[0] = {
@@ -309,10 +315,13 @@ export function MarkersPage() {
     if (!left_panel_collapsed && layout["left-panel"] !== undefined) {
       patch.left_panel_size_percent = layout["left-panel"];
     }
-    if (layout["agent-panel"] !== undefined) {
-      patch.agent_panel_size_percent = layout["agent-panel"];
-    }
     update_settings(patch);
+  }
+
+  function save_agent_layout(layout: Record<string, number>) {
+    const agent_panel_size_percent = layout["agent-panel"];
+    if (agent_panel_size_percent === undefined) return;
+    update_settings({ agent_panel_size_percent });
   }
 
   function open_library_video(asset_id: string) {
@@ -398,11 +407,69 @@ export function MarkersPage() {
     transcription_resources_error ??
     settings_error ??
     analysis_error;
+  const timeline = (
+    <Suspense
+      fallback={
+        <section
+          className="media_timeline flex items-center justify-center gap-2 text-sm text-muted-foreground"
+          role="status"
+          aria-label="剪辑时间轴"
+          aria-busy="true"
+        >
+          <Spinner />
+          正在加载时间线…
+        </section>
+      }
+    >
+      <MediaTimeline
+        asset_id={selected_asset_id}
+        duration_seconds={selected_asset?.duration_seconds ?? null}
+        current_time={current_time}
+        read_playback_time={() =>
+          player_ref.current?.current_time() ?? current_time
+        }
+        is_paused={is_paused}
+        playback_rate={playback_rate}
+        transcript={transcript}
+        segments={segments}
+        markers={markers}
+        candidate_markers={candidate_markers}
+        focus_selection={focus_selection}
+        event_analyses={visible_event_analyses}
+        selected_marker_ids={selected_marker_ids}
+        selected_transcript_indices={selected_transcript_indices}
+        analysis_strategy={analysis_strategy}
+        marker_error={marker_error}
+        on_scrub={preview_player}
+        on_seek={seek_player}
+        on_toggle_playback={() => player_ref.current?.toggle_playback()}
+        on_playback_rate_change={(rate) =>
+          player_ref.current?.set_playback_rate(rate)
+        }
+        on_selected_transcript_indices_change={set_selected_transcript_indices}
+        on_request_transcript_correction={open_transcript_correction}
+        on_selected_marker_ids_change={set_selected_marker_ids}
+        on_set_focus_in={(seconds) =>
+          void set_focus_endpoint("in_seconds", seconds)
+        }
+        on_set_focus_out={(seconds) =>
+          void set_focus_endpoint("out_seconds", seconds)
+        }
+        on_clear_focus={() => void clear_focus()}
+        on_delete_event_analysis={remove_event_analysis}
+        on_add_marker={add_marker}
+        on_update_marker={update_marker}
+        on_delete_marker={remove_marker}
+        on_update_transcript={save_transcript_segment}
+        toolbar_tools={transcription_tools}
+      />
+    </Suspense>
+  );
   return (
     <>
       <div
         className={cn(
-          "min-h-0 min-w-0 overflow-hidden max-[979px]:overflow-auto",
+          "h-full min-h-0 min-w-0 overflow-hidden",
           is_panel_size_transitioning && "panel-size-transition",
         )}
       >
@@ -415,122 +482,92 @@ export function MarkersPage() {
             正在恢复工作台布局
           </div>
         ) : is_compact_layout ? (
-          <div className="flex min-h-full flex-col [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
+          <div className="flex h-full min-h-0 flex-col overflow-auto [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
             {library_panel}
             {agent_panel}
             {video_workspace}
+            <div className="h-60 shrink-0 min-[821px]:h-66">{timeline}</div>
           </div>
         ) : (
           <ResizablePanelGroup
-            id="markers-workspace"
+            id="markers-page"
             orientation="horizontal"
             onLayoutChanged={(layout, metadata) => {
-              if (metadata.isUserInteraction) save_desktop_layout(layout);
+              if (metadata.isUserInteraction) save_agent_layout(layout);
             }}
           >
             <ResizablePanel
-              id="left-panel"
-              panelRef={left_panel_ref}
-              defaultSize={
-                settings.left_panel_collapsed
-                  ? `${PANEL_RAIL_WIDTH_PX}px`
-                  : `${settings.left_panel_size_percent}%`
-              }
-              minSize="320px"
-              maxSize="40%"
-              collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
-              collapsible
-              onResize={(size) => {
-                const collapsed = size.inPixels <= PANEL_RAIL_WIDTH_PX + 1;
-                if (collapsed !== settings.left_panel_collapsed) {
-                  update_settings({ left_panel_collapsed: collapsed });
-                }
-              }}
+              id="workbench-panel"
+              defaultSize={`${PANEL_GROUP_WIDTH_PERCENT - settings.agent_panel_size_percent}%`}
+              minSize={`${VIDEO_PANEL_MIN_WIDTH_PX}px`}
             >
-              {library_panel}
+              <section
+                className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+                aria-label="标记工作区"
+              >
+                <div className="min-h-0 flex-1">
+                  <ResizablePanelGroup
+                    id="markers-workspace"
+                    orientation="horizontal"
+                    onLayoutChanged={(layout, metadata) => {
+                      if (metadata.isUserInteraction)
+                        save_library_layout(layout);
+                    }}
+                  >
+                    <ResizablePanel
+                      id="left-panel"
+                      panelRef={left_panel_ref}
+                      defaultSize={
+                        settings.left_panel_collapsed
+                          ? `${PANEL_RAIL_WIDTH_PX}px`
+                          : `${settings.left_panel_size_percent}%`
+                      }
+                      minSize={`${LIBRARY_PANEL_MIN_WIDTH_PX}px`}
+                      maxSize={`${LIBRARY_PANEL_MAX_WIDTH_PERCENT}%`}
+                      collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
+                      collapsible
+                      onResize={(size) => {
+                        const collapsed =
+                          size.inPixels <= PANEL_RAIL_WIDTH_PX + 1;
+                        if (collapsed !== settings.left_panel_collapsed) {
+                          update_settings({ left_panel_collapsed: collapsed });
+                        }
+                      }}
+                    >
+                      {library_panel}
+                    </ResizablePanel>
+                    <ResizableHandle
+                      className="hover:bg-primary"
+                      withHandle
+                      aria-label="调整视频库宽度"
+                    />
+                    <ResizablePanel
+                      id="video-player"
+                      minSize={`${VIDEO_PANEL_MIN_WIDTH_PX}px`}
+                    >
+                      {video_workspace}
+                    </ResizablePanel>
+                  </ResizablePanelGroup>
+                </div>
+                <div className="h-66 shrink-0">{timeline}</div>
+              </section>
             </ResizablePanel>
             <ResizableHandle
               className="hover:bg-primary"
               withHandle
-              aria-label="调整视频库宽度"
-            />
-            <ResizablePanel id="video-player" minSize="400px">
-              {video_workspace}
-            </ResizablePanel>
-            <ResizableHandle
-              className="hover:bg-primary"
-              withHandle
-              aria-label="调整 Agent 面板宽度"
+              aria-label="调整智能助手面板宽度"
             />
             <ResizablePanel
               id="agent-panel"
               defaultSize={`${settings.agent_panel_size_percent}%`}
-              minSize="360px"
-              maxSize="48%"
+              minSize={`${AGENT_PANEL_MIN_WIDTH_PX}px`}
+              maxSize={`${AGENT_PANEL_MAX_WIDTH_PERCENT}%`}
             >
               {agent_panel}
             </ResizablePanel>
           </ResizablePanelGroup>
         )}
       </div>
-      <Suspense
-        fallback={
-          <section
-            className="media_timeline flex items-center justify-center gap-2 text-sm text-muted-foreground"
-            role="status"
-            aria-label="剪辑时间轴"
-            aria-busy="true"
-          >
-            <Spinner />
-            正在加载时间线…
-          </section>
-        }
-      >
-        <MediaTimeline
-          asset_id={selected_asset_id}
-          duration_seconds={selected_asset?.duration_seconds ?? null}
-          current_time={current_time}
-          read_playback_time={() =>
-            player_ref.current?.current_time() ?? current_time
-          }
-          is_paused={is_paused}
-          playback_rate={playback_rate}
-          transcript={transcript}
-          segments={segments}
-          markers={markers}
-          candidate_markers={candidate_markers}
-          focus_selection={focus_selection}
-          event_analyses={visible_event_analyses}
-          selected_marker_ids={selected_marker_ids}
-          selected_transcript_indices={selected_transcript_indices}
-          analysis_strategy={analysis_strategy}
-          marker_error={marker_error}
-          on_scrub={preview_player}
-          on_seek={seek_player}
-          on_toggle_playback={() => player_ref.current?.toggle_playback()}
-          on_playback_rate_change={(rate) =>
-            player_ref.current?.set_playback_rate(rate)
-          }
-          on_selected_transcript_indices_change={
-            set_selected_transcript_indices
-          }
-          on_request_transcript_correction={open_transcript_correction}
-          on_selected_marker_ids_change={set_selected_marker_ids}
-          on_set_focus_in={(seconds) =>
-            void set_focus_endpoint("in_seconds", seconds)
-          }
-          on_set_focus_out={(seconds) =>
-            void set_focus_endpoint("out_seconds", seconds)
-          }
-          on_clear_focus={() => void clear_focus()}
-          on_delete_event_analysis={remove_event_analysis}
-          on_add_marker={add_marker}
-          on_update_marker={update_marker}
-          on_delete_marker={remove_marker}
-          on_update_transcript={save_transcript_segment}
-          toolbar_tools={transcription_tools}
-        />
-      </Suspense>
       {error ? <FloatingError message={error} /> : null}
     </>
   );

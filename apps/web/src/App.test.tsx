@@ -425,7 +425,16 @@ describe("App", () => {
     const video_workspace = screen.getByRole("region", {
       name: "视频工作区",
     });
+    const marker_workspace = screen.getByRole("region", {
+      name: "标记工作区",
+    });
+    const timeline = await screen.findByRole("region", {
+      name: "剪辑时间轴",
+    });
     const agent_panel = screen.getByLabelText("标记 Agent");
+    expect(marker_workspace).toContainElement(video_workspace);
+    expect(marker_workspace).toContainElement(timeline);
+    expect(marker_workspace).not.toContainElement(agent_panel);
     expect(
       video_workspace.compareDocumentPosition(agent_panel) &
         Node.DOCUMENT_POSITION_FOLLOWING,
