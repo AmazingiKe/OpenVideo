@@ -3,24 +3,44 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
-import hashlib
-import json
 import shutil
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Any, Protocol
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openvideo.agent_runtime import (
     AgentRuntime,
-    AgentRuntimeError,
     AgentSessionStore,
     AgentTool,
     AgentToolRegistry,
     new_agent_run,
+)
+from openvideo.agent_registry import (
+    AgentConflictError,
+    AgentDefinitionRegistry,
+    AgentNotFoundError,
+    AgentServiceError,
+    RegisteredAgent,
+    agent_availability,
+    build_run_content,
+    validate_model,
+)
+from openvideo.agent_tooling import (
+    AgentRunContext,
+    CorrectTranscriptInput,
+    EvidenceSearchInput,
+    InspectFramesInput,
+    MarkerChangeOperation,
+    ProposeMarkerChangesInput,
+    ProposeSummaryEditInput,
+    ReadMarkersInput,
+    ReadSummaryDocumentInput,
+    build_proposed_marker,
+    markdown_diff,
+    marker_digest,
+    ranges_intersect,
+    rewrite_segment_references,
+    transcript_digest,
+    validate_marker_bounds,
 )
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
@@ -42,7 +62,7 @@ from openvideo.core.agent_runtime_models import (
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaMarker, MediaSegment
+from openvideo.core.media_models import MediaMarker
 from openvideo.core.summary_models import (
     SummaryDocumentCreate,
     SummaryDocumentUpdate,
@@ -68,29 +88,8 @@ AGENT_RUN_EDIT_INTENT = "edit"
 MARKER_EVIDENCE_TOOL_NAMES = frozenset({"search_evidence", "inspect_frames"})
 
 
-class MarkerChangeOperation(StrEnum):
-    CREATE = "create"
-    UPDATE = "update"
-    DELETE = "delete"
-    MERGE = "merge"
 
 
-class AgentServiceError(RuntimeError):
-    """统一公开接口无法满足请求时返回稳定业务错误。"""
-
-    def __init__(self, message: str, code: str = "agent_error") -> None:
-        super().__init__(message)
-        self.code = code
-
-
-class AgentNotFoundError(AgentServiceError):
-    def __init__(self, message: str) -> None:
-        super().__init__(message, "agent_not_found")
-
-
-class AgentConflictError(AgentServiceError):
-    def __init__(self, message: str) -> None:
-        super().__init__(message, "agent_conflict")
 
 
 class SummaryDocumentService(Protocol):
@@ -103,138 +102,10 @@ class SummaryDocumentService(Protocol):
     ) -> Any: ...
 
 
-class EvidenceSearchInput(BaseModel):
-    query: str | None = Field(default=None, max_length=500)
-    start_seconds: float | None = Field(default=None, ge=0)
-    end_seconds: float | None = Field(default=None, ge=0)
-    limit: int = Field(default=12, ge=1, le=30)
-
-    @model_validator(mode="after")
-    def validate_range(self) -> "EvidenceSearchInput":
-        if (
-            self.start_seconds is not None
-            and self.end_seconds is not None
-            and self.end_seconds <= self.start_seconds
-        ):
-            raise ValueError("结束时间必须晚于开始时间")
-        return self
 
 
-class ReadMarkersInput(BaseModel):
-    pass
 
 
-class InspectFramesInput(BaseModel):
-    start_seconds: float = Field(ge=0)
-    end_seconds: float = Field(gt=0)
-    question: str = Field(min_length=1, max_length=1_000)
-
-    @model_validator(mode="after")
-    def validate_range(self) -> "InspectFramesInput":
-        if self.end_seconds <= self.start_seconds:
-            raise ValueError("结束时间必须晚于开始时间")
-        return self
-
-
-class ProposedMarkerChangeInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    operation: MarkerChangeOperation
-    marker_ids: list[str] = Field(default_factory=list, max_length=100)
-    start_seconds: float | None = Field(default=None, ge=0)
-    end_seconds: float | None = Field(default=None, ge=0)
-    reason: str = Field(min_length=1, max_length=2_000)
-    evidence: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
-
-
-class ProposeMarkerChangesInput(BaseModel):
-    changes: list[ProposedMarkerChangeInput] = Field(min_length=1, max_length=100)
-
-
-class ReadSummaryDocumentInput(BaseModel):
-    document_id: str
-
-
-class ProposeSummaryEditInput(BaseModel):
-    document_id: str
-    expected_revision: int = Field(ge=1)
-    proposed_markdown: str
-    explanation: str = Field(min_length=1, max_length=4_000)
-    suggested_subdocuments: list[SummaryDocumentCreate] = Field(default_factory=list)
-
-
-class CorrectTranscriptInput(BaseModel):
-    segment_indices: list[int] | None = None
-    execution_mode: str = Field(
-        default="automatic", pattern=r"^(automatic|chunked|compressed)$"
-    )
-
-
-@dataclass
-class RunEvidenceState:
-    markers_read: bool = False
-    evidence_read: bool = False
-    frames_inspected: bool = False
-
-
-@dataclass(frozen=True)
-class RegisteredAgent:
-    definition: AgentDefinition
-    tool_builder: Any
-    approver: Any
-    session_validator: Any | None
-    run_definition: Any | None
-
-
-class AgentDefinitionRegistry:
-    """用途差异集中在注册项，API 和运行生命周期不做类型分派。"""
-
-    def __init__(self, definitions: list[RegisteredAgent]) -> None:
-        self._definitions = {
-            registered.definition.agent_id: registered for registered in definitions
-        }
-        if len(self._definitions) != len(definitions):
-            raise ValueError("Agent 标识不能重复")
-
-    def require(self, agent_id: str) -> RegisteredAgent:
-        registered = self._definitions.get(agent_id)
-        if registered is None:
-            raise AgentNotFoundError("Agent 定义不存在")
-        return registered
-
-    def values(self) -> list[RegisteredAgent]:
-        return list(self._definitions.values())
-
-
-@dataclass
-class AgentRunContext:
-    service: "AgentService"
-    session: AgentSession
-    run: AgentRun
-    model: AiModelConfiguration
-    task_input: dict[str, Any]
-    evidence: RunEvidenceState = field(default_factory=RunEvidenceState)
-
-    def create_artifact(
-        self, result_type: str, payload: dict[str, Any]
-    ) -> AgentArtifact:
-        artifact = AgentArtifact(
-            artifact_id=f"artifact-{uuid7().hex}",
-            run_id=self.run.run_id,
-            session_id=self.session.session_id,
-            agent_id=self.session.agent_id,
-            asset_id=self.session.asset_id,
-            result_type=result_type,
-            payload=payload,
-        )
-        self.service.library.save_agent_artifact(artifact)
-        self.service.store.append(
-            self.session.session_id,
-            self.run.run_id,
-            AgentEventType.ARTIFACT_CREATED,
-            {"artifact": artifact.model_dump(mode="json")},
-        )
-        return artifact
 
 
 class AgentService:
@@ -258,7 +129,9 @@ class AgentService:
     def definitions(self) -> list[AgentDefinitionAvailability]:
         models = self.settings.ai_models
         return [
-            self._availability(registered.definition, models)
+            agent_availability(
+                registered.definition, models, self.capability_resolver
+            )
             for registered in self.registry.values()
         ]
 
@@ -318,8 +191,8 @@ class AgentService:
             if registered.run_definition is not None
             else registered.definition
         )
-        self._validate_model(definition, profile)
-        content = self._run_content(definition, request)
+        validate_model(definition, profile)
+        content = build_run_content(definition, request)
         run = new_agent_run(session_id, request.request_key, request.ai_model_id)
         context = AgentRunContext(self, session, run, model, request.task_input)
         tool_registry = registered.tool_builder(context, definition)
@@ -630,84 +503,6 @@ class AgentService:
             }
         )
 
-    @staticmethod
-    def _run_content(definition: AgentDefinition, request: AgentRunCreate) -> str:
-        content = request.content.strip()
-        if content:
-            return content
-        if definition.mode == AgentMode.TASK:
-            return "执行任务：" + json.dumps(request.task_input, ensure_ascii=False)
-        raise AgentServiceError("聊天消息不能为空")
-
-    def _availability(
-        self, definition: AgentDefinition, models: list[AiModelConfiguration]
-    ) -> AgentDefinitionAvailability:
-        profiles = {
-            model.model_id: self.capability_resolver.resolve(model) for model in models
-        }
-        compatible = [
-            model.model_id
-            for model in models
-            if self._model_supports(definition, profiles[model.model_id])
-        ]
-        return AgentDefinitionAvailability(
-            definition=definition,
-            available=bool(compatible),
-            compatible_model_ids=compatible,
-            capability_model_ids={
-                AgentCapability.TOOLS: [
-                    model.model_id
-                    for model in models
-                    if profiles[model.model_id].support(CapabilityName.TOOLS)
-                    != Support.NO
-                ],
-                AgentCapability.VISION: [
-                    model.model_id
-                    for model in models
-                    if profiles[model.model_id].support(CapabilityName.VISION)
-                    != Support.NO
-                ],
-                AgentCapability.LONG_CONTEXT: [
-                    model.model_id
-                    for model in models
-                    if self._has_context_capacity(definition, profiles[model.model_id])
-                ],
-            },
-            unavailable_reason=None if compatible else "没有满足能力要求的模型",
-        )
-
-    @staticmethod
-    def _model_supports(definition: AgentDefinition, profile: ModelProfile) -> bool:
-        if (
-            AgentCapability.TOOLS in definition.required_capabilities
-            and profile.support(CapabilityName.TOOLS) == Support.NO
-        ):
-            return False
-        if (
-            AgentCapability.VISION in definition.required_capabilities
-            and profile.support(CapabilityName.VISION) == Support.NO
-        ):
-            return False
-        return AgentService._has_context_capacity(definition, profile)
-
-    @staticmethod
-    def _has_context_capacity(
-        definition: AgentDefinition, profile: ModelProfile
-    ) -> bool:
-        context_tokens = profile.limits.context_tokens
-        return (
-            context_tokens is None
-            or context_tokens >= definition.minimum_context_tokens
-        )
-
-    @classmethod
-    def _validate_model(
-        cls, definition: AgentDefinition, profile: ModelProfile
-    ) -> None:
-        if not cls._model_supports(definition, profile):
-            raise AgentServiceError(
-                "所选模型不满足 Agent 的能力要求", "capability_unavailable"
-            )
 
     def _marker_tools(
         self, context: AgentRunContext, definition: AgentDefinition
@@ -819,7 +614,7 @@ class AgentService:
         evidence: list[dict[str, Any]] = []
         transcript = self.library.load_transcript(context.session.asset_id)
         for segment in transcript.segments if transcript else []:
-            if not _in_range(
+            if not ranges_intersect(
                 segment.start_seconds,
                 segment.end_seconds,
                 parameters.start_seconds,
@@ -850,7 +645,7 @@ class AgentService:
                 )
                 if value
             )
-            if not _in_range(
+            if not ranges_intersect(
                 segment.start_seconds,
                 segment.end_seconds,
                 parameters.start_seconds,
@@ -952,9 +747,11 @@ class AgentService:
                 valid = len(before) == expected and len(before) == len(marker_ids)
             if not valid:
                 return {"ok": False, "error": "建议引用的标记不存在或数量无效"}
-            after = _proposed_marker(context.session.asset_id, requested, before)
+            after = build_proposed_marker(
+                context.session.asset_id, requested, before
+            )
             if after is not None:
-                _validate_marker_bounds(after, asset.duration_seconds)
+                validate_marker_bounds(after, asset.duration_seconds)
             changes.append(
                 {
                     "operation": requested.operation.value,
@@ -968,7 +765,7 @@ class AgentService:
             MARKER_ARTIFACT_TYPE,
             {
                 "changes": changes,
-                "snapshot_digest": _marker_digest(list(current.values())),
+                "snapshot_digest": marker_digest(list(current.values())),
             },
         )
         return {"ok": True, "artifact": artifact.model_dump(mode="json")}
@@ -1008,7 +805,7 @@ class AgentService:
                 "original_markdown": document.markdown,
                 "proposed_markdown": parameters.proposed_markdown,
                 "explanation": parameters.explanation,
-                "diff": _markdown_diff(document.markdown, parameters.proposed_markdown),
+                "diff": markdown_diff(document.markdown, parameters.proposed_markdown),
                 "suggested_subdocuments": [
                     item.model_dump(mode="json")
                     for item in parameters.suggested_subdocuments
@@ -1056,7 +853,7 @@ class AgentService:
         artifact = context.create_artifact(
             TRANSCRIPT_ARTIFACT_TYPE,
             {
-                "transcript_digest": _transcript_digest(transcript),
+                "transcript_digest": transcript_digest(transcript),
                 "changes": changes,
             },
         )
@@ -1064,7 +861,7 @@ class AgentService:
 
     def _approve_marker_changes(self, artifact: AgentArtifact) -> None:
         current = self.library.load_markers(artifact.asset_id)
-        if _marker_digest(current) != artifact.payload["snapshot_digest"]:
+        if marker_digest(current) != artifact.payload["snapshot_digest"]:
             raise AgentConflictError("标记已发生变化，整批建议已过期")
         markers_by_id = {marker.marker_id: marker for marker in current}
         segments = self.library.load_segments(artifact.asset_id)
@@ -1087,7 +884,9 @@ class AgentService:
                 if operation == MarkerChangeOperation.MERGE and after
                 else None
             )
-            segments = _rewrite_segment_references(segments, source_ids, replacement)
+            segments = rewrite_segment_references(
+                segments, source_ids, replacement
+            )
         resolved = sorted(markers_by_id.values(), key=lambda item: item.start_seconds)
         self.library.replace_markers_and_segments(artifact.asset_id, resolved, segments)
 
@@ -1117,7 +916,7 @@ class AgentService:
         transcript = self.library.load_transcript(artifact.asset_id)
         if (
             transcript is None
-            or _transcript_digest(transcript) != artifact.payload["transcript_digest"]
+            or transcript_digest(transcript) != artifact.payload["transcript_digest"]
         ):
             raise AgentConflictError("字幕已发生变化，纠错预览已过期")
         segments = list(transcript.segments)
@@ -1149,103 +948,3 @@ class AgentService:
         if artifact is None:
             raise AgentNotFoundError("Agent 审批结果不存在")
         return artifact
-
-
-def _in_range(
-    start: float,
-    end: float,
-    range_start: float | None,
-    range_end: float | None,
-) -> bool:
-    return not (
-        (range_start is not None and end < range_start)
-        or (range_end is not None and start > range_end)
-    )
-
-
-def _proposed_marker(
-    asset_id: str,
-    requested: ProposedMarkerChangeInput,
-    before: list[MediaMarker],
-) -> MediaMarker | None:
-    if requested.operation == MarkerChangeOperation.DELETE:
-        return None
-    if requested.start_seconds is None:
-        raise AgentRuntimeError("新增、修改或合并建议必须提供开始时间")
-    marker_id = (
-        before[0].marker_id
-        if requested.operation == MarkerChangeOperation.UPDATE
-        else f"marker-{uuid7().hex}"
-    )
-    if requested.operation == MarkerChangeOperation.UPDATE:
-        importance = before[0].importance
-    elif requested.operation == MarkerChangeOperation.MERGE:
-        importance = max(marker.importance for marker in before)
-    else:
-        importance = 0
-    return MediaMarker(
-        marker_id=marker_id,
-        asset_id=asset_id,
-        start_seconds=requested.start_seconds,
-        end_seconds=requested.end_seconds,
-        importance=importance,
-    )
-
-
-def _validate_marker_bounds(marker: MediaMarker, duration: float | None) -> None:
-    if duration is not None and (
-        marker.start_seconds > duration
-        or (marker.end_seconds is not None and marker.end_seconds > duration)
-    ):
-        raise AgentRuntimeError("标记范围超出视频时长")
-
-
-def _marker_digest(markers: list[MediaMarker]) -> str:
-    payload = [
-        marker.model_dump(mode="json")
-        for marker in sorted(markers, key=lambda item: item.marker_id)
-    ]
-    return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-
-
-def _transcript_digest(transcript: Any) -> str:
-    payload = [
-        {
-            "start_seconds": segment.start_seconds,
-            "end_seconds": segment.end_seconds,
-            "text": segment.text,
-        }
-        for segment in transcript.segments
-    ]
-    return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-
-
-def _rewrite_segment_references(
-    segments: list[MediaSegment], source_ids: set[str], replacement_id: str | None
-) -> list[MediaSegment]:
-    rewritten: list[MediaSegment] = []
-    for segment in segments:
-        original = segment.marker_ids
-        marker_ids = [item for item in original if item not in source_ids]
-        if replacement_id and any(item in source_ids for item in original):
-            marker_ids.append(replacement_id)
-        rewritten.append(
-            segment.model_copy(update={"marker_ids": list(dict.fromkeys(marker_ids))})
-        )
-    return rewritten
-
-
-def _markdown_diff(original: str, proposed: str) -> str:
-    return "\n".join(
-        difflib.unified_diff(
-            original.splitlines(),
-            proposed.splitlines(),
-            fromfile="当前版本",
-            tofile="建议版本",
-            lineterm="",
-        )
-    )

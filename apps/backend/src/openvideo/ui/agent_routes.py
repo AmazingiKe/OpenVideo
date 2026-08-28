@@ -4,12 +4,12 @@ import asyncio
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
-from openvideo.agent_service import (
+from openvideo.agent_registry import (
     AgentConflictError,
     AgentNotFoundError,
-    AgentService,
     AgentServiceError,
 )
+from openvideo.agent_service import AgentService
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentDefinitionAvailability,

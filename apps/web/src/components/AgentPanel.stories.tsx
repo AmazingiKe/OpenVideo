@@ -6,7 +6,7 @@ import {
   AgentReasoning,
   AgentRunBadge,
   AgentToolActivity,
-} from "./AgentPanel";
+} from "./AgentPanelContent";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import type { AgentArtifact, AgentEvent } from "@/shared/types";
 

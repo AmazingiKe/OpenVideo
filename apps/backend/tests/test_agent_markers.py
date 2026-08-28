@@ -1,10 +1,10 @@
 import pytest
 from pydantic import ValidationError
 
-from openvideo.agent_service import (
+from openvideo.agent_tooling import (
     MarkerChangeOperation,
     ProposedMarkerChangeInput,
-    _proposed_marker,
+    build_proposed_marker,
 )
 from openvideo.core.media_models import MediaMarker
 
@@ -36,15 +36,15 @@ def test_agent_create_update_and_merge_preserve_user_importance():
     low = marker("marker-0123456789abcdef0123456789abcdef", 2)
     high = marker("marker-1123456789abcdef0123456789abcdef", 5)
 
-    created = _proposed_marker(
+    created = build_proposed_marker(
         ASSET_ID, request(MarkerChangeOperation.CREATE, []), []
     )
-    updated = _proposed_marker(
+    updated = build_proposed_marker(
         ASSET_ID,
         request(MarkerChangeOperation.UPDATE, [low.marker_id]),
         [low],
     )
-    merged = _proposed_marker(
+    merged = build_proposed_marker(
         ASSET_ID,
         request(MarkerChangeOperation.MERGE, [low.marker_id, high.marker_id]),
         [low, high],

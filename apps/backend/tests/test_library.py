@@ -317,7 +317,10 @@ def test_business_file_survives_projection_update_failure(
     def fail_projection(*_args, **_kwargs):
         raise sqlite3.OperationalError("模拟索引写入失败")
 
-    monkeypatch.setattr("openvideo.core.library.synchronize_asset", fail_projection)
+    monkeypatch.setattr(
+        "openvideo.core.library_analysis_storage.synchronize_asset",
+        fail_projection,
+    )
     with pytest.raises(sqlite3.OperationalError, match="模拟索引写入失败"):
         library.save_segments(
             ASSET_ID,
