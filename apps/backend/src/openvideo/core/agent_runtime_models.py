@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -232,7 +233,9 @@ class AgentContextAttachment(BaseModel):
     @classmethod
     def validate_attachment_id(cls, value: str) -> str:
         if not is_prefixed_uuid7(value, "attachment-"):
-            raise ValueError("上下文附件标识必须使用 attachment- 前缀和 UUIDv7 十六进制")
+            raise ValueError(
+                "上下文附件标识必须使用 attachment- 前缀和 UUIDv7 十六进制"
+            )
         return value
 
     @field_validator("asset_id")
@@ -259,6 +262,9 @@ class AgentContextAttachment(BaseModel):
             return self
         if self.snapshot_text is None or self.content_digest is None:
             raise ValueError("文本选择附件必须保存文本快照与内容摘要")
+        snapshot_digest = hashlib.sha256(self.snapshot_text.encode("utf-8")).hexdigest()
+        if self.content_digest != snapshot_digest:
+            raise ValueError("文本选择附件的内容摘要与快照不一致")
         if self.start_seconds is not None or self.end_seconds is not None:
             raise ValueError("文本选择附件不能携带时间范围")
         if (self.selection_start is None) != (self.selection_end is None):

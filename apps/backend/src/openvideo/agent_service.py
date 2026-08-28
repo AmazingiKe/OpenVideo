@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import shutil
 from datetime import UTC, datetime
 from time import perf_counter
@@ -41,6 +43,7 @@ from openvideo.agent_tooling import (
     build_proposed_marker,
     markdown_diff,
     marker_digest,
+    ranges_intersect,
     rewrite_segment_references,
     transcript_digest,
     validate_marker_bounds,
@@ -49,6 +52,7 @@ from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentArtifactStatus,
     AgentCapability,
+    AgentContextAttachmentKind,
     AgentDefinition,
     AgentDefinitionAvailability,
     AgentEvent,
@@ -219,6 +223,11 @@ class AgentService:
             for run in self.library.load_agent_runs(session_id)
         ):
             raise AgentConflictError("当前会话已有正在运行的任务")
+        if "thinking_mode" not in request.model_fields_set:
+            request = request.model_copy(
+                update={"thinking_mode": self.settings.agent.default_thinking_mode}
+            )
+        request = self._resolve_context_attachments(request)
         routing_started_at = perf_counter()
         model_role = self._select_model_role(request)
         model_id = self._model_id_for_role(model_role) or request.ai_model_id
@@ -402,6 +411,62 @@ class AgentService:
             AgentModelRole.COMPLEX: self.settings.agent.complex_model_id,
             AgentModelRole.VISION: self.settings.agent.vision_model_id,
         }[role]
+
+    def _resolve_context_attachments(self, request: AgentRunCreate) -> AgentRunCreate:
+        resolved_attachments = []
+        for attachment in request.context_attachments:
+            asset = self.library.get(attachment.asset_id)
+            if asset is None:
+                raise AgentServiceError("上下文附件引用的媒体资源不存在")
+            if attachment.kind != AgentContextAttachmentKind.TIME_RANGE:
+                resolved_attachments.append(attachment)
+                continue
+            if (
+                asset.duration_seconds is not None
+                and attachment.end_seconds is not None
+                and attachment.end_seconds > asset.duration_seconds
+            ):
+                raise AgentServiceError("上下文附件的时间范围超出视频时长")
+            transcript = self.library.load_transcript(attachment.asset_id)
+            transcript_segments = [
+                segment.model_dump(mode="json")
+                for segment in (transcript.segments if transcript else [])
+                if ranges_intersect(
+                    segment.start_seconds,
+                    segment.end_seconds,
+                    attachment.start_seconds,
+                    attachment.end_seconds,
+                )
+            ]
+            analysis_segments = [
+                segment.model_dump(mode="json")
+                for segment in self.library.load_segments(attachment.asset_id)
+                if ranges_intersect(
+                    segment.start_seconds,
+                    segment.end_seconds,
+                    attachment.start_seconds,
+                    attachment.end_seconds,
+                )
+            ]
+            source_snapshot = json.dumps(
+                {
+                    "transcript": transcript_segments,
+                    "analysis": analysis_segments,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            content_digest = hashlib.sha256(source_snapshot.encode("utf-8")).hexdigest()
+            if (
+                attachment.content_digest is not None
+                and attachment.content_digest != content_digest
+            ):
+                raise AgentConflictError("时间范围附件引用的源内容已发生变化")
+            resolved_attachments.append(
+                attachment.model_copy(update={"content_digest": content_digest})
+            )
+        return request.model_copy(update={"context_attachments": resolved_attachments})
 
     def _process_run_artifacts(
         self, context: AgentRunContext, artifacts: list[AgentArtifact]

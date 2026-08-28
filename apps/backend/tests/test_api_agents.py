@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -202,7 +203,7 @@ def test_nonempty_chat_content_includes_task_session_and_selection_context():
         asset_id=ASSET_ID,
         label="总结选区",
         snapshot_text="透视投影",
-        content_digest="a" * 64,
+        content_digest=hashlib.sha256("透视投影".encode("utf-8")).hexdigest(),
         selection_start=3,
         selection_end=7,
     )
@@ -248,6 +249,39 @@ def test_summary_run_rejects_task_input_for_another_bound_document():
             session,
             {"document_id": "document-b", "version_id": "version-a"},
         )
+
+
+def test_time_range_attachment_derives_source_digest(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        request = AgentRunCreate(
+            request_key=f"request-{uuid7().hex}",
+            ai_model_id=MODEL_ID,
+            content="解释这个时间范围",
+            context_attachments=[
+                AgentContextAttachment(
+                    attachment_id=f"attachment-{uuid7().hex}",
+                    kind="time_range",
+                    asset_id=ASSET_ID,
+                    label="时间线 00:10–00:20",
+                    start_seconds=10,
+                    end_seconds=20,
+                )
+            ],
+        )
+
+        resolved = service._resolve_context_attachments(request)
+
+        stale_attachment = request.context_attachments[0].model_copy(
+            update={"content_digest": "a" * 64}
+        )
+        with pytest.raises(Exception, match="源内容已发生变化"):
+            service._resolve_context_attachments(
+                request.model_copy(update={"context_attachments": [stale_attachment]})
+            )
+
+    assert resolved.context_attachments[0].content_digest is not None
+    assert len(resolved.context_attachments[0].content_digest) == 64
 
 
 def test_evidence_citations_stay_unique_across_searches_and_invalid_keys_downgrade():

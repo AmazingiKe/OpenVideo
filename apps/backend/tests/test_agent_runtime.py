@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
 from typing import Any
 
@@ -235,9 +236,7 @@ async def test_runtime_persists_phase_metrics_without_raw_reasoning(monkeypatch)
     events = repository.events[run.session_id]
     serialized_events = [event.model_dump(mode="json") for event in events]
     assert "不应持久化的原始推理" not in str(serialized_events)
-    assert AgentEventType.REASONING_DELTA not in {
-        event.event_type for event in events
-    }
+    assert AgentEventType.REASONING_DELTA not in {event.event_type for event in events}
     phase_event = next(
         event
         for event in events
@@ -411,7 +410,7 @@ def test_context_attachments_enforce_snapshot_and_time_range_contracts():
         asset_id=asset_id,
         label="总结选区",
         snapshot_text="选中的总结内容",
-        content_digest="a" * 64,
+        content_digest=hashlib.sha256("选中的总结内容".encode("utf-8")).hexdigest(),
         selection_start=2,
         selection_end=10,
     )
@@ -444,4 +443,13 @@ def test_context_attachments_enforce_snapshot_and_time_range_contracts():
             asset_id=asset_id,
             label="无效字幕选区",
             snapshot_text="缺少摘要",
+        )
+    with pytest.raises(ValueError, match="摘要与快照不一致"):
+        AgentContextAttachment(
+            attachment_id=f"attachment-{uuid7().hex}",
+            kind="transcript_selection",
+            asset_id=asset_id,
+            label="摘要被篡改的字幕选区",
+            snapshot_text="字幕快照",
+            content_digest="a" * 64,
         )
