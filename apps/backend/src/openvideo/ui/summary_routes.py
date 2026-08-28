@@ -174,7 +174,9 @@ def register_summary_routes(
         request: SummaryMediaCreate,
     ) -> SummaryMediaCreateResponse:
         try:
-            artifact, document = await summary_manager().create_media(request)
+            artifact, document = await asyncio.to_thread(
+                summary_manager().create_media, request
+            )
             return SummaryMediaCreateResponse(artifact=artifact, document=document)
         except SummaryRevisionConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

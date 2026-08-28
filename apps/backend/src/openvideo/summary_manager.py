@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 import re
@@ -288,7 +287,7 @@ class SummaryManager:
             raise SummaryNotFoundError("总结文档不存在")
         self._document_path(document).unlink(missing_ok=True)
 
-    async def create_media(
+    def create_media(
         self, request: SummaryMediaCreate
     ) -> tuple[SummaryMediaArtifact, SummaryDocument]:
         document = self._require_document(request.document_id)
@@ -322,8 +321,7 @@ class SummaryManager:
         except ValueError as error:
             raise SummaryError(str(error)) from error
         try:
-            await asyncio.to_thread(
-                generate_summary_media,
+            generate_summary_media(
                 playback,
                 output_path,
                 request.media_type,

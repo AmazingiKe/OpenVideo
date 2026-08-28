@@ -19,7 +19,7 @@ from openvideo.core.agent_runtime_models import (
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import MediaMarker, MediaSegment
-from openvideo.core.summary_models import SummaryDocumentCreate
+from openvideo.core.summary_models import SummaryDocumentCreate, SummaryMediaType
 
 if TYPE_CHECKING:
     from openvideo.agent_service import AgentService
@@ -92,6 +92,30 @@ class ProposeSummaryEditInput(BaseModel):
     suggested_subdocuments: list[SummaryDocumentCreate] = Field(default_factory=list)
 
 
+class ProposeSummaryMediaInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    expected_revision: int = Field(ge=1)
+    media_type: SummaryMediaType
+    start_seconds: float = Field(ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+    insert_after: str = Field(min_length=1, max_length=2_000)
+    caption: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=2_000)
+    confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_media_range(self) -> "ProposeSummaryMediaInput":
+        if self.media_type == SummaryMediaType.IMAGE and self.end_seconds is not None:
+            raise ValueError("静态图片不能设置结束时间")
+        if self.media_type == SummaryMediaType.GIF and self.end_seconds is None:
+            raise ValueError("GIF 必须设置结束时间")
+        if self.end_seconds is not None and self.end_seconds <= self.start_seconds:
+            raise ValueError("结束时间必须晚于开始时间")
+        return self
+
+
 class CorrectTranscriptInput(BaseModel):
     segment_indices: list[int] | None = None
     execution_mode: str = Field(
@@ -104,6 +128,9 @@ class RunEvidenceState:
     markers_read: bool = False
     evidence_read: bool = False
     frames_inspected: bool = False
+    summary_read: bool = False
+    inspected_frame_times: list[float] = field(default_factory=list)
+    inspected_frame_ranges: list[tuple[float, float]] = field(default_factory=list)
 
 
 @dataclass

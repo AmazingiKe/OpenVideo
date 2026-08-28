@@ -1,8 +1,10 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from openvideo.core.agent_runtime_models import AgentRunCreate
+from openvideo.agent_tooling import ProposeSummaryMediaInput, RunEvidenceState
+from openvideo.core.agent_runtime_models import AgentArtifact, AgentRunCreate
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -11,6 +13,7 @@ from openvideo.core.media_models import (
     MediaAssetStatus,
     SourcePlatform,
 )
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.llm.agno_executor import AgnoAgentExecutor
 from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.llm.events import (
@@ -49,7 +52,8 @@ def create_client(tmp_path: Path) -> TestClient:
         model_id=MODEL_ID,
         name="工具模型",
         litellm_model="openai/test",
-        capabilities={"tools": "enabled"},
+        input_modalities=["text", "image"],
+        capabilities={"tools": "enabled", "vision": "enabled"},
     )
     resolver = CapabilityResolver(
         models_dev=ModelsDevCatalog(tmp_path / "config" / "models-dev.json"),
@@ -198,3 +202,134 @@ def test_marker_run_mode_separates_questions_from_change_proposals(tmp_path: Pat
         assert proposal_definition.allowed_tools == registered.definition.allowed_tools
         assert proposal_definition.required_tools == {"propose_marker_changes"}
         assert proposal_definition.requires_approval is True
+
+
+def test_summary_media_mode_requires_inspected_visual_toolchain(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        registered = service.registry.require("summary")
+        profile = service.capability_resolver.resolve(
+            service.settings.ai_model(MODEL_ID)
+        )
+
+        definition = registered.run_definition(
+            registered.definition,
+            AgentRunCreate(
+                request_key=f"request-{uuid7().hex}",
+                ai_model_id=MODEL_ID,
+                content="为核心概念选择关键画面",
+                task_input={"intent": "illustrate"},
+            ),
+            profile,
+        )
+
+        assert definition.allowed_tools == (
+            "search_evidence",
+            "inspect_frames",
+            "read_summary_document",
+            "propose_summary_media",
+        )
+        assert definition.required_capabilities == {"tools", "vision"}
+        assert definition.required_tools == {"propose_summary_media"}
+        assert definition.requires_approval is True
+        assert definition.result_type == "summary_media"
+
+
+def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
+    tmp_path: Path,
+    monkeypatch,
+):
+    with create_client(tmp_path) as client:
+        library = client.app.state.library
+        library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(
+                        start_seconds=0,
+                        end_seconds=20,
+                        text="这里展示透视投影示意图。",
+                    )
+                ],
+            )
+        )
+        document = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={
+                "detail": "standard",
+                "create_subdocuments": False,
+                "subdocument_mode": "chapters",
+            },
+        ).json()[0]
+        service = client.app.state.agent_service
+        created_artifact: AgentArtifact | None = None
+
+        def create_artifact(result_type: str, payload: dict) -> AgentArtifact:
+            nonlocal created_artifact
+            created_artifact = AgentArtifact(
+                artifact_id=f"artifact-{uuid7().hex}",
+                run_id=f"run-{uuid7().hex}",
+                session_id=f"session-{uuid7().hex}",
+                agent_id="summary",
+                asset_id=ASSET_ID,
+                result_type=result_type,
+                payload=payload,
+            )
+            return created_artifact
+
+        context = SimpleNamespace(
+            session=SimpleNamespace(asset_id=ASSET_ID),
+            evidence=RunEvidenceState(
+                evidence_read=True,
+                frames_inspected=True,
+                summary_read=True,
+                inspected_frame_times=[12.5],
+                inspected_frame_ranges=[(10, 15)],
+            ),
+            create_artifact=create_artifact,
+        )
+        rejected = service._propose_summary_media(
+            context,
+            ProposeSummaryMediaInput(
+                document_id=document["document_id"],
+                expected_revision=document["revision"],
+                media_type="image",
+                start_seconds=13,
+                insert_after="# 测试视频",
+                caption="未经确认的画面",
+                reason="该时间点没有对应候选帧。",
+                confidence=0.9,
+            ),
+        )
+        result = service._propose_summary_media(
+            context,
+            ProposeSummaryMediaInput(
+                document_id=document["document_id"],
+                expected_revision=document["revision"],
+                media_type="image",
+                start_seconds=12.5,
+                insert_after="# 测试视频",
+                caption="透视投影示意图",
+                reason="画面完整展示正文涉及的空间结构。",
+                confidence=0.9,
+            ),
+        )
+
+        assert rejected == {
+            "ok": False,
+            "error": "图片时间点必须来自已检查的候选画面",
+        }
+        assert result["ok"] is True
+        assert created_artifact is not None
+        requests = []
+        monkeypatch.setattr(
+            service.summary_documents,
+            "create_media",
+            lambda request: requests.append(request),
+        )
+
+        service._approve_summary_artifact(created_artifact)
+
+        assert len(requests) == 1
+        assert requests[0].start_seconds == 12.5
+        assert requests[0].caption == "透视投影示意图"

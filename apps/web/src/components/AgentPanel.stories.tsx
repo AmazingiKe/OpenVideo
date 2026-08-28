@@ -68,6 +68,38 @@ export const SummaryApproval: Story = {
   },
 };
 
+export const SummaryMediaApproval: Story = {
+  args: {
+    artifact: {
+      ...BASE_ARTIFACT,
+      agent_id: "summary",
+      result_type: "summary_media",
+      payload: {
+        media: {
+          document_id: "document-01890f4c7a2b7cc298c4dc0c0c07398f",
+          expected_revision: 2,
+          media_type: "image",
+          start_seconds: 126.8,
+          end_seconds: null,
+          insert_after: "透视投影会把三维点映射到二维平面。",
+          caption: "透视投影视锥体示意图",
+        },
+        reason: "该画面完整展示了正文提到的视锥体结构。",
+        confidence: 0.91,
+      },
+    },
+  },
+};
+
+export const SummaryMediaApprovalDark: Story = {
+  ...SummaryMediaApproval,
+  render: (args) => (
+    <div className="dark bg-background p-4 text-foreground">
+      <AgentArtifactCard {...args} />
+    </div>
+  ),
+};
+
 export const TranscriptApproval: Story = {
   args: {
     artifact: {

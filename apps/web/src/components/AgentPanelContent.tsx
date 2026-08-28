@@ -27,6 +27,7 @@ const TOOL_LABELS: Record<string, string> = {
   propose_marker_changes: "生成标记变更预览",
   read_summary_document: "读取总结文档",
   propose_summary_edit: "生成总结修改预览",
+  propose_summary_media: "生成图文增强预览",
   correct_transcript: "校对字幕",
 };
 
@@ -219,7 +220,7 @@ export function AgentArtifactCard({
   return (
     <Card aria-label="Agent 审批结果">
       <CardHeader>
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <CardTitle>变更预览</CardTitle>
             <CardDescription>
@@ -256,7 +257,7 @@ export function AgentArtifactCard({
         ) : null}
       </CardContent>
       {pending ? (
-        <CardFooter className="justify-end gap-2">
+        <CardFooter className="flex-wrap justify-end gap-2">
           <Button variant="outline" onClick={() => on_resolve("reject")}>
             整批拒绝
           </Button>
@@ -274,6 +275,50 @@ function ArtifactPayload({
   artifact: AgentArtifact;
   on_seek?: (seconds: number) => void;
 }) {
+  const media =
+    typeof artifact.payload.media === "object" &&
+    artifact.payload.media !== null
+      ? (artifact.payload.media as Record<string, unknown>)
+      : null;
+  if (artifact.result_type === "summary_media" && media) {
+    const start = Number(media.start_seconds ?? Number.NaN);
+    const end = Number(media.end_seconds ?? Number.NaN);
+    const confidence = Number(artifact.payload.confidence ?? Number.NaN);
+    return (
+      <div className="flex flex-col gap-3 rounded-md border p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">
+            {media.media_type === "gif" ? "GIF" : "图片"}
+          </Badge>
+          <p className="text-sm font-medium">
+            {String(media.caption ?? "关键画面")}
+          </p>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {String(artifact.payload.reason ?? "该画面有助于理解正文。")}
+        </p>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span>
+            时间：{Number.isFinite(start) ? format_time(start) : "未知"}
+            {Number.isFinite(end) ? `–${format_time(end)}` : ""}
+          </span>
+          {Number.isFinite(confidence) ? (
+            <span>置信度：{Math.round(confidence * 100)}%</span>
+          ) : null}
+        </div>
+        {Number.isFinite(start) && on_seek ? (
+          <Button
+            type="button"
+            variant="link"
+            className="w-fit px-0"
+            onClick={() => on_seek(start)}
+          >
+            跳转检查画面
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
   const changes = Array.isArray(artifact.payload.changes)
     ? (artifact.payload.changes as Record<string, unknown>[])
     : [];
@@ -344,6 +389,7 @@ function artifact_description(result_type: string): string {
     {
       marker_changes: "标记操作将作为一个原子批次提交。",
       summary_edit: "总结正文与子文档建议将在确认后提交。",
+      summary_media: "确认后会从原视频生成媒体并插入当前文档。",
       transcript_correction: "字幕文字会更新，时间边界保持不变。",
     }[result_type] ?? "确认后才会修改业务数据。"
   );

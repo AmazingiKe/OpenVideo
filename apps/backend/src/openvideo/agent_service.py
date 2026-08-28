@@ -32,6 +32,7 @@ from openvideo.agent_tooling import (
     MarkerChangeOperation,
     ProposeMarkerChangesInput,
     ProposeSummaryEditInput,
+    ProposeSummaryMediaInput,
     ReadMarkersInput,
     ReadSummaryDocumentInput,
     build_proposed_marker,
@@ -66,9 +67,13 @@ from openvideo.core.media_models import MediaMarker
 from openvideo.core.summary_models import (
     SummaryDocumentCreate,
     SummaryDocumentUpdate,
+    SummaryMediaCreate,
+    SummaryMediaType,
 )
+from openvideo.summary_manager import SummaryError, SummaryRevisionConflictError
 from openvideo.settings import Settings
 from openvideo.tools.frames import extract_frames
+from openvideo.tools.summary_media import GIF_MAX_DURATION_SECONDS
 from openvideo.tools.transcript_correction import LiteLlmTranscriptCorrector
 from openvideo.tools.vision import LiteLlmVision
 from openvideo.llm.agno_executor import AgnoAgentExecutor
@@ -81,15 +86,26 @@ SUMMARY_AGENT_ID = "summary"
 TRANSCRIPT_CORRECTION_AGENT_ID = "transcript_correction"
 MARKER_ARTIFACT_TYPE = "marker_changes"
 SUMMARY_ARTIFACT_TYPE = "summary_edit"
+SUMMARY_MEDIA_ARTIFACT_TYPE = "summary_media"
 TRANSCRIPT_ARTIFACT_TYPE = "transcript_correction"
 SESSION_TITLE_LENGTH = 60
 AGENT_RUN_INTENT_KEY = "intent"
 AGENT_RUN_EDIT_INTENT = "edit"
+SUMMARY_RUN_ILLUSTRATE_INTENT = "illustrate"
 MARKER_EVIDENCE_TOOL_NAMES = frozenset({"search_evidence", "inspect_frames"})
-
-
-
-
+SUMMARY_EDIT_TOOL_NAMES = frozenset(
+    {"search_evidence", "read_summary_document", "propose_summary_edit"}
+)
+SUMMARY_MEDIA_TOOL_NAMES = frozenset(
+    {
+        "search_evidence",
+        "inspect_frames",
+        "read_summary_document",
+        "propose_summary_media",
+    }
+)
+SUMMARY_IMAGE_SELECTION_TOLERANCE_SECONDS = 0.25
+SUMMARY_MEDIA_MIN_CONFIDENCE = 0.75
 
 
 class SummaryDocumentService(Protocol):
@@ -101,11 +117,7 @@ class SummaryDocumentService(Protocol):
         self, root_document_id: str, request: SummaryDocumentCreate
     ) -> Any: ...
 
-
-
-
-
-
+    def create_media(self, request: SummaryMediaCreate) -> Any: ...
 
 
 class AgentService:
@@ -373,12 +385,24 @@ class AgentService:
             tools=[
                 AgentToolDescriptor(name="search_evidence", description="搜索视频证据"),
                 AgentToolDescriptor(
+                    name="inspect_frames", description="检查指定时间范围画面"
+                ),
+                AgentToolDescriptor(
                     name="read_summary_document", description="读取总结文档"
                 ),
                 AgentToolDescriptor(
                     name="propose_summary_edit",
                     description="生成总结修改审批预览",
                     prerequisites=["read_summary_document"],
+                ),
+                AgentToolDescriptor(
+                    name="propose_summary_media",
+                    description="生成总结图片或 GIF 插入预览",
+                    prerequisites=[
+                        "read_summary_document",
+                        "search_evidence",
+                        "inspect_frames",
+                    ],
                 ),
             ],
             result_type=SUMMARY_ARTIFACT_TYPE,
@@ -415,7 +439,7 @@ class AgentService:
             RegisteredAgent(
                 summary,
                 self._summary_tools,
-                self._approve_summary_edit,
+                self._approve_summary_artifact,
                 self._validate_summary_session,
                 self._summary_run_definition,
             ),
@@ -444,13 +468,46 @@ class AgentService:
         request: AgentRunCreate,
         profile: ModelProfile,
     ) -> AgentDefinition:
-        edit_intent = (
-            request.task_input.get(AGENT_RUN_INTENT_KEY) == AGENT_RUN_EDIT_INTENT
-        )
-        if edit_intent:
+        intent = request.task_input.get(AGENT_RUN_INTENT_KEY)
+        if intent == SUMMARY_RUN_ILLUSTRATE_INTENT:
+            media_tools = [
+                tool
+                for tool in definition.tools
+                if tool.name in SUMMARY_MEDIA_TOOL_NAMES
+            ]
+            return definition.model_copy(
+                update={
+                    "prompt": (
+                        "你是 OpenVideo 总结图文增强 Agent。当前运行只选择一个最有助于理解正文的"
+                        "视频画面或短 GIF，并生成待审批预览。先读取当前文档，再检索与目标段落"
+                        "对应的带时间戳证据。必须调用 inspect_frames 检查候选画面；范围较大或"
+                        "候选不明确时，再对最佳候选附近缩小范围检查。静态公式、图表、代码、"
+                        "板书和界面结果使用图片；只有动作顺序或状态变化必须连续展示时才使用"
+                        " 3 至 6 秒 GIF。图片时间点必须直接采用 inspect_frames 返回的候选时间。"
+                        "插入锚点必须是文档中唯一存在的原文。置信度不足 0.75、画面重复、仅有"
+                        "讲师头像或不能增加信息时，不得编造建议。确定选择后调用"
+                        " propose_summary_media，成功前不得声称媒体已经插入。"
+                    ),
+                    "required_capabilities": {
+                        AgentCapability.TOOLS,
+                        AgentCapability.VISION,
+                    },
+                    "tools": media_tools,
+                    "required_tools": {"propose_summary_media"},
+                    "requires_approval": True,
+                    "result_type": SUMMARY_MEDIA_ARTIFACT_TYPE,
+                }
+            )
+        if intent == AGENT_RUN_EDIT_INTENT:
+            edit_tools = [
+                tool
+                for tool in definition.tools
+                if tool.name in SUMMARY_EDIT_TOOL_NAMES
+            ]
             return definition.model_copy(
                 update={
                     "required_capabilities": {AgentCapability.TOOLS},
+                    "tools": edit_tools,
                     "required_tools": {"propose_summary_edit"},
                     "requires_approval": True,
                 }
@@ -563,6 +620,19 @@ class AgentService:
                     lambda parameters: self._search_evidence(context, parameters),
                 )
             )
+        if "inspect_frames" in definition.allowed_tools:
+            registry.register(
+                AgentTool(
+                    "inspect_frames",
+                    "抽取指定时间范围的编号候选画面并回答选帧问题。",
+                    InspectFramesInput,
+                    lambda parameters: self._inspect_frames(context, parameters),
+                    prerequisite=lambda: (
+                        context.evidence.evidence_read,
+                        "检查画面前必须先搜索转录或已有分析",
+                    ),
+                )
+            )
         if "read_summary_document" in definition.allowed_tools:
             registry.register(
                 AgentTool(
@@ -579,6 +649,23 @@ class AgentService:
                     "创建总结文档修改预览。",
                     ProposeSummaryEditInput,
                     lambda parameters: self._propose_summary_edit(context, parameters),
+                )
+            )
+        if "propose_summary_media" in definition.allowed_tools:
+            registry.register(
+                AgentTool(
+                    "propose_summary_media",
+                    "创建一个经过画面检查的图片或 GIF 插入预览。",
+                    ProposeSummaryMediaInput,
+                    lambda parameters: self._propose_summary_media(
+                        context, parameters
+                    ),
+                    prerequisite=lambda: (
+                        context.evidence.summary_read
+                        and context.evidence.evidence_read
+                        and context.evidence.frames_inspected,
+                        "生成媒体建议前必须读取文档、检索证据并检查候选画面",
+                    ),
                 )
             )
         return registry
@@ -676,6 +763,13 @@ class AgentService:
         result = await asyncio.to_thread(self._inspect_frames_sync, context, parameters)
         if result.get("ok") is True:
             context.evidence.frames_inspected = True
+            context.evidence.inspected_frame_ranges.append(
+                (parameters.start_seconds, parameters.end_seconds)
+            )
+            context.evidence.inspected_frame_times.extend(
+                float(candidate["time_seconds"])
+                for candidate in result.get("candidates", [])
+            )
         return result
 
     def _inspect_frames_sync(
@@ -698,6 +792,19 @@ class AgentService:
             parameters.start_seconds + duration * (index + 0.5) / frame_count
             for index in range(frame_count)
         ]
+        candidates = [
+            {"candidate_index": index, "time_seconds": round(point, 3)}
+            for index, point in enumerate(points, start=1)
+        ]
+        candidate_guide = "\n".join(
+            f"候选画面 {candidate['candidate_index']}："
+            f"{candidate['time_seconds']:.3f} 秒"
+            for candidate in candidates
+        )
+        selection_question = (
+            f"{parameters.question}\n\n{candidate_guide}\n"
+            "回答时必须使用上述候选编号和对应的准确秒数；不要自行猜测未提供的时间点。"
+        )
         temporary_directory = self.library.temporary_directory(
             f"agent-frame-{uuid7().hex}"
         )
@@ -710,11 +817,11 @@ class AgentService:
                 self.settings.ffmpeg_bin_dir,
             )
             description = LiteLlmVision(context.model).describe(
-                frames, parameters.question
+                frames, selection_question
             )
         finally:
             shutil.rmtree(temporary_directory, ignore_errors=True)
-        return {"ok": True, "description": description, "time_points": points}
+        return {"ok": True, "description": description, "candidates": candidates}
 
     def _propose_marker_changes(
         self, context: AgentRunContext, parameters: ProposeMarkerChangesInput
@@ -776,7 +883,7 @@ class AgentService:
         document = self.library.load_summary_document(parameters.document_id)
         if document is None or document.asset_id != context.session.asset_id:
             return {"ok": False, "error": "文档不存在或不属于当前视频"}
-        context.evidence.evidence_read = True
+        context.evidence.summary_read = True
         return {"ok": True, "document": document.model_dump(mode="json")}
 
     def _propose_summary_edit(
@@ -810,6 +917,83 @@ class AgentService:
                     item.model_dump(mode="json")
                     for item in parameters.suggested_subdocuments
                 ],
+            },
+        )
+        return {"ok": True, "artifact": artifact.model_dump(mode="json")}
+
+    def _propose_summary_media(
+        self, context: AgentRunContext, parameters: ProposeSummaryMediaInput
+    ) -> dict[str, Any]:
+        document = self.library.load_summary_document(parameters.document_id)
+        if document is None or document.asset_id != context.session.asset_id:
+            return {"ok": False, "error": "文档不存在或不属于当前视频"}
+        if document.revision != parameters.expected_revision:
+            return {
+                "ok": False,
+                "error_code": "revision_conflict",
+                "error": "文档版本冲突",
+                "current_revision": document.revision,
+            }
+        if parameters.confidence < SUMMARY_MEDIA_MIN_CONFIDENCE:
+            return {"ok": False, "error": "候选画面的选择置信度不足"}
+        if document.markdown.count(parameters.insert_after) != 1:
+            return {"ok": False, "error": "插入锚点必须在文档中唯一存在"}
+
+        selected_end = parameters.end_seconds or parameters.start_seconds
+        inspected_range = any(
+            range_start <= parameters.start_seconds
+            and selected_end <= range_end
+            for range_start, range_end in context.evidence.inspected_frame_ranges
+        )
+        if not inspected_range:
+            return {"ok": False, "error": "媒体时间范围尚未经过画面检查"}
+        if parameters.media_type == SummaryMediaType.IMAGE and not any(
+            abs(time_seconds - parameters.start_seconds)
+            <= SUMMARY_IMAGE_SELECTION_TOLERANCE_SECONDS
+            for time_seconds in context.evidence.inspected_frame_times
+        ):
+            return {"ok": False, "error": "图片时间点必须来自已检查的候选画面"}
+        if (
+            parameters.end_seconds is not None
+            and parameters.end_seconds - parameters.start_seconds
+            > GIF_MAX_DURATION_SECONDS
+        ):
+            return {
+                "ok": False,
+                "error": f"GIF 时长不能超过 {GIF_MAX_DURATION_SECONDS:g} 秒",
+            }
+
+        asset = self.library.get(document.asset_id)
+        if asset is None or (
+            asset.duration_seconds is not None
+            and selected_end > asset.duration_seconds
+        ):
+            return {"ok": False, "error": "媒体时间范围超出视频时长"}
+        duplicate = any(
+            artifact.document_id == document.document_id
+            and abs(artifact.start_seconds - parameters.start_seconds) < 1
+            for artifact in self.library.load_summary_media(document.asset_id)
+        )
+        if duplicate:
+            return {"ok": False, "error": "该时间点附近已经存在总结媒体"}
+
+        media = SummaryMediaCreate(
+            document_id=document.document_id,
+            expected_revision=document.revision,
+            media_type=parameters.media_type,
+            start_seconds=parameters.start_seconds,
+            end_seconds=parameters.end_seconds,
+            insert_after=parameters.insert_after,
+            caption=parameters.caption,
+        )
+        artifact = context.create_artifact(
+            SUMMARY_MEDIA_ARTIFACT_TYPE,
+            {
+                "document_id": document.document_id,
+                "base_revision": document.revision,
+                "media": media.model_dump(mode="json"),
+                "reason": parameters.reason,
+                "confidence": parameters.confidence,
             },
         )
         return {"ok": True, "artifact": artifact.model_dump(mode="json")}
@@ -890,11 +1074,23 @@ class AgentService:
         resolved = sorted(markers_by_id.values(), key=lambda item: item.start_seconds)
         self.library.replace_markers_and_segments(artifact.asset_id, resolved, segments)
 
-    def _approve_summary_edit(self, artifact: AgentArtifact) -> None:
+    def _approve_summary_artifact(self, artifact: AgentArtifact) -> None:
         payload = artifact.payload
         document = self.library.load_summary_document(payload["document_id"])
         if document is None or document.revision != payload["base_revision"]:
             raise AgentConflictError("总结文档已发生变化，建议已过期")
+        if artifact.result_type == SUMMARY_MEDIA_ARTIFACT_TYPE:
+            try:
+                self.summary_documents.create_media(
+                    SummaryMediaCreate.model_validate(payload["media"])
+                )
+            except SummaryRevisionConflictError as error:
+                raise AgentConflictError("总结文档已发生变化，建议已过期") from error
+            except SummaryError as error:
+                raise AgentServiceError(str(error)) from error
+            return
+        if artifact.result_type != SUMMARY_ARTIFACT_TYPE:
+            raise AgentConflictError("总结审批结果类型无效")
         updated = self.summary_documents.update_document(
             document.document_id,
             SummaryDocumentUpdate(

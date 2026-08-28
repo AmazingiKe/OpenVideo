@@ -149,6 +149,13 @@ export function SummaryEditorLayout({
           task_input: { intent: "edit" },
           required_capabilities: ["tools"],
         },
+        {
+          value: "illustrate",
+          label: "图文增强",
+          description: "检查视频候选画面，生成一项图片或 GIF 插入预览。",
+          task_input: { intent: "illustrate" },
+          required_capabilities: ["tools", "vision"],
+        },
       ]}
       on_artifact_change={on_artifact_change}
     />

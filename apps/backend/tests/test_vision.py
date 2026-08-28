@@ -39,6 +39,9 @@ def test_describe_returns_content(tmp_path: Path, monkeypatch):
     assert captured["api_base"] == "https://api.example.com/v1"
     assert captured["model"] == "openai/gpt-5.6-terra"
     assert captured["api_key"] == "secret"
+    content = captured["messages"][0]["content"]
+    assert content[1] == {"type": "text", "text": "候选画面 1"}
+    assert content[2]["type"] == "image_url"
 
 
 def test_describe_requires_existing_frame(tmp_path: Path):

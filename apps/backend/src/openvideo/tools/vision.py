@@ -33,10 +33,17 @@ class LiteLlmVision:
     def describe(self, image_paths: list[Path], prompt: str) -> str:
         if not image_paths:
             raise VisionDescriptionError("至少需要一张关键帧")
-        image_messages = [
-            {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}}
-            for image_path in image_paths
-        ]
+        image_messages: list[dict[str, object]] = []
+        for index, image_path in enumerate(image_paths, start=1):
+            image_messages.extend(
+                (
+                    {"type": "text", "text": f"候选画面 {index}"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": _image_data_url(image_path)},
+                    },
+                )
+            )
         messages: list[dict[str, object]] = [
             {
                 "role": "user",
