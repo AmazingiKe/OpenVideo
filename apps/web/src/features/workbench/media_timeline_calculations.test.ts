@@ -17,7 +17,9 @@ import {
   create_timeline_render_window,
   extend_timeline_render_window,
   filter_timeline_rows_for_window,
+  hit_test_timeline_marquee,
   normalize_wheel_delta,
+  normalize_timeline_marquee_rectangle,
   round_marker_time,
   timeline_content_duration,
   type MediaTimelineAction,
@@ -127,6 +129,101 @@ describe("media timeline calculations", () => {
     });
     expect(filtered[0]?.actions).toHaveLength(1);
     expect(filtered[1]?.actions.map((action) => action.id)).toEqual(["inside"]);
+  });
+
+  it("normalizes reverse marquee drags and includes touching action edges", () => {
+    const rectangle = normalize_timeline_marquee_rectangle(
+      { x: 136, y: 80 },
+      { x: 116, y: 32 },
+    );
+    const rows: TimelineRow[] = [
+      {
+        id: TIMELINE_TRACK_IDS.marker,
+        rowHeight: 48,
+        actions: [
+          {
+            id: "edge-touching-action",
+            start: 10,
+            end: 12,
+            effectId: "marker",
+            data: { kind: "marker", label: "edge" },
+          } as MediaTimelineAction,
+        ],
+      },
+    ];
+
+    expect(rectangle).toEqual({
+      left: 116,
+      right: 136,
+      top: 32,
+      bottom: 80,
+      width: 20,
+      height: 48,
+    });
+    expect(
+      hit_test_timeline_marquee({
+        rectangle,
+        rows,
+        viewport: {
+          zoom_pixels_per_second: 10,
+          scroll_left: 0,
+          scroll_top: 0,
+        },
+      }).map((action) => action.id),
+    ).toEqual(["edge-touching-action"]);
+  });
+
+  it("hits actions across tracks with horizontal and vertical scroll offsets", () => {
+    const rows: TimelineRow[] = [
+      {
+        id: TIMELINE_TRACK_IDS.marker,
+        rowHeight: 48,
+        actions: [
+          {
+            id: "scrolled-marker",
+            start: 10,
+            end: 12,
+            effectId: "marker",
+            data: { kind: "marker", label: "marker" },
+          } as MediaTimelineAction,
+        ],
+      },
+      {
+        id: TIMELINE_TRACK_IDS.transcript,
+        rowHeight: 48,
+        actions: [
+          {
+            id: "scrolled-transcript",
+            start: 11,
+            end: 13,
+            effectId: "transcript",
+            data: { kind: "transcript", label: "transcript" },
+          } as MediaTimelineAction,
+        ],
+      },
+    ];
+
+    const matches = hit_test_timeline_marquee({
+      rectangle: {
+        left: 116,
+        right: 176,
+        top: 22,
+        bottom: 118,
+        width: 60,
+        height: 96,
+      },
+      rows,
+      viewport: {
+        zoom_pixels_per_second: 20,
+        scroll_left: 100,
+        scroll_top: 10,
+      },
+    });
+
+    expect(matches.map((action) => action.id)).toEqual([
+      "scrolled-marker",
+      "scrolled-transcript",
+    ]);
   });
 
   it("builds bounded rows for point markers and source content", () => {

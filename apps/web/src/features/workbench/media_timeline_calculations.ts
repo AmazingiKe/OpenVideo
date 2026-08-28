@@ -26,6 +26,7 @@ const MAXIMUM_WHEEL_FRAME_FACTOR = 1.25;
 const WHEEL_ZOOM_EPSILON = 1e-9;
 export const TIMELINE_START_LEFT = 16;
 export const TIMELINE_ROW_HEIGHT = 48;
+export const TIMELINE_RULER_HEIGHT = 32;
 const RENDER_WINDOW_BUFFER_VIEWPORTS = 0.5;
 const RENDER_WINDOW_COVERAGE_MARGIN_VIEWPORTS = 0.1;
 const RENDER_WINDOW_MOVEMENT_THRESHOLD_VIEWPORTS = 0.25;
@@ -86,6 +87,83 @@ export type TimelineRenderWindow = {
   start_seconds: number;
   end_seconds: number;
 };
+
+export type TimelineMarqueePoint = {
+  x: number;
+  y: number;
+};
+
+export type TimelineMarqueeRectangle = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+export function normalize_timeline_marquee_rectangle(
+  anchor: TimelineMarqueePoint,
+  current: TimelineMarqueePoint,
+): TimelineMarqueeRectangle {
+  const left = Math.min(anchor.x, current.x);
+  const right = Math.max(anchor.x, current.x);
+  const top = Math.min(anchor.y, current.y);
+  const bottom = Math.max(anchor.y, current.y);
+  return {
+    left,
+    right,
+    top,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+export function timeline_marquee_exceeds_drag_threshold(
+  rectangle: TimelineMarqueeRectangle,
+  threshold: number,
+): boolean {
+  return rectangle.width >= threshold || rectangle.height >= threshold;
+}
+
+export function hit_test_timeline_marquee({
+  rectangle,
+  rows,
+  viewport,
+}: {
+  rectangle: TimelineMarqueeRectangle;
+  rows: TimelineRow[];
+  viewport: TimelineViewportState;
+}): MediaTimelineAction[] {
+  const matches: MediaTimelineAction[] = [];
+  let row_top = TIMELINE_RULER_HEIGHT - viewport.scroll_top;
+
+  for (const row of rows) {
+    const row_height = row.rowHeight ?? TIMELINE_ROW_HEIGHT;
+    const row_bottom = row_top + row_height;
+    const intersects_row =
+      row_top <= rectangle.bottom && row_bottom >= rectangle.top;
+    if (intersects_row) {
+      for (const action of row.actions as MediaTimelineAction[]) {
+        const action_left =
+          TIMELINE_START_LEFT +
+          action.start * viewport.zoom_pixels_per_second -
+          viewport.scroll_left;
+        const action_right =
+          TIMELINE_START_LEFT +
+          action.end * viewport.zoom_pixels_per_second -
+          viewport.scroll_left;
+        const intersects_time =
+          action_left <= rectangle.right && action_right >= rectangle.left;
+        if (intersects_time) matches.push(action);
+      }
+    }
+    row_top = row_bottom;
+  }
+
+  return matches;
+}
 
 export function calculate_zoom_viewport({
   viewport,
@@ -405,6 +483,7 @@ export function build_timeline_rows({
   selected_marker_id,
   selected_marker_ids,
   selected_transcript_indices,
+  selected_read_only_action_ids,
   focus_selection = null,
   event_analyses = [],
 }: {
@@ -417,6 +496,7 @@ export function build_timeline_rows({
   selected_marker_id: string | null;
   selected_marker_ids?: Set<string>;
   selected_transcript_indices?: ReadonlySet<number>;
+  selected_read_only_action_ids?: ReadonlySet<string>;
   focus_selection?: FocusSelection | null;
   event_analyses?: EventAnalysis[];
 }): TimelineRow[] {
@@ -447,6 +527,9 @@ export function build_timeline_rows({
               marker.end_seconds ??
               marker.start_seconds + MINIMUM_ACTION_DURATION_SECONDS,
             duration,
+            selected: selected_read_only_action_ids?.has(
+              `candidate-${marker.marker_id}`,
+            ),
             movable: false,
             flexible: false,
             data: {
@@ -489,6 +572,9 @@ export function build_timeline_rows({
           start: segment.start_seconds,
           end: segment.end_seconds,
           duration,
+          selected: selected_read_only_action_ids?.has(
+            `event-${segment.segment_id}`,
+          ),
           movable: false,
           flexible: false,
           data: {
@@ -505,17 +591,28 @@ export function build_timeline_rows({
             id: TIMELINE_TRACK_IDS.focus,
             rowHeight: TIMELINE_ROW_HEIGHT,
             classNames: ["timeline_row_focus"],
-            actions: create_focus_actions(focus_selection, duration),
+            actions: create_focus_actions(
+              focus_selection,
+              duration,
+              selected_read_only_action_ids,
+            ),
           },
         ]
       : []),
-    ...event_analysis_rows,
+    ...event_analysis_rows.map((row) => ({
+      ...row,
+      actions: row.actions.map((action) => ({
+        ...action,
+        selected: selected_read_only_action_ids?.has(action.id) ?? false,
+      })),
+    })),
   ];
 }
 
 function create_focus_actions(
   selection: FocusSelection,
   duration: number,
+  selected_action_ids?: ReadonlySet<string>,
 ): MediaTimelineAction[] {
   if (selection.in_seconds !== null && selection.out_seconds !== null) {
     return [
@@ -524,6 +621,7 @@ function create_focus_actions(
         start: selection.in_seconds,
         end: selection.out_seconds,
         duration,
+        selected: selected_action_ids?.has(selection.selection_id),
         movable: false,
         flexible: false,
         data: {
@@ -545,6 +643,7 @@ function create_focus_actions(
         start: seconds,
         end: seconds + MINIMUM_ACTION_DURATION_SECONDS,
         duration,
+        selected: selected_action_ids?.has(`${selection.selection_id}-${name}`),
         movable: false,
         flexible: false,
         data: {
@@ -596,9 +695,9 @@ function build_event_analysis_rows(
     id: `${TIMELINE_TRACK_IDS.event_analysis_prefix}-${lane_index}`,
     rowHeight: TIMELINE_ROW_HEIGHT,
     classNames: ["timeline_row_event_analyses"],
-    actions: lane.map((group, group_index) =>
+    actions: lane.map((group) =>
       create_timeline_action({
-        id: `event-analysis-${lane_index}-${group_index}`,
+        id: `event-analysis-${group.ids.join("+")}`,
         start: group.start,
         end: group.end,
         duration,

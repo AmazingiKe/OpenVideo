@@ -179,6 +179,12 @@
   --timeline-color-event-border: #6687a3;
   --timeline-color-candidate-background: #3b351b;
   --timeline-color-selection-border: #64b5ff;
+  --timeline-color-marquee-border: var(--timeline-color-selection-border);
+  --timeline-color-marquee-background: color-mix(
+    in srgb,
+    var(--timeline-color-accent) 18%,
+    transparent
+  );
   --timeline-color-grid: #f5f5f714;
   --timeline-ruler-height: 32px;
   --timeline-ruler-font: 500 10px ui-monospace, SFMono-Regular, Menlo, Consolas,
@@ -960,6 +966,15 @@
 
 .media_timeline_playhead[data-visible="false"] {
   opacity: 0;
+}
+
+.media_timeline_marquee {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+  border: 1px solid var(--timeline-color-marquee-border);
+  background: var(--timeline-color-marquee-background);
+  pointer-events: none;
 }
 
 .media_timeline .timeline-editor-edit-area .ReactVirtualized__Grid {

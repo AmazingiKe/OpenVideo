@@ -39,6 +39,7 @@ type MockTimelineAction =
       marker_shape?: "point" | "range";
       marker_anchor_seconds?: number;
       rendered_start_seconds?: number;
+      event_analysis_ids?: string[];
     };
   };
 
@@ -348,6 +349,83 @@ function render_timeline(options?: {
   };
 }
 
+function timeline_event_analysis(start_seconds = 8): EventAnalysis {
+  return {
+    event_analysis_id: "event-analysis-0198d12345677890abcdef1234567890",
+    asset_id: ASSET_ID,
+    target: {
+      source: "marker",
+      marker_id: POINT_MARKER.marker_id,
+      start_seconds,
+      end_seconds: start_seconds + 3,
+    },
+    title: "关键步骤",
+    conclusion: "这是一次事件分析。",
+    key_points: [],
+    evidence: [],
+    preset_id: "course_notes",
+    preset_version: 1,
+    depth: "balanced",
+    user_input: null,
+    ai_model_id: "model-0198d12345677890abcdef1234567890",
+    source_summary: {
+      transcript_digest: "transcript",
+      target_digest: "target",
+      timeline_digest: "timeline",
+    },
+    status: "valid",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+function install_timeline_bounds(width = 2_000, height = 320) {
+  const timeline_canvas = screen.getByLabelText(/时间线画布/);
+  vi.spyOn(timeline_canvas, "getBoundingClientRect").mockReturnValue({
+    x: 100,
+    y: 50,
+    left: 100,
+    top: 50,
+    right: 100 + width,
+    bottom: 50 + height,
+    width,
+    height,
+    toJSON: () => undefined,
+  });
+  return timeline_canvas;
+}
+
+function drag_timeline_marquee({
+  from,
+  to,
+  ctrl_key = false,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  ctrl_key?: boolean;
+}) {
+  const timeline_canvas = install_timeline_bounds();
+  fireEvent.pointerDown(timeline_canvas, {
+    button: 0,
+    pointerId: 7,
+    clientX: 100 + from.x,
+    clientY: 50 + from.y,
+    ctrlKey: ctrl_key,
+  });
+  fireEvent.pointerMove(window, {
+    pointerId: 7,
+    clientX: 100 + to.x,
+    clientY: 50 + to.y,
+    ctrlKey: ctrl_key,
+  });
+  fireEvent.pointerUp(window, {
+    pointerId: 7,
+    clientX: 100 + to.x,
+    clientY: 50 + to.y,
+    ctrlKey: ctrl_key,
+  });
+}
+
 describe("MediaTimeline", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -422,6 +500,175 @@ describe("MediaTimeline", () => {
     expect(added_grid).not.toHaveAttribute("aria-readonly");
     expect(added_row).not.toHaveAttribute("role");
     expect(host_query).not.toHaveBeenCalled();
+  });
+
+  it("marquee-selects all six visible clip kinds without opening read-only details", () => {
+    const { change_selected_marker_ids, change_selected_transcript_indices } =
+      render_timeline({
+        candidate_markers: [
+          {
+            ...CANDIDATE_MARKER,
+            start_seconds: 10,
+            end_seconds: 11,
+          },
+        ],
+        focus_selection: {
+          selection_id: "focus-selection-0198d12345677890abcdef1234567890",
+          asset_id: ASSET_ID,
+          in_seconds: 6,
+          out_seconds: 10,
+          revision: 1,
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+        event_analyses: [timeline_event_analysis()],
+      });
+
+    drag_timeline_marquee({
+      from: { x: 0, y: 33 },
+      to: { x: 1_800, y: 272 },
+    });
+
+    expect(change_selected_marker_ids).toHaveBeenLastCalledWith(
+      new Set([POINT_MARKER.marker_id]),
+    );
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([0]);
+    for (const name of [
+      /点标记/,
+      /待审批/,
+      /转写：原始转写/,
+      /全片分析：矩阵推导/,
+      /焦点选区：In \/ Out 焦点选区/,
+      /事件分析：关键步骤/,
+    ]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    }
+    expect(
+      screen.queryByRole("dialog", { name: "事件分析结果" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("已框选 6 个片段")).toBeInTheDocument();
+  });
+
+  it("replaces selection with a normal marquee and toggles hits with Ctrl", () => {
+    render_timeline({
+      candidate_markers: [
+        { ...CANDIDATE_MARKER, start_seconds: 10, end_seconds: 11 },
+      ],
+    });
+    drag_timeline_marquee({
+      from: { x: 0, y: 33 },
+      to: { x: 1_800, y: 176 },
+    });
+
+    drag_timeline_marquee({
+      from: { x: 416, y: 81 },
+      to: { x: 656, y: 127 },
+      ctrl_key: true,
+    });
+    expect(
+      screen.getByRole("button", { name: /转写：原始转写/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /点标记/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: /待审批/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    drag_timeline_marquee({
+      from: { x: 416, y: 81 },
+      to: { x: 656, y: 127 },
+    });
+    expect(
+      screen.getByRole("button", { name: /转写：原始转写/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /点标记/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: /待审批/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("clears selection on a blank click and cancels an active marquee with Escape", () => {
+    const { change_selected_marker_ids, change_selected_transcript_indices } =
+      render_timeline();
+    drag_timeline_marquee({
+      from: { x: 0, y: 33 },
+      to: { x: 1_800, y: 176 },
+    });
+    const timeline_canvas = install_timeline_bounds();
+
+    fireEvent.pointerDown(timeline_canvas, {
+      button: 0,
+      pointerId: 8,
+      clientX: 110,
+      clientY: 200,
+    });
+    fireEvent.pointerUp(window, {
+      pointerId: 8,
+      clientX: 110,
+      clientY: 200,
+    });
+    expect(change_selected_marker_ids).toHaveBeenLastCalledWith(new Set());
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([]);
+    expect(screen.getByRole("button", { name: /点标记/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+
+    fireEvent.pointerDown(timeline_canvas, {
+      button: 0,
+      pointerId: 9,
+      clientX: 100,
+      clientY: 83,
+    });
+    fireEvent.pointerMove(window, {
+      pointerId: 9,
+      clientX: 1_000,
+      clientY: 200,
+    });
+    expect(
+      timeline_canvas.querySelector(".media_timeline_marquee"),
+    ).not.toBeNull();
+    const marker_callback_count = change_selected_marker_ids.mock.calls.length;
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(timeline_canvas.querySelector(".media_timeline_marquee")).toBeNull();
+    expect(change_selected_marker_ids).toHaveBeenCalledTimes(
+      marker_callback_count,
+    );
+    expect(screen.getByText("已取消框选")).toBeInTheDocument();
+  });
+
+  it("removes invalid selections after source deletion and asset changes", async () => {
+    const {
+      change_selected_marker_ids,
+      change_selected_transcript_indices,
+      replace_asset_id,
+      replace_markers,
+    } = render_timeline();
+    drag_timeline_marquee({
+      from: { x: 0, y: 33 },
+      to: { x: 1_800, y: 128 },
+    });
+
+    act(() => replace_markers([]));
+    await waitFor(() =>
+      expect(change_selected_marker_ids).toHaveBeenLastCalledWith(new Set()),
+    );
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([0]);
+
+    act(() => replace_asset_id("asset-0198d12345677890abcdef1234567899"));
+    await waitFor(() =>
+      expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([]),
+    );
   });
 
   it("limits two thousand transcript actions to the initial render window", () => {

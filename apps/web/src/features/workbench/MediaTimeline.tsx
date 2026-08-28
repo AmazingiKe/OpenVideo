@@ -76,9 +76,11 @@ import {
   TIMELINE_TRACK_IDS,
   build_timeline_rows,
   filter_timeline_rows_for_window,
+  hit_test_timeline_marquee,
   round_marker_time,
   timeline_content_duration,
   type MediaTimelineAction,
+  type TimelineMarqueeRectangle,
   type TimelineAction,
 } from "./media_timeline_calculations";
 import {
@@ -86,6 +88,7 @@ import {
   type TimelinePointerPosition,
 } from "./use_media_timeline_editors";
 import { use_media_timeline_viewport } from "./use_media_timeline_viewport";
+import { use_media_timeline_marquee } from "./use_media_timeline_marquee";
 
 const TIMELINE_SCALE_SECONDS = 1;
 const TIMELINE_SCALE_SPLIT_COUNT = 1;
@@ -200,6 +203,12 @@ export function MediaTimeline({
   const [selected_marker_id, set_selected_marker_id] = useState<string | null>(
     null,
   );
+  const [
+    uncontrolled_selected_marker_ids,
+    set_uncontrolled_selected_marker_ids,
+  ] = useState<Set<string>>(() => new Set());
+  const [selected_read_only_action_ids, set_selected_read_only_action_ids] =
+    useState<Set<string>>(() => new Set());
   const [context_marker_id, set_context_marker_id] = useState<string | null>(
     null,
   );
@@ -217,6 +226,7 @@ export function MediaTimeline({
   );
   const ruler_pointer_id_ref = useRef<number | null>(null);
   const ruler_scrub_time_ref = useRef(0);
+  const previous_asset_id_ref = useRef(asset_id);
   const transcript_segments = useMemo(
     () => transcript?.segments ?? [],
     [transcript],
@@ -225,6 +235,8 @@ export function MediaTimeline({
     () => new Set(selected_transcript_indices),
     [selected_transcript_indices],
   );
+  const effective_selected_marker_ids =
+    selected_marker_ids ?? uncontrolled_selected_marker_ids;
   const {
     cancel_marker_edit,
     cancel_transcript_edit,
@@ -304,8 +316,9 @@ export function MediaTimeline({
         analysis_strategy,
         duration,
         selected_marker_id,
-        selected_marker_ids,
+        selected_marker_ids: effective_selected_marker_ids,
         selected_transcript_indices: selected_transcript_index_set,
+        selected_read_only_action_ids,
         focus_selection,
         event_analyses,
       }),
@@ -321,7 +334,8 @@ export function MediaTimeline({
       markers,
       segments,
       selected_marker_id,
-      selected_marker_ids,
+      effective_selected_marker_ids,
+      selected_read_only_action_ids,
       selected_transcript_index_set,
       transcript_segments,
     ],
@@ -361,14 +375,90 @@ export function MediaTimeline({
         state: "只读" as const,
       })),
   ];
+  const {
+    announcement: marquee_announcement,
+    marquee_rectangle,
+    start_marquee,
+  } = use_media_timeline_marquee({
+    on_clear_selection: clear_timeline_selection,
+    on_commit_selection: commit_marquee_selection,
+  });
 
   useEffect(() => {
+    const asset_changed = previous_asset_id_ref.current !== asset_id;
+    previous_asset_id_ref.current = asset_id;
+    if (!asset_changed) return;
     set_selected_marker_id(null);
+    set_uncontrolled_selected_marker_ids(new Set());
     set_context_marker_id(null);
     set_context_transcript_indices([]);
     set_interaction_error(null);
+    set_selected_read_only_action_ids(new Set());
     set_selected_event_analysis_ids([]);
-  }, [asset_id]);
+    on_selected_marker_ids_change?.(new Set());
+    on_selected_transcript_indices_change([]);
+  }, [
+    asset_id,
+    on_selected_marker_ids_change,
+    on_selected_transcript_indices_change,
+  ]);
+
+  useEffect(() => {
+    const valid_marker_ids = new Set(markers.map((marker) => marker.marker_id));
+    const next_selection = new Set(
+      [...effective_selected_marker_ids].filter((marker_id) =>
+        valid_marker_ids.has(marker_id),
+      ),
+    );
+    if (!sets_equal(next_selection, effective_selected_marker_ids)) {
+      set_uncontrolled_selected_marker_ids(next_selection);
+      on_selected_marker_ids_change?.(next_selection);
+    }
+    if (
+      selected_marker_id !== null &&
+      !valid_marker_ids.has(selected_marker_id)
+    ) {
+      set_selected_marker_id(null);
+    }
+  }, [
+    effective_selected_marker_ids,
+    markers,
+    on_selected_marker_ids_change,
+    selected_marker_id,
+  ]);
+
+  useEffect(() => {
+    const next_selection = selected_transcript_indices.filter(
+      (index) => index >= 0 && index < transcript_segments.length,
+    );
+    if (!number_arrays_equal(next_selection, selected_transcript_indices)) {
+      on_selected_transcript_indices_change(next_selection);
+    }
+  }, [
+    on_selected_transcript_indices_change,
+    selected_transcript_indices,
+    transcript_segments.length,
+  ]);
+
+  useEffect(() => {
+    const valid_action_ids = new Set(
+      full_editor_data.flatMap((row) =>
+        (row.actions as MediaTimelineAction[])
+          .filter(
+            (action) =>
+              action.data.kind !== "marker" &&
+              action.data.kind !== "transcript",
+          )
+          .map((action) => action.id),
+      ),
+    );
+    set_selected_read_only_action_ids((current) => {
+      const next_selection = new Set(
+        [...current].filter((action_id) => valid_action_ids.has(action_id)),
+      );
+      return sets_equal(next_selection, current) ? current : next_selection;
+    });
+  }, [full_editor_data]);
 
   const add_marker_and_select = useCallback(
     async (
@@ -382,7 +472,11 @@ export function MediaTimeline({
         );
         if (marker) {
           set_selected_marker_id(marker.marker_id);
-          on_selected_marker_ids_change?.(new Set([marker.marker_id]));
+          const next_selection = new Set([marker.marker_id]);
+          set_uncontrolled_selected_marker_ids(next_selection);
+          set_selected_read_only_action_ids(new Set());
+          on_selected_marker_ids_change?.(next_selection);
+          on_selected_transcript_indices_change([]);
         }
         return marker;
       } catch {
@@ -390,7 +484,11 @@ export function MediaTimeline({
         return undefined;
       }
     },
-    [on_add_marker, on_selected_marker_ids_change],
+    [
+      on_add_marker,
+      on_selected_marker_ids_change,
+      on_selected_transcript_indices_change,
+    ],
   );
 
   useEffect(() => {
@@ -446,18 +544,87 @@ export function MediaTimeline({
     selected_marker_id,
   ]);
 
+  function clear_timeline_selection() {
+    set_selected_marker_id(null);
+    set_uncontrolled_selected_marker_ids(new Set());
+    set_selected_read_only_action_ids(new Set());
+    set_selected_event_analysis_ids([]);
+    set_context_marker_id(null);
+    set_context_transcript_indices([]);
+    on_selected_marker_ids_change?.(new Set());
+    on_selected_transcript_indices_change([]);
+  }
+
+  function commit_marquee_selection(
+    rectangle: TimelineMarqueeRectangle,
+    toggle_selection: boolean,
+  ): number {
+    const actions = hit_test_timeline_marquee({
+      rectangle,
+      rows: editor_data,
+      viewport,
+    });
+    const hit_marker_ids = new Set<string>();
+    const hit_transcript_indices = new Set<number>();
+    const hit_read_only_action_ids = new Set<string>();
+    for (const action of actions) {
+      if (action.data.kind === "marker" && action.data.source_id) {
+        hit_marker_ids.add(action.data.source_id);
+      } else if (
+        action.data.kind === "transcript" &&
+        action.data.source_index !== undefined
+      ) {
+        hit_transcript_indices.add(action.data.source_index);
+      } else {
+        hit_read_only_action_ids.add(action.id);
+      }
+    }
+
+    const next_marker_ids = toggle_selection
+      ? toggle_set_members(effective_selected_marker_ids, hit_marker_ids)
+      : hit_marker_ids;
+    const next_transcript_indices = toggle_selection
+      ? toggle_number_members(
+          selected_transcript_indices,
+          hit_transcript_indices,
+        )
+      : [...hit_transcript_indices].sort((left, right) => left - right);
+    const next_read_only_action_ids = toggle_selection
+      ? toggle_set_members(
+          selected_read_only_action_ids,
+          hit_read_only_action_ids,
+        )
+      : hit_read_only_action_ids;
+
+    set_selected_marker_id(
+      next_marker_ids.size === 1
+        ? (next_marker_ids.values().next().value ?? null)
+        : null,
+    );
+    set_uncontrolled_selected_marker_ids(next_marker_ids);
+    set_selected_read_only_action_ids(next_read_only_action_ids);
+    set_selected_event_analysis_ids([]);
+    set_context_marker_id(null);
+    set_context_transcript_indices([]);
+    on_selected_marker_ids_change?.(next_marker_ids);
+    on_selected_transcript_indices_change(next_transcript_indices);
+    return actions.length;
+  }
+
   function select_action(action: TimelineAction, toggle_selection = false) {
     const media_action = action as MediaTimelineAction;
     const { data } = media_action;
     set_interaction_error(null);
     if (data.kind === "marker" && data.source_id) {
-      set_selected_marker_id(data.source_id);
       const next_selection = toggle_selection
-        ? toggle_marker_selection(
-            selected_marker_ids ?? new Set<string>(),
-            data.source_id,
-          )
+        ? toggle_marker_selection(effective_selected_marker_ids, data.source_id)
         : new Set([data.source_id]);
+      set_selected_marker_id(
+        next_selection.has(data.source_id) ? data.source_id : null,
+      );
+      set_uncontrolled_selected_marker_ids(next_selection);
+      set_selected_read_only_action_ids(new Set());
+      set_selected_event_analysis_ids([]);
       on_selected_marker_ids_change?.(next_selection);
       on_selected_transcript_indices_change([]);
       on_seek(data.marker_anchor_seconds ?? media_action.start);
@@ -465,12 +632,48 @@ export function MediaTimeline({
       return;
     }
     if (data.kind === "event_analysis" && data.event_analysis_ids) {
-      set_selected_event_analysis_ids(data.event_analysis_ids);
+      const next_selection = toggle_selection
+        ? toggle_set_members(
+            selected_read_only_action_ids,
+            new Set([media_action.id]),
+          )
+        : new Set([media_action.id]);
+      const is_selected = next_selection.has(media_action.id);
+      set_selected_read_only_action_ids(next_selection);
+      set_selected_event_analysis_ids(
+        is_selected ? data.event_analysis_ids : [],
+      );
+      set_selected_marker_id(null);
+      set_uncontrolled_selected_marker_ids(new Set());
+      on_selected_marker_ids_change?.(new Set());
+      on_selected_transcript_indices_change([]);
+      on_seek(media_action.start);
+      return;
+    }
+    if (
+      data.kind === "candidate" ||
+      data.kind === "event" ||
+      data.kind === "focus"
+    ) {
+      const next_selection = toggle_selection
+        ? toggle_set_members(
+            selected_read_only_action_ids,
+            new Set([media_action.id]),
+          )
+        : new Set([media_action.id]);
+      set_selected_read_only_action_ids(next_selection);
+      set_selected_event_analysis_ids([]);
+      set_selected_marker_id(null);
+      set_uncontrolled_selected_marker_ids(new Set());
+      on_selected_marker_ids_change?.(new Set());
       on_selected_transcript_indices_change([]);
       on_seek(media_action.start);
       return;
     }
     set_selected_marker_id(null);
+    set_selected_read_only_action_ids(new Set());
+    set_selected_event_analysis_ids([]);
+    set_uncontrolled_selected_marker_ids(new Set());
     on_selected_marker_ids_change?.(new Set());
     on_seek(media_action.start);
     if (data.kind === "transcript" && data.source_index !== undefined) {
@@ -492,11 +695,21 @@ export function MediaTimeline({
   ) {
     const data = (action as MediaTimelineAction).data;
     if (data.kind === "marker" && data.source_id) {
-      on_selected_marker_ids_change?.(new Set([data.source_id]));
+      const next_selection = new Set([data.source_id]);
+      set_uncontrolled_selected_marker_ids(next_selection);
+      set_selected_read_only_action_ids(new Set());
+      set_selected_event_analysis_ids([]);
+      on_selected_marker_ids_change?.(next_selection);
+      on_selected_transcript_indices_change([]);
       edit_marker(data.source_id, pointer_position);
       return;
     }
     if (data.kind === "transcript" && data.source_index !== undefined) {
+      set_selected_marker_id(null);
+      set_uncontrolled_selected_marker_ids(new Set());
+      set_selected_read_only_action_ids(new Set());
+      set_selected_event_analysis_ids([]);
+      on_selected_marker_ids_change?.(new Set());
       on_selected_transcript_indices_change([data.source_index]);
       edit_transcript(data.source_index);
     }
@@ -512,7 +725,11 @@ export function MediaTimeline({
     if (data.kind === "marker" && data.source_id) {
       set_context_marker_id(data.source_id);
       set_selected_marker_id(data.source_id);
-      on_selected_marker_ids_change?.(new Set([data.source_id]));
+      const next_selection = new Set([data.source_id]);
+      set_uncontrolled_selected_marker_ids(next_selection);
+      set_selected_read_only_action_ids(new Set());
+      set_selected_event_analysis_ids([]);
+      on_selected_marker_ids_change?.(next_selection);
       on_selected_transcript_indices_change([]);
       on_seek(data.marker_anchor_seconds ?? action.start);
       return;
@@ -525,6 +742,9 @@ export function MediaTimeline({
         : [data.source_index];
       set_context_transcript_indices(context_selection);
       set_selected_marker_id(null);
+      set_uncontrolled_selected_marker_ids(new Set());
+      set_selected_read_only_action_ids(new Set());
+      set_selected_event_analysis_ids([]);
       on_selected_marker_ids_change?.(new Set());
       on_selected_transcript_indices_change(context_selection);
       on_seek(action.start);
@@ -649,6 +869,7 @@ export function MediaTimeline({
               ref={timeline_host_ref}
               className="media_timeline_canvas"
               onWheelCapture={zoom_with_alt}
+              onPointerDownCapture={start_marquee}
               aria-label="时间线画布；双击标记轨道空白处添加标记，Enter 编辑片段，Shift+F10 打开菜单"
             >
               <TimelineRulerCanvas
@@ -736,6 +957,21 @@ export function MediaTimeline({
                   void persist_marker_bounds(action, start, end, "resize");
                 }}
               />
+              {marquee_rectangle ? (
+                <div
+                  className="media_timeline_marquee"
+                  style={{
+                    left: marquee_rectangle.left,
+                    top: marquee_rectangle.top,
+                    width: marquee_rectangle.width,
+                    height: marquee_rectangle.height,
+                  }}
+                  aria-hidden="true"
+                />
+              ) : null}
+              <output className="sr_only" aria-live="polite">
+                {marquee_announcement}
+              </output>
             </div>
           </ContextMenuTrigger>
           {context_marker ? (
@@ -974,4 +1210,38 @@ function toggle_transcript_selection(
   return current.includes(transcript_index)
     ? current.filter((index) => index !== transcript_index)
     : [...current, transcript_index].sort((left, right) => left - right);
+}
+
+function toggle_set_members<T>(
+  current: ReadonlySet<T>,
+  toggled: ReadonlySet<T>,
+): Set<T> {
+  const next = new Set(current);
+  for (const value of toggled) {
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+  }
+  return next;
+}
+
+function toggle_number_members(
+  current: number[],
+  toggled: ReadonlySet<number>,
+): number[] {
+  return [...toggle_set_members(new Set(current), toggled)].sort(
+    (left, right) => left - right,
+  );
+}
+
+function sets_equal<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
+  return (
+    left.size === right.size && [...left].every((value) => right.has(value))
+  );
+}
+
+function number_arrays_equal(left: number[], right: number[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }

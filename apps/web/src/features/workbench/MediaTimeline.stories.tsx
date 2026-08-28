@@ -110,6 +110,9 @@ function TimelineStory({
 }: TimelineStoryProps) {
   const [current_time, set_current_time] = useState(initial_time);
   const [markers, set_markers] = useState(initial_markers);
+  const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
   const [is_paused, set_is_paused] = useState(true);
@@ -143,6 +146,7 @@ function TimelineStory({
         segments={analysis_segments}
         markers={markers}
         candidate_markers={candidate_markers}
+        selected_marker_ids={selected_marker_ids}
         selected_transcript_indices={selected_transcript_indices}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={marker_error}
@@ -151,6 +155,7 @@ function TimelineStory({
         on_toggle_playback={() => set_is_paused((current) => !current)}
         on_playback_rate_change={set_playback_rate}
         on_selected_transcript_indices_change={set_selected_transcript_indices}
+        on_selected_marker_ids_change={set_selected_marker_ids}
         on_request_transcript_correction={() => undefined}
         on_add_marker={async () => undefined}
         on_update_marker={update_marker}
@@ -217,6 +222,33 @@ export const SelectedPointMarker: Story = {
     await userEvent.click(
       within(canvasElement).getByRole("button", { name: /点标记/ }),
     );
+  },
+};
+
+export const MarqueeSelection: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement).getByLabelText(/时间线画布/);
+    const bounds = canvas.getBoundingClientRect();
+    await userEvent.pointer([
+      {
+        keys: "[MouseLeft>]",
+        target: canvas,
+        coords: { clientX: bounds.left + 150, clientY: bounds.top + 82 },
+      },
+      {
+        target: canvas,
+        coords: {
+          clientX: Math.min(bounds.right - 8, bounds.left + 700),
+          clientY: bounds.top + 126,
+        },
+      },
+      { keys: "[/MouseLeft]" },
+    ]);
+    expect(
+      within(canvasElement).getByRole("button", {
+        name: /转写：介绍投影矩阵的基本结构/,
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
   },
 };
 
