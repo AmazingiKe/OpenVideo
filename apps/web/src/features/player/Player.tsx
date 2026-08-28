@@ -94,6 +94,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   );
   const toggle_picture_in_picture_fn_ref = useRef<(() => void) | null>(null);
   const toggle_fullscreen_fn_ref = useRef<(() => void) | null>(null);
+  const current_time_fn_ref = useRef<(() => number) | null>(null);
   const current_time_value_ref = useRef(0);
   const scrub_video_ref = useRef<HTMLVideoElement>(null);
   const scrub_time_ref = useRef<number | null>(null);
@@ -194,7 +195,19 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         }
       },
       preview_to: schedule_scrub_time,
-      current_time: () => current_time_value_ref.current,
+      current_time: () => {
+        const pending_seek = pending_seek_ref.current;
+        const seek_is_pending =
+          pending_seek !== null &&
+          performance.now() - pending_seek.requested_at <
+            SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS;
+        if (preview_active_ref.current || seek_is_pending) {
+          return current_time_value_ref.current;
+        }
+        return (
+          current_time_fn_ref.current?.() ?? current_time_value_ref.current
+        );
+      },
       toggle_playback: () => toggle_playback_fn_ref.current?.(),
       set_volume: (volume: number) => set_volume_fn_ref.current?.(volume),
       toggle_muted: () => toggle_muted_fn_ref.current?.(),
@@ -220,6 +233,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   );
 
   const on_player_ready = useCallback((instance: PlayerRef | null) => {
+    current_time_fn_ref.current = instance ? instance.current_time : null;
     seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
     toggle_playback_fn_ref.current = instance
       ? () => instance.toggle_playback()
@@ -356,6 +370,7 @@ export function active_subtitle_text(
 }
 
 type PlayerRef = {
+  current_time: () => number;
   seek: (seconds: number) => void;
   toggle_playback: () => void;
   set_volume: (volume: number) => void;
@@ -388,6 +403,7 @@ function PlayerStateBridge({
     // 直接读取 remote/player 的当前值，不把它们放入依赖数组，
     // 避免 remote 对象引用变化时产生短暂的 null 窗口。
     on_player_ready({
+      current_time: () => player.currentTime,
       seek: (seconds: number) => remote.seek(seconds),
       toggle_playback: () => {
         if (player.paused) void remote.play();

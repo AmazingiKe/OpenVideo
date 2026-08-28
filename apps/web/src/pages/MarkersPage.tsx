@@ -420,6 +420,9 @@ export function MarkersPage() {
           asset_id={selected_asset_id}
           duration_seconds={selected_asset?.duration_seconds ?? null}
           current_time={current_time}
+          read_playback_time={() =>
+            player_ref.current?.current_time() ?? current_time
+          }
           is_paused={is_paused}
           playback_rate={playback_rate}
           transcript={transcript}

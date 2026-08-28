@@ -185,6 +185,9 @@
     monospace;
   --timeline-scrollbar-size: 12px;
   --timeline-scrollbar-border-size: 2px;
+  --timeline-playhead-line-width: 1px;
+  --timeline-playhead-handle-width: 8px;
+  --timeline-playhead-handle-height: 12px;
 
   --browser-theme-color: #0b141a;
   --browser-icon-background: #0b141a;
@@ -913,20 +916,33 @@
   display: none;
 }
 
-.media_timeline .timeline-editor-cursor {
+.media_timeline_playhead {
+  position: absolute;
+  z-index: 2;
   top: 0;
-  height: 100%;
-  border-color: var(--timeline-color-accent);
-}
-
-.media_timeline_canvas[data-playhead-visible="false"]
-  .timeline-editor-cursor {
-  opacity: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--timeline-playhead-line-width);
+  transform: translate3d(0, 0, 0);
+  background: var(--timeline-color-accent);
   pointer-events: none;
+  will-change: transform;
 }
 
-.media_timeline .timeline-editor-cursor-top path {
-  fill: var(--timeline-color-accent);
+.media_timeline_playhead::before {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: var(--timeline-playhead-handle-width);
+  height: var(--timeline-playhead-handle-height);
+  transform: translateX(-50%);
+  clip-path: polygon(0 0, 100% 0, 100% 75%, 50% 100%, 0 75%);
+  background: var(--timeline-color-accent);
+  content: "";
+}
+
+.media_timeline_playhead[data-visible="false"] {
+  opacity: 0;
 }
 
 .media_timeline .timeline-editor-edit-area .ReactVirtualized__Grid {

@@ -100,6 +100,7 @@ type MediaTimelineProps = {
   asset_id: string | null;
   duration_seconds: number | null;
   current_time: number;
+  read_playback_time?: () => number;
   is_paused: boolean;
   playback_rate: number;
   transcript: Transcript | null;
@@ -129,6 +130,7 @@ export function MediaTimeline({
   asset_id,
   duration_seconds,
   current_time,
+  read_playback_time,
   is_paused,
   playback_rate,
   transcript,
@@ -217,6 +219,8 @@ export function MediaTimeline({
     canvas_width,
     editor_render_window,
     handle_timeline_scroll,
+    playhead_ref,
+    set_playhead_time,
     timeline_host_ref,
     timeline_ref,
     viewport,
@@ -228,12 +232,8 @@ export function MediaTimeline({
     duration,
     is_paused,
     playback_rate,
+    read_playback_time,
   });
-  const playhead_x =
-    TIMELINE_START_LEFT +
-    bounded_time * viewport.zoom_pixels_per_second -
-    viewport.scroll_left;
-  const playhead_is_visible = playhead_x >= 0 && playhead_x <= canvas_width;
   const full_editor_data = useMemo(
     () =>
       build_timeline_rows({
@@ -484,7 +484,6 @@ export function MediaTimeline({
               ref={timeline_host_ref}
               className="media_timeline_canvas"
               onWheelCapture={zoom_with_alt}
-              data-playhead-visible={playhead_is_visible}
               aria-label="时间线画布；双击标记轨道空白处添加标记，Enter 编辑片段，Shift+F10 打开菜单"
             >
               <TimelineRulerCanvas
@@ -510,6 +509,12 @@ export function MediaTimeline({
                 onPointerUp={finish_ruler_scrub}
                 onPointerCancel={cancel_ruler_scrub}
               />
+              <div
+                ref={playhead_ref}
+                className="media_timeline_playhead"
+                data-visible="false"
+                aria-hidden="true"
+              />
               <Timeline
                 ref={timeline_ref}
                 editorData={editor_data}
@@ -525,6 +530,7 @@ export function MediaTimeline({
                 dragLine={false}
                 autoScroll
                 autoReRender={false}
+                hideCursor
                 getActionRender={(action) => (
                   <MediaTimelineActionContent
                     action={action}
@@ -537,8 +543,6 @@ export function MediaTimeline({
                   on_seek_bounded(time);
                   return true;
                 }}
-                onCursorDrag={on_scrub_bounded}
-                onCursorDragEnd={on_seek_bounded}
                 onClickActionOnly={(event, { action }) => {
                   event.stopPropagation();
                   select_action(action);
@@ -635,7 +639,7 @@ export function MediaTimeline({
     event.currentTarget.setPointerCapture(event.pointerId);
     const time = ruler_time_from_pointer(event);
     ruler_scrub_time_ref.current = time;
-    timeline_ref.current?.setTime(time);
+    set_playhead_time(time);
     on_scrub_bounded(time);
   }
 
@@ -643,7 +647,7 @@ export function MediaTimeline({
     if (ruler_pointer_id_ref.current !== event.pointerId) return;
     const time = ruler_time_from_pointer(event);
     ruler_scrub_time_ref.current = time;
-    timeline_ref.current?.setTime(time);
+    set_playhead_time(time);
     on_scrub_bounded(time);
   }
 
@@ -653,7 +657,7 @@ export function MediaTimeline({
     ruler_pointer_id_ref.current = null;
     ruler_scrub_time_ref.current = time;
     event.currentTarget.releasePointerCapture(event.pointerId);
-    timeline_ref.current?.setTime(time);
+    set_playhead_time(time);
     on_seek_bounded(time);
   }
 

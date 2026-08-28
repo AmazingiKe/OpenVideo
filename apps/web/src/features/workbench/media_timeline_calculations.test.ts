@@ -30,6 +30,7 @@ describe("media timeline calculations", () => {
       requested_zoom: MAXIMUM_ZOOM_PIXELS_PER_SECOND * 2,
       anchor_x: 300,
       viewport_width: 800,
+      scale_count: 120,
     });
 
     const pointer_time_before = (viewport.scroll_left + 300 - 16) / 80;
@@ -37,6 +38,31 @@ describe("media timeline calculations", () => {
       (result.scroll_left + 300 - 16) / result.zoom_pixels_per_second;
     expect(result.zoom_pixels_per_second).toBe(MAXIMUM_ZOOM_PIXELS_PER_SECOND);
     expect(pointer_time_after).toBeCloseTo(pointer_time_before);
+  });
+
+  it("clamps zoom scroll to the rendered content bounds", () => {
+    const result = calculate_zoom_viewport({
+      viewport: { zoom_pixels_per_second: 80, scroll_left: 8_816 },
+      requested_zoom: 40,
+      anchor_x: 700,
+      viewport_width: 800,
+      scale_count: 120,
+    });
+
+    expect(result.zoom_pixels_per_second).toBe(40);
+    expect(result.scroll_left).toBe(4_016);
+  });
+
+  it("resets scroll when zoomed content fits inside the viewport", () => {
+    const result = calculate_zoom_viewport({
+      viewport: { zoom_pixels_per_second: 80, scroll_left: 200 },
+      requested_zoom: MINIMUM_ZOOM_PIXELS_PER_SECOND,
+      anchor_x: 400,
+      viewport_width: 800,
+      scale_count: 120,
+    });
+
+    expect(result.scroll_left).toBe(0);
   });
 
   it("normalizes pixel, line, page and invalid wheel deltas", () => {
@@ -50,6 +76,7 @@ describe("media timeline calculations", () => {
     const result = consume_timeline_wheel_zoom_frame({
       viewport: { zoom_pixels_per_second: 80, scroll_left: 0 },
       events: [{ logarithmic_delta: 2, anchor_x: 200, viewport_width: 800 }],
+      scale_count: 120,
     });
 
     expect(result.viewport.zoom_pixels_per_second).toBe(100);

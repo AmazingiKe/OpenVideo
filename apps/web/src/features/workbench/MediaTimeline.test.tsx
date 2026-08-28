@@ -192,6 +192,16 @@ function install_animation_frame_mock() {
       frames.delete(next_frame[0]);
       act(() => next_frame[1](frame_time));
     },
+    run_frame(frame_time = performance.now()) {
+      const scheduled_frames = [...frames.entries()];
+      if (scheduled_frames.length === 0) {
+        throw new Error("Missing animation frame");
+      }
+      for (const [frame_id] of scheduled_frames) frames.delete(frame_id);
+      act(() => {
+        for (const [, callback] of scheduled_frames) callback(frame_time);
+      });
+    },
   };
 }
 
@@ -201,6 +211,7 @@ function render_timeline(options?: {
   duration_seconds?: number;
   is_paused?: boolean;
   playback_rate?: number;
+  read_playback_time?: () => number;
   transcript_segments?: TranscriptSegment[];
   analysis_segments?: MediaSegment[];
   update_marker?: (
@@ -210,6 +221,7 @@ function render_timeline(options?: {
 }) {
   let replace_markers: (markers: MediaMarker[]) => void = () => undefined;
   let replace_asset_id: (asset_id: string) => void = () => undefined;
+  let change_is_paused: (is_paused: boolean) => void = () => undefined;
   let refresh_parent: () => void = () => undefined;
   const callbacks = {
     scrub_to: vi.fn(),
@@ -253,17 +265,20 @@ function render_timeline(options?: {
   function TimelineHarness() {
     const [asset_id, set_asset_id] = useState(ASSET_ID);
     const [markers, set_markers] = useState([POINT_MARKER, RANGE_MARKER]);
+    const [is_paused, set_is_paused] = useState(options?.is_paused ?? true);
     const [, set_refresh_revision] = useState(0);
     replace_markers = set_markers;
     replace_asset_id = set_asset_id;
+    change_is_paused = set_is_paused;
     refresh_parent = () => set_refresh_revision((current) => current + 1);
     return (
       <MediaTimeline
         asset_id={asset_id}
         duration_seconds={options?.duration_seconds ?? 120}
         current_time={30.023}
-        is_paused={options?.is_paused ?? true}
+        is_paused={is_paused}
         playback_rate={options?.playback_rate ?? 1}
+        read_playback_time={options?.read_playback_time}
         transcript={{
           asset_id: ASSET_ID,
           language: "zh",
@@ -295,6 +310,7 @@ function render_timeline(options?: {
     ...callbacks,
     replace_markers,
     replace_asset_id,
+    change_is_paused,
     refresh_parent,
     result,
   };
@@ -496,32 +512,29 @@ describe("MediaTimeline", () => {
     expect(change_playback_rate).toHaveBeenCalledWith(1.5);
   });
 
-  it("previews while dragging and seeks the source only after release", () => {
-    const { scrub_to, seek_to } = render_timeline();
-
-    act(() => timeline_props().onCursorDrag?.(42.027));
-    expect(scrub_to).toHaveBeenCalledWith(42.027);
-    expect(seek_to).not.toHaveBeenCalled();
-
-    act(() => timeline_props().onCursorDragEnd?.(42.027));
-    expect(seek_to).toHaveBeenCalledWith(42.027);
-  });
-
-  it("animates the playback head every display frame while playing", () => {
-    vi.spyOn(performance, "now").mockReturnValue(100);
+  it("follows the exact player clock without rerendering the editor", () => {
     const animation_frames = install_animation_frame_mock();
+    let playback_time = 30.04;
     const { result } = render_timeline({
       is_paused: false,
-      playback_rate: 2,
+      read_playback_time: () => playback_time,
     });
+    const playhead = result.container.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    );
+    if (!playhead) throw new Error("Missing playback head");
     timeline_mock.set_time.mockClear();
 
     animation_frames.run_next_frame(116);
-    expect(timeline_mock.set_time.mock.calls.at(-1)?.[0]).toBeCloseTo(30.055);
+    expect(playhead.style.transform).toBe("translate3d(2419.2px, 0, 0)");
+    expect(timeline_mock.set_time).not.toHaveBeenCalled();
     expect(animation_frames.frames.size).toBe(1);
 
     animation_frames.run_next_frame(132);
-    expect(timeline_mock.set_time.mock.calls.at(-1)?.[0]).toBeCloseTo(30.087);
+    expect(playhead.style.transform).toBe("translate3d(2419.2px, 0, 0)");
+    playback_time = 30.087;
+    animation_frames.run_next_frame(148);
+    expect(playhead.style.transform).toBe("translate3d(2422.96px, 0, 0)");
     const pending_frame = [...animation_frames.frames.keys()][0];
 
     result.unmount();
@@ -529,9 +542,39 @@ describe("MediaTimeline", () => {
     expect(animation_frames.frames.size).toBe(0);
   });
 
+  it("excludes paused time from fallback playback interpolation", () => {
+    let clock_time = 100;
+    vi.spyOn(performance, "now").mockImplementation(() => clock_time);
+    const animation_frames = install_animation_frame_mock();
+    const { change_is_paused, result } = render_timeline({
+      is_paused: false,
+      playback_rate: 2,
+    });
+    const playhead = result.container.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    );
+    if (!playhead) throw new Error("Missing playback head");
+
+    animation_frames.run_next_frame(116);
+    expect(playhead.style.transform).toBe("translate3d(2420.4px, 0, 0)");
+
+    clock_time = 116;
+    act(() => change_is_paused(true));
+    expect(animation_frames.frames.size).toBe(0);
+
+    clock_time = 10_116;
+    act(() => change_is_paused(false));
+    animation_frames.run_next_frame(10_132);
+    expect(playhead.style.transform).toBe("translate3d(2422.96px, 0, 0)");
+  });
+
   it("scrubs across the full ruler and commits the aligned time on release", () => {
-    const { scrub_to, seek_to } = render_timeline();
+    const { result, scrub_to, seek_to } = render_timeline();
     const ruler = screen.getByRole("slider", { name: "时间线播放头" });
+    const playhead = result.container.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    );
+    if (!playhead) throw new Error("Missing playback head");
     vi.spyOn(ruler, "getBoundingClientRect").mockReturnValue({
       x: 16,
       y: 0,
@@ -558,7 +601,7 @@ describe("MediaTimeline", () => {
 
     fireEvent.pointerUp(ruler, { clientX: 576, pointerId: 7 });
     expect(seek_to).toHaveBeenCalledWith(6.8);
-    expect(timeline_mock.set_time).toHaveBeenLastCalledWith(6.8);
+    expect(playhead.style.transform).toBe("translate3d(560px, 0, 0)");
   });
 
   it("adds markers from the toolbar, shortcut, and marker row", async () => {
@@ -800,6 +843,89 @@ describe("MediaTimeline", () => {
     animation_frames.run_next_frame();
     expect(timeline_props().scaleWidth).toBeCloseTo(80 * Math.exp(0.048));
     expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
+  });
+
+  it("keeps playback and Alt wheel zoom independent in one display frame", () => {
+    const animation_frames = install_animation_frame_mock();
+    const playback_time = 30.04;
+    const { result } = render_timeline({
+      is_paused: false,
+      read_playback_time: () => playback_time,
+    });
+    const host = screen.getByLabelText(/时间线画布/);
+    const playhead = result.container.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    );
+    if (!playhead) throw new Error("Missing playback head");
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 176,
+      width: 800,
+      height: 176,
+      toJSON: () => undefined,
+    });
+    timeline_mock.set_time.mockClear();
+    timeline_mock.set_scroll_left.mockClear();
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 400,
+      deltaY: -100,
+    });
+    expect(animation_frames.frames.size).toBe(2);
+    animation_frames.run_frame(116);
+
+    const zoom = 80 * Math.exp(0.1);
+    const pointer_time = (400 - 16) / 80;
+    const scroll_left = pointer_time * zoom + 16 - 400;
+    const playhead_x = 16 + playback_time * zoom - scroll_left;
+    expect(timeline_props().scaleWidth).toBeCloseTo(zoom);
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(scroll_left);
+    expect(playhead.style.transform).toBe(`translate3d(${playhead_x}px, 0, 0)`);
+    expect(timeline_mock.set_time).not.toHaveBeenCalled();
+    expect(animation_frames.frames.size).toBe(1);
+  });
+
+  it("clamps Alt zoom scroll at the timeline end", () => {
+    const animation_frames = install_animation_frame_mock();
+    render_timeline();
+    const host = screen.getByLabelText(/时间线画布/);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 176,
+      width: 800,
+      height: 176,
+      toJSON: () => undefined,
+    });
+    act(() => {
+      timeline_props().onScroll?.({
+        clientHeight: 144,
+        clientWidth: 800,
+        scrollHeight: 144,
+        scrollLeft: 8_816,
+        scrollTop: 0,
+        scrollWidth: 9_616,
+      });
+    });
+    timeline_mock.set_scroll_left.mockClear();
+
+    fireEvent.wheel(host, {
+      altKey: true,
+      clientX: 700,
+      deltaY: 1_000,
+    });
+    animation_frames.run_next_frame();
+
+    expect(timeline_props().scaleWidth).toBe(64);
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(6_896);
   });
 
   it("limits wheel zoom to one viewport commit and 0.8x–1.25x per frame", () => {

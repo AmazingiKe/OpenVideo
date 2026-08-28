@@ -86,11 +86,13 @@ export function calculate_zoom_viewport({
   requested_zoom,
   anchor_x,
   viewport_width,
+  scale_count,
 }: {
   viewport: TimelineZoomViewport;
   requested_zoom: number;
   anchor_x: number;
   viewport_width: number;
+  scale_count: number;
 }): TimelineZoomViewport {
   const zoom_pixels_per_second = Math.min(
     MAXIMUM_ZOOM_PIXELS_PER_SECOND,
@@ -105,13 +107,21 @@ export function calculate_zoom_viewport({
     (viewport.scroll_left + bounded_anchor_x - TIMELINE_START_LEFT) /
       viewport.zoom_pixels_per_second,
   );
+  const requested_scroll_left =
+    anchor_time * zoom_pixels_per_second +
+    TIMELINE_START_LEFT -
+    bounded_anchor_x;
+  const content_width =
+    Math.max(0, scale_count) * zoom_pixels_per_second + TIMELINE_START_LEFT;
+  const maximum_scroll_left = Math.max(
+    0,
+    content_width - Math.max(0, viewport_width),
+  );
   return {
     zoom_pixels_per_second,
-    scroll_left: Math.max(
-      0,
-      anchor_time * zoom_pixels_per_second +
-        TIMELINE_START_LEFT -
-        bounded_anchor_x,
+    scroll_left: Math.min(
+      maximum_scroll_left,
+      Math.max(0, requested_scroll_left),
     ),
   };
 }
@@ -135,9 +145,11 @@ export function normalize_wheel_delta(
 export function consume_timeline_wheel_zoom_frame({
   viewport,
   events,
+  scale_count,
 }: {
   viewport: TimelineZoomViewport;
   events: TimelineWheelZoomEvent[];
+  scale_count: number;
 }): {
   viewport: TimelineZoomViewport;
   remaining_events: TimelineWheelZoomEvent[];
@@ -169,6 +181,7 @@ export function consume_timeline_wheel_zoom_frame({
       requested_zoom: frame_limited_zoom,
       anchor_x: wheel_event.anchor_x,
       viewport_width: wheel_event.viewport_width,
+      scale_count,
     });
     const applied_delta = Math.log(
       calculated_viewport.zoom_pixels_per_second /
