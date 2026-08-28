@@ -190,7 +190,14 @@ def _score_moment(moment: TimelineMoment, strategy: AnalysisStrategy) -> Timelin
     weights = strategy.weights
     if weights is None:
         raise ValueError("分析策略权重尚未解析")
-    score = float(getattr(weights, content_type))
+    content_weights = {
+        "core_concepts": weights.core_concepts,
+        "formula_derivation": weights.formula_derivation,
+        "case_demonstration": weights.case_demonstration,
+        "questions_conclusions": weights.questions_conclusions,
+        "visual_content": weights.visual_content,
+    }
+    score = float(content_weights[content_type])
     score += weights.user_markers * moment.marker_weight
     return TimelineMoment(
         **{

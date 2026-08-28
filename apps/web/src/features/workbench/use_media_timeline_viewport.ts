@@ -1,0 +1,348 @@
+import type { TimelineState } from "@xzdarcy/react-timeline-editor";
+import {
+  type WheelEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+import {
+  DEFAULT_ZOOM_PIXELS_PER_SECOND,
+  calculate_zoom_viewport,
+  consume_timeline_wheel_zoom_frame,
+  create_timeline_render_window,
+  extend_timeline_render_window,
+  normalize_wheel_delta,
+  timeline_render_windows_equal,
+  update_timeline_render_window,
+  type TimelineViewportState,
+  type TimelineWheelZoomEvent,
+  type TimelineZoomViewport,
+} from "./media_timeline_calculations";
+
+const ALT_WHEEL_ZOOM_SENSITIVITY = -0.001;
+const WHEEL_ZOOM_IDLE_MILLISECONDS = 100;
+const DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS = 1024;
+const VIRTUALIZED_GRID_SELECTOR = ".ReactVirtualized__Grid";
+const VIRTUALIZED_GRID_ROLE_SELECTOR = '[role="row"], [role="gridcell"]';
+
+type TimelineScrollPosition = {
+  scrollLeft: number;
+  scrollTop: number;
+};
+
+type MediaTimelineViewportOptions = {
+  asset_id: string | null;
+  bounded_time: number;
+  duration: number;
+};
+
+function normalize_virtualized_timeline_accessibility(root: Element) {
+  const grids = root.matches(VIRTUALIZED_GRID_SELECTOR)
+    ? [root]
+    : [...root.querySelectorAll(VIRTUALIZED_GRID_SELECTOR)];
+  for (const grid of grids) {
+    grid.setAttribute("role", "group");
+    grid.setAttribute("aria-label", "时间线轨道内容");
+    grid.removeAttribute("aria-readonly");
+  }
+
+  const role_elements = root.matches(VIRTUALIZED_GRID_ROLE_SELECTOR)
+    ? [root]
+    : [...root.querySelectorAll(VIRTUALIZED_GRID_ROLE_SELECTOR)];
+  for (const element of role_elements) element.removeAttribute("role");
+}
+
+export function use_media_timeline_viewport({
+  asset_id,
+  bounded_time,
+  duration,
+}: MediaTimelineViewportOptions) {
+  const timeline_ref = useRef<TimelineState>(null);
+  const timeline_host_ref = useRef<HTMLDivElement>(null);
+  const pending_wheel_events_ref = useRef<TimelineWheelZoomEvent[]>([]);
+  const pending_wheel_frame_ref = useRef<number | null>(null);
+  const pending_wheel_idle_ref = useRef<number | null>(null);
+  const synchronized_scroll_ref = useRef({ scroll_left: 0, scroll_top: 0 });
+  const [viewport, set_viewport] = useState<TimelineViewportState>({
+    zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
+    scroll_left: 0,
+    scroll_top: 0,
+  });
+  const viewport_ref = useRef(viewport);
+  const [canvas_width, set_canvas_width] = useState(
+    DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS,
+  );
+  const [render_window, set_render_window] = useState(() =>
+    create_timeline_render_window({
+      viewport: {
+        zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
+        scroll_left: 0,
+      },
+      canvas_width: DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS,
+      duration,
+    }),
+  );
+  const render_metrics_ref = useRef({ canvas_width, duration });
+  const wheel_zoom_is_active =
+    pending_wheel_frame_ref.current !== null ||
+    pending_wheel_idle_ref.current !== null ||
+    pending_wheel_events_ref.current.length > 0;
+  const editor_render_window = useMemo(() => {
+    const parameters = { render_window, viewport, canvas_width, duration };
+    return wheel_zoom_is_active
+      ? extend_timeline_render_window(parameters)
+      : update_timeline_render_window(parameters);
+  }, [canvas_width, duration, render_window, viewport, wheel_zoom_is_active]);
+
+  const cancel_pending_wheel_zoom = useCallback(() => {
+    if (pending_wheel_frame_ref.current !== null) {
+      window.cancelAnimationFrame(pending_wheel_frame_ref.current);
+    }
+    if (pending_wheel_idle_ref.current !== null) {
+      window.clearTimeout(pending_wheel_idle_ref.current);
+    }
+    pending_wheel_frame_ref.current = null;
+    pending_wheel_idle_ref.current = null;
+    pending_wheel_events_ref.current = [];
+  }, []);
+
+  useLayoutEffect(() => {
+    render_metrics_ref.current = { canvas_width, duration };
+  }, [canvas_width, duration]);
+
+  useEffect(() => {
+    cancel_pending_wheel_zoom();
+    const initial_viewport: TimelineViewportState = {
+      zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
+      scroll_left: 0,
+      scroll_top: 0,
+    };
+    viewport_ref.current = initial_viewport;
+    set_viewport(initial_viewport);
+    set_render_window(
+      create_timeline_render_window({
+        viewport: initial_viewport,
+        canvas_width: render_metrics_ref.current.canvas_width,
+        duration: render_metrics_ref.current.duration,
+      }),
+    );
+  }, [asset_id, cancel_pending_wheel_zoom]);
+
+  useEffect(
+    () => () => cancel_pending_wheel_zoom(),
+    [cancel_pending_wheel_zoom],
+  );
+
+  useLayoutEffect(() => {
+    set_render_window((current) =>
+      timeline_render_windows_equal(current, editor_render_window)
+        ? current
+        : editor_render_window,
+    );
+  }, [editor_render_window]);
+
+  useLayoutEffect(() => {
+    viewport_ref.current = viewport;
+    if (synchronized_scroll_ref.current.scroll_left !== viewport.scroll_left) {
+      timeline_ref.current?.setScrollLeft(viewport.scroll_left);
+      synchronized_scroll_ref.current.scroll_left = viewport.scroll_left;
+    }
+    if (synchronized_scroll_ref.current.scroll_top !== viewport.scroll_top) {
+      timeline_ref.current?.setScrollTop(viewport.scroll_top);
+      synchronized_scroll_ref.current.scroll_top = viewport.scroll_top;
+    }
+  }, [viewport]);
+
+  useLayoutEffect(() => {
+    const timeline_host = timeline_host_ref.current;
+    if (!timeline_host) return;
+    const timeline_element = timeline_host;
+
+    function measure_canvas_width() {
+      const measured_width = timeline_element.getBoundingClientRect().width;
+      if (measured_width <= 0) return;
+      set_canvas_width((current) =>
+        current === measured_width ? current : measured_width,
+      );
+    }
+
+    measure_canvas_width();
+    const resize_observer = new ResizeObserver(measure_canvas_width);
+    resize_observer.observe(timeline_element);
+    return () => resize_observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const timeline_host = timeline_host_ref.current;
+    if (!timeline_host) return;
+
+    normalize_virtualized_timeline_accessibility(timeline_host);
+    const accessibility_observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof Element) {
+            normalize_virtualized_timeline_accessibility(node);
+          }
+        }
+      }
+    });
+    accessibility_observer.observe(timeline_host, {
+      subtree: true,
+      childList: true,
+    });
+    return () => accessibility_observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    timeline_ref.current?.setTime(bounded_time);
+  }, [bounded_time]);
+
+  const commit_zoom_viewport = useCallback(
+    (next_viewport: TimelineZoomViewport) => {
+      const current = viewport_ref.current;
+      if (
+        next_viewport.zoom_pixels_per_second ===
+          current.zoom_pixels_per_second &&
+        next_viewport.scroll_left === current.scroll_left
+      ) {
+        return;
+      }
+      const committed_viewport = { ...current, ...next_viewport };
+      viewport_ref.current = committed_viewport;
+      const timeline = timeline_ref.current;
+      if (
+        timeline &&
+        synchronized_scroll_ref.current.scroll_left !==
+          next_viewport.scroll_left
+      ) {
+        timeline.setScrollLeft(next_viewport.scroll_left);
+        synchronized_scroll_ref.current.scroll_left = next_viewport.scroll_left;
+      }
+      set_viewport(committed_viewport);
+    },
+    [],
+  );
+
+  const zoom_to = useCallback(
+    (requested_zoom: number, anchor_x?: number) => {
+      cancel_pending_wheel_zoom();
+      const measured_width =
+        timeline_host_ref.current?.getBoundingClientRect().width ?? 0;
+      const viewport_width = measured_width > 0 ? measured_width : canvas_width;
+      const next_viewport = calculate_zoom_viewport({
+        viewport: viewport_ref.current,
+        requested_zoom,
+        anchor_x: anchor_x ?? viewport_width / 2,
+        viewport_width,
+      });
+      commit_zoom_viewport(next_viewport);
+    },
+    [cancel_pending_wheel_zoom, canvas_width, commit_zoom_viewport],
+  );
+
+  function settle_render_window_after_wheel() {
+    if (pending_wheel_idle_ref.current !== null) {
+      window.clearTimeout(pending_wheel_idle_ref.current);
+    }
+    pending_wheel_idle_ref.current = window.setTimeout(() => {
+      pending_wheel_idle_ref.current = null;
+      if (
+        pending_wheel_frame_ref.current !== null ||
+        pending_wheel_events_ref.current.length > 0
+      ) {
+        return;
+      }
+      const settled_window = create_timeline_render_window({
+        viewport: viewport_ref.current,
+        canvas_width: render_metrics_ref.current.canvas_width,
+        duration: render_metrics_ref.current.duration,
+      });
+      set_render_window((current) =>
+        timeline_render_windows_equal(current, settled_window)
+          ? current
+          : settled_window,
+      );
+    }, WHEEL_ZOOM_IDLE_MILLISECONDS);
+  }
+
+  function flush_pending_wheel_zoom() {
+    pending_wheel_frame_ref.current = null;
+    const frame_result = consume_timeline_wheel_zoom_frame({
+      viewport: viewport_ref.current,
+      events: pending_wheel_events_ref.current,
+    });
+    pending_wheel_events_ref.current = frame_result.remaining_events;
+    commit_zoom_viewport(frame_result.viewport);
+    if (pending_wheel_events_ref.current.length > 0) {
+      pending_wheel_frame_ref.current = window.requestAnimationFrame(
+        flush_pending_wheel_zoom,
+      );
+      return;
+    }
+    settle_render_window_after_wheel();
+  }
+
+  function zoom_with_alt(event: WheelEvent<HTMLDivElement>) {
+    if (!event.altKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const viewport_width = bounds.width > 0 ? bounds.width : canvas_width;
+    const page_height = bounds.height > 0 ? bounds.height : window.innerHeight;
+    const normalized_delta = normalize_wheel_delta(
+      event.deltaY,
+      event.deltaMode,
+      page_height,
+    );
+    pending_wheel_events_ref.current.push({
+      logarithmic_delta: normalized_delta * ALT_WHEEL_ZOOM_SENSITIVITY,
+      anchor_x: event.clientX - bounds.left,
+      viewport_width,
+    });
+    if (pending_wheel_idle_ref.current !== null) {
+      window.clearTimeout(pending_wheel_idle_ref.current);
+      pending_wheel_idle_ref.current = null;
+    }
+    if (pending_wheel_frame_ref.current !== null) return;
+    pending_wheel_frame_ref.current = window.requestAnimationFrame(
+      flush_pending_wheel_zoom,
+    );
+  }
+
+  function handle_timeline_scroll(position: TimelineScrollPosition) {
+    synchronized_scroll_ref.current = {
+      scroll_left: position.scrollLeft,
+      scroll_top: position.scrollTop,
+    };
+    set_viewport((current) => {
+      if (
+        current.scroll_left === position.scrollLeft &&
+        current.scroll_top === position.scrollTop
+      ) {
+        return current;
+      }
+      const updated_viewport = {
+        ...current,
+        scroll_left: position.scrollLeft,
+        scroll_top: position.scrollTop,
+      };
+      viewport_ref.current = updated_viewport;
+      return updated_viewport;
+    });
+  }
+
+  return {
+    canvas_width,
+    editor_render_window,
+    handle_timeline_scroll,
+    timeline_host_ref,
+    timeline_ref,
+    viewport,
+    zoom_to,
+    zoom_with_alt,
+  };
+}

@@ -1,22 +1,14 @@
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from enum import StrEnum
 from pathlib import Path
 from threading import Event
-from uuid import UUID
 import asyncio
 import os
-import re
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import (
-    BaseModel,
-    Field,
-    SecretStr,
-    field_validator,
-)
+from pydantic import BaseModel
 
 from openvideo.agent_service import (
     AgentService,
@@ -33,18 +25,11 @@ from openvideo.core.transcription_models import (
     TranscriptionModelState,
     TranscriptionOptions,
 )
-from openvideo.core.download_models import (
-    DownloadQuality,
-    DownloadStage,
-    DownloadTask,
-)
 from openvideo.core.library import (
-    FolderNotFoundError,
     LibraryDescription,
     LibraryError,
     MediaLibrary,
 )
-from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import SourcePlatform
 from openvideo.core.page_settings import (
     LEGACY_PAGE_SETTINGS_FILE_NAME,
@@ -62,24 +47,10 @@ from openvideo.settings import (
     preferences_from_settings,
 )
 from openvideo.download_accounts import (
-    DownloadAccount,
-    DownloadAccountError,
-    DownloadAccountExpired,
-    DownloadAccountLoginCancelled,
     DownloadAccountStore,
-    DownloadCookieBrowser,
     capture_cookie_from_dedicated_browser,
-    import_cookie_from_browser,
-)
-from openvideo.tools.downloader import (
-    DownloadFailure,
-    PlaylistProbe,
-    is_authentication_failure,
-    probe_source,
-    read_download_metadata,
 )
 from openvideo.llm.capability_resolver import CapabilityResolver
-from openvideo.tools.sources import UnsupportedSourceError, resolve_source
 from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
     TranscriptionModelManager,
@@ -93,100 +64,11 @@ from openvideo.ui.ai_routes import register_ai_routes
 from openvideo.ui.library_routes import register_library_routes
 from openvideo.ui.health_routes import register_health_routes
 from openvideo.ui.summary_routes import register_summary_routes
-
-
-MAX_BATCH_DOWNLOADS = 100
-DEFAULT_DOWNLOAD_HISTORY_LIMIT = 50
-MAX_DOWNLOAD_HISTORY_LIMIT = 100
-DOWNLOAD_ACCOUNT_TEST_URLS = {
-    SourcePlatform.BILIBILI: "https://www.bilibili.com/video/BV1xx411c7mD",
-    SourcePlatform.DOUYIN: "https://www.douyin.com/video/6961737553342991651",
-    SourcePlatform.YOUTUBE: "https://www.youtube.com/watch?v=BaW_jenozKc",
-}
-DOWNLOAD_ACCOUNT_LOGIN_ID_PATTERN = re.compile(r"^login-[0-9a-f]{32}$")
-
-
-class ProbeRequest(BaseModel):
-    source_url: str
-
-
-class DownloadAccountConnectRequest(BaseModel):
-    cookie: SecretStr = Field(min_length=1, max_length=16_000)
-
-
-class DownloadAccountTestRequest(BaseModel):
-    source_url: str | None = None
-
-
-class DownloadAccountBrowserImportRequest(BaseModel):
-    browser: DownloadCookieBrowser
-    source_url: str | None = None
-
-
-class DownloadAccountLoginStage(StrEnum):
-    WAITING = "waiting"
-    COMPLETE = "complete"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class DownloadAccountLoginSession(BaseModel):
-    login_id: str
-    platform: SourcePlatform
-    stage: DownloadAccountLoginStage = DownloadAccountLoginStage.WAITING
-    message: str = "请在专用浏览器窗口完成登录"
-    account: DownloadAccount | None = None
-
-    @field_validator("login_id")
-    @classmethod
-    def validate_login_id(cls, login_id: str) -> str:
-        if not DOWNLOAD_ACCOUNT_LOGIN_ID_PATTERN.fullmatch(login_id):
-            raise ValueError("账号登录会话 ID 格式无效")
-        login_uuid = UUID(hex=login_id.removeprefix("login-"))
-        if login_uuid.version != 7:
-            raise ValueError("账号登录会话 ID 必须使用 UUIDv7")
-        return login_id
-
-
-def _download_account_test_url(
-    platform: SourcePlatform,
-    source_url: str | None,
-) -> str:
-    """账号测试必须使用同平台链接，避免误把另一平台的公开访问判为登录成功。"""
-    if not source_url:
-        return DOWNLOAD_ACCOUNT_TEST_URLS[platform]
-    try:
-        match = resolve_source(source_url)
-    except UnsupportedSourceError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    if match.platform != platform:
-        raise HTTPException(status_code=422, detail="请使用当前平台的视频地址测试账号")
-    return match.normalized_url
-
-
-class ProbeEntry(BaseModel):
-    source_video_id: str
-    url: str
-    title: str | None
-    duration_seconds: float | None
-    uploader: str | None
-
-
-class ProbeResponse(BaseModel):
-    platform: SourcePlatform
-    is_playlist: bool
-    title: str | None
-    entries: list[ProbeEntry]
-    truncated: bool
-    total_count: int
-
-
-class BatchDownloadRequest(BaseModel):
-    source_urls: list[str]
-    video_quality: DownloadQuality = DownloadQuality.BEST
-    folder_id: str | None = None
-    automatic_folder_name: str | None = None
-    assign_folder: bool = False
+from openvideo.ui.download_account_routes import (
+    DownloadAccountLoginManager,
+    register_download_account_routes,
+)
+from openvideo.ui.download_routes import register_download_routes
 
 
 class LibraryCreateRequest(BaseModel):
@@ -239,67 +121,10 @@ def create_app(
     pick_directory = directory_picker or select_directory
     directory_picker_lock = asyncio.Lock()
     account_store = download_account_store or DownloadAccountStore()
-    capture_account_login = (
-        download_account_login_capture or capture_cookie_from_dedicated_browser
+    account_login_manager = DownloadAccountLoginManager(
+        account_store,
+        download_account_login_capture or capture_cookie_from_dedicated_browser,
     )
-    account_login_sessions: dict[str, DownloadAccountLoginSession] = {}
-    account_login_cancellations: dict[str, Event] = {}
-    account_login_tasks: dict[str, asyncio.Task[None]] = {}
-
-    async def run_download_account_login(
-        login_id: str,
-        platform: SourcePlatform,
-        cancel_event: Event,
-    ) -> None:
-        try:
-            cookie_header = await asyncio.to_thread(
-                capture_account_login,
-                platform,
-                cancel_event,
-            )
-            if cancel_event.is_set():
-                raise DownloadAccountLoginCancelled("账号登录已取消")
-            account_store.save(platform, cookie_header)
-            with account_store.cookie_file(platform) as cookie_source:
-                assert cookie_source is not None
-                await asyncio.to_thread(
-                    read_download_metadata,
-                    DOWNLOAD_ACCOUNT_TEST_URLS[platform],
-                    platform,
-                    cookie_source,
-                )
-            account = account_store.mark_available(platform)
-            assert account is not None
-            account_login_sessions[login_id] = DownloadAccountLoginSession(
-                login_id=login_id,
-                platform=platform,
-                stage=DownloadAccountLoginStage.COMPLETE,
-                message="登录成功",
-                account=account,
-            )
-        except DownloadAccountLoginCancelled as error:
-            account_login_sessions[login_id] = DownloadAccountLoginSession(
-                login_id=login_id,
-                platform=platform,
-                stage=DownloadAccountLoginStage.CANCELLED,
-                message=str(error),
-            )
-        except DownloadFailure as error:
-            if is_authentication_failure(error):
-                account_store.mark_expired(platform)
-            account_login_sessions[login_id] = DownloadAccountLoginSession(
-                login_id=login_id,
-                platform=platform,
-                stage=DownloadAccountLoginStage.FAILED,
-                message=str(error) or "无法验证账号登录状态",
-            )
-        except DownloadAccountError as error:
-            account_login_sessions[login_id] = DownloadAccountLoginSession(
-                login_id=login_id,
-                platform=platform,
-                stage=DownloadAccountLoginStage.FAILED,
-                message=str(error),
-            )
 
     async def install_library(opened_library: MediaLibrary) -> None:
         nonlocal \
@@ -375,13 +200,7 @@ def create_app(
         try:
             yield
         finally:
-            for cancel_event in account_login_cancellations.values():
-                cancel_event.set()
-            if account_login_tasks:
-                await asyncio.gather(
-                    *account_login_tasks.values(),
-                    return_exceptions=True,
-                )
+            await account_login_manager.close()
             if agent_service:
                 await agent_service.close()
             if library:
@@ -404,285 +223,6 @@ def create_app(
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
         allow_headers=["Content-Type", "Range"],
     )
-
-    @app.post("/api/downloads/probe", response_model=ProbeResponse)
-    async def probe_download(request: ProbeRequest) -> ProbeResponse:
-        try:
-            match = resolve_source(request.source_url)
-        except UnsupportedSourceError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        probe_target = match.playlist_url or match.normalized_url
-        try:
-            with account_store.cookie_file(match.platform) as cookie_source:
-                probe = await asyncio.to_thread(
-                    probe_source,
-                    probe_target,
-                    match.platform,
-                    match.source_video_id,
-                    cookie_source,
-                )
-                if cookie_source is not None:
-                    account_store.mark_available(match.platform)
-        except DownloadAccountExpired as error:
-            raise HTTPException(status_code=401, detail=str(error)) from error
-        except DownloadAccountError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-        except DownloadFailure as error:
-            if is_authentication_failure(error):
-                account_store.mark_expired(match.platform)
-            raise HTTPException(
-                status_code=502, detail=str(error) or "无法读取视频信息"
-            ) from error
-        return _probe_response(match.platform, probe)
-
-    @app.get(
-        "/api/download-accounts",
-        response_model=list[DownloadAccount],
-    )
-    def list_download_accounts() -> list[DownloadAccount]:
-        try:
-            return account_store.list_accounts()
-        except DownloadAccountError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-
-    @app.post(
-        "/api/download-accounts/{platform}/login-sessions",
-        response_model=DownloadAccountLoginSession,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def create_download_account_login_session(
-        platform: SourcePlatform,
-    ) -> DownloadAccountLoginSession:
-        stale_login_ids = [
-            login_id
-            for login_id, session in account_login_sessions.items()
-            if session.platform == platform
-            and session.stage != DownloadAccountLoginStage.WAITING
-        ]
-        for stale_login_id in stale_login_ids:
-            account_login_sessions.pop(stale_login_id, None)
-            account_login_cancellations.pop(stale_login_id, None)
-            account_login_tasks.pop(stale_login_id, None)
-        active_session = next(
-            (
-                session
-                for session in account_login_sessions.values()
-                if session.platform == platform
-                and session.stage == DownloadAccountLoginStage.WAITING
-            ),
-            None,
-        )
-        if active_session is not None:
-            return active_session.model_copy(deep=True)
-        login_id = f"login-{uuid7().hex}"
-        session = DownloadAccountLoginSession(login_id=login_id, platform=platform)
-        cancel_event = Event()
-        account_login_sessions[login_id] = session
-        account_login_cancellations[login_id] = cancel_event
-        account_login_tasks[login_id] = asyncio.create_task(
-            run_download_account_login(login_id, platform, cancel_event)
-        )
-        return session.model_copy(deep=True)
-
-    @app.get(
-        "/api/download-account-login-sessions/{login_id}",
-        response_model=DownloadAccountLoginSession,
-    )
-    async def get_download_account_login_session(
-        login_id: str,
-    ) -> DownloadAccountLoginSession:
-        session = account_login_sessions.get(login_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="账号登录会话不存在")
-        return session.model_copy(deep=True)
-
-    @app.delete(
-        "/api/download-account-login-sessions/{login_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-    )
-    async def delete_download_account_login_session(login_id: str) -> Response:
-        session = account_login_sessions.get(login_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="账号登录会话不存在")
-        cancel_event = account_login_cancellations[login_id]
-        cancel_event.set()
-        await account_login_tasks[login_id]
-        account_login_sessions.pop(login_id, None)
-        account_login_cancellations.pop(login_id, None)
-        account_login_tasks.pop(login_id, None)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.get(
-        "/api/download-accounts/{platform}",
-        response_model=DownloadAccount | None,
-    )
-    def get_download_account(platform: SourcePlatform) -> DownloadAccount | None:
-        try:
-            return account_store.get(platform)
-        except DownloadAccountError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-
-    @app.put(
-        "/api/download-accounts/{platform}",
-        response_model=DownloadAccount,
-    )
-    def save_download_account(
-        platform: SourcePlatform,
-        request: DownloadAccountConnectRequest,
-    ) -> DownloadAccount:
-        try:
-            return account_store.save(platform, request.cookie.get_secret_value())
-        except DownloadAccountError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.post(
-        "/api/download-accounts/{platform}/import-browser",
-        response_model=DownloadAccount,
-    )
-    async def import_download_account_from_browser(
-        platform: SourcePlatform,
-        request: DownloadAccountBrowserImportRequest,
-    ) -> DownloadAccount:
-        test_url = _download_account_test_url(platform, request.source_url)
-        try:
-            cookie_header = await asyncio.to_thread(
-                import_cookie_from_browser,
-                platform,
-                request.browser,
-                test_url,
-            )
-            account_store.save(platform, cookie_header)
-            imported_account = account_store.mark_available(platform)
-            assert imported_account is not None
-            return imported_account
-        except DownloadAccountError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.post(
-        "/api/download-accounts/{platform}/test",
-        response_model=DownloadAccount,
-    )
-    async def test_download_account(
-        platform: SourcePlatform,
-        request: DownloadAccountTestRequest,
-    ) -> DownloadAccount:
-        account = account_store.get(platform)
-        if account is None:
-            raise HTTPException(status_code=404, detail="尚未连接该平台账号")
-        test_url = _download_account_test_url(platform, request.source_url)
-        try:
-            with account_store.cookie_file(platform) as cookie_source:
-                assert cookie_source is not None
-                await asyncio.to_thread(
-                    read_download_metadata,
-                    test_url,
-                    platform,
-                    cookie_source,
-                )
-            tested_account = account_store.mark_available(platform)
-            assert tested_account is not None
-            return tested_account
-        except DownloadAccountExpired as error:
-            raise HTTPException(status_code=401, detail=str(error)) from error
-        except DownloadAccountError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-        except DownloadFailure as error:
-            if is_authentication_failure(error):
-                account_store.mark_expired(platform)
-                raise HTTPException(status_code=401, detail=str(error)) from error
-            raise HTTPException(status_code=502, detail=str(error)) from error
-
-    @app.delete(
-        "/api/download-accounts/{platform}",
-        status_code=status.HTTP_204_NO_CONTENT,
-    )
-    def delete_download_account(platform: SourcePlatform) -> Response:
-        try:
-            account_store.delete(platform)
-        except DownloadAccountError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.post(
-        "/api/downloads",
-        response_model=list[DownloadTask],
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def create_downloads(request: BatchDownloadRequest) -> list[DownloadTask]:
-        if not request.source_urls:
-            raise HTTPException(status_code=422, detail="请至少提供一个视频地址")
-        if len(request.source_urls) > MAX_BATCH_DOWNLOADS:
-            raise HTTPException(
-                status_code=422,
-                detail=f"单次最多下载 {MAX_BATCH_DOWNLOADS} 个视频",
-            )
-        matches = []
-        for source_url in request.source_urls:
-            try:
-                matches.append(resolve_source(source_url))
-            except UnsupportedSourceError as error:
-                raise HTTPException(status_code=422, detail=str(error)) from error
-        try:
-            folder_id = request.folder_id
-            if folder_id is None and request.automatic_folder_name:
-                folder_id = library.create_or_get_root_folder(
-                    request.automatic_folder_name
-                ).folder_id
-            assign_ready_folder = request.assign_folder or bool(
-                request.automatic_folder_name
-            )
-            jobs = manager.create_batch(
-                matches,
-                folder_id,
-                assign_ready_folder,
-                request.video_quality,
-            )
-        except (FolderNotFoundError, ValueError) as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        for job in jobs:
-            if job.stage.value != "complete":
-                manager.start(job.job_id)
-        return [
-            task for job in jobs if (task := manager.get_task(job.job_id)) is not None
-        ]
-
-    @app.get("/api/downloads", response_model=list[DownloadTask])
-    def list_downloads(
-        limit: int = Query(
-            default=DEFAULT_DOWNLOAD_HISTORY_LIMIT,
-            ge=1,
-            le=MAX_DOWNLOAD_HISTORY_LIMIT,
-        ),
-    ) -> list[DownloadTask]:
-        return manager.list_tasks(limit) if manager else []
-
-    @app.get("/api/downloads/{job_id}", response_model=DownloadTask)
-    def get_download(job_id: str) -> DownloadTask:
-        task = manager.get_task(job_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="下载任务不存在")
-        return task
-
-    @app.post(
-        "/api/downloads/{job_id}/retry",
-        response_model=DownloadTask,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def retry_download(job_id: str) -> DownloadTask:
-        try:
-            job = manager.retry(job_id)
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        if job.stage != DownloadStage.COMPLETE:
-            manager.start(job.job_id)
-        task = manager.get_task(job.job_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="重新下载任务不存在")
-        return task
-
-
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException):
@@ -886,6 +426,8 @@ def create_app(
 
 
     register_page_settings_routes(app, require_page_settings_store)
+    register_download_account_routes(app, account_store, account_login_manager)
+    register_download_routes(app, lambda: library, lambda: manager, account_store)
 
     register_health_routes(app, resolved_settings)
     register_analysis_routes(
@@ -909,26 +451,6 @@ def create_app(
     register_media_routes(app, lambda: library, resolved_settings)
 
     return app
-
-
-def _probe_response(platform: SourcePlatform, probe: PlaylistProbe) -> ProbeResponse:
-    return ProbeResponse(
-        platform=platform,
-        is_playlist=probe.is_playlist,
-        title=probe.title,
-        entries=[
-            ProbeEntry(
-                source_video_id=entry.source_video_id,
-                url=_entry_download_url(platform, entry.source_video_id, entry.url),
-                title=entry.title,
-                duration_seconds=entry.duration_seconds,
-                uploader=entry.uploader,
-            )
-            for entry in probe.entries
-        ],
-        truncated=probe.truncated,
-        total_count=probe.total_count,
-    )
 
 
 def _library_error(status_code: int, code: str, message: str):
@@ -977,21 +499,6 @@ def _preferences_response(settings: Settings) -> PreferencesResponse:
         managed_fields=sorted(settings.managed_fields),
         library_path_managed=os.getenv("OPENVIDEO_LIBRARY_PATH") is not None,
     )
-
-
-def _entry_download_url(platform: SourcePlatform, video_id: str, raw_url: str) -> str:
-    """把浅层条目补全成 resolve_source 能识别的规范单视频地址。
-
-    yt-dlp 的 --flat-playlist 对不同平台返回完整 URL 或裸 ID，统一按平台重建，
-    确保批量下载端点里的每个地址都能通过来源校验。
-    """
-    if platform == SourcePlatform.BILIBILI:
-        return raw_url or f"https://www.bilibili.com/video/{video_id}"
-    if platform == SourcePlatform.DOUYIN:
-        return f"https://www.douyin.com/video/{video_id}"
-    if platform == SourcePlatform.YOUTUBE:
-        return f"https://www.youtube.com/watch?v={video_id}"
-    return raw_url
 
 
 app = create_app()

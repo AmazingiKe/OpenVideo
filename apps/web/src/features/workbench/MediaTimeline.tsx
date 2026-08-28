@@ -1,8 +1,4 @@
-import {
-  Timeline,
-  type TimelineEditor,
-  type TimelineState,
-} from "@xzdarcy/react-timeline-editor";
+import { Timeline, type TimelineEditor } from "@xzdarcy/react-timeline-editor";
 import "@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css";
 import {
   Captions,
@@ -12,15 +8,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
-  type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
-  type WheelEvent,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 
@@ -50,62 +42,29 @@ import { MediaTimelineActionContent } from "./MediaTimelineActionContent";
 import { MediaTimelineToolbar } from "./MediaTimelineToolbar";
 import { MediaTimelineTranscriptEditor } from "./MediaTimelineTranscriptEditor";
 import {
-  DEFAULT_ZOOM_PIXELS_PER_SECOND,
   MARKER_SHAPE_VALUES,
   MINIMUM_ACTION_DURATION_SECONDS,
   TIMELINE_ROW_HEIGHT,
   TIMELINE_START_LEFT,
   TIMELINE_TRACK_IDS,
   build_timeline_rows,
-  calculate_zoom_viewport,
-  consume_timeline_wheel_zoom_frame,
-  create_timeline_render_window,
-  extend_timeline_render_window,
   filter_timeline_rows_for_window,
-  normalize_wheel_delta,
   round_marker_time,
   timeline_content_duration,
-  timeline_render_windows_equal,
-  update_timeline_render_window,
   type MediaTimelineAction,
   type TimelineAction,
-  type TimelineRenderWindow,
-  type TimelineViewportState,
-  type TimelineWheelZoomEvent,
-  type TimelineZoomViewport,
 } from "./media_timeline_calculations";
+import {
+  use_media_timeline_editors,
+  type TimelinePointerPosition,
+} from "./use_media_timeline_editors";
+import { use_media_timeline_viewport } from "./use_media_timeline_viewport";
 
-const ALT_WHEEL_ZOOM_SENSITIVITY = -0.001;
-const WHEEL_ZOOM_IDLE_MILLISECONDS = 100;
 const TIMELINE_SCALE_SECONDS = 1;
 const TIMELINE_SCALE_SPLIT_COUNT = 1;
-const DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS = 1024;
-const VIRTUALIZED_GRID_SELECTOR = ".ReactVirtualized__Grid";
-const VIRTUALIZED_GRID_ROLE_SELECTOR = '[role="row"], [role="gridcell"]';
 const EMPTY_MARKERS: MediaMarker[] = [];
 const EMPTY_TIMELINE_EFFECTS: TimelineEditor["effects"] = {};
 const MARKER_IMPORTANCE_VALUES: MarkerImportance[] = [0, 1, 2, 3, 4, 5];
-
-function normalize_virtualized_timeline_accessibility(root: Element) {
-  const grids = root.matches(VIRTUALIZED_GRID_SELECTOR)
-    ? [root]
-    : [...root.querySelectorAll(VIRTUALIZED_GRID_SELECTOR)];
-  for (const grid of grids) {
-    grid.setAttribute("role", "group");
-    grid.setAttribute("aria-label", "时间线轨道内容");
-    grid.removeAttribute("aria-readonly");
-  }
-
-  const role_elements = root.matches(VIRTUALIZED_GRID_ROLE_SELECTOR)
-    ? [root]
-    : [...root.querySelectorAll(VIRTUALIZED_GRID_ROLE_SELECTOR)];
-  for (const element of role_elements) element.removeAttribute("role");
-}
-
-type TimelinePointerPosition = {
-  x: number;
-  y: number;
-};
 
 type TimelineTrackPresentation = {
   id: string;
@@ -186,21 +145,6 @@ export function MediaTimeline({
   on_delete_marker,
   on_update_transcript,
 }: MediaTimelineProps) {
-  const timeline_ref = useRef<TimelineState>(null);
-  const timeline_host_ref = useRef<HTMLDivElement>(null);
-  const pending_wheel_events_ref = useRef<TimelineWheelZoomEvent[]>([]);
-  const pending_wheel_frame_ref = useRef<number | null>(null);
-  const pending_wheel_idle_ref = useRef<number | null>(null);
-  const synchronized_scroll_ref = useRef({ scroll_left: 0, scroll_top: 0 });
-  const [viewport, set_viewport] = useState<TimelineViewportState>({
-    zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
-    scroll_left: 0,
-    scroll_top: 0,
-  });
-  const viewport_ref = useRef(viewport);
-  const [canvas_width, set_canvas_width] = useState(
-    DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS,
-  );
   const [selected_marker_id, set_selected_marker_id] = useState<string | null>(
     null,
   );
@@ -211,31 +155,40 @@ export function MediaTimeline({
   const [interaction_error, set_interaction_error] = useState<string | null>(
     null,
   );
-  const [editing_transcript_index, set_editing_transcript_index] = useState<
-    number | null
-  >(null);
-  const [transcript_draft, set_transcript_draft] = useState("");
-  const [transcript_error, set_transcript_error] = useState<string | null>(
-    null,
-  );
-  const [is_saving_transcript, set_is_saving_transcript] = useState(false);
-  const [editing_marker_id, set_editing_marker_id] = useState<string | null>(
-    null,
-  );
-  const [marker_start_draft, set_marker_start_draft] = useState(0);
-  const [marker_end_draft, set_marker_end_draft] = useState<number | null>(
-    null,
-  );
-  const [marker_save_error, set_marker_save_error] = useState<string | null>(
-    null,
-  );
-  const [is_saving_marker, set_is_saving_marker] = useState(false);
-  const [marker_editor_position, set_marker_editor_position] =
-    useState<TimelinePointerPosition | null>(null);
   const transcript_segments = useMemo(
     () => transcript?.segments ?? [],
     [transcript],
   );
+  const {
+    cancel_marker_edit,
+    cancel_transcript_edit,
+    delete_marker,
+    edit_marker,
+    edit_transcript,
+    editing_marker_id,
+    editing_transcript_index,
+    is_saving_marker,
+    is_saving_transcript,
+    marker_editor_position,
+    marker_end_draft,
+    marker_save_error,
+    marker_start_draft,
+    save_marker,
+    save_transcript,
+    set_marker_end_draft,
+    set_marker_start_draft,
+    set_transcript_draft,
+    transcript_draft,
+    transcript_error,
+  } = use_media_timeline_editors({
+    asset_id,
+    markers,
+    on_delete_marker,
+    on_select_marker: set_selected_marker_id,
+    on_update_marker,
+    on_update_transcript,
+    transcript_segments,
+  });
   const content_duration = useMemo(
     () =>
       timeline_content_duration(
@@ -256,36 +209,16 @@ export function MediaTimeline({
   const duration = Math.max(content_duration, current_time);
   const bounded_time = Math.min(Math.max(current_time, 0), duration);
   const scale_count = Math.max(1, Math.ceil(duration));
-  const [render_window, set_render_window] = useState<TimelineRenderWindow>(
-    () =>
-      create_timeline_render_window({
-        viewport: {
-          zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
-          scroll_left: 0,
-        },
-        canvas_width: DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS,
-        duration,
-      }),
-  );
-  const wheel_zoom_is_active =
-    pending_wheel_frame_ref.current !== null ||
-    pending_wheel_idle_ref.current !== null ||
-    pending_wheel_events_ref.current.length > 0;
-  const editor_render_window = useMemo(() => {
-    const render_window_parameters = {
-      render_window,
-      viewport,
-      canvas_width,
-      duration,
-    };
-    return wheel_zoom_is_active
-      ? extend_timeline_render_window(render_window_parameters)
-      : update_timeline_render_window(render_window_parameters);
-  }, [canvas_width, duration, render_window, viewport, wheel_zoom_is_active]);
-  const render_metrics_ref = useRef({ canvas_width, duration });
-  useLayoutEffect(() => {
-    render_metrics_ref.current = { canvas_width, duration };
-  }, [canvas_width, duration]);
+  const {
+    canvas_width,
+    editor_render_window,
+    handle_timeline_scroll,
+    timeline_host_ref,
+    timeline_ref,
+    viewport,
+    zoom_to,
+    zoom_with_alt,
+  } = use_media_timeline_viewport({ asset_id, bounded_time, duration });
   const full_editor_data = useMemo(
     () =>
       build_timeline_rows({
@@ -320,116 +253,11 @@ export function MediaTimeline({
   );
   const timeline_error = interaction_error ?? transcript_error ?? marker_error;
 
-  const cancel_pending_wheel_zoom = useCallback(() => {
-    if (pending_wheel_frame_ref.current !== null) {
-      window.cancelAnimationFrame(pending_wheel_frame_ref.current);
-    }
-    if (pending_wheel_idle_ref.current !== null) {
-      window.clearTimeout(pending_wheel_idle_ref.current);
-    }
-    pending_wheel_frame_ref.current = null;
-    pending_wheel_idle_ref.current = null;
-    pending_wheel_events_ref.current = [];
-  }, []);
-
   useEffect(() => {
-    cancel_pending_wheel_zoom();
-    const render_metrics = render_metrics_ref.current;
-    const initial_viewport: TimelineViewportState = {
-      zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
-      scroll_left: 0,
-      scroll_top: 0,
-    };
-    viewport_ref.current = initial_viewport;
-    set_viewport(initial_viewport);
-    set_render_window(
-      create_timeline_render_window({
-        viewport: {
-          zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
-          scroll_left: 0,
-        },
-        canvas_width: render_metrics.canvas_width,
-        duration: render_metrics.duration,
-      }),
-    );
     set_selected_marker_id(null);
     set_context_marker_id(null);
     set_interaction_error(null);
-    set_editing_marker_id(null);
-    set_marker_editor_position(null);
-    set_editing_transcript_index(null);
-    set_transcript_draft("");
-    set_transcript_error(null);
-  }, [asset_id, cancel_pending_wheel_zoom]);
-
-  useEffect(
-    () => () => cancel_pending_wheel_zoom(),
-    [cancel_pending_wheel_zoom],
-  );
-
-  useLayoutEffect(() => {
-    set_render_window((current) =>
-      timeline_render_windows_equal(current, editor_render_window)
-        ? current
-        : editor_render_window,
-    );
-  }, [editor_render_window]);
-
-  useLayoutEffect(() => {
-    viewport_ref.current = viewport;
-    if (synchronized_scroll_ref.current.scroll_left !== viewport.scroll_left) {
-      timeline_ref.current?.setScrollLeft(viewport.scroll_left);
-      synchronized_scroll_ref.current.scroll_left = viewport.scroll_left;
-    }
-    if (synchronized_scroll_ref.current.scroll_top !== viewport.scroll_top) {
-      timeline_ref.current?.setScrollTop(viewport.scroll_top);
-      synchronized_scroll_ref.current.scroll_top = viewport.scroll_top;
-    }
-  }, [viewport]);
-
-  useLayoutEffect(() => {
-    const timeline_host = timeline_host_ref.current;
-    if (!timeline_host) return;
-
-    function measure_canvas_width() {
-      const measured_width = timeline_host?.getBoundingClientRect().width ?? 0;
-      if (measured_width <= 0) return;
-      set_canvas_width((current) =>
-        current === measured_width ? current : measured_width,
-      );
-    }
-
-    measure_canvas_width();
-    const resize_observer = new ResizeObserver(measure_canvas_width);
-    resize_observer.observe(timeline_host);
-    return () => resize_observer.disconnect();
-  }, []);
-
-  useLayoutEffect(() => {
-    const timeline_host = timeline_host_ref.current;
-    if (!timeline_host) return;
-
-    // react-virtualized 将自由定位片段错误标成 grid row，需在集成边界修正语义。
-    normalize_virtualized_timeline_accessibility(timeline_host);
-    const accessibility_observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node instanceof Element) {
-            normalize_virtualized_timeline_accessibility(node);
-          }
-        }
-      }
-    });
-    accessibility_observer.observe(timeline_host, {
-      subtree: true,
-      childList: true,
-    });
-    return () => accessibility_observer.disconnect();
-  }, []);
-
-  useLayoutEffect(() => {
-    timeline_ref.current?.setTime(bounded_time);
-  }, [bounded_time]);
+  }, [asset_id]);
 
   const add_marker_and_select = useCallback(
     async (
@@ -483,122 +311,6 @@ export function MediaTimeline({
     on_update_marker,
     selected_marker_id,
   ]);
-
-  const commit_zoom_viewport = useCallback(
-    (next_viewport: TimelineZoomViewport) => {
-      const current = viewport_ref.current;
-      if (
-        next_viewport.zoom_pixels_per_second ===
-          current.zoom_pixels_per_second &&
-        next_viewport.scroll_left === current.scroll_left
-      ) {
-        return;
-      }
-      const committed_viewport = { ...current, ...next_viewport };
-      viewport_ref.current = committed_viewport;
-      const timeline = timeline_ref.current;
-      if (
-        timeline &&
-        synchronized_scroll_ref.current.scroll_left !==
-          next_viewport.scroll_left
-      ) {
-        // 第三方组件内部持有滚动状态，必须和新比例进入同一批次，避免先用旧位置绘制一帧。
-        timeline.setScrollLeft(next_viewport.scroll_left);
-        synchronized_scroll_ref.current.scroll_left = next_viewport.scroll_left;
-      }
-      set_viewport(committed_viewport);
-    },
-    [],
-  );
-
-  const zoom_to = useCallback(
-    (requested_zoom: number, anchor_x?: number) => {
-      cancel_pending_wheel_zoom();
-      const measured_width =
-        timeline_host_ref.current?.getBoundingClientRect().width ?? 0;
-      const viewport_width = measured_width > 0 ? measured_width : canvas_width;
-      const next_viewport = calculate_zoom_viewport({
-        viewport: viewport_ref.current,
-        requested_zoom,
-        anchor_x: anchor_x ?? viewport_width / 2,
-        viewport_width,
-      });
-      commit_zoom_viewport(next_viewport);
-    },
-    [cancel_pending_wheel_zoom, canvas_width, commit_zoom_viewport],
-  );
-
-  function settle_render_window_after_wheel() {
-    if (pending_wheel_idle_ref.current !== null) {
-      window.clearTimeout(pending_wheel_idle_ref.current);
-    }
-    pending_wheel_idle_ref.current = window.setTimeout(() => {
-      pending_wheel_idle_ref.current = null;
-      if (
-        pending_wheel_frame_ref.current !== null ||
-        pending_wheel_events_ref.current.length > 0
-      ) {
-        return;
-      }
-      const render_metrics = render_metrics_ref.current;
-      const settled_window = create_timeline_render_window({
-        viewport: viewport_ref.current,
-        canvas_width: render_metrics.canvas_width,
-        duration: render_metrics.duration,
-      });
-      set_render_window((current) =>
-        timeline_render_windows_equal(current, settled_window)
-          ? current
-          : settled_window,
-      );
-    }, WHEEL_ZOOM_IDLE_MILLISECONDS);
-  }
-
-  function flush_pending_wheel_zoom() {
-    pending_wheel_frame_ref.current = null;
-    const frame_result = consume_timeline_wheel_zoom_frame({
-      viewport: viewport_ref.current,
-      events: pending_wheel_events_ref.current,
-    });
-    pending_wheel_events_ref.current = frame_result.remaining_events;
-    commit_zoom_viewport(frame_result.viewport);
-
-    if (pending_wheel_events_ref.current.length > 0) {
-      pending_wheel_frame_ref.current = window.requestAnimationFrame(
-        flush_pending_wheel_zoom,
-      );
-      return;
-    }
-    settle_render_window_after_wheel();
-  }
-
-  function zoom_with_alt(event: WheelEvent<HTMLDivElement>) {
-    if (!event.altKey) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const anchor_x = event.clientX - bounds.left;
-    const viewport_width = bounds.width > 0 ? bounds.width : canvas_width;
-    const page_height = bounds.height > 0 ? bounds.height : window.innerHeight;
-    const normalized_delta = normalize_wheel_delta(
-      event.deltaY,
-      event.deltaMode,
-      page_height,
-    );
-    pending_wheel_events_ref.current.push({
-      logarithmic_delta: normalized_delta * ALT_WHEEL_ZOOM_SENSITIVITY,
-      anchor_x,
-      viewport_width,
-    });
-    if (pending_wheel_idle_ref.current !== null) {
-      window.clearTimeout(pending_wheel_idle_ref.current);
-      pending_wheel_idle_ref.current = null;
-    }
-    if (pending_wheel_frame_ref.current !== null) return;
-    pending_wheel_frame_ref.current = window.requestAnimationFrame(
-      flush_pending_wheel_zoom,
-    );
-  }
 
   function select_action(action: TimelineAction) {
     const media_action = action as MediaTimelineAction;
@@ -789,27 +501,7 @@ export function MediaTimeline({
                     open_action_editor={open_action_editor}
                   />
                 )}
-                onScroll={(next_viewport) => {
-                  synchronized_scroll_ref.current = {
-                    scroll_left: next_viewport.scrollLeft,
-                    scroll_top: next_viewport.scrollTop,
-                  };
-                  set_viewport((current) => {
-                    if (
-                      current.scroll_left === next_viewport.scrollLeft &&
-                      current.scroll_top === next_viewport.scrollTop
-                    ) {
-                      return current;
-                    }
-                    const updated_viewport = {
-                      ...current,
-                      scroll_left: next_viewport.scrollLeft,
-                      scroll_top: next_viewport.scrollTop,
-                    };
-                    viewport_ref.current = updated_viewport;
-                    return updated_viewport;
-                  });
-                }}
+                onScroll={handle_timeline_scroll}
                 onChange={() => false}
                 onClickTimeArea={(time) => {
                   on_seek_bounded(time);
@@ -891,91 +583,6 @@ export function MediaTimeline({
 
   function on_scrub_bounded(seconds: number) {
     on_scrub(Math.min(Math.max(seconds, 0), duration));
-  }
-
-  function edit_marker(
-    marker_id: string,
-    pointer_position: TimelinePointerPosition,
-  ) {
-    const marker = markers.find(
-      (candidate) => candidate.marker_id === marker_id,
-    );
-    if (!marker) return;
-    set_selected_marker_id(marker.marker_id);
-    set_editing_marker_id(marker.marker_id);
-    set_marker_start_draft(marker.start_seconds);
-    set_marker_end_draft(marker.end_seconds);
-    set_marker_save_error(null);
-    set_marker_editor_position(pointer_position);
-    cancel_transcript_edit();
-  }
-
-  function edit_transcript(segment_index: number) {
-    const segment = transcript_segments[segment_index];
-    if (!segment) return;
-    cancel_marker_edit();
-    set_editing_transcript_index(segment_index);
-    set_transcript_draft(segment.text);
-    set_transcript_error(null);
-  }
-
-  function cancel_transcript_edit() {
-    set_editing_transcript_index(null);
-    set_transcript_draft("");
-    set_transcript_error(null);
-  }
-
-  async function save_transcript(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (editing_transcript_index === null) return;
-    const text = transcript_draft.trim();
-    if (!text) return;
-    set_is_saving_transcript(true);
-    set_transcript_error(null);
-    try {
-      await on_update_transcript(editing_transcript_index, text);
-      cancel_transcript_edit();
-    } catch {
-      set_transcript_error("转写保存失败，请稍后重试");
-    } finally {
-      set_is_saving_transcript(false);
-    }
-  }
-
-  function save_marker(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (editing_marker_id === null) return;
-    set_is_saving_marker(true);
-    set_marker_save_error(null);
-    void on_update_marker(editing_marker_id, {
-      start_seconds: round_marker_time(marker_start_draft),
-      end_seconds:
-        marker_end_draft === null ? null : round_marker_time(marker_end_draft),
-    })
-      .then(cancel_marker_edit)
-      .catch(() => set_marker_save_error("标记保存失败，请稍后重试"))
-      .finally(() => set_is_saving_marker(false));
-  }
-
-  function delete_marker() {
-    if (editing_marker_id === null) return;
-    set_is_saving_marker(true);
-    set_marker_save_error(null);
-    void on_delete_marker(editing_marker_id)
-      .then(() => {
-        set_selected_marker_id(null);
-        cancel_marker_edit();
-      })
-      .catch(() => set_marker_save_error("标记删除失败，请稍后重试"))
-      .finally(() => set_is_saving_marker(false));
-  }
-
-  function cancel_marker_edit() {
-    set_editing_marker_id(null);
-    set_marker_start_draft(0);
-    set_marker_end_draft(null);
-    set_marker_save_error(null);
-    set_marker_editor_position(null);
   }
 
   function scrub_with_keyboard(event: KeyboardEvent<HTMLDivElement>) {

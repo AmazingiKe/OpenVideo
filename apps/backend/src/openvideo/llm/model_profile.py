@@ -63,6 +63,21 @@ class ModelCapabilities(BaseModel):
     parallel_tools: Support = Support.UNKNOWN
     vision_tools: Support = Support.UNKNOWN
 
+    def support(self, capability: CapabilityName) -> Support:
+        return {
+            CapabilityName.TOOLS: self.tools,
+            CapabilityName.REASONING: self.reasoning,
+            CapabilityName.VISION: self.vision,
+            CapabilityName.STRUCTURED_OUTPUT: self.structured_output,
+            CapabilityName.STREAMING_TOOLS: self.streaming_tools,
+            CapabilityName.REASONING_TOOLS: self.reasoning_tools,
+            CapabilityName.TOOL_CHOICE_AUTO: self.tool_choice_auto,
+            CapabilityName.TOOL_CHOICE_REQUIRED: self.tool_choice_required,
+            CapabilityName.TOOL_CHOICE_NAMED: self.tool_choice_named,
+            CapabilityName.PARALLEL_TOOLS: self.parallel_tools,
+            CapabilityName.VISION_TOOLS: self.vision_tools,
+        }[capability]
+
 
 class ModelCapabilityOverrides(BaseModel):
     tools: CapabilityOverride = CapabilityOverride.AUTO
@@ -76,6 +91,22 @@ class ModelCapabilityOverrides(BaseModel):
     tool_choice_named: CapabilityOverride = CapabilityOverride.AUTO
     parallel_tools: CapabilityOverride = CapabilityOverride.AUTO
     vision_tools: CapabilityOverride = CapabilityOverride.AUTO
+
+    def support(self, capability: CapabilityName) -> Support:
+        override = {
+            CapabilityName.TOOLS: self.tools,
+            CapabilityName.REASONING: self.reasoning,
+            CapabilityName.VISION: self.vision,
+            CapabilityName.STRUCTURED_OUTPUT: self.structured_output,
+            CapabilityName.STREAMING_TOOLS: self.streaming_tools,
+            CapabilityName.REASONING_TOOLS: self.reasoning_tools,
+            CapabilityName.TOOL_CHOICE_AUTO: self.tool_choice_auto,
+            CapabilityName.TOOL_CHOICE_REQUIRED: self.tool_choice_required,
+            CapabilityName.TOOL_CHOICE_NAMED: self.tool_choice_named,
+            CapabilityName.PARALLEL_TOOLS: self.parallel_tools,
+            CapabilityName.VISION_TOOLS: self.vision_tools,
+        }[capability]
+        return override.support()
 
 
 class ModelQuirks(BaseModel):
@@ -101,7 +132,7 @@ class ModelProfile(BaseModel):
     )
 
     def support(self, capability: CapabilityName) -> Support:
-        return Support(getattr(self.capabilities, capability.value))
+        return self.capabilities.support(capability)
 
     def source(self, capability: CapabilityName) -> CapabilitySource:
         return self.capability_sources.get(capability, CapabilitySource.UNKNOWN)

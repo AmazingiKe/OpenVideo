@@ -1,4 +1,4 @@
-import { Component, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -16,10 +16,7 @@ import {
 } from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
-import {
-  MarkdownEditor,
-  type MarkdownSelection,
-} from "@/components/MarkdownEditor";
+import type { MarkdownSelection } from "@/components/MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -82,6 +79,12 @@ import type {
   SummaryDocument,
   Transcript,
 } from "@/shared/types";
+
+const MarkdownEditor = lazy(() =>
+  import("@/components/MarkdownEditor").then((module) => ({
+    default: module.MarkdownEditor,
+  })),
+);
 
 export type SaveStatus = "saved" | "pending" | "saving" | "failed" | "conflict";
 
@@ -515,12 +518,24 @@ export function DocumentEditor({
           document_id={document.document_id}
           on_use_source={() => on_mode_change("source")}
         >
-          <MarkdownEditor
-            document_key={document.document_id}
-            markdown={markdown}
-            on_change={on_markdown_change}
-            on_selection_change={on_selection_change}
-          />
+          <Suspense
+            fallback={
+              <div
+                className="flex h-full min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground"
+                role="status"
+              >
+                <Spinner />
+                正在加载编辑器…
+              </div>
+            }
+          >
+            <MarkdownEditor
+              document_key={document.document_id}
+              markdown={markdown}
+              on_change={on_markdown_change}
+              on_selection_change={on_selection_change}
+            />
+          </Suspense>
         </MarkdownEditorErrorBoundary>
       </TabsContent>
       <TabsContent value="source" className="min-h-0">

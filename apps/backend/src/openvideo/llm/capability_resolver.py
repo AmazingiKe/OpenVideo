@@ -79,12 +79,12 @@ class CapabilityResolver:
         local: ModelCapabilities,
         catalog: ModelCapabilities,
     ) -> tuple[Support, CapabilitySource]:
-        configured = getattr(model.capabilities, capability.value).support()
+        configured = model.capabilities.support(capability)
         candidates = (
             (configured, CapabilitySource.USER_OVERRIDE),
             (probed.get(capability, Support.UNKNOWN), CapabilitySource.RUNTIME_PROBE),
-            (getattr(local, capability.value), CapabilitySource.LOCAL_OVERRIDE),
-            (getattr(catalog, capability.value), CapabilitySource.MODELS_DEV),
+            (local.support(capability), CapabilitySource.LOCAL_OVERRIDE),
+            (catalog.support(capability), CapabilitySource.MODELS_DEV),
             (
                 self._litellm_support(model, capability),
                 CapabilitySource.LITELLM_METADATA,

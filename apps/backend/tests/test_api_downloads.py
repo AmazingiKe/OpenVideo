@@ -19,7 +19,7 @@ from openvideo.tools.downloader import (
     PlaylistEntry,
     PlaylistProbe,
 )
-from openvideo.ui import api
+from openvideo.ui import api, download_account_routes, download_routes
 
 
 class MemoryDownloadAccountSecretStore:
@@ -57,7 +57,7 @@ def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
             total_count=1,
         )
 
-    monkeypatch.setattr(api, "probe_source", probe_douyin)
+    monkeypatch.setattr(download_routes, "probe_source", probe_douyin)
     app = api.create_app(Settings(library_path=tmp_path))
     with TestClient(app) as client:
         response = client.post(
@@ -97,7 +97,7 @@ def test_probe_preserves_bilibili_part_download_urls(monkeypatch, tmp_path):
             total_count=1,
         )
 
-    monkeypatch.setattr(api, "probe_source", probe_bilibili)
+    monkeypatch.setattr(download_routes, "probe_source", probe_bilibili)
     app = api.create_app(Settings(library_path=tmp_path))
 
     with TestClient(app) as client:
@@ -510,7 +510,11 @@ def test_platform_account_can_be_saved_tested_listed_and_removed(
             thumbnail_url=None,
         )
 
-    monkeypatch.setattr(api, "read_download_metadata", read_metadata)
+    monkeypatch.setattr(
+        download_account_routes,
+        "read_download_metadata",
+        read_metadata,
+    )
     account_store = DownloadAccountStore(
         tmp_path / "config",
         MemoryDownloadAccountSecretStore(),
@@ -549,7 +553,11 @@ def test_failed_douyin_account_test_marks_cookie_as_expired(monkeypatch, tmp_pat
     def reject_metadata(*_: object):
         raise DownloadFailure("保存的登录状态已失效，请重新登录")
 
-    monkeypatch.setattr(api, "read_download_metadata", reject_metadata)
+    monkeypatch.setattr(
+        download_account_routes,
+        "read_download_metadata",
+        reject_metadata,
+    )
     account_store = DownloadAccountStore(
         tmp_path / "config",
         MemoryDownloadAccountSecretStore(),
@@ -605,7 +613,11 @@ def test_platform_account_can_be_imported_from_a_logged_in_browser(
         import_calls.append((platform, browser, source_url))
         return cookie_header
 
-    monkeypatch.setattr(api, "import_cookie_from_browser", import_cookie)
+    monkeypatch.setattr(
+        download_account_routes,
+        "import_cookie_from_browser",
+        import_cookie,
+    )
     account_store = DownloadAccountStore(
         tmp_path / "config",
         MemoryDownloadAccountSecretStore(),
@@ -654,7 +666,11 @@ def test_platform_account_can_login_in_a_dedicated_browser(monkeypatch, tmp_path
             thumbnail_url=None,
         )
 
-    monkeypatch.setattr(api, "read_download_metadata", read_metadata)
+    monkeypatch.setattr(
+        download_account_routes,
+        "read_download_metadata",
+        read_metadata,
+    )
     account_store = DownloadAccountStore(
         tmp_path / "config",
         MemoryDownloadAccountSecretStore(),

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 
@@ -18,7 +18,6 @@ import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
 import { AnalysisToolPanel } from "@/features/workbench/AnalysisToolPanel";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
-import { MediaTimeline } from "@/features/workbench/MediaTimeline";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import {
   ResizableHandle,
@@ -38,6 +37,12 @@ import type {
   MediaMarker,
   TranscriptionOptions,
 } from "@/shared/types";
+
+const MediaTimeline = lazy(() =>
+  import("@/features/workbench/MediaTimeline").then((module) => ({
+    default: module.MediaTimeline,
+  })),
+);
 
 // 比样式表里 220ms 的面板过渡多留一拍，确保过渡结束前过渡类不被移除
 const PANEL_TOGGLE_TRANSITION_MS = 280;
@@ -398,30 +403,46 @@ export function MarkersPage() {
           </ResizablePanelGroup>
         )}
       </div>
-      <MediaTimeline
-        asset_id={selected_asset_id}
-        duration_seconds={selected_asset?.duration_seconds ?? null}
-        current_time={current_time}
-        is_paused={is_paused}
-        playback_rate={playback_rate}
-        transcript={transcript}
-        segments={segments}
-        markers={markers}
-        candidate_markers={candidate_markers}
-        analysis_strategy={analysis_strategy}
-        marker_error={marker_error}
-        on_scrub={preview_player}
-        on_seek={seek_player}
-        on_toggle_playback={() => player_ref.current?.toggle_playback()}
-        on_playback_rate_change={(rate) =>
-          player_ref.current?.set_playback_rate(rate)
+      <Suspense
+        fallback={
+          <section
+            className="media_timeline flex items-center justify-center gap-2 text-sm text-muted-foreground"
+            role="status"
+            aria-label="剪辑时间轴"
+            aria-busy="true"
+          >
+            <Spinner />
+            正在加载时间线…
+          </section>
         }
-        on_selected_transcript_indices_change={set_selected_transcript_indices}
-        on_add_marker={add_marker}
-        on_update_marker={update_marker}
-        on_delete_marker={remove_marker}
-        on_update_transcript={save_transcript_segment}
-      />
+      >
+        <MediaTimeline
+          asset_id={selected_asset_id}
+          duration_seconds={selected_asset?.duration_seconds ?? null}
+          current_time={current_time}
+          is_paused={is_paused}
+          playback_rate={playback_rate}
+          transcript={transcript}
+          segments={segments}
+          markers={markers}
+          candidate_markers={candidate_markers}
+          analysis_strategy={analysis_strategy}
+          marker_error={marker_error}
+          on_scrub={preview_player}
+          on_seek={seek_player}
+          on_toggle_playback={() => player_ref.current?.toggle_playback()}
+          on_playback_rate_change={(rate) =>
+            player_ref.current?.set_playback_rate(rate)
+          }
+          on_selected_transcript_indices_change={
+            set_selected_transcript_indices
+          }
+          on_add_marker={add_marker}
+          on_update_marker={update_marker}
+          on_delete_marker={remove_marker}
+          on_update_transcript={save_transcript_segment}
+        />
+      </Suspense>
       {error ? <FloatingError message={error} /> : null}
     </>
   );
