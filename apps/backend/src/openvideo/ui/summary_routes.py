@@ -13,10 +13,15 @@ from openvideo.core.summary_models import (
     SummaryDocumentUpdate,
     SummaryExportResult,
     SummaryGenerationRequest,
+    SummaryGenerationResult,
     SummaryMediaArtifact,
     SummaryMediaCreate,
+    SummaryPreset,
+    SummaryVersion,
 )
+from openvideo.core.summary_presets import summary_presets
 from openvideo.summary_manager import (
+    SummaryCapacityError,
     SummaryError,
     SummaryManager,
     SummaryNotFoundError,
@@ -33,17 +38,51 @@ class SummaryMediaCreateResponse(BaseModel):
     document: SummaryDocument
 
 
+class SummaryVersionSelectRequest(BaseModel):
+    version_id: str
+
+
 def register_summary_routes(
     app: FastAPI,
     summary_manager: Callable[[], SummaryManager],
 ) -> None:
+    @app.get("/api/summary-presets", response_model=list[SummaryPreset])
+    def list_summary_presets() -> list[SummaryPreset]:
+        return [preset.model_copy(deep=True) for preset in summary_presets()]
+
+    @app.get(
+        "/api/media/assets/{asset_id}/summary-versions",
+        response_model=list[SummaryVersion],
+    )
+    def list_summary_versions(asset_id: str) -> list[SummaryVersion]:
+        try:
+            return summary_manager().versions(asset_id)
+        except SummaryError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.patch(
+        "/api/media/assets/{asset_id}/summary-current-version",
+        response_model=SummaryVersion,
+    )
+    def select_summary_version(
+        asset_id: str,
+        request: SummaryVersionSelectRequest,
+    ) -> SummaryVersion:
+        try:
+            return summary_manager().select_version(asset_id, request.version_id)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.get(
         "/api/media/assets/{asset_id}/summary-documents",
         response_model=list[SummaryDocument],
     )
-    def list_summary_documents(asset_id: str) -> list[SummaryDocument]:
+    def list_summary_documents(
+        asset_id: str,
+        version_id: str | None = None,
+    ) -> list[SummaryDocument]:
         try:
-            return summary_manager().documents(asset_id)
+            return summary_manager().documents(asset_id, version_id)
         except SummaryError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -90,17 +129,19 @@ def register_summary_routes(
 
     @app.post(
         "/api/media/assets/{asset_id}/summary-documents/generate",
-        response_model=list[SummaryDocument],
+        response_model=SummaryGenerationResult,
         status_code=status.HTTP_201_CREATED,
     )
     def generate_summary_documents(
         asset_id: str,
         request: SummaryGenerationRequest,
-    ) -> list[SummaryDocument]:
+    ) -> SummaryGenerationResult:
         try:
             return summary_manager().generate(asset_id, request)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        except SummaryCapacityError as error:
+            raise HTTPException(status_code=409, detail=error.detail) from error
         except SummaryError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -210,9 +251,12 @@ def register_summary_routes(
         response_model=SummaryExportResult,
         status_code=status.HTTP_201_CREATED,
     )
-    def export_summary(asset_id: str) -> SummaryExportResult:
+    def export_summary(
+        asset_id: str,
+        version_id: str | None = None,
+    ) -> SummaryExportResult:
         try:
-            return summary_manager().export(asset_id)
+            return summary_manager().export(asset_id, version_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except SummaryError as error:

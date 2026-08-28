@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 from openvideo.core.analysis_models import (
     AnalysisDepth,
-    AnalysisMode,
     AnalysisStrategy,
 )
 from openvideo.core.media_models import MediaMarker
@@ -71,23 +70,14 @@ class SemanticChapter:
 
 def select_timeline_moments(
     transcript: Transcript,
-    mode: AnalysisMode,
     markers: list[MediaMarker],
     duration_seconds: float | None,
     scene_boundaries: list[float] | None = None,
     strategy: AnalysisStrategy | None = None,
     semantic_chapters: list[SemanticChapter] | None = None,
 ) -> list[TimelineMoment]:
-    """全片按内容边界建事件；标记模式只保留用户主动关注的上下文。"""
+    """全片按内容边界建事件，并把正式标记作为内容优先级信号。"""
     resolved_strategy = strategy or AnalysisStrategy()
-    if mode == AnalysisMode.MARKERS:
-        moments = _precise_marker_moments(
-            transcript.segments,
-            markers,
-            duration_seconds,
-            resolved_strategy,
-        )
-        return prioritize_timeline_moments(moments, resolved_strategy)
     moments = _full_timeline_moments(
         transcript.segments,
         scene_boundaries or [],
@@ -100,60 +90,6 @@ def select_timeline_moments(
         resolved_strategy,
     )
     return prioritize_timeline_moments(moments, resolved_strategy)
-
-
-def _precise_marker_moments(
-    segments: list[TranscriptSegment],
-    markers: list[MediaMarker],
-    duration_seconds: float | None,
-    strategy: AnalysisStrategy,
-) -> list[TimelineMoment]:
-    """点标记取全局上下文，范围标记保持用户明确划定的边界。"""
-
-    moments: list[TimelineMoment] = []
-    for marker in sorted(markers, key=lambda item: item.start_seconds):
-        focus_start = marker.start_seconds
-        focus_end = (
-            marker.end_seconds if marker.end_seconds is not None else focus_start
-        )
-        if marker.end_seconds is None:
-            range_start = max(0, focus_start - strategy.marker_range_before_seconds)
-            range_end = focus_end + strategy.marker_range_after_seconds
-            if duration_seconds is not None:
-                range_end = min(range_end, duration_seconds)
-            before_seconds = focus_start - range_start
-            after_seconds = max(0, range_end - focus_end)
-        else:
-            range_start = focus_start
-            range_end = focus_end
-            before_seconds = 0
-            after_seconds = 0
-        matching = [
-            segment
-            for segment in segments
-            if segment.end_seconds >= range_start and segment.start_seconds <= range_end
-        ]
-        influence = MarkerInfluence(
-            marker_id=marker.marker_id,
-            anchor_seconds=(focus_start + focus_end) / 2,
-            focus_start_seconds=focus_start,
-            focus_end_seconds=focus_end,
-            range_before_seconds=before_seconds,
-            range_after_seconds=after_seconds,
-            importance=marker.importance,
-            event_weight=marker.importance / 5,
-        )
-        moments.append(
-            TimelineMoment(
-                start_seconds=range_start,
-                end_seconds=max(range_end, range_start + 0.1),
-                transcript_text=_merge_text(matching),
-                marker_ids=(marker.marker_id,),
-                marker_weight=influence.event_weight,
-                marker_influences=(influence,),
-            )
-        )
-    return moments
 
 
 def prioritize_timeline_moments(

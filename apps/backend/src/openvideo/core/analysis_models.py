@@ -39,7 +39,6 @@ INACTIVE_ANALYSIS_STAGES = {
 
 class AnalysisMode(StrEnum):
     FULL = "full"
-    MARKERS = "markers"
 
 
 class AnalysisOperation(StrEnum):
@@ -182,7 +181,6 @@ class AnalysisJob(BaseModel):
     asset_id: str
     operation: AnalysisOperation = AnalysisOperation.ANALYSIS
     mode: AnalysisMode = AnalysisMode.FULL
-    marker_ids: list[str] = Field(default_factory=list)
     ai_model_id: str | None = None
     strategy: AnalysisStrategy = Field(default_factory=AnalysisStrategy)
     capabilities: list[AnalysisCapability] = Field(default_factory=list)

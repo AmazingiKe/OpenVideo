@@ -10,7 +10,7 @@ from openvideo.core.analysis import (
     TimelineMoment,
     select_timeline_moments,
 )
-from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, AnalysisStrategy
+from openvideo.core.analysis_models import AnalysisStage, AnalysisStrategy
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import MediaMarker, MediaSegment
@@ -39,7 +39,6 @@ def build_segments(
     duration_seconds: float | None,
     settings: Settings,
     describer: VisionDescriber | None,
-    mode: AnalysisMode,
     markers: list[MediaMarker],
     strategy: AnalysisStrategy,
     progress_callback: AnalysisProgress,
@@ -51,14 +50,9 @@ def build_segments(
         settings.ffmpeg_path,
         settings.ffmpeg_bin_dir,
     )
-    semantic_chapters = (
-        build_global_semantic_chapters(transcript.segments, chapter_model)
-        if mode == AnalysisMode.FULL
-        else None
-    )
+    semantic_chapters = build_global_semantic_chapters(transcript.segments, chapter_model)
     moments = select_timeline_moments(
         transcript,
-        mode,
         markers,
         duration_seconds,
         scene_boundaries,

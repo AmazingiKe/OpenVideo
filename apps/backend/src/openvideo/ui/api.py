@@ -15,6 +15,7 @@ from openvideo.agent_service import (
 )
 from openvideo.analysis_manager import AnalysisManager
 from openvideo.download_manager import DownloadManager
+from openvideo.event_analysis_manager import EventAnalysisManager
 from openvideo.summary_manager import SummaryManager
 from openvideo.core.ai_models import (
     AiModelCollection,
@@ -69,6 +70,7 @@ from openvideo.ui.download_account_routes import (
     register_download_account_routes,
 )
 from openvideo.ui.download_routes import register_download_routes
+from openvideo.ui.event_analysis_routes import register_event_analysis_routes
 
 
 class LibraryCreateRequest(BaseModel):
@@ -113,6 +115,7 @@ def create_app(
     library: MediaLibrary | None = None
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
+    event_analysis_manager: EventAnalysisManager | None = None
     agent_service: AgentService | None = None
     summary_manager: SummaryManager | None = None
     resolved_capability_resolver = capability_resolver or CapabilityResolver()
@@ -131,12 +134,14 @@ def create_app(
             library, \
             manager, \
             analysis_manager, \
+            event_analysis_manager, \
             agent_service, \
             summary_manager, \
             page_settings_store
         library = opened_library
         manager = DownloadManager(opened_library, resolved_settings, account_store)
         analysis_manager = AnalysisManager(opened_library, resolved_settings)
+        event_analysis_manager = EventAnalysisManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
         agent_service = AgentService(
             opened_library,
@@ -150,9 +155,11 @@ def create_app(
             opened_library.library_path / LEGACY_PAGE_SETTINGS_FILE_NAME,
         )
         analysis_manager.restore()
+        event_analysis_manager.restore()
         app.state.library = opened_library
         app.state.download_manager = manager
         app.state.analysis_manager = analysis_manager
+        app.state.event_analysis_manager = event_analysis_manager
         app.state.agent_service = agent_service
         app.state.summary_manager = summary_manager
         app.state.page_settings_store = page_settings_store
@@ -203,6 +210,8 @@ def create_app(
             await account_login_manager.close()
             if agent_service:
                 await agent_service.close()
+            if event_analysis_manager:
+                await event_analysis_manager.close()
             if library:
                 library.close()
 
@@ -210,6 +219,7 @@ def create_app(
     app.state.library = library
     app.state.download_manager = manager
     app.state.analysis_manager = analysis_manager
+    app.state.event_analysis_manager = event_analysis_manager
     app.state.agent_service = agent_service
     app.state.summary_manager = summary_manager
     app.state.transcription_model_manager = transcription_model_manager
@@ -239,12 +249,18 @@ def create_app(
             "/api/downloads",
             "/api/library/folders",
             "/api/analysis",
+            "/api/event-analysis",
             "/api/agent-",
             "/api/summary",
             "/api/page-settings",
             "/assets/media-",
         )
-        if request.url.path.startswith(managed_prefixes) and library is None:
+        global_resource_paths = {"/api/summary-presets"}
+        if (
+            request.url.path not in global_resource_paths
+            and request.url.path.startswith(managed_prefixes)
+            and library is None
+        ):
             return JSONResponse(
                 status_code=status.HTTP_409_CONFLICT,
                 content={"code": "library_not_open", "message": "尚未打开资料库"},
@@ -275,6 +291,7 @@ def create_app(
         _ensure_switch_allowed(
             manager,
             analysis_manager,
+            event_analysis_manager,
             agent_service,
         )
         requested_path = _absolute_library_path(request.path)
@@ -289,6 +306,8 @@ def create_app(
             _library_error(422, error_code, str(error))
         if agent_service:
             await agent_service.close()
+        if event_analysis_manager:
+            await event_analysis_manager.close()
         if library:
             library.close()
         await install_library(opened)
@@ -307,6 +326,7 @@ def create_app(
         _ensure_switch_allowed(
             manager,
             analysis_manager,
+            event_analysis_manager,
             agent_service,
         )
         try:
@@ -318,6 +338,8 @@ def create_app(
             _library_error(422, error_code, str(error))
         if agent_service:
             await agent_service.close()
+        if event_analysis_manager:
+            await event_analysis_manager.close()
         if library:
             library.close()
         await install_library(opened)
@@ -330,6 +352,7 @@ def create_app(
             library, \
             manager, \
             analysis_manager, \
+            event_analysis_manager, \
             agent_service, \
             summary_manager, \
             page_settings_store
@@ -340,21 +363,26 @@ def create_app(
         _ensure_switch_allowed(
             manager,
             analysis_manager,
+            event_analysis_manager,
             agent_service,
         )
         if agent_service:
             await agent_service.close()
+        if event_analysis_manager:
+            await event_analysis_manager.close()
         if library:
             library.close()
         library = None
         manager = None
         analysis_manager = None
+        event_analysis_manager = None
         agent_service = None
         summary_manager = None
         page_settings_store = None
         app.state.library = None
         app.state.download_manager = None
         app.state.analysis_manager = None
+        app.state.event_analysis_manager = None
         app.state.agent_service = None
         app.state.summary_manager = None
         app.state.page_settings_store = None
@@ -436,6 +464,11 @@ def create_app(
         lambda: analysis_manager,
         resolved_settings,
     )
+    register_event_analysis_routes(
+        app,
+        lambda: library,
+        lambda: event_analysis_manager,
+    )
 
     register_ai_routes(app, resolved_settings, resolved_capability_resolver)
     register_summary_routes(app, lambda: summary_manager)
@@ -476,11 +509,13 @@ def _absolute_library_path(raw_path: str) -> Path:
 def _ensure_switch_allowed(
     manager: DownloadManager | None,
     analysis_manager: AnalysisManager | None,
+    event_analysis_manager: EventAnalysisManager | None,
     agent_service: AgentService | None,
 ) -> None:
     if (
         (manager and manager.has_active_jobs())
         or (analysis_manager and analysis_manager.has_active_jobs())
+        or (event_analysis_manager and event_analysis_manager.has_active_jobs())
         or (agent_service and agent_service.has_active_jobs())
     ):
         _library_error(

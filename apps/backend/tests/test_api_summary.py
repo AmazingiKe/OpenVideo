@@ -1,29 +1,34 @@
 import json
 import re
-import sqlite3
 import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from openvideo.core.ai_models import TEXT_INPUT_MODALITY, AiModelConfiguration
-from openvideo.core.transcription_models import Transcript, TranscriptSegment
-from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import (
-    MediaAsset,
-    MediaAssetStatus,
-    MediaSegment,
-    SourcePlatform,
+from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.event_analysis_models import (
+    EventAnalysis,
+    EventAnalysisSourceSummary,
+    FocusSelection,
+    FocusSelectionEventAnalysisTarget,
+    MarkerEventAnalysisTarget,
 )
+from openvideo.core.library import MediaLibrary
+from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaMarker, SourcePlatform
+from openvideo.core.summary_files import markdown_digest
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
+from openvideo.llm.model_profile import ModelLimits, ModelProfile
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 MODEL_ID = "model-01890f4c7a2b7cc298c4dc0c0c07398f"
+MARKER_ID = "marker-01890f4c7a2b7cc298c4dc0c0c073990"
+SELECTION_ID = "focus-selection-01890f4c7a2b7cc298c4dc0c0c073991"
 
 
-def create_client(tmp_path: Path, with_model: bool = False) -> TestClient:
+def create_client(tmp_path: Path) -> TestClient:
     library = MediaLibrary.initialize_directory(tmp_path)
     asset_directory = library.asset_directory(ASSET_ID)
     asset_directory.mkdir(parents=True, exist_ok=True)
@@ -31,352 +36,410 @@ def create_client(tmp_path: Path, with_model: bool = False) -> TestClient:
     library.save(
         MediaAsset(
             asset_id=ASSET_ID,
-            source_url="https://www.bilibili.com/video/BV1xx411c7mD",
-            source_platform=SourcePlatform.BILIBILI,
-            source_video_id="BV1xx411c7mD",
-            title="测试课程",
+            source_url="https://example.com/video",
+            source_platform=SourcePlatform.YOUTUBE,
+            title="总结测试视频",
             duration_seconds=60,
-            status=MediaAssetStatus.READY,
             playback_path="playback.mp4",
+            status=MediaAssetStatus.READY,
         )
     )
     library.save_transcript(
         Transcript(
             asset_id=ASSET_ID,
             segments=[
-                TranscriptSegment(start_seconds=0, end_seconds=10, text="核心概念")
+                TranscriptSegment(start_seconds=0, end_seconds=15, text="完整转录甲"),
+                TranscriptSegment(start_seconds=15, end_seconds=30, text="完整转录乙"),
             ],
         )
     )
-    library.save_segments(
+    library.create_marker(
+        MediaMarker(
+            marker_id=MARKER_ID,
+            asset_id=ASSET_ID,
+            start_seconds=5,
+            end_seconds=20,
+            importance=5,
+        )
+    )
+    library.save_focus_selection(
+        FocusSelection(
+            selection_id=SELECTION_ID,
+            asset_id=ASSET_ID,
+            in_seconds=10,
+            out_seconds=25,
+        )
+    )
+    source = EventAnalysisSourceSummary(
+        transcript_digest="t",
+        target_digest="m",
+        timeline_digest="l",
+    )
+    library.append_event_analyses(
         ASSET_ID,
         [
-            MediaSegment(
-                segment_id="segment-01890f4c7a2b7cc298c4dc0c0c07398f",
+            EventAnalysis(
+                event_analysis_id="event-analysis-01890f4c7a2b7cc298c4dc0c0c073992",
                 asset_id=ASSET_ID,
-                start_seconds=0,
-                end_seconds=10,
-                title="第一章",
-                detailed_summary="核心概念说明",
-            )
+                target=MarkerEventAnalysisTarget(
+                    marker_id=MARKER_ID,
+                    start_seconds=5,
+                    end_seconds=20,
+                ),
+                title="正式标记分析",
+                conclusion="应进入总结",
+                preset_id="course_notes",
+                preset_version=1,
+                depth="balanced",
+                ai_model_id=MODEL_ID,
+                source_summary=source,
+            ),
+            EventAnalysis(
+                event_analysis_id="event-analysis-01890f4c7a2b7cc298c4dc0c0c073993",
+                asset_id=ASSET_ID,
+                target=FocusSelectionEventAnalysisTarget(
+                    selection_id=SELECTION_ID,
+                    start_seconds=10,
+                    end_seconds=25,
+                ),
+                title="焦点选区分析",
+                conclusion="不得进入总结",
+                preset_id="course_notes",
+                preset_version=1,
+                depth="balanced",
+                ai_model_id=MODEL_ID,
+                source_summary=source,
+            ),
         ],
     )
     library.close()
-    models = (
-        [
-            AiModelConfiguration(
-                model_id=MODEL_ID,
-                name="测试模型",
-                litellm_model="openai/test",
-                api_key="test",
-                input_modalities=[TEXT_INPUT_MODALITY],
+    return TestClient(
+        create_app(
+            Settings(
+                library_path=tmp_path,
+                ai_models=[
+                    AiModelConfiguration(
+                        model_id=MODEL_ID,
+                        name="测试模型",
+                        litellm_model="openai/test-model",
+                    )
+                ],
             )
-        ]
-        if with_model
-        else []
+        )
     )
-    return TestClient(create_app(Settings(library_path=tmp_path, ai_models=models)))
 
 
-def generate_documents(client: TestClient, children: bool = False):
+def install_generation_mocks(monkeypatch, captured: list[list[dict[str, str]]] | None = None):
+    monkeypatch.setattr(
+        "openvideo.summary_manager.CapabilityResolver.resolve",
+        lambda *_args, **_kwargs: ModelProfile(
+            provider="openai",
+            model="test-model",
+            limits=ModelLimits(),
+        ),
+    )
+    monkeypatch.setattr(
+        "openvideo.summary_manager.litellm.token_counter",
+        lambda **_kwargs: 1_000,
+    )
+
+    def complete(_model, messages, *_args, **_kwargs):
+        if captured is not None:
+            captured.append(messages)
+        if "规划" in messages[0]["content"]:
+            return json.dumps(
+                {
+                    "documents": [
+                        {"key": "root", "title": "课程总结", "parent_key": None},
+                        {"key": "chapter", "title": "第一章", "parent_key": "root"},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        match = re.search(r"<允许路径表>\n(.*?)\n</允许路径表>", messages[1]["content"])
+        assert match is not None
+        paths = json.loads(match.group(1))
+        return json.dumps(
+            {
+                "documents": [
+                    {
+                        "relative_path": item["relative_path"],
+                        "markdown": f"# {item['title']}\n\n正文。",
+                    }
+                    for item in paths
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete)
+
+
+def generate(client: TestClient):
     response = client.post(
         f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
         json={
+            "ai_model_id": MODEL_ID,
+            "preset_id": "knowledge_notes",
+            "user_input": "突出结论",
             "detail": "standard",
-            "create_subdocuments": children,
-            "subdocument_mode": "chapters",
+            "output_language": "zh-CN",
         },
     )
-    assert response.status_code == 201
+    assert response.status_code == 201, response.text
     return response.json()
 
 
-def test_analysis_strategy_presets_are_resolved(tmp_path: Path):
-    with create_client(tmp_path) as client:
-        response = client.get("/api/analysis-strategies")
-
-    assert response.status_code == 200
-    presets = response.json()
-    assert presets[0]["name"] == "课程笔记"
-    assert presets[0]["strategy"]["weights"]["core_concepts"] == 90
-
-
-def test_summary_generation_enforces_one_root_and_one_child_level(tmp_path: Path):
-    with create_client(tmp_path) as client:
-        documents = generate_documents(client, children=True)
-        root = next(item for item in documents if item["parent_document_id"] is None)
-        child = next(
-            item for item in documents if item["parent_document_id"] is not None
-        )
-        duplicate = client.post(
-            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
-            json={},
-        )
-        nested = client.post(
-            f"/api/summary-documents/{child['document_id']}/children",
-            json={"title": "不允许的孙文档", "markdown": ""},
-        )
-
-    assert root["document_id"].startswith("document-")
-    assert len(root["document_id"]) == len("document-") + 32
-    assert child["parent_document_id"] == root["document_id"]
-    assert duplicate.status_code == 409
-    assert nested.status_code == 409
-
-
-def test_summary_generation_uses_selected_ai_model(tmp_path: Path, monkeypatch):
-    response_payload = {
-        "title": "AI 课程总结",
-        "markdown": "# AI 课程总结\n\n模型整理的核心结论。",
-        "subdocuments": [{"title": "第一章", "markdown": "# 第一章\n\n章节内容。\n"}],
-    }
-    monkeypatch.setattr(
-        "openvideo.summary_manager.complete_text",
-        lambda *args, **kwargs: json.dumps(response_payload, ensure_ascii=False),
-    )
-    with create_client(tmp_path, with_model=True) as client:
-        response = client.post(
-            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
-            json={
-                "ai_model_id": MODEL_ID,
-                "detail": "detailed",
-                "create_subdocuments": True,
-                "subdocument_mode": "chapters",
-            },
-        )
-
-    assert response.status_code == 201
-    documents = response.json()
-    root = next(item for item in documents if item["parent_document_id"] is None)
-    child = next(item for item in documents if item["parent_document_id"] is not None)
-    assert root["title"] == "AI 课程总结"
-    assert "模型整理的核心结论" in root["markdown"]
-    assert f"docs/{child['document_id']}.md" in root["markdown"]
-    assert child["title"] == "第一章"
-
-
-def test_summary_generation_does_not_force_children_when_ai_returns_none(
-    tmp_path: Path, monkeypatch
-):
-    response_payload = {
-        "title": "AI 课程总结",
-        "markdown": "# AI 课程总结\n\n内容不适合继续拆分。",
-        "subdocuments": [],
-    }
-    monkeypatch.setattr(
-        "openvideo.summary_manager.complete_text",
-        lambda *args, **kwargs: json.dumps(response_payload, ensure_ascii=False),
-    )
-    with create_client(tmp_path, with_model=True) as client:
-        response = client.post(
-            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
-            json={
-                "ai_model_id": MODEL_ID,
-                "detail": "standard",
-                "create_subdocuments": True,
-                "subdocument_mode": "chapters",
-            },
-        )
-
-    assert response.status_code == 201
-    documents = response.json()
-    assert len(documents) == 1
-    assert documents[0]["parent_document_id"] is None
-
-
-def test_summary_generation_ignores_ai_children_without_body(
-    tmp_path: Path, monkeypatch
-):
-    response_payload = {
-        "title": "AI 课程总结",
-        "markdown": "# AI 课程总结\n\n模型整理的核心结论。",
-        "subdocuments": [
-            {"title": "空章节", "markdown": "# 空章节\n"},
-            {"title": "有效章节", "markdown": "# 有效章节\n\n章节正文。"},
-        ],
-    }
-    monkeypatch.setattr(
-        "openvideo.summary_manager.complete_text",
-        lambda *args, **kwargs: json.dumps(response_payload, ensure_ascii=False),
-    )
-    with create_client(tmp_path, with_model=True) as client:
-        response = client.post(
-            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
-            json={
-                "ai_model_id": MODEL_ID,
-                "detail": "standard",
-                "create_subdocuments": True,
-                "subdocument_mode": "chapters",
-            },
-        )
-
-    assert response.status_code == 201
-    children = [
-        item for item in response.json() if item["parent_document_id"] is not None
-    ]
-    assert [child["title"] for child in children] == ["有效章节"]
-    assert children[0]["markdown"] == "# 有效章节\n\n章节正文。\n"
-
-
-def test_summary_document_update_detects_revision_conflict(tmp_path: Path):
-    with create_client(tmp_path) as client:
-        document = generate_documents(client)[0]
-        first = client.patch(
-            f"/api/summary-documents/{document['document_id']}",
-            json={"expected_revision": 1, "markdown": "# 新内容\n"},
-        )
-        conflict = client.patch(
-            f"/api/summary-documents/{document['document_id']}",
-            json={"expected_revision": 1, "markdown": "# 旧覆盖\n"},
-        )
-
-    assert first.status_code == 200
-    assert first.json()["revision"] == 2
-    assert conflict.status_code == 409
-
-
-def test_summary_project_exports_stable_relative_paths(tmp_path: Path):
-    with create_client(tmp_path) as client:
-        documents = generate_documents(client, children=True)
-        root = next(item for item in documents if item["parent_document_id"] is None)
-        child = next(
-            item for item in documents if item["parent_document_id"] is not None
-        )
-        first = client.post(f"/api/media/assets/{ASSET_ID}/summary-exports")
-        second = client.post(f"/api/media/assets/{ASSET_ID}/summary-exports")
-
-    assert first.status_code == 201
-    assert second.status_code == 201
-    assert first.json()["export_id"] != second.json()["export_id"]
-    file_name = first.json()["file_name"]
-    assert re.fullmatch(
-        r"summary-\d{8}-\d{6}-\d{3}-export-[0-9a-f]{32}\.zip",
-        file_name,
-    )
-    export_path = tmp_path / "assets" / ASSET_ID / first.json()["relative_path"]
-    assert export_path.is_file()
-    assert len(list(export_path.parent.glob("*.zip"))) == 2
-    with zipfile.ZipFile(export_path) as archive:
-        names = set(archive.namelist())
-        assert names == {"index.md", f"docs/{child['document_id']}.md", "manifest.json"}
-        assert f"docs/{child['document_id']}.md" in archive.read("index.md").decode()
-        manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["root_document_id"] == root["document_id"]
-        assert re.search(r"[+-]\d{2}:\d{2}$", manifest["exported_at"])
-
-
-def test_summary_files_are_source_of_truth_and_stale_save_conflicts(tmp_path: Path):
-    with create_client(tmp_path) as client:
-        document = generate_documents(client)[0]
-        summary_directory = tmp_path / "assets" / ASSET_ID / "summary"
-        markdown_path = summary_directory / "index.md"
-        manifest_path = summary_directory / "manifest.json"
-        before_markdown_mtime = markdown_path.stat().st_mtime_ns
-        before_manifest_mtime = manifest_path.stat().st_mtime_ns
-
-        loaded = client.get(f"/api/media/assets/{ASSET_ID}/summary-documents")
-        assert loaded.status_code == 200
-        assert markdown_path.stat().st_mtime_ns == before_markdown_mtime
-        assert manifest_path.stat().st_mtime_ns == before_manifest_mtime
-
-        markdown_path.write_text("# 外部修改\n", encoding="utf-8")
-    with TestClient(create_app(Settings(library_path=tmp_path))) as reopened:
-        refreshed = reopened.get(
-            f"/api/media/assets/{ASSET_ID}/summary-documents"
-        ).json()[0]
-        conflict = reopened.patch(
-            f"/api/summary-documents/{document['document_id']}",
-            json={"expected_revision": document["revision"], "markdown": "# 旧草稿\n"},
-        )
-
-    assert refreshed["markdown"] == "# 外部修改\n"
-    assert refreshed["revision"] == document["revision"] + 1
-    assert conflict.status_code == 409
-    assert markdown_path.read_text(encoding="utf-8") == "# 外部修改\n"
-    assert manifest_path.stat().st_mtime_ns == before_manifest_mtime
-
-
-def test_summary_manifest_contains_paths_and_no_markdown_body(tmp_path: Path):
-    with create_client(tmp_path) as client:
-        documents = generate_documents(client, children=True)
-
-    summary_directory = tmp_path / "assets" / ASSET_ID / "summary"
-    manifest = json.loads(
-        (summary_directory / "manifest.json").read_text(encoding="utf-8")
-    )
-    assert manifest["format_version"] == 1
-    assert "markdown" not in json.dumps(manifest)
-    root = next(item for item in documents if item["parent_document_id"] is None)
-    child = next(item for item in documents if item["parent_document_id"] is not None)
-    assert root["relative_path"] == "index.md"
-    assert child["relative_path"] == f"docs/{child['document_id']}.md"
-    assert (summary_directory / child["relative_path"]).is_file()
-
-
-def test_gif_default_range_must_fit_video_duration(tmp_path: Path):
-    with create_client(tmp_path) as client:
-        document = generate_documents(client)[0]
-        response = client.post(
-            "/api/summary-media",
-            json={
-                "document_id": document["document_id"],
-                "expected_revision": document["revision"],
-                "media_type": "gif",
-                "start_seconds": 58,
-                "end_seconds": None,
-                "caption": "片尾",
-            },
-        )
-
-    assert response.status_code == 422
-    assert response.json()["detail"] == "媒体时间范围超出视频范围"
-
-
-def test_child_media_uses_summary_assets_and_parent_relative_link(
+def test_summary_presets_and_formal_context_exclude_focus_selection(
     tmp_path: Path,
     monkeypatch,
 ):
-    def write_media(_playback, output_path, *_args, **_kwargs):
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(b"image")
-
-    monkeypatch.setattr("openvideo.summary_manager.generate_summary_media", write_media)
+    captured: list[list[dict[str, str]]] = []
+    install_generation_mocks(monkeypatch, captured)
     with create_client(tmp_path) as client:
-        documents = generate_documents(client, children=True)
-        child = next(
-            item for item in documents if item["parent_document_id"] is not None
+        presets = client.get("/api/summary-presets")
+        generated = generate(client)
+
+    assert [item["title"] for item in presets.json()] == [
+        "知识笔记",
+        "章节整理",
+        "复习教练",
+        "教程编写",
+    ]
+    assert generated["version"]["version_id"].startswith("summary-version-")
+    assert all(
+        "正式标记分析" in messages[1]["content"]
+        and "焦点选区分析" not in messages[1]["content"]
+        and "不得进入总结" not in messages[1]["content"]
+        for messages in captured
+    )
+
+
+def test_generation_appends_versions_and_history_remains_editable(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+    with create_client(tmp_path) as client:
+        first = generate(client)
+        second = generate(client)
+        versions = client.get(f"/api/media/assets/{ASSET_ID}/summary-versions").json()
+        first_root = next(
+            item for item in first["documents"] if item["parent_document_id"] is None
         )
+        updated = client.patch(
+            f"/api/summary-documents/{first_root['document_id']}",
+            json={"expected_revision": 1, "markdown": "# 历史版本仍可编辑\n"},
+        )
+        selected = client.patch(
+            f"/api/media/assets/{ASSET_ID}/summary-current-version",
+            json={"version_id": first["version"]["version_id"]},
+        )
+        current_documents = client.get(
+            f"/api/media/assets/{ASSET_ID}/summary-documents"
+        ).json()
+
+    assert len(versions) == 2
+    assert first["version"]["version_id"] != second["version"]["version_id"]
+    assert updated.status_code == 200
+    assert selected.json()["version_id"] == first["version"]["version_id"]
+    assert current_documents[0]["version_id"] == first["version"]["version_id"]
+    summary_root = tmp_path / "assets" / ASSET_ID / "summary"
+    assert (summary_root / "manifest.json").is_file()
+    assert len(list((summary_root / "versions").iterdir())) == 2
+
+
+def test_generation_rejects_paths_outside_preallocated_whitelist(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+    responses = iter(
+        (
+            json.dumps(
+                {"documents": [{"key": "root", "title": "总结", "parent_key": None}]},
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {"documents": [{"relative_path": "../escape.md", "markdown": "越界"}]},
+                ensure_ascii=False,
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "openvideo.summary_manager.complete_text",
+        lambda *_args, **_kwargs: next(responses),
+    )
+    with create_client(tmp_path) as client:
         response = client.post(
-            "/api/summary-media",
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
             json={
-                "document_id": child["document_id"],
-                "expected_revision": child["revision"],
-                "media_type": "image",
-                "start_seconds": 1,
-                "end_seconds": None,
-                "caption": "关键画面",
+                "ai_model_id": MODEL_ID,
+                "preset_id": "knowledge_notes",
             },
         )
 
-    assert response.status_code == 201
-    payload = response.json()
-    artifact = payload["artifact"]
-    assert artifact["relative_path"].startswith("summary/assets/media-")
-    assert f"../assets/{artifact['media_id']}.jpg" in payload["document"]["markdown"]
-    assert (tmp_path / "assets" / ASSET_ID / artifact["relative_path"]).is_file()
+    assert response.status_code == 409
+    assert not (tmp_path / "assets" / ASSET_ID / "summary" / "manifest.json").exists()
+    assert not (tmp_path / "assets" / ASSET_ID / "summary" / "escape.md").exists()
 
-    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    connection.execute("DELETE FROM summary_media")
-    connection.commit()
-    connection.close()
-    with TestClient(create_app(Settings(library_path=tmp_path))) as reopened:
-        assert (
-            reopened.get(f"/api/media/assets/{ASSET_ID}/summary-documents").status_code
-            == 200
+
+def test_generation_rejects_unallocated_markdown_links(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+
+    def complete(_model, messages, *_args, **_kwargs):
+        if "规划" in messages[0]["content"]:
+            return json.dumps(
+                {"documents": [{"key": "root", "title": "总结", "parent_key": None}]},
+                ensure_ascii=False,
+            )
+        match = re.search(r"<允许路径表>\n(.*?)\n</允许路径表>", messages[1]["content"])
+        assert match is not None
+        path = json.loads(match.group(1))[0]["relative_path"]
+        return json.dumps(
+            {
+                "documents": [
+                    {"relative_path": path, "markdown": "[越界](../outside.md)"}
+                ]
+            },
+            ensure_ascii=False,
         )
-    connection = sqlite3.connect(tmp_path / "openvideo.sqlite3")
-    restored_count = connection.execute(
-        "SELECT COUNT(*) FROM summary_media"
-    ).fetchone()[0]
-    connection.close()
-    assert restored_count == 1
+
+    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete)
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={"ai_model_id": MODEL_ID, "preset_id": "knowledge_notes"},
+        )
+
+    assert response.status_code == 409
+    assert "相对链接" in response.json()["detail"]
+
+
+def test_legacy_single_summary_migrates_once(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    library.save(
+        MediaAsset(
+            asset_id=ASSET_ID,
+            source_url="https://example.com/legacy",
+            source_platform=SourcePlatform.YOUTUBE,
+            title="旧总结",
+            duration_seconds=60,
+            status=MediaAssetStatus.READY,
+        )
+    )
+    asset_directory = library.asset_directory(ASSET_ID)
+    library.close()
+    summary_directory = asset_directory / "summary"
+    summary_directory.mkdir(parents=True)
+    markdown = "# 旧总结\n"
+    (summary_directory / "index.md").write_text(markdown, encoding="utf-8")
+    timestamp = "2026-01-01T00:00:00Z"
+    legacy_manifest = json.dumps(
+        {
+            "format_version": 1,
+            "asset_id": ASSET_ID,
+            "root_document_id": "document-01890f4c7a2b7cc298c4dc0c0c073994",
+            "documents": [
+                {
+                    "document_id": "document-01890f4c7a2b7cc298c4dc0c0c073994",
+                    "parent_document_id": None,
+                    "title": "旧总结",
+                    "position": 0,
+                    "revision": 1,
+                    "relative_path": "index.md",
+                    "content_digest": markdown_digest(markdown),
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            ],
+            "media": [],
+            "updated_at": timestamp,
+        },
+        ensure_ascii=False,
+    )
+    root_manifest_path = summary_directory / "manifest.json"
+    root_manifest_path.write_text(legacy_manifest, encoding="utf-8")
+
+    migrated = MediaLibrary.open(tmp_path)
+    first_version_id = migrated.load_summary_versions(ASSET_ID)[0].version_id
+    assert migrated.load_summary_documents(ASSET_ID)[0].markdown == markdown
+    migrated.close()
+    root_manifest_path.write_text(legacy_manifest, encoding="utf-8")
+    reopened = MediaLibrary.open(tmp_path)
+    try:
+        assert reopened.load_summary_versions(ASSET_ID)[0].version_id == first_version_id
+        assert json.loads(root_manifest_path.read_text("utf-8"))["format_version"] == 2
+        assert len(list((summary_directory / "versions").iterdir())) == 1
+        assert not (summary_directory / "index.md").exists()
+    finally:
+        reopened.close()
+
+
+def test_known_context_capacity_error_is_structured(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "openvideo.summary_manager.CapabilityResolver.resolve",
+        lambda *_args, **_kwargs: ModelProfile(
+            provider="openai",
+            model="test-model",
+            limits=ModelLimits(context_tokens=4_000, max_output_tokens=2_000),
+        ),
+    )
+    monkeypatch.setattr(
+        "openvideo.summary_manager.litellm.token_counter",
+        lambda **_kwargs: 3_000,
+    )
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={"ai_model_id": MODEL_ID, "preset_id": "knowledge_notes"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "summary_context_capacity_exceeded"
+    assert response.json()["stage"] == "planning"
+
+
+def test_known_output_capacity_error_is_structured(tmp_path: Path, monkeypatch):
+    install_generation_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "openvideo.summary_manager.CapabilityResolver.resolve",
+        lambda *_args, **_kwargs: ModelProfile(
+            provider="openai",
+            model="test-model",
+            limits=ModelLimits(context_tokens=50_000, max_output_tokens=4_000),
+        ),
+    )
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={"ai_model_id": MODEL_ID, "preset_id": "knowledge_notes"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "summary_context_capacity_exceeded"
+    assert response.json()["stage"] == "writing"
+    assert response.json()["required_tokens"] == 8_000
+    assert response.json()["context_tokens"] == 4_000
+
+
+def test_each_version_exports_independently(tmp_path: Path, monkeypatch):
+    install_generation_mocks(monkeypatch)
+    with create_client(tmp_path) as client:
+        first = generate(client)
+        second = generate(client)
+        exported = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-exports",
+            params={"version_id": first["version"]["version_id"]},
+        )
+
+    assert exported.status_code == 201
+    payload = exported.json()
+    assert payload["version_id"] == first["version"]["version_id"]
+    assert payload["version_id"] != second["version"]["version_id"]
+    path = tmp_path / "assets" / ASSET_ID / payload["relative_path"]
+    with zipfile.ZipFile(path) as archive:
+        assert {"index.md", "manifest.json"} <= set(archive.namelist())

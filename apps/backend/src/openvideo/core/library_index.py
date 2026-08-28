@@ -19,7 +19,7 @@ from openvideo.core.folder_models import Folder, FolderManifest
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 17
+DATABASE_VERSION = 18
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -220,7 +220,56 @@ def replace_asset_projection(
             ],
         )
 
+    connection.execute("DELETE FROM focus_selections WHERE asset_id = ?", (asset.asset_id,))
+    if bundle.focus_selection is not None:
+        _insert_model(
+            connection,
+            "focus_selections",
+            bundle.focus_selection.model_dump(mode="json"),
+        )
+
+    connection.execute("DELETE FROM event_analyses WHERE asset_id = ?", (asset.asset_id,))
+    for analysis in bundle.event_analyses:
+        target = analysis.target
+        values = analysis.model_dump(
+            mode="json",
+            exclude={"target", "key_points", "evidence", "source_summary"},
+        )
+        values.update(
+            target_source=target.source,
+            marker_id=target.marker_id if target.source == "marker" else None,
+            selection_id=(
+                target.selection_id if target.source == "focus_selection" else None
+            ),
+            start_seconds=target.start_seconds,
+            end_seconds=target.end_seconds,
+            key_points=json.dumps(analysis.key_points, ensure_ascii=False),
+            source_summary=analysis.source_summary.model_dump_json(),
+        )
+        _insert_model(connection, "event_analyses", values)
+        connection.executemany(
+            "INSERT INTO event_analysis_evidence "
+            "(event_analysis_id, position, start_seconds, end_seconds, text, source) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    analysis.event_analysis_id,
+                    position,
+                    evidence.start_seconds,
+                    evidence.end_seconds,
+                    evidence.text,
+                    evidence.source,
+                )
+                for position, evidence in enumerate(analysis.evidence)
+            ],
+        )
+
     document_ids = {document.document_id for document in bundle.summary_documents}
+    connection.execute("DELETE FROM summary_versions WHERE asset_id = ?", (asset.asset_id,))
+    for version in bundle.summary_versions:
+        values = version.model_dump(mode="json", exclude={"context_summary"})
+        values["context_summary"] = version.context_summary.model_dump_json()
+        _insert_model(connection, "summary_versions", values)
     for document in sorted(
         bundle.summary_documents,
         key=lambda item: (item.parent_document_id is not None, item.position),
@@ -499,18 +548,65 @@ CREATE TABLE markers (
     start_seconds REAL NOT NULL, end_seconds REAL,
     importance INTEGER NOT NULL CHECK(importance BETWEEN 0 AND 5)
 );
+CREATE TABLE focus_selections (
+    selection_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL UNIQUE REFERENCES assets(asset_id) ON DELETE CASCADE,
+    in_seconds REAL, out_seconds REAL, revision INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE event_analyses (
+    event_analysis_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    target_source TEXT NOT NULL, marker_id TEXT, selection_id TEXT,
+    start_seconds REAL NOT NULL, end_seconds REAL NOT NULL,
+    title TEXT NOT NULL, conclusion TEXT NOT NULL, key_points TEXT NOT NULL,
+    preset_id TEXT NOT NULL, preset_version INTEGER NOT NULL, depth TEXT NOT NULL,
+    user_input TEXT, ai_model_id TEXT NOT NULL, source_summary TEXT NOT NULL,
+    status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE event_analysis_evidence (
+    event_analysis_id TEXT NOT NULL REFERENCES event_analyses(event_analysis_id) ON DELETE CASCADE,
+    position INTEGER NOT NULL, start_seconds REAL NOT NULL, end_seconds REAL NOT NULL,
+    text TEXT NOT NULL, source TEXT NOT NULL,
+    PRIMARY KEY(event_analysis_id, position)
+);
+CREATE TABLE event_analysis_jobs (
+    job_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    preset_id TEXT NOT NULL, preset_version INTEGER NOT NULL, depth TEXT NOT NULL,
+    user_input TEXT, ai_model_id TEXT NOT NULL, stage TEXT NOT NULL,
+    progress_percent REAL NOT NULL, message TEXT NOT NULL, error_message TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE event_analysis_job_targets (
+    job_id TEXT NOT NULL REFERENCES event_analysis_jobs(job_id) ON DELETE CASCADE,
+    position INTEGER NOT NULL, target TEXT NOT NULL,
+    PRIMARY KEY(job_id, position)
+);
+CREATE TABLE event_analysis_job_results (
+    job_id TEXT NOT NULL REFERENCES event_analysis_jobs(job_id) ON DELETE CASCADE,
+    position INTEGER NOT NULL, event_analysis_id TEXT NOT NULL,
+    PRIMARY KEY(job_id, position)
+);
 CREATE TABLE tags (name TEXT PRIMARY KEY);
 CREATE TABLE segment_tags (segment_id TEXT NOT NULL REFERENCES timeline_segments(segment_id) ON DELETE CASCADE, tag_name TEXT NOT NULL REFERENCES tags(name), PRIMARY KEY(segment_id, tag_name));
 CREATE TABLE segment_frames (segment_id TEXT NOT NULL REFERENCES timeline_segments(segment_id) ON DELETE CASCADE, position INTEGER NOT NULL, relative_path TEXT NOT NULL, PRIMARY KEY(segment_id, position));
 CREATE TABLE segment_markers (segment_id TEXT NOT NULL REFERENCES timeline_segments(segment_id) ON DELETE CASCADE, marker_id TEXT NOT NULL REFERENCES markers(marker_id) ON DELETE CASCADE, PRIMARY KEY(segment_id, marker_id));
-CREATE TABLE analysis_job_markers (job_id TEXT NOT NULL REFERENCES analysis_jobs(job_id) ON DELETE CASCADE, marker_id TEXT NOT NULL, PRIMARY KEY(job_id, marker_id));
 CREATE TABLE analysis_job_capabilities (job_id TEXT NOT NULL REFERENCES analysis_jobs(job_id) ON DELETE CASCADE, capability TEXT NOT NULL, PRIMARY KEY(job_id, capability));
 CREATE TABLE summary_documents (
     document_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES summary_versions(version_id) ON DELETE CASCADE,
     parent_document_id TEXT REFERENCES summary_documents(document_id) ON DELETE CASCADE,
     title TEXT NOT NULL, relative_path TEXT NOT NULL, content_digest TEXT NOT NULL,
     position INTEGER NOT NULL, revision INTEGER NOT NULL, created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+CREATE TABLE summary_versions (
+    version_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    preset_id TEXT NOT NULL, preset_version INTEGER NOT NULL, user_input TEXT,
+    ai_model_id TEXT NOT NULL, detail TEXT NOT NULL, output_language TEXT NOT NULL,
+    context_summary TEXT NOT NULL, relative_path TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE agent_sessions (
     session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
@@ -539,6 +635,7 @@ CREATE TABLE agent_artifacts (
 );
 CREATE TABLE summary_media (
     media_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES summary_versions(version_id) ON DELETE CASCADE,
     document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
     media_type TEXT NOT NULL, relative_path TEXT NOT NULL, caption TEXT NOT NULL,
     start_seconds REAL NOT NULL, end_seconds REAL, created_at TEXT NOT NULL
@@ -557,8 +654,12 @@ CREATE INDEX assets_title_index ON assets(title COLLATE NOCASE);
 CREATE INDEX folders_parent_name_index ON folders(parent_id, name COLLATE NOCASE);
 CREATE INDEX folders_materialized_path_index ON folders(materialized_path);
 CREATE INDEX markers_asset_time_index ON markers(asset_id, start_seconds);
+CREATE INDEX event_analyses_asset_created_index ON event_analyses(asset_id, created_at DESC);
+CREATE INDEX event_analyses_marker_index ON event_analyses(marker_id, created_at DESC);
+CREATE INDEX event_analyses_selection_index ON event_analyses(selection_id, created_at DESC);
 CREATE INDEX download_events_job_created_index ON download_events(job_id, created_at);
-CREATE UNIQUE INDEX summary_documents_root_asset_index ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
+CREATE UNIQUE INDEX summary_documents_root_version_index ON summary_documents(version_id) WHERE parent_document_id IS NULL;
+CREATE INDEX summary_versions_asset_created_index ON summary_versions(asset_id, created_at DESC);
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);
 CREATE INDEX agent_sessions_updated_index ON agent_sessions(updated_at DESC);
 CREATE INDEX agent_sessions_asset_agent_index ON agent_sessions(asset_id, agent_id, updated_at DESC);

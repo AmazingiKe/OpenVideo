@@ -1,0 +1,34 @@
+[
+  {
+    "preset_id": "knowledge_notes",
+    "title": "知识笔记",
+    "description": "提炼概念、论点、证据与可复习的知识结构。",
+    "prompt": "以知识笔记作者的角色组织内容。保留概念之间的关系、关键论据、限定条件和带时间戳的来源，优先形成便于检索与复习的层级结构。",
+    "minimum_context_tokens": 16000,
+    "version": 1
+  },
+  {
+    "preset_id": "chapter_organizer",
+    "title": "章节整理",
+    "description": "按主题与内容转折重建清晰的章节文档树。",
+    "prompt": "以内容编辑的角色按主题转折整理章节。章节边界必须来自提供的完整上下文，标题要概括领域含义，跨文档引用使用允许路径表中的相对链接。",
+    "minimum_context_tokens": 16000,
+    "version": 1
+  },
+  {
+    "preset_id": "review_coach",
+    "title": "复习教练",
+    "description": "突出学习目标、易错点、检查问题与回忆线索。",
+    "prompt": "以复习教练的角色组织内容。明确学习目标、核心结论、易错点、前置知识与自测问题，同时忠实保留证据时间戳。",
+    "minimum_context_tokens": 16000,
+    "version": 1
+  },
+  {
+    "preset_id": "tutorial_writer",
+    "title": "教程编写",
+    "description": "把内容改写为可执行的步骤、条件与结果说明。",
+    "prompt": "以教程作者的角色组织内容。明确前置条件、步骤、关键决策、预期结果和故障排查，不能从上下文之外补造操作事实。",
+    "minimum_context_tokens": 16000,
+    "version": 1
+  }
+]

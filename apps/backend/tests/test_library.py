@@ -14,12 +14,20 @@ from openvideo.core.media_models import (
     SourcePlatform,
 )
 from openvideo.core.summary_files import (
+    SummaryRootManifest,
     atomic_write_text,
-    build_manifest,
+    build_version_manifest,
     markdown_digest,
-    write_manifest,
+    resolve_version_path,
+    write_root_manifest,
+    write_version_manifest,
 )
-from openvideo.core.summary_models import SummaryDocument, SummaryMediaArtifact
+from openvideo.core.summary_models import (
+    SummaryContextSummary,
+    SummaryDocument,
+    SummaryMediaArtifact,
+    SummaryVersion,
+)
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 
@@ -29,6 +37,7 @@ MARKER_ID = "marker-01890f4c7a2b7cc298c4dc0c0c07398f"
 SEGMENT_ID = "segment-01890f4c7a2b7cc298c4dc0c0c07398f"
 DOCUMENT_ID = "document-01890f4c7a2b7cc298c4dc0c0c07398f"
 MEDIA_ID = "media-01890f4c7a2b7cc298c4dc0c0c07398f"
+VERSION_ID = "summary-version-01890f4c7a2b7cc298c4dc0c0c07398f"
 JOB_ID = "job-01890f4c7a2b7cc298c4dc0c0c07398f"
 
 
@@ -52,28 +61,58 @@ def _save_asset(library: MediaLibrary, asset: MediaAsset) -> None:
 
 def _save_summary(library: MediaLibrary) -> None:
     markdown = "# 用户总结\n"
+    version = SummaryVersion(
+        version_id=VERSION_ID,
+        asset_id=ASSET_ID,
+        preset_id="knowledge_notes",
+        preset_version=1,
+        ai_model_id="model-1",
+        detail="standard",
+        output_language="zh-CN",
+        context_summary=SummaryContextSummary(
+            transcript_digest="transcript",
+            marker_digest="markers",
+            event_analysis_digest="events",
+        ),
+        relative_path=f"versions/{VERSION_ID}",
+    )
     document = SummaryDocument(
         document_id=DOCUMENT_ID,
         asset_id=ASSET_ID,
+        version_id=VERSION_ID,
         title="用户总结",
         markdown=markdown,
         relative_path="index.md",
         content_digest=markdown_digest(markdown),
     )
     asset_directory = library.asset_directory(ASSET_ID)
-    atomic_write_text(asset_directory / "summary" / "index.md", markdown)
-    write_manifest(asset_directory, build_manifest(ASSET_ID, [document], []))
+    atomic_write_text(
+        resolve_version_path(asset_directory, VERSION_ID, "index.md"), markdown
+    )
+    write_version_manifest(
+        asset_directory, build_version_manifest(version, [document], [])
+    )
+    write_root_manifest(
+        asset_directory,
+        SummaryRootManifest(
+            asset_id=ASSET_ID,
+            current_version_id=VERSION_ID,
+            versions=[version],
+        ),
+    )
     library.create_summary_documents([document])
-    media_path = asset_directory / "summary" / "assets" / f"{MEDIA_ID}.jpg"
+    media_relative_path = f"summary/versions/{VERSION_ID}/assets/{MEDIA_ID}.jpg"
+    media_path = asset_directory / media_relative_path
     media_path.parent.mkdir(parents=True, exist_ok=True)
     media_path.write_bytes(b"image")
     library.save_summary_media(
         SummaryMediaArtifact(
             media_id=MEDIA_ID,
             asset_id=ASSET_ID,
+            version_id=VERSION_ID,
             document_id=DOCUMENT_ID,
             media_type="image",
-            relative_path=f"summary/assets/{MEDIA_ID}.jpg",
+            relative_path=media_relative_path,
             caption="关键画面",
             start_seconds=1,
         )

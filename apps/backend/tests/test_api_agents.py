@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +24,7 @@ from openvideo.llm.events import (
     LlmAgentEventType,
 )
 from openvideo.llm.models_dev import ModelsDevCatalog
+from openvideo.llm.model_profile import ModelLimits, ModelProfile
 from openvideo.llm.probe_cache import ProbeCache
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
@@ -239,6 +242,38 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
     tmp_path: Path,
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        "openvideo.summary_manager.CapabilityResolver.resolve",
+        lambda *_args, **_kwargs: ModelProfile(
+            provider="openai",
+            model="test",
+            limits=ModelLimits(),
+        ),
+    )
+    monkeypatch.setattr(
+        "openvideo.summary_manager.litellm.token_counter",
+        lambda **_kwargs: 1_000,
+    )
+
+    def complete_summary(_model, messages, *_args, **_kwargs):
+        if "规划" in messages[0]["content"]:
+            return json.dumps(
+                {
+                    "documents": [
+                        {"key": "root", "title": "测试视频", "parent_key": None}
+                    ]
+                }
+            )
+        match = re.search(
+            r"<允许路径表>\n(.*?)\n</允许路径表>", messages[1]["content"]
+        )
+        assert match is not None
+        path = json.loads(match.group(1))[0]["relative_path"]
+        return json.dumps(
+            {"documents": [{"relative_path": path, "markdown": "# 测试视频"}]}
+        )
+
+    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete_summary)
     with create_client(tmp_path) as client:
         library = client.app.state.library
         library.save_transcript(
@@ -253,14 +288,16 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
                 ],
             )
         )
-        document = client.post(
+        generation = client.post(
             f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
             json={
+                "ai_model_id": MODEL_ID,
+                "preset_id": "knowledge_notes",
                 "detail": "standard",
-                "create_subdocuments": False,
-                "subdocument_mode": "chapters",
+                "output_language": "zh-CN",
             },
-        ).json()[0]
+        ).json()
+        document = generation["documents"][0]
         service = client.app.state.agent_service
         created_artifact: AgentArtifact | None = None
 
@@ -278,7 +315,10 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
             return created_artifact
 
         context = SimpleNamespace(
-            session=SimpleNamespace(asset_id=ASSET_ID),
+            session=SimpleNamespace(
+                asset_id=ASSET_ID,
+                context={"version_id": document["version_id"]},
+            ),
             evidence=RunEvidenceState(
                 evidence_read=True,
                 frames_inspected=True,

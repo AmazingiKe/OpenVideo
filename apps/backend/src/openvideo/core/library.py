@@ -605,16 +605,17 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
 
     def _write_markers(self, asset_id: str, markers: list[MediaMarker]) -> None:
         output = MarkersFile(asset_id=asset_id, markers=markers)
-        with self._lock:
-            atomic_write_model(
-                self.asset_directory(asset_id) / MARKERS_FILE_NAME, output
-            )
-            synchronize_asset(self._db(), self.assets_path, asset_id)
+        atomic_write_model(
+            self.asset_directory(asset_id) / MARKERS_FILE_NAME,
+            output,
+        )
 
     def _summary_document_from_row(self, row: sqlite3.Row) -> SummaryDocument:
         values = dict(row)
         markdown = read_markdown(
-            self.asset_directory(values["asset_id"]), values["relative_path"]
+            self.asset_directory(values["asset_id"]),
+            values["version_id"],
+            values["relative_path"],
         )
         return SummaryDocument.model_validate({**values, "markdown": markdown})
 

@@ -70,7 +70,6 @@ class TranscriptionCreateRequest(BaseModel):
 
 class AnalysisCreateRequest(BaseModel):
     mode: AnalysisMode = AnalysisMode.FULL
-    marker_ids: list[str] = Field(default_factory=list)
     force: bool = False
     ai_model_id: str | None = None
     strategy: AnalysisStrategy = Field(default_factory=AnalysisStrategy)
@@ -95,7 +94,6 @@ def register_analysis_routes(
             job = analysis_manager().create_analysis(
                 asset_id,
                 request.mode,
-                request.marker_ids,
                 request.ai_model_id,
                 request.strategy,
                 request.force,

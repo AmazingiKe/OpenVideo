@@ -14,8 +14,12 @@ from openvideo.core.agent_runtime_models import (
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library_index import synchronize_asset
-from openvideo.core.summary_files import load_manifest, write_manifest
-from openvideo.core.summary_models import SummaryDocument, SummaryMediaArtifact
+from openvideo.core.summary_files import load_version_manifest, write_version_manifest
+from openvideo.core.summary_models import (
+    SummaryDocument,
+    SummaryMediaArtifact,
+    SummaryVersion,
+)
 
 
 class LibraryGeneratedStorageMixin:
@@ -51,18 +55,41 @@ class LibraryGeneratedStorageMixin:
         )
         return self._summary_document_from_row(row) if row else None
 
-    def load_summary_documents(self, asset_id: str) -> list[SummaryDocument]:
+    def load_summary_documents(
+        self,
+        asset_id: str,
+        version_id: str | None = None,
+    ) -> list[SummaryDocument]:
         self._validate_asset_id(asset_id)
+        where = "asset_id = ?"
+        parameters = [asset_id]
+        if version_id is not None:
+            self._validate_identifier(version_id, "summary-version")
+            where += " AND version_id = ?"
+            parameters.append(version_id)
         rows = (
             self._db()
             .execute(
-                "SELECT * FROM summary_documents WHERE asset_id = ? "
+                f"SELECT * FROM summary_documents WHERE {where} "
                 "ORDER BY parent_document_id IS NOT NULL, position, created_at",
-                (asset_id,),
+                tuple(parameters),
             )
             .fetchall()
         )
         return [self._summary_document_from_row(row) for row in rows]
+
+    def load_summary_versions(self, asset_id: str) -> list[SummaryVersion]:
+        self._validate_asset_id(asset_id)
+        rows = self._db().execute(
+            "SELECT * FROM summary_versions WHERE asset_id = ? ORDER BY created_at DESC",
+            (asset_id,),
+        ).fetchall()
+        versions: list[SummaryVersion] = []
+        for row in rows:
+            values = dict(row)
+            values["context_summary"] = json.loads(values["context_summary"])
+            versions.append(SummaryVersion.model_validate(values))
+        return versions
 
     def update_summary_document(
         self,
@@ -347,21 +374,31 @@ class LibraryGeneratedStorageMixin:
     def save_summary_media(self, media: SummaryMediaArtifact) -> None:
         self._validate_identifier(media.media_id, "media")
         asset_directory = self.asset_directory(media.asset_id)
-        manifest = load_manifest(asset_directory)
+        manifest = load_version_manifest(asset_directory, media.version_id)
         if any(item.media_id == media.media_id for item in manifest.media):
             raise sqlite3.IntegrityError("总结媒体标识已存在")
-        write_manifest(
+        write_version_manifest(
             asset_directory,
             manifest.model_copy(update={"media": [*manifest.media, media]}),
         )
         synchronize_asset(self._db(), self.assets_path, media.asset_id)
 
-    def load_summary_media(self, asset_id: str) -> list[SummaryMediaArtifact]:
+    def load_summary_media(
+        self,
+        asset_id: str,
+        version_id: str | None = None,
+    ) -> list[SummaryMediaArtifact]:
+        where = "asset_id = ?"
+        parameters = [asset_id]
+        if version_id is not None:
+            self._validate_identifier(version_id, "summary-version")
+            where += " AND version_id = ?"
+            parameters.append(version_id)
         rows = (
             self._db()
             .execute(
-                "SELECT * FROM summary_media WHERE asset_id = ? ORDER BY created_at",
-                (asset_id,),
+                f"SELECT * FROM summary_media WHERE {where} ORDER BY created_at",
+                tuple(parameters),
             )
             .fetchall()
         )

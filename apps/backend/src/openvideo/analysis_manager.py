@@ -17,7 +17,7 @@ from openvideo.core.analysis_models import (
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaAssetStatus, MediaMarker, MediaSegment
+from openvideo.core.media_models import MediaAssetStatus, MediaSegment
 from openvideo.core.transcription_models import (
     Transcript,
     TranscriptionMetadata,
@@ -79,7 +79,6 @@ class AnalysisManager:
         self,
         asset_id: str,
         mode: AnalysisMode,
-        marker_ids: list[str],
         ai_model_id: str | None,
         strategy: AnalysisStrategy,
         force: bool,
@@ -100,18 +99,16 @@ class AnalysisManager:
         active_job = self._active_job_for(asset_id)
         if active_job:
             return active_job
-        resolved_marker_ids = self._validated_marker_ids(asset_id, mode, marker_ids)
         existing_segments = self.library.load_segments(asset_id)
         has_full_timeline = any(not segment.marker_ids for segment in existing_segments)
         if mode == AnalysisMode.FULL and has_full_timeline and not force:
-            return self._completed_job(asset_id, mode, [])
+            return self._completed_job(asset_id, mode)
 
         job_id = f"job-{uuid7().hex}"
         job = AnalysisJob(
             job_id=job_id,
             asset_id=asset_id,
             mode=mode,
-            marker_ids=resolved_marker_ids,
             ai_model_id=ai_model_id,
             strategy=strategy,
         )
@@ -394,7 +391,7 @@ class AnalysisManager:
                 self._update_job(
                     job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件"
                 )
-                markers = self._job_markers(job)
+                markers = self.library.load_markers(job.asset_id)
                 asset_directory = self.library.artifacts_directory(asset.asset_id)
                 segments = await asyncio.to_thread(
                     build_segments,
@@ -405,7 +402,6 @@ class AnalysisManager:
                     asset.duration_seconds,
                     self.settings,
                     describer,
-                    job.mode,
                     markers,
                     job.strategy,
                     lambda stage, progress, message: self._update_job(
@@ -439,7 +435,7 @@ class AnalysisManager:
                     95,
                     f"已生成 {len(segments)} 个时间轴事件",
                 )
-                merged_segments = self._merge_segments(job, segments)
+                proposed_segments = self._validate_and_sort_segments(job, segments)
                 message = (
                     "分析预览已生成，等待确认"
                     if describer is not None
@@ -448,7 +444,7 @@ class AnalysisManager:
                 self._set_analysis_proposal(
                     job_id,
                     _segment_digest(self.library.load_segments(asset.asset_id)),
-                    merged_segments,
+                    proposed_segments,
                     message,
                 )
             except Exception as error:
@@ -488,76 +484,38 @@ class AnalysisManager:
     def _transcriber(self, options: TranscriptionOptions) -> Transcriber:
         return create_transcriber(options, self.settings.models_root_directory)
 
-    def _validated_marker_ids(
-        self,
-        asset_id: str,
-        mode: AnalysisMode,
-        marker_ids: list[str],
-    ) -> list[str]:
-        if mode == AnalysisMode.FULL:
-            return []
-        markers = self.library.load_markers(asset_id)
-        available_ids = {marker.marker_id for marker in markers}
-        resolved_ids = (
-            list(dict.fromkeys(marker_ids))
-            if marker_ids
-            else [marker.marker_id for marker in markers]
-        )
-        if not resolved_ids:
-            raise AnalysisError("请先添加至少一个标记")
-        if any(marker_id not in available_ids for marker_id in resolved_ids):
-            raise AnalysisError("分析请求包含不存在的标记")
-        return resolved_ids
-
-    def _job_markers(self, job: AnalysisJob) -> list[MediaMarker]:
-        if job.mode == AnalysisMode.FULL:
-            return self.library.load_markers(job.asset_id)
-        selected_ids = set(job.marker_ids)
-        return [
-            marker
-            for marker in self.library.load_markers(job.asset_id)
-            if marker.marker_id in selected_ids
-        ]
-
-    def _merge_segments(
+    def _validate_and_sort_segments(
         self,
         job: AnalysisJob,
         new_segments: list[MediaSegment],
     ) -> list[MediaSegment]:
-        existing = self.library.load_segments(job.asset_id)
-        if job.mode == AnalysisMode.FULL:
-            retained: list[MediaSegment] = []
-        else:
-            selected_ids = set(job.marker_ids)
-            retained = [
-                segment
-                for segment in existing
-                if not selected_ids.intersection(segment.marker_ids)
-                and not any(
-                    _segments_overlap(segment, replacement)
-                    for replacement in new_segments
-                )
-            ]
-        merged = sorted(
-            [*retained, *new_segments], key=lambda segment: segment.start_seconds
+        sorted_segments = sorted(
+            new_segments,
+            key=lambda segment: segment.start_seconds,
         )
         marker_ids = {
             marker.marker_id for marker in self.library.load_markers(job.asset_id)
         }
         if any(
             marker_id not in marker_ids
-            for segment in merged
+            for segment in sorted_segments
             for marker_id in segment.marker_ids
         ):
             raise AnalysisError("分析结果引用了不存在的人工标记")
-        if len({segment.segment_id for segment in merged}) != len(merged):
+        if len({segment.segment_id for segment in sorted_segments}) != len(
+            sorted_segments
+        ):
             raise AnalysisError("分析结果包含重复事件")
         if any(
             _segments_overlap(previous, current)
-            for previous, current in zip(merged, merged[1:], strict=False)
+            for previous, current in zip(
+                sorted_segments,
+                sorted_segments[1:],
+                strict=False,
+            )
         ):
             raise AnalysisError("分析结果包含重叠事件")
-        return merged
+        return sorted_segments
 
     def _add_capability(self, job_id: str, capability: AnalysisCapability) -> None:
         with self._lock:
@@ -657,13 +615,11 @@ class AnalysisManager:
     def _completed_job(
         asset_id: str,
         mode: AnalysisMode,
-        marker_ids: list[str],
     ) -> AnalysisJob:
         return AnalysisJob(
             job_id=f"job-{uuid7().hex}",
             asset_id=asset_id,
             mode=mode,
-            marker_ids=marker_ids,
             strategy=AnalysisStrategy(),
             capabilities=[AnalysisCapability.TRANSCRIPT, AnalysisCapability.TIMELINE],
             stage=AnalysisStage.COMPLETE,

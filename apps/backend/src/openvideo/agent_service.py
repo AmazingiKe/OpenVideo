@@ -454,13 +454,18 @@ class AgentService:
 
     def _validate_summary_session(self, asset_id: str, context: dict[str, Any]) -> None:
         document_id = context.get("document_id")
+        version_id = context.get("version_id")
         document = (
             self.library.load_summary_document(str(document_id))
             if document_id
             else None
         )
-        if document is None or document.asset_id != asset_id:
-            raise AgentServiceError("总结 Agent 必须绑定当前素材的一篇文档")
+        if (
+            document is None
+            or document.asset_id != asset_id
+            or document.version_id != version_id
+        ):
+            raise AgentServiceError("总结 Agent 必须显式绑定当前素材的版本与文档")
 
     def _summary_run_definition(
         self,
@@ -686,26 +691,41 @@ class AgentService:
 
     def _read_markers(self, context: AgentRunContext) -> dict[str, Any]:
         context.evidence.markers_read = True
+        focus_selection = self.library.load_focus_selection(context.session.asset_id)
         return {
             "ok": True,
             "markers": [
                 marker.model_dump(mode="json")
                 for marker in self.library.load_markers(context.session.asset_id)
             ],
+            "focus_selection": (
+                focus_selection.model_dump(mode="json") if focus_selection else None
+            ),
         }
 
     def _search_evidence(
         self, context: AgentRunContext, parameters: EvidenceSearchInput
     ) -> dict[str, Any]:
         query = (parameters.query or "").casefold().strip()
+        focus_selection = self.library.load_focus_selection(context.session.asset_id)
+        start_seconds = parameters.start_seconds
+        end_seconds = parameters.end_seconds
+        if (
+            start_seconds is None
+            and end_seconds is None
+            and focus_selection is not None
+            and focus_selection.is_complete
+        ):
+            start_seconds = focus_selection.in_seconds
+            end_seconds = focus_selection.out_seconds
         evidence: list[dict[str, Any]] = []
         transcript = self.library.load_transcript(context.session.asset_id)
         for segment in transcript.segments if transcript else []:
             if not ranges_intersect(
                 segment.start_seconds,
                 segment.end_seconds,
-                parameters.start_seconds,
-                parameters.end_seconds,
+                start_seconds,
+                end_seconds,
             ) or (query and query not in segment.text.casefold()):
                 continue
             evidence.append(
@@ -735,8 +755,8 @@ class AgentService:
             if not ranges_intersect(
                 segment.start_seconds,
                 segment.end_seconds,
-                parameters.start_seconds,
-                parameters.end_seconds,
+                start_seconds,
+                end_seconds,
             ) or (query and query not in text.casefold()):
                 continue
             evidence.append(
@@ -749,7 +769,13 @@ class AgentService:
                 }
             )
         context.evidence.evidence_read = True
-        return {"ok": True, "evidence": evidence}
+        return {
+            "ok": True,
+            "evidence": evidence,
+            "focus_selection": (
+                focus_selection.model_dump(mode="json") if focus_selection else None
+            ),
+        }
 
     async def _inspect_frames(
         self, context: AgentRunContext, parameters: InspectFramesInput
@@ -881,7 +907,11 @@ class AgentService:
         self, context: AgentRunContext, parameters: ReadSummaryDocumentInput
     ) -> dict[str, Any]:
         document = self.library.load_summary_document(parameters.document_id)
-        if document is None or document.asset_id != context.session.asset_id:
+        if (
+            document is None
+            or document.asset_id != context.session.asset_id
+            or document.version_id != context.session.context.get("version_id")
+        ):
             return {"ok": False, "error": "文档不存在或不属于当前视频"}
         context.evidence.summary_read = True
         return {"ok": True, "document": document.model_dump(mode="json")}
@@ -890,7 +920,11 @@ class AgentService:
         self, context: AgentRunContext, parameters: ProposeSummaryEditInput
     ) -> dict[str, Any]:
         document = self.library.load_summary_document(parameters.document_id)
-        if document is None or document.asset_id != context.session.asset_id:
+        if (
+            document is None
+            or document.asset_id != context.session.asset_id
+            or document.version_id != context.session.context.get("version_id")
+        ):
             return {"ok": False, "error": "文档不存在或不属于当前视频"}
         if document.revision != parameters.expected_revision:
             return {
@@ -908,6 +942,7 @@ class AgentService:
             SUMMARY_ARTIFACT_TYPE,
             {
                 "document_id": document.document_id,
+                "version_id": document.version_id,
                 "base_revision": document.revision,
                 "original_markdown": document.markdown,
                 "proposed_markdown": parameters.proposed_markdown,
@@ -925,7 +960,11 @@ class AgentService:
         self, context: AgentRunContext, parameters: ProposeSummaryMediaInput
     ) -> dict[str, Any]:
         document = self.library.load_summary_document(parameters.document_id)
-        if document is None or document.asset_id != context.session.asset_id:
+        if (
+            document is None
+            or document.asset_id != context.session.asset_id
+            or document.version_id != context.session.context.get("version_id")
+        ):
             return {"ok": False, "error": "文档不存在或不属于当前视频"}
         if document.revision != parameters.expected_revision:
             return {
@@ -972,7 +1011,9 @@ class AgentService:
         duplicate = any(
             artifact.document_id == document.document_id
             and abs(artifact.start_seconds - parameters.start_seconds) < 1
-            for artifact in self.library.load_summary_media(document.asset_id)
+            for artifact in self.library.load_summary_media(
+                document.asset_id, document.version_id
+            )
         )
         if duplicate:
             return {"ok": False, "error": "该时间点附近已经存在总结媒体"}
@@ -990,6 +1031,7 @@ class AgentService:
             SUMMARY_MEDIA_ARTIFACT_TYPE,
             {
                 "document_id": document.document_id,
+                "version_id": document.version_id,
                 "base_revision": document.revision,
                 "media": media.model_dump(mode="json"),
                 "reason": parameters.reason,
@@ -1077,7 +1119,11 @@ class AgentService:
     def _approve_summary_artifact(self, artifact: AgentArtifact) -> None:
         payload = artifact.payload
         document = self.library.load_summary_document(payload["document_id"])
-        if document is None or document.revision != payload["base_revision"]:
+        if (
+            document is None
+            or document.version_id != payload["version_id"]
+            or document.revision != payload["base_revision"]
+        ):
             raise AgentConflictError("总结文档已发生变化，建议已过期")
         if artifact.result_type == SUMMARY_MEDIA_ARTIFACT_TYPE:
             try:

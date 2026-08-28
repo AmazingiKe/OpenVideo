@@ -194,7 +194,7 @@ def test_analyze_rejects_text_only_model_for_visual_task(tmp_path: Path):
     assert response.json()["detail"] == "所选 AI 模型不支持视觉分析"
 
 
-def test_marker_analysis_records_selected_marker_scope(tmp_path: Path):
+def test_legacy_marker_analysis_mode_is_rejected(tmp_path: Path):
     with create_client(tmp_path) as client:
         client.app.state.library.save_transcript(Transcript(asset_id=ASSET_ID))
         marker = client.post(
@@ -214,10 +214,7 @@ def test_marker_analysis_records_selected_marker_scope(tmp_path: Path):
             },
         )
 
-    assert response.status_code == 202
-    job = response.json()
-    assert job["mode"] == "markers"
-    assert job["marker_ids"] == [marker["marker_id"]]
+    assert response.status_code == 422
 
 
 def test_analysis_requires_transcription(tmp_path: Path):
