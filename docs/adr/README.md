@@ -16,3 +16,6 @@
 | [0001](./0001-portable-library.md) | 采用可携带的文件夹资料库 | 已接受 |
 | [0002](./0002-model-capabilities-and-agno-runtime.md) | 采用三态模型能力解析与 Agno Agent Runtime | 已接受 |
 | [0003](./0003-marker-event-analysis-and-summary-context.md) | 分离标记事件分析与总结文档生成 | 已接受 |
+| [0004](./0004-evidence-first-unified-agent.md) | 采用证据优先的统一视频助手与分层多模态检索 | 已接受 |
+| [0005](./0005-agent-runtime-governance.md) | 采用确定性权限与可恢复的 Agent 运行治理 | 已接受 |
+| [0006](./0006-agent-interaction-and-observability.md) | 采用渐进披露的 Agent 交互与分阶段可观测性 | 已接受 |
