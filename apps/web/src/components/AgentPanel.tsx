@@ -1,13 +1,21 @@
 import { Bot, History, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
+import { AgentComposer } from "@/components/AgentComposer";
+import { AgentContextAttachments } from "@/components/AgentContextAttachments";
+import { AgentMarkdown } from "@/components/AgentMarkdown";
 import { AiModelSelect } from "@/components/AiModelSelect";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Marker, MarkerContent } from "@/components/ui/marker";
+import { Message, MessageContent } from "@/components/ui/message";
 import {
-  Bubble,
-  Marker,
-  Message,
-  MessageComposer,
   MessageScroller,
-} from "@/components/chat";
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,15 +47,23 @@ import { cn } from "@/lib/utils";
 import type {
   AgentArtifact,
   AgentCapability,
+  AgentEvidenceReference,
+  AgentThinkingMode,
   AiModelSummary,
 } from "@/shared/types";
 import {
+  AgentAnswerEvidence,
+  AgentIndexStatusDisclosure,
+  AgentRunMetricsDisclosure,
+  type AgentIndexStatus,
+} from "./AgentAnswerDetails";
+import {
   AgentArtifactCard,
-  AgentReasoning,
   AgentRunBadge,
   AgentToolActivity,
   build_agent_timeline,
 } from "./AgentPanelContent";
+import type { AgentContextAttachmentDraft } from "./agent_context";
 import { use_agent_panel, type AgentRunOption } from "./use_agent_panel";
 
 const CAPABILITY_LABELS: Record<AgentCapability, string> = {
@@ -63,9 +79,18 @@ export type AgentPanelProps = {
   context?: Record<string, unknown>;
   task_input?: Record<string, unknown>;
   run_options?: AgentRunOption[];
+  context_attachments?: AgentContextAttachmentDraft[];
+  default_thinking_mode?: AgentThinkingMode;
+  thinking_modes_enabled?: boolean;
+  library_scope_enabled?: boolean;
+  index_status?: AgentIndexStatus;
   title?: string;
   placeholder?: string;
-  on_seek?: (seconds: number) => void;
+  on_seek?: (
+    seconds: number,
+    end_seconds?: number | null,
+    evidence?: AgentEvidenceReference,
+  ) => void;
   on_artifact_change?: (artifact: AgentArtifact) => void | Promise<void>;
   className?: string;
 };
@@ -77,6 +102,11 @@ export function AgentPanel({
   context = {},
   task_input = {},
   run_options = [],
+  context_attachments = [],
+  default_thinking_mode = "auto",
+  thinking_modes_enabled = false,
+  library_scope_enabled = false,
+  index_status,
   title,
   placeholder,
   on_seek,
@@ -97,18 +127,25 @@ export function AgentPanel({
     last_content,
     model_id,
     pending,
+    preparing_attachments,
     resolve_artifact,
+    retrieval_scope,
     run_option_value,
     selected_run_option,
     select_session,
     sessions,
     set_draft,
     set_model_id,
+    set_retrieval_scope,
     set_run_option_value,
+    set_scope_pinned,
+    set_thinking_mode,
+    scope_key,
+    scope_pinned,
     state,
-    stream_reasoning,
     stream_text,
     submit,
+    thinking_mode,
   } = use_agent_panel({
     agent_id,
     asset_id,
@@ -117,9 +154,38 @@ export function AgentPanel({
     on_artifact_change,
     run_options,
     task_input,
+    default_thinking_mode,
   });
 
+  const [dismissed_attachment_ids, set_dismissed_attachment_ids] = useState(
+    () => new Set<string>(),
+  );
+  const [dropped_attachments, set_dropped_attachments] = useState<
+    AgentContextAttachmentDraft[]
+  >([]);
+  useEffect(() => {
+    set_dismissed_attachment_ids(new Set());
+    set_dropped_attachments([]);
+  }, [scope_key]);
+  const visible_attachments = useMemo(
+    () =>
+      [...context_attachments, ...dropped_attachments].filter(
+        (attachment) => !dismissed_attachment_ids.has(attachment.draft_id),
+      ),
+    [context_attachments, dismissed_attachment_ids, dropped_attachments],
+  );
+
   const panel_title = title ?? definition?.definition.title ?? "Agent";
+
+  async function submit_current(content_override?: string) {
+    const submitted = await submit(content_override, visible_attachments);
+    if (submitted) {
+      set_dismissed_attachment_ids(
+        new Set(visible_attachments.map((attachment) => attachment.draft_id)),
+      );
+      set_dropped_attachments([]);
+    }
+  }
 
   if (!asset_id) {
     return (
@@ -249,78 +315,165 @@ export function AgentPanel({
         ) : null}
       </CardHeader>
       <CardContent className="min-h-0 flex-1 p-0">
-        <MessageScroller className="h-full">
-          {events.length === 0 && artifacts.length === 0 ? (
-            <Empty className="border-0">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <ShieldCheck />
-                </EmptyMedia>
-                <EmptyTitle>尚未创建会话</EmptyTitle>
-                <EmptyDescription>
-                  首次发送消息或启动任务时才会创建，会话不会因访问素材而自动产生。
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : null}
-          {build_agent_timeline(events).map((item) => {
-            if (item.type === "message") {
-              return (
-                <Message key={item.id} role={item.role}>
-                  {item.reasoning ? (
-                    <AgentReasoning content={item.reasoning} />
-                  ) : null}
-                  {item.content ? (
-                    <Bubble role={item.role}>{item.content}</Bubble>
-                  ) : null}
-                </Message>
-              );
-            }
-            return <AgentToolActivity key={item.id} events={item.events} />;
-          })}
-          {stream_text || stream_reasoning ? (
-            <Message role="assistant">
-              {stream_reasoning ? (
-                <AgentReasoning content={stream_reasoning} running />
-              ) : null}
-              {stream_text ? (
-                <Bubble role="assistant">{stream_text}</Bubble>
-              ) : null}
-            </Message>
-          ) : null}
-          {artifacts.map((artifact) => (
-            <AgentArtifactCard
-              key={artifact.artifact_id}
-              artifact={artifact}
-              on_seek={on_seek}
-              on_resolve={(action) => void resolve_artifact(artifact, action)}
-              on_regenerate={() => void submit(last_content)}
-            />
-          ))}
-          {connection_message ? (
-            <div className="flex flex-col items-center gap-2">
-              <Marker>{connection_message}</Marker>
-              {active_run ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    void follow_run(active_run, state?.events ?? [])
-                  }
-                >
-                  继续接收
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
-          {error ? (
-            <Alert variant="destructive">
-              <AlertTitle>Agent 运行失败</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-        </MessageScroller>
+        <MessageScrollerProvider autoScroll>
+          <MessageScroller>
+            <MessageScrollerViewport
+              role="log"
+              aria-label="Agent 对话消息"
+              aria-live="polite"
+              tabIndex={0}
+            >
+              <MessageScrollerContent className="gap-4 p-4">
+                {index_status ? (
+                  <MessageScrollerItem messageId="index-status">
+                    <AgentIndexStatusDisclosure status={index_status} />
+                  </MessageScrollerItem>
+                ) : null}
+                {events.length === 0 && artifacts.length === 0 ? (
+                  <MessageScrollerItem messageId="empty-session">
+                    <Empty className="border-0">
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                          <ShieldCheck />
+                        </EmptyMedia>
+                        <EmptyTitle>尚未创建会话</EmptyTitle>
+                        <EmptyDescription>
+                          首次发送消息或启动任务时才会创建，会话会与当前工作对象绑定。
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  </MessageScrollerItem>
+                ) : null}
+                {build_agent_timeline(events, state?.runs).map((item) => (
+                  <MessageScrollerItem
+                    key={item.id}
+                    messageId={item.id}
+                    scrollAnchor={
+                      item.type === "message" && item.role === "user"
+                    }
+                  >
+                    {item.type === "message" ? (
+                      <Message align={item.role === "user" ? "end" : "start"}>
+                        <MessageContent>
+                          {item.context_attachments?.length ? (
+                            <AgentContextAttachments
+                              attachments={item.context_attachments}
+                              label="该消息发送时的上下文附件"
+                            />
+                          ) : null}
+                          {item.content ? (
+                            <Bubble
+                              align={item.role === "user" ? "end" : "start"}
+                              variant={
+                                item.role === "user" ? "default" : "muted"
+                              }
+                            >
+                              <BubbleContent>
+                                {item.role === "assistant" ? (
+                                  <AgentMarkdown content={item.content} />
+                                ) : (
+                                  <p className="whitespace-pre-wrap">
+                                    {item.content}
+                                  </p>
+                                )}
+                              </BubbleContent>
+                            </Bubble>
+                          ) : null}
+                          {item.role === "assistant" ? (
+                            <>
+                              <AgentAnswerEvidence
+                                confidence={item.confidence}
+                                answer_status={item.answer_status}
+                                evidence_bundle={item.evidence_bundle}
+                                on_seek={on_seek}
+                              />
+                              {item.metrics ? (
+                                <AgentRunMetricsDisclosure
+                                  metrics={item.metrics}
+                                />
+                              ) : null}
+                            </>
+                          ) : null}
+                        </MessageContent>
+                      </Message>
+                    ) : (
+                      <AgentToolActivity events={item.events} />
+                    )}
+                  </MessageScrollerItem>
+                ))}
+                {stream_text ? (
+                  <MessageScrollerItem messageId="streaming-answer">
+                    <Message align="start">
+                      <MessageContent>
+                        <Bubble align="start" variant="muted">
+                          <BubbleContent>
+                            <AgentMarkdown content={stream_text} />
+                          </BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
+                ) : null}
+                {pending && !stream_text ? (
+                  <MessageScrollerItem messageId="pending-answer">
+                    <Marker>
+                      <MarkerContent className="shimmer">
+                        正在处理当前问题…
+                      </MarkerContent>
+                    </Marker>
+                  </MessageScrollerItem>
+                ) : null}
+                {artifacts.map((artifact) => (
+                  <MessageScrollerItem
+                    key={artifact.artifact_id}
+                    messageId={artifact.artifact_id}
+                  >
+                    <AgentArtifactCard
+                      artifact={artifact}
+                      on_seek={on_seek}
+                      on_resolve={(action) =>
+                        void resolve_artifact(artifact, action)
+                      }
+                      on_regenerate={() =>
+                        void submit(last_content, visible_attachments)
+                      }
+                    />
+                  </MessageScrollerItem>
+                ))}
+                {connection_message ? (
+                  <MessageScrollerItem messageId="connection-message">
+                    <div className="flex flex-col items-center gap-2">
+                      <Marker variant="separator">
+                        <MarkerContent>{connection_message}</MarkerContent>
+                      </Marker>
+                      {active_run ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            void follow_run(active_run, state?.events ?? [])
+                          }
+                        >
+                          继续接收
+                        </Button>
+                      ) : null}
+                    </div>
+                  </MessageScrollerItem>
+                ) : null}
+                {error ? (
+                  <MessageScrollerItem messageId="agent-error">
+                    <Alert variant="destructive">
+                      <AlertTitle>Agent 运行失败</AlertTitle>
+                      <AlertDescription>{error}</AlertDescription>
+                    </Alert>
+                  </MessageScrollerItem>
+                ) : null}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton />
+          </MessageScroller>
+        </MessageScrollerProvider>
       </CardContent>
       <CardFooter className="block p-0">
         {definition?.definition.input_mode === "task" ? (
@@ -336,23 +489,49 @@ export function AgentPanel({
             ) : null}
             <Button
               type="button"
-              onClick={() => void submit()}
+              onClick={() => void submit_current()}
               disabled={pending || !definition.available || !model_id}
             >
               启动任务
             </Button>
           </div>
         ) : (
-          <MessageComposer
+          <AgentComposer
             value={draft}
             on_change={set_draft}
-            on_submit={() => void submit()}
+            on_submit={() => void submit_current()}
             on_cancel={
               active_run ? () => void cancel_run(active_run.run_id) : undefined
             }
             pending={pending}
+            preparing_attachments={preparing_attachments}
             disabled={!definition?.available || !model_id}
             placeholder={placeholder ?? "输入消息；运行时仍可编辑下一条草稿"}
+            thinking_mode={thinking_mode}
+            on_thinking_mode_change={set_thinking_mode}
+            thinking_modes_enabled={thinking_modes_enabled}
+            retrieval_scope={retrieval_scope}
+            on_retrieval_scope_change={(scope) => {
+              set_retrieval_scope(scope);
+              if (scope === "current_asset") set_scope_pinned(false);
+            }}
+            library_scope_enabled={library_scope_enabled}
+            scope_pinned={scope_pinned}
+            on_scope_pinned_change={set_scope_pinned}
+            attachments={visible_attachments}
+            on_remove_attachment={(draft_id) =>
+              set_dismissed_attachment_ids(
+                (current) => new Set([...current, draft_id]),
+              )
+            }
+            on_attachment_drop={(attachment) =>
+              set_dropped_attachments((current) => [
+                ...current.filter(
+                  (item) => item.draft_id !== attachment.draft_id,
+                ),
+                attachment,
+              ])
+            }
           />
         )}
       </CardFooter>

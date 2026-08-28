@@ -14,6 +14,7 @@ import { use_task_manager } from "@/app/task_manager";
 import { marker_asset_path } from "@/app/workspace_routes";
 import { use_asset_analysis } from "@/features/analysis/use_asset_analysis";
 import {
+  use_agent_preferences,
   use_ai_models,
   use_transcription_resources,
 } from "@/features/workbench/use_processing_resources";
@@ -82,6 +83,8 @@ export function MarkersPage() {
   const { settings, settings_error, is_ready, update_settings } =
     use_markers_page_settings();
   const { models: ai_models, error: ai_models_error } = use_ai_models();
+  const { agent_preferences, error: agent_preferences_error } =
+    use_agent_preferences();
   const {
     transcription_models: loaded_transcription_models,
     default_transcription,
@@ -348,6 +351,8 @@ export function MarkersPage() {
     <MarkerAgentPanel
       asset_id={selected_asset_id}
       models={ai_models}
+      focus_selection={focus_selection}
+      default_thinking_mode={agent_preferences?.default_thinking_mode}
       compact={is_compact_layout}
       on_seek={seek_player}
       on_candidate_markers_change={set_candidate_markers}
@@ -403,6 +408,7 @@ export function MarkersPage() {
 
   const error =
     page_error ??
+    agent_preferences_error ??
     ai_models_error ??
     transcription_resources_error ??
     settings_error ??

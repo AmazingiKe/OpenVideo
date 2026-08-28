@@ -8,6 +8,7 @@ import {
 } from "@/shared/api";
 import { error_message } from "@/shared/errors";
 import type {
+  AgentPreferences,
   AiModelSummary,
   TranscriptionModelDescriptor,
   TranscriptionOptions,
@@ -22,6 +23,22 @@ const EMPTY_TRANSCRIPTION_RESOURCES: TranscriptionResources = {
   transcription_models: [],
   default_transcription: null,
 };
+
+export function use_agent_preferences(): {
+  agent_preferences: AgentPreferences | null;
+  error: string | null;
+} {
+  const preferences_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.preferences,
+    queryFn: ({ signal }) => get_preferences(signal),
+  });
+  return {
+    agent_preferences: preferences_query.data?.agent ?? null,
+    error: preferences_query.error
+      ? error_message(preferences_query.error)
+      : null,
+  };
+}
 
 export function use_ai_models(): {
   models: AiModelSummary[];

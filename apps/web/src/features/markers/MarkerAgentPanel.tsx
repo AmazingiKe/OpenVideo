@@ -1,6 +1,7 @@
 import { Bot } from "lucide-react";
 
 import { AgentPanel } from "@/components/AgentPanel";
+import type { AgentContextAttachmentDraft } from "@/components/agent_context";
 import {
   Empty,
   EmptyDescription,
@@ -11,7 +12,9 @@ import {
 import { cn } from "@/lib/utils";
 import type {
   AgentArtifact,
+  AgentThinkingMode,
   AiModelSummary,
+  FocusSelection,
   MediaMarker,
 } from "@/shared/types";
 
@@ -21,6 +24,8 @@ type MarkerAgentPanelProps = {
   on_seek: (seconds: number) => void;
   on_candidate_markers_change: (markers: MediaMarker[]) => void;
   on_markers_changed: () => Promise<void>;
+  focus_selection?: FocusSelection | null;
+  default_thinking_mode?: AgentThinkingMode;
   compact?: boolean;
 };
 
@@ -30,6 +35,8 @@ export function MarkerAgentPanel({
   on_seek,
   on_candidate_markers_change,
   on_markers_changed,
+  focus_selection = null,
+  default_thinking_mode = "auto",
   compact = false,
 }: MarkerAgentPanelProps) {
   return (
@@ -61,6 +68,10 @@ export function MarkerAgentPanel({
           models={models}
           on_seek={on_seek}
           placeholder="例如：这个课程主要讲什么？"
+          context_attachments={time_range_attachment(focus_selection)}
+          default_thinking_mode={default_thinking_mode}
+          thinking_modes_enabled
+          library_scope_enabled
           run_options={[
             {
               value: "chat",
@@ -105,4 +116,27 @@ export function MarkerAgentPanel({
       }),
     );
   }
+}
+
+function time_range_attachment(
+  selection: FocusSelection | null,
+): AgentContextAttachmentDraft[] {
+  if (
+    selection?.in_seconds === null ||
+    selection?.out_seconds === null ||
+    !selection
+  ) {
+    return [];
+  }
+  return [
+    {
+      draft_id: `${selection.selection_id}-${selection.revision}`,
+      kind: "time_range",
+      asset_id: selection.asset_id,
+      label: "时间线理解范围",
+      reference_id: selection.selection_id,
+      start_seconds: selection.in_seconds,
+      end_seconds: selection.out_seconds,
+    },
+  ];
 }

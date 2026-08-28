@@ -1,4 +1,4 @@
-import { Brain, CheckCircle2, CircleX, RotateCcw, Wrench } from "lucide-react";
+import { CheckCircle2, CircleX, RotateCcw, Wrench } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -18,7 +18,28 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { format_time } from "@/shared/format";
-import type { AgentArtifact, AgentEvent, AgentRun } from "@/shared/types";
+import type {
+  AgentAnswerStatus,
+  AgentArtifact,
+  AgentConfidence,
+  AgentContextAttachment,
+  AgentEvent,
+  AgentEvidenceBundle,
+  AgentRetrievalScope,
+  AgentRun,
+  AgentRunMetrics,
+  AgentThinkingMode,
+} from "@/shared/types";
+import {
+  parse_answer_status,
+  parse_confidence,
+  parse_context_attachments,
+  parse_evidence_bundle,
+  parse_retrieval_scope,
+  parse_run_metrics,
+  parse_thinking_mode,
+  run_duration_metrics,
+} from "./agent_event_payload";
 
 const TOOL_LABELS: Record<string, string> = {
   read_markers: "读取现有标记",
@@ -52,34 +73,64 @@ type TimelineItem =
   | {
       type: "message";
       id: string;
+      run_id: string | null;
       role: "user" | "assistant";
       content: string;
-      reasoning?: string;
+      confidence?: AgentConfidence;
+      answer_status?: AgentAnswerStatus;
+      evidence_bundle?: AgentEvidenceBundle;
+      metrics?: AgentRunMetrics;
+      thinking_mode?: AgentThinkingMode;
+      retrieval_scope?: AgentRetrievalScope;
+      context_attachments?: AgentContextAttachment[];
     }
   | { type: "tools"; id: string; events: AgentEvent[] };
 
-export function build_agent_timeline(events: AgentEvent[]): TimelineItem[] {
+export function build_agent_timeline(
+  events: AgentEvent[],
+  runs: AgentRun[] = [],
+): TimelineItem[] {
   const items: TimelineItem[] = [];
+  const metrics_by_run = new Map<string, AgentRunMetrics>();
+  for (const event of events) {
+    if (event.event_type !== "run.metrics" || !event.run_id) continue;
+    const metrics = parse_run_metrics(event.payload);
+    if (metrics) metrics_by_run.set(event.run_id, metrics);
+  }
   for (const event of events) {
     if (event.event_type === "run.status" && event.payload.input) {
       items.push({
         type: "message",
         id: event.event_id,
+        run_id: event.run_id,
         role: "user",
         content: String(event.payload.input),
+        thinking_mode: parse_thinking_mode(event.payload.thinking_mode),
+        retrieval_scope: parse_retrieval_scope(event.payload.retrieval_scope),
+        context_attachments: parse_context_attachments(
+          event.payload.context_attachments,
+        ),
       });
     } else if (
       event.event_type === "message.completed" &&
-      (event.payload.content || event.payload.reasoning_content)
+      event.payload.content
     ) {
+      const event_metrics = parse_run_metrics(event.payload.metrics);
+      const metrics = event.run_id
+        ? (metrics_by_run.get(event.run_id) ??
+          event_metrics ??
+          run_duration_metrics(runs, event.run_id))
+        : event_metrics;
       items.push({
         type: "message",
         id: event.event_id,
+        run_id: event.run_id,
         role: "assistant",
-        content: String(event.payload.content ?? ""),
-        reasoning: event.payload.reasoning_content
-          ? String(event.payload.reasoning_content)
-          : undefined,
+        content: String(event.payload.content),
+        confidence: parse_confidence(event.payload.confidence),
+        answer_status: parse_answer_status(event.payload.answer_status),
+        evidence_bundle: parse_evidence_bundle(event.payload.evidence_bundle),
+        metrics,
       });
     } else if (event.event_type === "tool.status") {
       const previous = items.at(-1);
@@ -96,28 +147,6 @@ export function build_agent_timeline(events: AgentEvent[]): TimelineItem[] {
     }
   }
   return items;
-}
-
-export function AgentReasoning({
-  content,
-  running = false,
-}: {
-  content: string;
-  running?: boolean;
-}) {
-  return (
-    <Accordion type="single" collapsible>
-      <AccordionItem value="reasoning">
-        <AccordionTrigger>
-          <Brain />
-          {running ? "正在思考" : "思考过程"}
-        </AccordionTrigger>
-        <AccordionContent>
-          <p className="whitespace-pre-wrap text-muted-foreground">{content}</p>
-        </AccordionContent>
-      </AccordionItem>
-    </Accordion>
-  );
 }
 
 export function AgentToolActivity({ events }: { events: AgentEvent[] }) {

@@ -75,11 +75,37 @@ export type LibraryIndexIssue = {
   message: string;
 };
 
+export type AgentPermissionMode =
+  "request_approval" | "smart_approval" | "full_access";
+export type AgentThinkingMode = "auto" | "fast" | "complex";
+export type AgentResourceScope =
+  "current_item" | "selection" | "library" | "application" | "external";
+export type AgentPermissionGrantScope = "once" | "session" | "always";
+export type AgentPermissionGrant = {
+  grant_id: string;
+  capability: string;
+  resource_scope: AgentResourceScope;
+  resource_id: string | null;
+  scope: AgentPermissionGrantScope;
+  request_id: string | null;
+  session_id: string | null;
+};
+export type AgentPreferences = {
+  permission_mode: AgentPermissionMode;
+  fast_model_id: string | null;
+  complex_model_id: string | null;
+  vision_model_id: string | null;
+  default_thinking_mode: AgentThinkingMode;
+  max_concurrent_runs: number;
+  always_allowed_grants: AgentPermissionGrant[];
+};
+
 export type Preferences = {
   tools_directory: string | null;
   models_directory: string | null;
   default_transcription: TranscriptionOptions;
   ai_models: AiModelConfiguration[];
+  agent: AgentPreferences;
   managed_fields: string[];
   library_path_managed: boolean;
 };
@@ -565,6 +591,7 @@ export type AgentSession = {
 };
 export type AgentEventType =
   | "run.status"
+  | "run.metrics"
   | "message.delta"
   | "reasoning.delta"
   | "message.completed"
@@ -603,6 +630,64 @@ export type AgentRun = {
   started_at: string | null;
   updated_at: string;
   completed_at: string | null;
+};
+
+export type AgentRetrievalScope = "current_asset" | "library";
+export type AgentContextAttachment = {
+  attachment_id: string;
+  kind: "summary_selection" | "transcript_selection" | "time_range";
+  asset_id: string;
+  label: string;
+  reference_id?: string;
+  version_id?: string;
+  start_seconds?: number;
+  end_seconds?: number;
+  snapshot_text?: string;
+  content_digest?: string;
+  selection_start?: number;
+  selection_end?: number;
+};
+export type AgentAnswerStatus = "final" | "provisional" | "insufficient";
+export type AgentConfidence = "high" | "medium" | "low";
+export type AgentEvidenceRelation = "supports" | "conflicts";
+export type AgentEvidenceReference = {
+  evidence_id: string;
+  citation_key: string;
+  source_type: string;
+  source_version: string;
+  asset_id: string;
+  start_seconds: number;
+  end_seconds: number;
+  excerpt: string;
+  relation: AgentEvidenceRelation;
+  retrieval_relation?: "direct" | "neighbor" | "overview" | "corroborated";
+};
+export type AgentEvidenceConflict = {
+  evidence_ids: string[];
+  reason: string;
+};
+export type AgentEvidenceBundle = {
+  items: AgentEvidenceReference[];
+  conflicts: AgentEvidenceConflict[];
+  coverage: {
+    temporal: number;
+    source_types: string[];
+  };
+};
+export type AgentRunMetrics = {
+  total_ms?: number;
+  time_to_first_token_ms?: number;
+  routing_ms?: number;
+  retrieval_ms?: number;
+  vision_ms?: number;
+  model_wait_ms?: number;
+  tool_ms?: number;
+  generation_ms?: number;
+  retry_count?: number;
+  tool_count?: number;
+  model_role?: "fast" | "complex" | "vision" | null;
+  selected_model_id?: string | null;
+  final_status?: string | null;
 };
 
 export type AgentCapability = "tools" | "vision" | "long_context";

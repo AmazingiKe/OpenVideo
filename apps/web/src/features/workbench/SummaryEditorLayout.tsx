@@ -2,6 +2,7 @@ import { CircleCheck, FilePlus2, PanelLeft, PanelRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { AgentPanel } from "@/components/AgentPanel";
+import type { AgentContextAttachmentDraft } from "@/components/agent_context";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import type {
   AgentArtifact,
+  AgentThinkingMode,
   AiModelSummary,
   SummaryDocument,
   SummaryVersion,
@@ -50,6 +52,7 @@ type SummaryEditorLayoutProps = {
   export_pending: boolean;
   export_relative_path: string | null;
   generation_notice: string | null;
+  default_thinking_mode?: AgentThinkingMode;
   models: AiModelSummary[];
   move_child: (document_id: string, direction: -1 | 1) => void;
   new_document_open: boolean;
@@ -95,6 +98,7 @@ export function SummaryEditorLayout({
   export_pending,
   export_relative_path,
   generation_notice,
+  default_thinking_mode = "auto",
   models,
   move_child,
   new_document_open,
@@ -156,6 +160,14 @@ export function SummaryEditorLayout({
         expected_revision: selected_document.revision,
         selection,
       }}
+      context_attachments={summary_context_attachments(
+        selected_asset_id,
+        selected_document,
+        selection,
+      )}
+      default_thinking_mode={default_thinking_mode}
+      thinking_modes_enabled
+      library_scope_enabled
       run_options={[
         {
           value: "chat",
@@ -323,4 +335,25 @@ export function SummaryEditorLayout({
       />
     </section>
   );
+}
+
+function summary_context_attachments(
+  asset_id: string,
+  document: SummaryDocument,
+  selection: MarkdownSelection | null,
+): AgentContextAttachmentDraft[] {
+  if (!selection?.text.trim()) return [];
+  return [
+    {
+      draft_id: `${document.document_id}-${document.revision}-${selection.start}-${selection.end}`,
+      kind: "summary_selection",
+      asset_id,
+      label: `${document.title}选区`,
+      reference_id: document.document_id,
+      version_id: document.version_id,
+      snapshot_text: selection.text,
+      selection_start: selection.start,
+      selection_end: selection.end,
+    },
+  ];
 }
