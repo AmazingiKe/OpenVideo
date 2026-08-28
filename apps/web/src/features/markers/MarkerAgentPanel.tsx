@@ -8,7 +8,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { CollapsiblePanelRail } from "@/features/workbench/CollapsiblePanelRail";
+import { cn } from "@/lib/utils";
 import type {
   AgentArtifact,
   AiModelSummary,
@@ -21,8 +21,7 @@ type MarkerAgentPanelProps = {
   on_seek: (seconds: number) => void;
   on_candidate_markers_change: (markers: MediaMarker[]) => void;
   on_markers_changed: () => Promise<void>;
-  collapsed?: boolean;
-  on_collapsed_change?: (collapsed: boolean) => void;
+  compact?: boolean;
 };
 
 export function MarkerAgentPanel({
@@ -31,63 +30,56 @@ export function MarkerAgentPanel({
   on_seek,
   on_candidate_markers_change,
   on_markers_changed,
-  collapsed = false,
-  on_collapsed_change,
+  compact = false,
 }: MarkerAgentPanelProps) {
-  if (collapsed) {
-    return (
-      <aside className="h-full overflow-hidden bg-card" aria-label="标记 Agent">
-        <CollapsiblePanelRail
-          icon={Bot}
-          label="Agent"
-          edge="left"
-          on_expand={() => on_collapsed_change?.(false)}
-        />
-      </aside>
-    );
-  }
-
-  if (!asset_id) {
-    return (
-      <Empty className="h-full rounded-none border-0">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Bot />
-          </EmptyMedia>
-          <EmptyTitle>请先选择视频</EmptyTitle>
-          <EmptyDescription>Agent 只处理当前播放器中的视频。</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
-  }
-
   return (
-    <aside className="h-full min-h-80 min-w-0 bg-card" aria-label="标记 Agent">
-      <AgentPanel
-        className="h-full rounded-none border-0"
-        agent_id="marker"
-        asset_id={asset_id}
-        models={models}
-        on_seek={on_seek}
-        placeholder="例如：这个课程主要讲什么？"
-        run_options={[
-          {
-            value: "chat",
-            label: "内容问答",
-            description: "检索视频证据并回答问题，不创建标记建议。",
-            task_input: { intent: "chat" },
-            required_capabilities: ["tools"],
-          },
-          {
-            value: "edit",
-            label: "生成标记建议",
-            description: "生成整批标记变更预览，确认后才会修改标记。",
-            task_input: { intent: "edit" },
-            required_capabilities: ["tools"],
-          },
-        ]}
-        on_artifact_change={handle_artifact}
-      />
+    <aside
+      className={cn(
+        "min-h-0 min-w-0 bg-card",
+        compact ? "h-[36rem] shrink-0 border-t" : "h-full",
+      )}
+      aria-label="标记 Agent"
+      data-slot="marker-agent-panel"
+    >
+      {!asset_id ? (
+        <Empty className="h-full rounded-none border-0">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Bot />
+            </EmptyMedia>
+            <EmptyTitle>请先选择视频</EmptyTitle>
+            <EmptyDescription>
+              Agent 只处理当前播放器中的视频。
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <AgentPanel
+          className="h-full rounded-none border-0"
+          agent_id="marker"
+          asset_id={asset_id}
+          models={models}
+          on_seek={on_seek}
+          placeholder="例如：这个课程主要讲什么？"
+          run_options={[
+            {
+              value: "chat",
+              label: "内容问答",
+              description: "检索视频证据并回答问题，不创建标记建议。",
+              task_input: { intent: "chat" },
+              required_capabilities: ["tools"],
+            },
+            {
+              value: "edit",
+              label: "生成标记建议",
+              description: "生成整批标记变更预览，确认后才会修改标记。",
+              task_input: { intent: "edit" },
+              required_capabilities: ["tools"],
+            },
+          ]}
+          on_artifact_change={handle_artifact}
+        />
+      )}
     </aside>
   );
 

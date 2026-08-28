@@ -1,4 +1,11 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 
@@ -13,7 +20,7 @@ import {
 import { use_compact_markers_layout } from "@/features/markers/use_compact_markers_layout";
 import { use_markers_page_settings } from "@/features/markers/use_markers_page_settings";
 import { MarkerAgentPanel } from "@/features/markers/MarkerAgentPanel";
-import { MarkerLeftPanel } from "@/features/markers/MarkerLeftPanel";
+import { MarkerLibraryPanel } from "@/features/markers/MarkerLibraryPanel";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
 import {
@@ -101,6 +108,9 @@ export function MarkersPage() {
   const panel_transition_timeout_ref = useRef<number | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
   const left_panel_ref = useRef<PanelImperativeHandle>(null);
+  const library_visibility_asset_id_ref = useRef<string | null | undefined>(
+    undefined,
+  );
   const mounted_ref = useRef(true);
   const is_compact_layout = use_compact_markers_layout();
   const {
@@ -183,7 +193,7 @@ export function MarkersPage() {
     [],
   );
 
-  function animate_panel_size_change() {
+  const animate_panel_size_change = useCallback(() => {
     set_is_panel_size_transitioning(true);
     if (panel_transition_timeout_ref.current !== null) {
       window.clearTimeout(panel_transition_timeout_ref.current);
@@ -192,7 +202,41 @@ export function MarkersPage() {
       panel_transition_timeout_ref.current = null;
       set_is_panel_size_transitioning(false);
     }, PANEL_TOGGLE_TRANSITION_MS);
-  }
+  }, []);
+
+  const set_left_panel_collapsed = useCallback(
+    (collapsed: boolean) => {
+      animate_panel_size_change();
+      if (collapsed) left_panel_ref.current?.collapse();
+      else
+        left_panel_ref.current?.resize(`${settings.left_panel_size_percent}%`);
+      update_settings({ left_panel_collapsed: collapsed });
+    },
+    [
+      animate_panel_size_change,
+      settings.left_panel_size_percent,
+      update_settings,
+    ],
+  );
+
+  useEffect(() => {
+    if (
+      !is_ready ||
+      library_visibility_asset_id_ref.current === selected_asset_id
+    ) {
+      return;
+    }
+    library_visibility_asset_id_ref.current = selected_asset_id;
+    const should_collapse_library = selected_asset_id !== null;
+    if (settings.left_panel_collapsed !== should_collapse_library) {
+      set_left_panel_collapsed(should_collapse_library);
+    }
+  }, [
+    is_ready,
+    selected_asset_id,
+    set_left_panel_collapsed,
+    settings.left_panel_collapsed,
+  ]);
 
   function seek_player(seconds: number) {
     set_current_time(seconds);
@@ -256,13 +300,6 @@ export function MarkersPage() {
     }
   }
 
-  function set_left_panel_collapsed(collapsed: boolean) {
-    animate_panel_size_change();
-    if (collapsed) left_panel_ref.current?.collapse();
-    else left_panel_ref.current?.resize(`${settings.left_panel_size_percent}%`);
-    update_settings({ left_panel_collapsed: collapsed });
-  }
-
   function save_desktop_layout(layout: Record<string, number>) {
     const left_panel_collapsed =
       left_panel_ref.current?.isCollapsed() ?? settings.left_panel_collapsed;
@@ -272,7 +309,15 @@ export function MarkersPage() {
     if (!left_panel_collapsed && layout["left-panel"] !== undefined) {
       patch.left_panel_size_percent = layout["left-panel"];
     }
+    if (layout["agent-panel"] !== undefined) {
+      patch.agent_panel_size_percent = layout["agent-panel"];
+    }
     update_settings(patch);
+  }
+
+  function open_library_video(asset_id: string) {
+    set_left_panel_collapsed(true);
+    navigate(marker_asset_path(asset_id));
   }
 
   function open_transcript_correction(segment_indices: number[]) {
@@ -294,26 +339,20 @@ export function MarkersPage() {
     <MarkerAgentPanel
       asset_id={selected_asset_id}
       models={ai_models}
+      compact={is_compact_layout}
       on_seek={seek_player}
       on_candidate_markers_change={set_candidate_markers}
       on_markers_changed={reload_markers}
     />
   );
-  const left_panel = (
-    <MarkerLeftPanel
-      active_tab={settings.left_panel_tab}
-      collapsed={!is_compact_layout && settings.left_panel_collapsed}
+  const library_panel = (
+    <MarkerLibraryPanel
+      collapsed={settings.left_panel_collapsed}
       compact={is_compact_layout}
       current_video_id={selected_asset_id}
       initial_folder_id={selected_asset ? selected_asset.folder_id : undefined}
-      agent_panel={agent_panel}
-      on_active_tab_change={(left_panel_tab) =>
-        update_settings({ left_panel_tab })
-      }
-      on_collapsed_change={
-        is_compact_layout ? undefined : set_left_panel_collapsed
-      }
-      on_open_video={(asset) => navigate(marker_asset_path(asset.asset_id))}
+      on_collapsed_change={set_left_panel_collapsed}
+      on_open_video={(asset) => open_library_video(asset.asset_id)}
     />
   );
   const video_workspace = (
@@ -376,8 +415,9 @@ export function MarkersPage() {
             正在恢复工作台布局
           </div>
         ) : is_compact_layout ? (
-          <div className="flex min-h-full flex-col [&>[data-slot=marker-left-panel]]:h-[32rem] [&>[data-slot=marker-left-panel]]:shrink-0 [&>[data-slot=marker-left-panel]]:border-b [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
-            {left_panel}
+          <div className="flex min-h-full flex-col [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
+            {library_panel}
+            {agent_panel}
             {video_workspace}
           </div>
         ) : (
@@ -407,15 +447,28 @@ export function MarkersPage() {
                 }
               }}
             >
-              {left_panel}
+              {library_panel}
             </ResizablePanel>
             <ResizableHandle
               className="hover:bg-primary"
               withHandle
-              aria-label="调整左侧面板宽度"
+              aria-label="调整视频库宽度"
             />
             <ResizablePanel id="video-player" minSize="400px">
               {video_workspace}
+            </ResizablePanel>
+            <ResizableHandle
+              className="hover:bg-primary"
+              withHandle
+              aria-label="调整 Agent 面板宽度"
+            />
+            <ResizablePanel
+              id="agent-panel"
+              defaultSize={`${settings.agent_panel_size_percent}%`}
+              minSize="360px"
+              maxSize="48%"
+            >
+              {agent_panel}
             </ResizablePanel>
           </ResizablePanelGroup>
         )}

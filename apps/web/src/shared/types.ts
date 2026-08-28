@@ -201,7 +201,7 @@ export type AiModelTestResult = {
 export type MarkersPageSettings = {
   left_panel_size_percent: number;
   left_panel_collapsed: boolean;
-  left_panel_tab: "library" | "agent";
+  agent_panel_size_percent: number;
 };
 
 type DownloadStage =

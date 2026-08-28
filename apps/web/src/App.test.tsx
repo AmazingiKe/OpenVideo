@@ -126,7 +126,7 @@ describe("App", () => {
     vi.mocked(get_markers_page_settings).mockResolvedValue({
       left_panel_size_percent: 24,
       left_panel_collapsed: false,
-      left_panel_tab: "library",
+      agent_panel_size_percent: 34,
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
     vi.mocked(get_focus_selection).mockResolvedValue(null);
@@ -281,10 +281,10 @@ describe("App", () => {
         screen.getByRole("heading", { name: "演示视频" }),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByRole("tab", { name: "视频库" })).toHaveAttribute(
-      "data-state",
-      "active",
-    );
+    expect(
+      screen.getByRole("button", { name: "展开视频库" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("标记 Agent")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "选择标记视频" }),
     ).not.toBeInTheDocument();
@@ -303,14 +303,17 @@ describe("App", () => {
     expect(
       screen.queryByRole("button", { name: "分析" }),
     ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开视频库" }));
     await waitFor(() =>
       expect(list_assets).toHaveBeenCalledWith(
         expect.any(AbortSignal),
         expect.objectContaining({ uncategorized: true }),
       ),
     );
-    expect(screen.getByLabelText("视频库浏览器")).toHaveTextContent(
-      "下载中的视频",
+    await waitFor(() =>
+      expect(screen.getByLabelText("视频库浏览器")).toHaveTextContent(
+        "下载中的视频",
+      ),
     );
     expect(screen.getByLabelText("视频库浏览器")).toHaveTextContent(
       "失败的视频",
@@ -388,7 +391,7 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("switches marker videos by UUID route and remembers the left panel state", async () => {
+  it("keeps Agent at the right and retracts the library after opening a video", async () => {
     const first_asset = create_asset({
       status: "ready",
       title: "第一段视频",
@@ -419,6 +422,22 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "第一段视频" }),
     ).toBeInTheDocument();
+    const video_workspace = screen.getByRole("region", {
+      name: "视频工作区",
+    });
+    const agent_panel = screen.getByLabelText("标记 Agent");
+    expect(
+      video_workspace.compareDocumentPosition(agent_panel) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("tab", { name: "Agent" }),
+    ).not.toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "展开视频库" })).toBeVisible(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "展开视频库" }));
     fireEvent.doubleClick(
       await screen.findByRole("button", { name: /第二段视频/ }),
     );
@@ -430,24 +449,12 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "第二段视频" }),
     ).toBeInTheDocument();
-
-    const agent_tab = screen.getByRole("tab", { name: "Agent" });
-    fireEvent.mouseDown(agent_tab, { button: 0 });
-    fireEvent.click(agent_tab);
     await waitFor(() =>
-      expect(update_markers_page_settings).toHaveBeenCalledWith(
-        expect.objectContaining({ left_panel_tab: "agent" }),
-        expect.any(AbortSignal),
-      ),
+      expect(screen.getByRole("button", { name: "展开视频库" })).toBeVisible(),
     );
-    vi.mocked(update_markers_page_settings).mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "收起左侧面板" }));
     await waitFor(() =>
-      expect(update_markers_page_settings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          left_panel_tab: "agent",
-          left_panel_collapsed: true,
-        }),
+      expect(update_markers_page_settings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ left_panel_collapsed: true }),
         expect.any(AbortSignal),
       ),
     );

@@ -26,7 +26,7 @@ def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
     expected = MarkersPageSettings(
         left_panel_size_percent=30,
         left_panel_collapsed=True,
-        left_panel_tab="agent",
+        agent_panel_size_percent=38,
     )
 
     store.save_markers(expected)

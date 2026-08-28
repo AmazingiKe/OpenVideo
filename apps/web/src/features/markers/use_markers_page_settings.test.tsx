@@ -37,7 +37,7 @@ describe("use_markers_page_settings", () => {
 
     act(() => {
       result.current.update_settings({ left_panel_size_percent: 28 });
-      result.current.update_settings({ left_panel_tab: "agent" });
+      result.current.update_settings({ agent_panel_size_percent: 38 });
     });
     await act(async () => vi.advanceTimersByTimeAsync(299));
     expect(update_markers_page_settings).not.toHaveBeenCalled();
@@ -48,7 +48,7 @@ describe("use_markers_page_settings", () => {
       {
         ...DEFAULT_MARKERS_PAGE_SETTINGS,
         left_panel_size_percent: 28,
-        left_panel_tab: "agent",
+        agent_panel_size_percent: 38,
       },
       expect.any(AbortSignal),
     );

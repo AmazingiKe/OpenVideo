@@ -112,7 +112,7 @@ describe("api client", () => {
     const settings = {
       left_panel_size_percent: 24,
       left_panel_collapsed: false,
-      left_panel_tab: "library" as const,
+      agent_panel_size_percent: 34,
     };
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       Promise.resolve(

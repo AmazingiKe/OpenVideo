@@ -28,13 +28,13 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
         assert defaults.json() == {
             "left_panel_size_percent": 24.0,
             "left_panel_collapsed": False,
-            "left_panel_tab": "library",
+            "agent_panel_size_percent": 34.0,
         }
 
         payload = {
             "left_panel_size_percent": 28,
             "left_panel_collapsed": True,
-            "left_panel_tab": "agent",
+            "agent_panel_size_percent": 38,
         }
         saved = client.put("/api/page-settings/markers", json=payload)
         assert saved.status_code == 200
@@ -44,12 +44,12 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
             "/api/page-settings/markers",
             json={**payload, "left_panel_size_percent": 17},
         )
-        invalid_tab = client.put(
+        invalid_agent_size = client.put(
             "/api/page-settings/markers",
-            json={**payload, "left_panel_tab": "unknown"},
+            json={**payload, "agent_panel_size_percent": 49},
         )
         assert invalid_size.status_code == 422
-        assert invalid_tab.status_code == 422
+        assert invalid_agent_size.status_code == 422
         config_path = tmp_path / (
             f"page-settings-{app.state.library.manifest.library_id}.json"
         )
@@ -85,6 +85,7 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
         )
         second_settings = client.get("/api/page-settings/markers").json()
         assert second_settings["left_panel_size_percent"] == 24
+        assert second_settings["agent_panel_size_percent"] == 34
         second_settings["left_panel_collapsed"] = True
         assert (
             client.put("/api/page-settings/markers", json=second_settings).status_code
@@ -97,6 +98,7 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
         )
         restored = client.get("/api/page-settings/markers").json()
         assert restored["left_panel_size_percent"] == 30
+        assert restored["agent_panel_size_percent"] == 34
         assert restored["left_panel_collapsed"] is False
 
 
