@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
+    AgentArtifactStatus,
     AgentDefinition,
     AgentEvent,
     AgentEventType,
@@ -26,6 +27,7 @@ from openvideo.core.agent_runtime_models import (
     AgentSession,
     AgentToolCall,
 )
+from openvideo.core.agent_governance_models import AgentModelRole
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.llm.agno_executor import AgentExecutor
@@ -134,6 +136,8 @@ class AgentSessionStore:
 
 ToolHandler = Callable[[BaseModel], Any | Awaitable[Any]]
 ToolPrerequisite = Callable[[], tuple[bool, str | None]]
+CompletionPayloadBuilder = Callable[[str], dict[str, Any]]
+ArtifactProcessor = Callable[[list[AgentArtifact]], None]
 
 
 @dataclass(frozen=True)
@@ -230,6 +234,8 @@ class AgentToolRegistry:
 @dataclass
 class AgentRunMetricTracker:
     started_at: float
+    routing_ms: int = 0
+    model_role: AgentModelRole | None = None
     first_response_at: float | None = None
     first_text_at: float | None = None
     active_tools: dict[str, tuple[str, float]] = field(default_factory=dict)
@@ -242,13 +248,18 @@ class AgentRunMetricTracker:
         now = monotonic()
         if self.first_response_at is None:
             self.first_response_at = now
-        if event.event_type == LlmAgentEventType.TEXT_DELTA and self.first_text_at is None:
+        if (
+            event.event_type == LlmAgentEventType.TEXT_DELTA
+            and self.first_text_at is None
+        ):
             self.first_text_at = now
         if event.event_type == LlmAgentEventType.TOOL_CALL_STARTED:
             self.tool_count += 1
             if event.call_id and event.name:
                 self.active_tools[event.call_id] = (event.name, now)
-        elif event.event_type == LlmAgentEventType.TOOL_CALL_COMPLETED and event.call_id:
+        elif (
+            event.event_type == LlmAgentEventType.TOOL_CALL_COMPLETED and event.call_id
+        ):
             started = self.active_tools.pop(event.call_id, None)
             if started is not None:
                 tool_name, tool_started_at = started
@@ -269,15 +280,21 @@ class AgentRunMetricTracker:
             else None
         )
         tool_ms = sum(self.tool_durations_ms.values())
+        retrieval_ms = self.tool_durations_ms.get("search_evidence", 0)
+        vision_ms = self.tool_durations_ms.get("inspect_frames", 0)
         generation_ms = max(0, total_ms - model_wait_ms - tool_ms)
         return AgentRunMetrics(
             total_ms=total_ms,
             time_to_first_token_ms=time_to_first_token_ms,
+            routing_ms=self.routing_ms,
+            retrieval_ms=retrieval_ms,
+            vision_ms=vision_ms,
             model_wait_ms=model_wait_ms,
             generation_ms=generation_ms,
             tool_ms=tool_ms,
             retry_count=self.retry_count,
             tool_count=self.tool_count,
+            model_role=self.model_role,
             selected_model_id=model_id,
             final_status=stage,
             tool_durations_ms=self.tool_durations_ms,
@@ -290,10 +307,14 @@ class AgentRuntime:
         store: AgentSessionStore,
         registry: AgentToolRegistry,
         executor: AgentExecutor,
+        completion_payload_builder: CompletionPayloadBuilder | None = None,
+        artifact_processor: ArtifactProcessor | None = None,
     ) -> None:
         self.store = store
         self.registry = registry
         self.executor = executor
+        self.completion_payload_builder = completion_payload_builder
+        self.artifact_processor = artifact_processor
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._active_tasks: dict[str, asyncio.Task[Any]] = {}
         self._metric_trackers: dict[str, AgentRunMetricTracker] = {}
@@ -315,6 +336,8 @@ class AgentRuntime:
         run_timeout_seconds: float = AGENT_RUN_TIMEOUT_SECONDS,
         tool_timeout_seconds: float = AGENT_TOOL_TIMEOUT_SECONDS,
         max_context_characters: int = MAX_CONTEXT_CHARACTERS,
+        routing_ms: int = 0,
+        model_role: AgentModelRole | None = None,
     ) -> AgentRun:
         self.registry.validate(definition.allowed_tools)
         if (
@@ -327,7 +350,11 @@ class AgentRuntime:
         if current_task is not None:
             self._active_tasks[run.run_id] = current_task
         started_at = datetime.now(UTC)
-        self._metric_trackers[run.run_id] = AgentRunMetricTracker(monotonic())
+        self._metric_trackers[run.run_id] = AgentRunMetricTracker(
+            monotonic(),
+            routing_ms=routing_ms,
+            model_role=model_role,
+        )
         running = run.model_copy(
             update={
                 "stage": AgentRunStage.RUNNING,
@@ -433,14 +460,6 @@ class AgentRuntime:
         tracker = self._metric_trackers[run.run_id]
         tracker.retry_count = result.retry_count
         tracker.tool_count = max(tracker.tool_count, result.tool_call_count)
-        self.store.append(
-            run.session_id,
-            run.run_id,
-            AgentEventType.MESSAGE_COMPLETED,
-            {
-                "content": result.content,
-            },
-        )
         missing = definition.required_tools - result.successful_tools
         if missing:
             raise AgentRuntimeError(
@@ -452,8 +471,42 @@ class AgentRuntime:
             raise AgentRuntimeError(
                 "运行未生成必需的审批结果", "required_result_missing"
             )
+        if artifacts and self.artifact_processor is not None:
+            self.artifact_processor(artifacts)
+            artifacts = self.store.repository.load_agent_artifacts(run_id=run.run_id)
+        failed_artifacts = [
+            artifact
+            for artifact in artifacts
+            if artifact.status
+            in {AgentArtifactStatus.FAILED, AgentArtifactStatus.STALE}
+        ]
+        if failed_artifacts:
+            raise AgentRuntimeError(
+                failed_artifacts[0].error_message or "自动应用 Agent 结果失败",
+                "artifact_apply_failed",
+            )
         stage = (
-            AgentRunStage.WAITING_FOR_APPROVAL if artifacts else AgentRunStage.COMPLETE
+            AgentRunStage.WAITING_FOR_APPROVAL
+            if any(
+                artifact.status
+                in {AgentArtifactStatus.PENDING, AgentArtifactStatus.APPLYING}
+                for artifact in artifacts
+            )
+            else AgentRunStage.COMPLETE
+        )
+        completion_payload = (
+            self.completion_payload_builder(result.content)
+            if self.completion_payload_builder is not None
+            else {}
+        )
+        self.store.append(
+            run.session_id,
+            run.run_id,
+            AgentEventType.MESSAGE_COMPLETED,
+            {
+                "content": result.content,
+                **completion_payload,
+            },
         )
         return self._finish(run, stage)
 

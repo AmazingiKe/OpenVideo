@@ -86,6 +86,17 @@ def build_run_content(
         for key in AGENT_REFERENCE_INPUT_KEYS
         if task_metadata.get(key) is not None
     }
+    if request.context_attachments:
+        references[AGENT_CONTEXT_ATTACHMENTS_INPUT_KEY] = [
+            attachment.model_dump(mode="json")
+            for attachment in request.context_attachments
+        ]
+    task_metadata.update(
+        {
+            "thinking_mode": request.thinking_mode.value,
+            "retrieval_scope": request.retrieval_scope.value,
+        }
+    )
     sections = [
         "<用户请求>",
         content or "执行当前任务。",

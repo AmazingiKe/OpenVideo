@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import shutil
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Any, Protocol
 
+from openvideo.agent_permission_policy import PermissionPolicy
 from openvideo.agent_runtime import (
     AgentRuntime,
     AgentSessionStore,
@@ -24,7 +26,7 @@ from openvideo.agent_registry import (
     build_run_content,
     validate_model,
 )
-from openvideo.agent_retrieval import retrieve_evidence
+from openvideo.agent_retrieval import combine_library_evidence, retrieve_evidence
 from openvideo.agent_tooling import (
     AgentRunContext,
     CorrectTranscriptInput,
@@ -59,6 +61,16 @@ from openvideo.core.agent_runtime_models import (
     AgentSessionState,
     AgentToolDescriptor,
     TERMINAL_AGENT_RUN_STAGES,
+)
+from openvideo.core.agent_governance_models import (
+    AgentModelRole,
+    AgentPermissionContext,
+    AgentPermissionOutcome,
+    AgentResourceScope,
+    AgentRetrievalScope,
+    AgentThinkingMode,
+    AgentToolEffect,
+    AgentToolPermissionPolicy,
 )
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, AiModelConfiguration
 from openvideo.core.identifiers import uuid7
@@ -111,6 +123,10 @@ SUMMARY_MEDIA_TOOL_NAMES = frozenset(
 )
 SUMMARY_IMAGE_SELECTION_TOLERANCE_SECONDS = 0.25
 SUMMARY_MEDIA_MIN_CONFIDENCE = 0.75
+AUTO_COMPLEX_CONTENT_LENGTH = 240
+AUTO_COMPLEX_TERMS = frozenset(
+    {"分析", "比较", "为什么", "全片", "跨视频", "冲突", "综合", "推理"}
+)
 
 
 class SummaryDocumentService(Protocol):
@@ -195,12 +211,18 @@ class AgentService:
             if existing.session_id != session_id:
                 raise AgentConflictError("请求键已被其他会话使用")
             return existing
+        active_run_count = sum(not task.done() for task in self._tasks.values())
+        if active_run_count >= self.settings.agent.max_concurrent_runs:
+            raise AgentConflictError("Agent 并行任务已达到用户设置的上限")
         if any(
             run.stage not in TERMINAL_AGENT_RUN_STAGES
             for run in self.library.load_agent_runs(session_id)
         ):
             raise AgentConflictError("当前会话已有正在运行的任务")
-        model = self.settings.ai_model(request.ai_model_id)
+        routing_started_at = perf_counter()
+        model_role = self._select_model_role(request)
+        model_id = self._model_id_for_role(model_role) or request.ai_model_id
+        model = self.settings.ai_model(model_id)
         if model is None:
             raise AgentServiceError("所选 AI 模型不存在", "model_not_found")
         profile = self.capability_resolver.resolve(model)
@@ -210,9 +232,17 @@ class AgentService:
             else registered.definition
         )
         validate_model(definition, profile)
+        routing_ms = round((perf_counter() - routing_started_at) * 1_000)
         content = build_run_content(definition, request, session.context)
-        run = new_agent_run(session_id, request.request_key, request.ai_model_id)
-        context = AgentRunContext(self, session, run, model, request.task_input)
+        run = new_agent_run(session_id, request.request_key, model.model_id)
+        context = AgentRunContext(
+            self,
+            session,
+            run,
+            model,
+            request.task_input,
+            request.retrieval_scope,
+        )
         tool_registry = registered.tool_builder(context, definition)
         tool_registry.validate(definition.allowed_tools)
         self.library.save_agent_run(run)
@@ -227,10 +257,26 @@ class AgentService:
                     }
                 )
             )
-        runtime = AgentRuntime(self.store, tool_registry, AgnoAgentExecutor())
+        runtime = AgentRuntime(
+            self.store,
+            tool_registry,
+            AgnoAgentExecutor(),
+            completion_payload_builder=context.completion_payload,
+            artifact_processor=lambda artifacts: self._process_run_artifacts(
+                context, artifacts
+            ),
+        )
         self._runtimes[run.run_id] = runtime
         task = asyncio.create_task(
-            runtime.run(run, model, profile, definition, content)
+            runtime.run(
+                run,
+                model,
+                profile,
+                definition,
+                content,
+                routing_ms=routing_ms,
+                model_role=model_role,
+            )
         )
         self._tasks[run.run_id] = task
         task.add_done_callback(
@@ -271,40 +317,44 @@ class AgentService:
         artifact = self._require_artifact(artifact_id)
         if artifact.status != AgentArtifactStatus.PENDING:
             return artifact
+        claimed = self.library.claim_agent_artifact(artifact_id)
+        if claimed is None:
+            return self._require_artifact(artifact_id)
         registered = self.registry.require(artifact.agent_id)
         try:
-            registered.approver(artifact)
+            registered.approver(claimed)
         except AgentConflictError as error:
-            stale = artifact.model_copy(
-                update={
-                    "status": AgentArtifactStatus.STALE,
-                    "error_message": str(error),
-                    "updated_at": datetime.now(UTC),
-                }
+            stale = self.library.finish_agent_artifact(
+                artifact_id,
+                AgentArtifactStatus.STALE,
+                str(error),
             )
-            self.library.save_agent_artifact(stale)
+            if stale is None:
+                raise AgentConflictError("审批状态已被其他操作更新") from error
             raise
-        approved = artifact.model_copy(
-            update={
-                "status": AgentArtifactStatus.APPROVED,
-                "updated_at": datetime.now(UTC),
-            }
+        except Exception as error:
+            failed = self.library.finish_agent_artifact(
+                artifact_id,
+                AgentArtifactStatus.FAILED,
+                str(error) or "应用审批结果失败",
+            )
+            if failed is None:
+                raise AgentConflictError("审批状态已被其他操作更新") from error
+            raise
+        approved = self.library.finish_agent_artifact(
+            artifact_id, AgentArtifactStatus.APPROVED
         )
-        self.library.save_agent_artifact(approved)
+        if approved is None:
+            raise AgentConflictError("审批状态已被其他操作更新")
         return approved
 
     def reject(self, artifact_id: str) -> AgentArtifact:
         artifact = self._require_artifact(artifact_id)
         if artifact.status != AgentArtifactStatus.PENDING:
             return artifact
-        rejected = artifact.model_copy(
-            update={
-                "status": AgentArtifactStatus.REJECTED,
-                "updated_at": datetime.now(UTC),
-            }
-        )
-        self.library.save_agent_artifact(rejected)
-        return rejected
+        return self.library.reject_agent_artifact(
+            artifact_id
+        ) or self._require_artifact(artifact_id)
 
     async def close(self) -> None:
         for runtime_id, runtime in list(self._runtimes.items()):
@@ -325,6 +375,65 @@ class AgentService:
         ]
         await asyncio.gather(*(self.cancel(run_id) for run_id in targets))
         return all(run_id not in self._tasks for run_id in targets)
+
+    @staticmethod
+    def _select_model_role(request: AgentRunCreate) -> AgentModelRole:
+        if (
+            request.task_input.get(AGENT_RUN_INTENT_KEY)
+            == SUMMARY_RUN_ILLUSTRATE_INTENT
+        ):
+            return AgentModelRole.VISION
+        if request.thinking_mode == AgentThinkingMode.FAST:
+            return AgentModelRole.FAST
+        if request.thinking_mode == AgentThinkingMode.COMPLEX:
+            return AgentModelRole.COMPLEX
+        content = request.content.strip()
+        complex_request = (
+            request.retrieval_scope == AgentRetrievalScope.LIBRARY
+            or request.task_input.get(AGENT_RUN_INTENT_KEY) == AGENT_RUN_EDIT_INTENT
+            or len(content) >= AUTO_COMPLEX_CONTENT_LENGTH
+            or any(term in content for term in AUTO_COMPLEX_TERMS)
+        )
+        return AgentModelRole.COMPLEX if complex_request else AgentModelRole.FAST
+
+    def _model_id_for_role(self, role: AgentModelRole) -> str | None:
+        return {
+            AgentModelRole.FAST: self.settings.agent.fast_model_id,
+            AgentModelRole.COMPLEX: self.settings.agent.complex_model_id,
+            AgentModelRole.VISION: self.settings.agent.vision_model_id,
+        }[role]
+
+    def _process_run_artifacts(
+        self, context: AgentRunContext, artifacts: list[AgentArtifact]
+    ) -> None:
+        permission_context = AgentPermissionContext(
+            request_id=context.run.request_key,
+            session_id=context.session.session_id,
+            resource_id=context.session.asset_id,
+        )
+        for artifact in artifacts:
+            if artifact.status != AgentArtifactStatus.PENDING:
+                continue
+            policy = AgentToolPermissionPolicy(
+                capability=f"artifact.apply.{artifact.result_type}",
+                effect=AgentToolEffect.WRITE,
+                resource_scope=AgentResourceScope.CURRENT_ITEM,
+                reversible=False,
+                bulk=True,
+            )
+            decision = PermissionPolicy.decide(
+                self.settings.agent.permission_mode,
+                policy,
+                permission_context,
+                self.settings.agent.always_allowed_grants,
+            )
+            if decision.outcome != AgentPermissionOutcome.ALLOW:
+                continue
+            try:
+                self.approve(artifact.artifact_id)
+            except Exception:
+                # approve 已把失败或版本冲突写入 artifact，Runtime 会返回稳定错误。
+                continue
 
     def _discard_run(self, run_id: str) -> None:
         self._tasks.pop(run_id, None)
@@ -544,12 +653,19 @@ class AgentService:
         chat_tools = [
             tool for tool in definition.tools if tool.name in SUMMARY_CHAT_TOOL_NAMES
         ]
+        evidence_scope_instruction = (
+            "当前用户已明确允许跨视频检索；search_evidence 必须传入精确 query，并按 asset_id 区分来源。"
+            if request.retrieval_scope == AgentRetrievalScope.LIBRARY
+            else (
+                "只检索当前视频。回答全片概览时 search_evidence 不要传 query；"
+                "局部问题传入精确关键词或时间范围。"
+            )
+        )
         return definition.model_copy(
             update={
                 "prompt": (
                     "你是 OpenVideo 总结与视频证据问答 Agent。先读取当前总结文档，并调用 "
-                    "search_evidence 检索当前视频的原始证据。回答全片概览时 search_evidence "
-                    "不要传 query；局部问题传入精确关键词或时间范围。工具返回的 confidence "
+                    f"search_evidence 检索原始证据。{evidence_scope_instruction}工具返回的 confidence "
                     "由程序确定，不得自行提高。每项事实用 [E1] 形式引用 evidence_bundle.items "
                     "中的 citation_key，"
                     "并按 answer_instruction 标注确定性；存在 conflicts 时并列展示冲突证据。"
@@ -588,12 +704,19 @@ class AgentService:
         evidence_tools = [
             tool for tool in definition.tools if tool.name in MARKER_EVIDENCE_TOOL_NAMES
         ]
+        evidence_scope_instruction = (
+            "当前用户已明确允许跨视频检索；search_evidence 必须传入精确 query，并按 asset_id 区分来源。"
+            if request.retrieval_scope == AgentRetrievalScope.LIBRARY
+            else (
+                "只检索当前视频；回答全片主题、课程内容或整体结构时不要传 query，"
+                "避免把概览问题误当作关键词过滤。"
+            )
+        )
         return definition.model_copy(
             update={
                 "prompt": (
                     "你是 OpenVideo 视频内容问答 Agent。当前运行只回答用户的问题。"
-                    "必须先调用 search_evidence 检索当前视频的转录与分析证据；"
-                    "回答全片主题、课程内容或整体结构时不要传 query，避免把概览问题误当作关键词过滤；"
+                    f"必须先调用 search_evidence 检索转录与分析证据；{evidence_scope_instruction}"
                     "只有问题确实依赖画面时才调用 inspect_frames。"
                     "工具返回的 confidence 由程序确定，不得自行提高；每项事实用 [E1] 形式引用"
                     " evidence_bundle.items 中的 citation_key，并严格遵守 answer_instruction。存在"
@@ -751,6 +874,8 @@ class AgentService:
     def _search_evidence(
         self, context: AgentRunContext, parameters: EvidenceSearchInput
     ) -> dict[str, Any]:
+        if context.retrieval_scope == AgentRetrievalScope.LIBRARY:
+            return self._search_library_evidence(context, parameters)
         focus_selection = self.library.load_focus_selection(context.session.asset_id)
         start_seconds = parameters.start_seconds
         end_seconds = parameters.end_seconds
@@ -774,7 +899,7 @@ class AgentService:
             transcript_segments=transcript.segments if transcript else [],
             analysis_segments=self.library.load_segments(context.session.asset_id),
         )
-        context.evidence.evidence_read = True
+        result = context.evidence.record_search(result)
         return {
             "ok": True,
             **result.model_dump(mode="json"),
@@ -782,6 +907,40 @@ class AgentService:
                 focus_selection.model_dump(mode="json") if focus_selection else None
             ),
         }
+
+    def _search_library_evidence(
+        self, context: AgentRunContext, parameters: EvidenceSearchInput
+    ) -> dict[str, Any]:
+        query = parameters.query.strip() if parameters.query else ""
+        if not query:
+            return {
+                "ok": False,
+                "error_code": "library_query_required",
+                "error": "跨视频检索必须提供明确问题或关键词",
+                "retryable": True,
+            }
+        results = []
+        for asset in self.library.list():
+            transcript = self.library.load_transcript(asset.asset_id)
+            results.append(
+                retrieve_evidence(
+                    asset_id=asset.asset_id,
+                    query=query,
+                    start_seconds=None,
+                    end_seconds=None,
+                    limit=parameters.limit,
+                    duration_seconds=asset.duration_seconds,
+                    transcript_segments=transcript.segments if transcript else [],
+                    analysis_segments=self.library.load_segments(asset.asset_id),
+                )
+            )
+        result = combine_library_evidence(
+            results,
+            query=query,
+            limit=parameters.limit,
+        )
+        result = context.evidence.record_search(result)
+        return {"ok": True, **result.model_dump(mode="json")}
 
     async def _inspect_frames(
         self, context: AgentRunContext, parameters: InspectFramesInput

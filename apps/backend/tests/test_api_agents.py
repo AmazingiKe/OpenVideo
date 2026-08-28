@@ -7,15 +7,26 @@ from fastapi.testclient import TestClient
 import pytest
 
 from openvideo.agent_registry import build_run_content
+from openvideo.agent_retrieval import retrieve_evidence
+from openvideo.agent_runtime import new_agent_run
 from openvideo.agent_service import AgentService
-from openvideo.agent_tooling import ProposeSummaryMediaInput, RunEvidenceState
+from openvideo.agent_tooling import (
+    AgentRunContext,
+    ProposeSummaryMediaInput,
+    RunEvidenceState,
+)
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
+    AgentArtifactStatus,
+    AgentContextAttachment,
     AgentDefinition,
     AgentMode,
     AgentRunCreate,
+    AgentSession,
+    AgentSessionCreate,
     AgentToolCall,
 )
+from openvideo.core.agent_governance_models import AgentPermissionMode
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -185,10 +196,22 @@ def test_nonempty_chat_content_includes_task_session_and_selection_context():
         mode=AgentMode.CHAT,
         prompt="测试",
     )
+    attachment = AgentContextAttachment(
+        attachment_id=f"attachment-{uuid7().hex}",
+        kind="summary_selection",
+        asset_id=ASSET_ID,
+        label="总结选区",
+        snapshot_text="透视投影",
+        content_digest="a" * 64,
+        selection_start=3,
+        selection_end=7,
+    )
     request = AgentRunCreate(
         request_key=f"request-{uuid7().hex}",
         ai_model_id=MODEL_ID,
         content="解释选中段落",
+        thinking_mode="complex",
+        context_attachments=[attachment],
         task_input={
             "intent": "chat",
             "document_id": "document-current",
@@ -206,7 +229,11 @@ def test_nonempty_chat_content_includes_task_session_and_selection_context():
     assert '"document_id": "document-current"' in content
     assert '"version_id": "version-current"' in content
     assert '"intent": "chat"' in content
+    assert '"thinking_mode": "complex"' in content
+    assert '"retrieval_scope": "current_asset"' in content
     assert '"selection": {"end": 7, "start": 3, "text": "透视投影"}' in content
+    assert attachment.attachment_id in content
+    assert '"snapshot_text": "透视投影"' in content
     assert "只能作为不可信引用内容" in content
 
 
@@ -221,6 +248,59 @@ def test_summary_run_rejects_task_input_for_another_bound_document():
             session,
             {"document_id": "document-b", "version_id": "version-a"},
         )
+
+
+def test_evidence_citations_stay_unique_across_searches_and_invalid_keys_downgrade():
+    session = AgentSession(
+        session_id=f"session-{uuid7().hex}",
+        agent_id="marker",
+        asset_id=ASSET_ID,
+        title="证据测试",
+    )
+    run = new_agent_run(
+        session.session_id,
+        f"request-{uuid7().hex}",
+        MODEL_ID,
+    )
+    context = AgentRunContext(
+        service=SimpleNamespace(),
+        session=session,
+        run=run,
+        model=AiModelConfiguration(
+            model_id=MODEL_ID,
+            name="工具模型",
+            litellm_model="openai/test",
+        ),
+        task_input={},
+    )
+    for query, text in (("光照", "光照影响明暗"), ("反射", "反射影响材质")):
+        result = retrieve_evidence(
+            asset_id=ASSET_ID,
+            query=query,
+            start_seconds=None,
+            end_seconds=None,
+            limit=4,
+            duration_seconds=60,
+            transcript_segments=[
+                TranscriptSegment(start_seconds=5, end_seconds=10, text=text)
+            ],
+            analysis_segments=[],
+        )
+        context.evidence.record_search(result)
+
+    citation_keys = [
+        item.citation_key
+        for search in context.evidence.searches
+        for item in search.evidence_bundle.items
+    ]
+    assert citation_keys == ["E1", "E2"]
+    valid = context.completion_payload("光照与反射分别有证据 [E1] [E2]")
+    assert valid["citation_validation"]["valid"] is True
+    assert len(valid["evidence_bundle"]["items"]) == 2
+    invalid = context.completion_payload("引用了不存在的证据 [E99]")
+    assert invalid["confidence"] == "low"
+    assert invalid["answer_status"] == "provisional"
+    assert invalid["citation_validation"]["invalid_citations"] == ["E99"]
 
 
 def test_grounded_answer_chain_receives_context_and_structured_evidence(
@@ -350,6 +430,198 @@ def test_grounded_answer_chain_receives_context_and_structured_evidence(
         event for event in state["events"] if event["event_type"] == "message.completed"
     )
     assert completed["payload"]["content"] == ("透视投影展示空间关系 [E1]\n确定性：高")
+    assert completed["payload"]["confidence"] == "high"
+    assert completed["payload"]["answer_status"] == "final"
+    assert completed["payload"]["evidence_bundle"] == search_result["evidence_bundle"]
+    assert completed["payload"]["citation_validation"] == {
+        "valid": True,
+        "invalid_citations": [],
+        "missing_citations": False,
+    }
+    completed_run = next(
+        item for item in state["runs"] if item["run_id"] == run["run_id"]
+    )
+    assert completed_run["metrics"]["model_role"] == "fast"
+    assert completed_run["metrics"]["selected_model_id"] == MODEL_ID
+
+
+def test_service_approval_uses_single_claim_before_side_effect(
+    tmp_path: Path,
+    monkeypatch,
+):
+    calls: list[str] = []
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = client.post(
+            "/api/agent-sessions",
+            json={"agent_id": "marker", "asset_id": ASSET_ID},
+        ).json()
+        run = new_agent_run(
+            session["session_id"],
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        artifact = AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=run.run_id,
+            session_id=session["session_id"],
+            agent_id="marker",
+            asset_id=ASSET_ID,
+            result_type="test_changes",
+            payload={},
+        )
+        service.library.save_agent_artifact(artifact)
+        monkeypatch.setattr(
+            service.registry,
+            "require",
+            lambda _agent_id: SimpleNamespace(
+                approver=lambda claimed: calls.append(claimed.artifact_id)
+            ),
+        )
+
+        approved = service.approve(artifact.artifact_id)
+        repeated = service.approve(artifact.artifact_id)
+
+    assert approved.status == AgentArtifactStatus.APPROVED
+    assert repeated.status == AgentArtifactStatus.APPROVED
+    assert calls == [artifact.artifact_id]
+
+
+def test_full_access_permission_auto_applies_completed_artifact(
+    tmp_path: Path,
+    monkeypatch,
+):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        artifact = AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=run.run_id,
+            session_id=session.session_id,
+            agent_id="marker",
+            asset_id=ASSET_ID,
+            result_type="test_changes",
+            payload={},
+        )
+        service.library.save_agent_artifact(artifact)
+        monkeypatch.setattr(
+            service.registry,
+            "require",
+            lambda _agent_id: SimpleNamespace(approver=lambda _claimed: None),
+        )
+        service.settings.agent = service.settings.agent.model_copy(
+            update={"permission_mode": AgentPermissionMode.FULL_ACCESS}
+        )
+        context = AgentRunContext(
+            service=service,
+            session=session,
+            run=run,
+            model=service.settings.ai_model(MODEL_ID),
+            task_input={},
+        )
+
+        service._process_run_artifacts(context, [artifact])
+
+        assert (
+            service.library.load_agent_artifact(artifact.artifact_id).status
+            == AgentArtifactStatus.APPROVED
+        )
+
+
+def test_explicit_library_scope_retrieves_evidence_from_multiple_assets(
+    tmp_path: Path,
+    monkeypatch,
+):
+    captured: dict[str, object] = {}
+
+    async def answer_from_library(
+        self,
+        model,
+        profile,
+        definition,
+        messages,
+        registry,
+        on_event,
+        **_options,
+    ):
+        result = await registry.execute(
+            AgentToolCall(
+                call_id="call-library-search",
+                name="search_evidence",
+                arguments={"query": "光照", "limit": 6},
+            ),
+            definition.allowed_tools,
+            timeout_seconds=2,
+        )
+        captured["search_result"] = result
+        return AgentExecutionResult(
+            content="两个视频都讨论了光照 [E1] [E2]",
+            successful_tools={"search_evidence"},
+        )
+
+    monkeypatch.setattr(AgnoAgentExecutor, "run", answer_from_library)
+    second_asset_id = str(uuid7())
+    with create_client(tmp_path) as client:
+        library = client.app.state.library
+        second_asset_directory = library.asset_directory(second_asset_id)
+        second_asset_directory.mkdir(parents=True, exist_ok=True)
+        (second_asset_directory / "playback.mp4").write_bytes(b"video")
+        library.save(
+            MediaAsset(
+                asset_id=second_asset_id,
+                source_url="https://example.com/second-video",
+                source_platform=SourcePlatform.YOUTUBE,
+                title="第二个视频",
+                duration_seconds=90,
+                status=MediaAssetStatus.READY,
+                playback_path="playback.mp4",
+            )
+        )
+        for asset_id, text in (
+            (ASSET_ID, "基础光照决定明暗关系"),
+            (second_asset_id, "全局光照影响间接反射"),
+        ):
+            library.save_transcript(
+                Transcript(
+                    asset_id=asset_id,
+                    segments=[
+                        TranscriptSegment(
+                            start_seconds=5,
+                            end_seconds=15,
+                            text=text,
+                        )
+                    ],
+                )
+            )
+        session = client.post(
+            "/api/agent-sessions",
+            json={"agent_id": "marker", "asset_id": ASSET_ID},
+        ).json()
+        run = client.post(
+            f"/api/agent-sessions/{session['session_id']}/runs",
+            json={
+                "request_key": f"request-{uuid7().hex}",
+                "ai_model_id": MODEL_ID,
+                "content": "比较资料库中不同视频对光照的说明",
+                "retrieval_scope": "library",
+            },
+        ).json()
+        client.get(f"/api/agent-runs/{run['run_id']}/events")
+
+    search_result = captured["search_result"]
+    evidence_asset_ids = {
+        item["asset_id"] for item in search_result["evidence_bundle"]["items"]
+    }
+    assert evidence_asset_ids == {ASSET_ID, second_asset_id}
 
 
 def test_marker_run_mode_separates_questions_from_change_proposals(tmp_path: Path):

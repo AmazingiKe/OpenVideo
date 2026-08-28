@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,14 @@ from openvideo.core.agent_runtime_models import (
     AgentRun,
     AgentSession,
 )
+from openvideo.core.agent_evidence_models import (
+    AgentAnswerStatus,
+    AgentEvidenceBundle,
+    AgentEvidenceConfidence,
+    AgentEvidenceCoverage,
+    AgentEvidenceSearchResult,
+)
+from openvideo.core.agent_governance_models import AgentRetrievalScope
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import MediaMarker, MediaSegment
@@ -131,6 +140,28 @@ class RunEvidenceState:
     summary_read: bool = False
     inspected_frame_times: list[float] = field(default_factory=list)
     inspected_frame_ranges: list[tuple[float, float]] = field(default_factory=list)
+    searches: list[AgentEvidenceSearchResult] = field(default_factory=list)
+
+    def record_search(
+        self, result: AgentEvidenceSearchResult
+    ) -> AgentEvidenceSearchResult:
+        citation_offset = sum(
+            len(search.evidence_bundle.items) for search in self.searches
+        )
+        items = [
+            item.model_copy(update={"citation_key": f"E{citation_offset + index}"})
+            for index, item in enumerate(result.evidence_bundle.items, start=1)
+        ]
+        recorded = result.model_copy(
+            update={
+                "evidence_bundle": result.evidence_bundle.model_copy(
+                    update={"items": items}
+                )
+            }
+        )
+        self.searches.append(recorded)
+        self.evidence_read = True
+        return recorded
 
 
 @dataclass
@@ -140,6 +171,7 @@ class AgentRunContext:
     run: AgentRun
     model: AiModelConfiguration
     task_input: dict[str, Any]
+    retrieval_scope: AgentRetrievalScope = AgentRetrievalScope.CURRENT_ASSET
     evidence: RunEvidenceState = field(default_factory=RunEvidenceState)
 
     def create_artifact(
@@ -162,6 +194,109 @@ class AgentRunContext:
             {"artifact": artifact.model_dump(mode="json")},
         )
         return artifact
+
+    def completion_payload(self, content: str) -> dict[str, Any]:
+        """把程序验证过的证据状态附到最终消息，防止模型自行声明可信度。"""
+
+        if not self.evidence.searches:
+            return {}
+        items = [
+            item
+            for search in self.evidence.searches
+            for item in search.evidence_bundle.items
+        ]
+        citation_keys = {item.citation_key for item in items}
+        cited_keys = set(re.findall(r"\[([A-Z]\d+)\]", content))
+        invalid_citations = sorted(cited_keys - citation_keys)
+        cited_searches = [
+            search
+            for search in self.evidence.searches
+            if any(
+                item.citation_key in cited_keys for item in search.evidence_bundle.items
+            )
+        ]
+        relevant_searches = cited_searches or self.evidence.searches
+        missing_citations = bool(citation_keys) and not cited_keys
+        confidence = min(
+            (search.confidence for search in relevant_searches),
+            key=lambda value: {
+                AgentEvidenceConfidence.LOW: 0,
+                AgentEvidenceConfidence.MEDIUM: 1,
+                AgentEvidenceConfidence.HIGH: 2,
+            }[value],
+        )
+        relevant_items = [
+            item
+            for search in relevant_searches
+            for item in search.evidence_bundle.items
+        ]
+        relevant_evidence_ids = {item.evidence_id for item in relevant_items}
+        conflicts = [
+            conflict
+            for search in relevant_searches
+            for conflict in search.evidence_bundle.conflicts
+            if set(conflict.evidence_ids) <= relevant_evidence_ids
+        ]
+        source_types = sorted(
+            {
+                source_type
+                for item in relevant_items
+                for source_type in (
+                    item.source_type,
+                    *item.supporting_source_types,
+                )
+            },
+            key=lambda source_type: source_type.value,
+        )
+        coverage = AgentEvidenceCoverage(
+            temporal=max(
+                search.evidence_bundle.coverage.temporal for search in relevant_searches
+            ),
+            source_types=source_types,
+        )
+        bundle = AgentEvidenceBundle(
+            query=(
+                relevant_searches[-1].evidence_bundle.query
+                if len(relevant_searches) == 1
+                else None
+            ),
+            items=relevant_items,
+            conflicts=conflicts,
+            coverage=coverage,
+        )
+        answer_status = (
+            AgentAnswerStatus.INSUFFICIENT
+            if not relevant_items
+            else (
+                AgentAnswerStatus.PROVISIONAL
+                if confidence == AgentEvidenceConfidence.LOW or conflicts
+                else AgentAnswerStatus.FINAL
+            )
+        )
+        payload = {
+            "confidence": confidence.value,
+            "answer_status": answer_status.value,
+            "evidence_bundle": bundle.model_dump(mode="json"),
+        }
+        if invalid_citations or missing_citations:
+            payload.update(
+                {
+                    "confidence": AgentEvidenceConfidence.LOW.value,
+                    "answer_status": AgentAnswerStatus.PROVISIONAL.value,
+                    "citation_validation": {
+                        "valid": False,
+                        "invalid_citations": invalid_citations,
+                        "missing_citations": missing_citations,
+                    },
+                }
+            )
+        else:
+            payload["citation_validation"] = {
+                "valid": True,
+                "invalid_citations": [],
+                "missing_citations": False,
+            }
+        return payload
 
 
 def ranges_intersect(

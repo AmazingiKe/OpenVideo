@@ -160,6 +160,85 @@ def retrieve_evidence(
     )
 
 
+def combine_library_evidence(
+    results: Iterable[AgentEvidenceSearchResult],
+    *,
+    query: str,
+    limit: int,
+) -> AgentEvidenceSearchResult:
+    """跨视频检索只合并显式查询结果，避免默认把整个资料库送进上下文。"""
+
+    collected_results = list(results)
+    items = sorted(
+        (item for result in collected_results for item in result.evidence_bundle.items),
+        key=lambda item: (
+            -item.relevance_score,
+            item.asset_id,
+            item.start_seconds,
+            item.source_type.value,
+        ),
+    )[:limit]
+    items = [
+        item.model_copy(update={"citation_key": f"E{index}"})
+        for index, item in enumerate(items, start=1)
+    ]
+    conflicts = _find_conflicts(items)
+    conflicting_evidence_ids = {
+        evidence_id for conflict in conflicts for evidence_id in conflict.evidence_ids
+    }
+    if conflicting_evidence_ids:
+        items = [
+            item.model_copy(update={"relation": "conflicts"})
+            if item.evidence_id in conflicting_evidence_ids
+            else item
+            for item in items
+        ]
+    source_types = sorted(
+        {
+            source
+            for item in items
+            for source in (item.source_type, *item.supporting_source_types)
+        },
+        key=lambda source: source.value,
+    )
+    represented_asset_ids = {item.asset_id for item in items}
+    represented_coverages = [
+        result.evidence_bundle.coverage.temporal
+        for result in collected_results
+        if any(
+            item.asset_id in represented_asset_ids
+            for item in result.evidence_bundle.items
+        )
+    ]
+    temporal_coverage = (
+        sum(represented_coverages) / len(represented_coverages)
+        if represented_coverages
+        else 0.0
+    )
+    confidence, confidence_reasons = _confidence(
+        items,
+        _normalize_text(query),
+        temporal_coverage,
+        conflicts,
+    )
+    bundle = AgentEvidenceBundle(
+        query=query,
+        items=items,
+        conflicts=conflicts,
+        coverage=AgentEvidenceCoverage(
+            temporal=round(temporal_coverage, 4),
+            source_types=source_types,
+        ),
+    )
+    return AgentEvidenceSearchResult(
+        confidence=confidence,
+        confidence_reasons=confidence_reasons,
+        answer_status=_answer_status(confidence, items, conflicts),
+        evidence_bundle=bundle,
+        answer_instruction=_answer_instruction(confidence, items, conflicts),
+    )
+
+
 def _build_candidates(
     transcript_segments: Iterable[TranscriptSegment],
     analysis_segments: Iterable[MediaSegment],
@@ -455,8 +534,10 @@ def _find_conflicts(
     conflicts: list[AgentEvidenceConflict] = []
     for index, left in enumerate(evidence):
         for right in evidence[index + 1 :]:
-            if left.source_type == right.source_type or not _item_ranges_overlap(
-                left, right
+            if (
+                left.asset_id != right.asset_id
+                or left.source_type == right.source_type
+                or not _item_ranges_overlap(left, right)
             ):
                 continue
             left_tokens = _tokens_without_numbers(left.excerpt)
