@@ -21,12 +21,14 @@ import {
   get_preferences,
   import_download_account_from_browser,
   get_markers,
+  get_focus_selection,
   get_segments,
   get_transcript,
   list_assets,
   list_folders,
   list_ai_models,
   list_analysis_strategies,
+  list_event_analyses,
   list_transcription_models,
   probe_source,
   save_download_account,
@@ -60,12 +62,17 @@ vi.mock("./shared/api", () => ({
   get_preferences: vi.fn(),
   import_download_account_from_browser: vi.fn(),
   get_markers: vi.fn(),
+  get_focus_selection: vi.fn(),
   get_segments: vi.fn(),
   get_transcript: vi.fn(),
   list_assets: vi.fn(),
   list_folders: vi.fn(),
   list_ai_models: vi.fn(),
   list_analysis_strategies: vi.fn(),
+  list_event_analyses: vi.fn(),
+  list_summary_documents: vi.fn(),
+  list_summary_presets: vi.fn(),
+  list_summary_versions: vi.fn(),
   list_transcription_models: vi.fn(),
   media_url: (path: string) => path,
   move_assets: vi.fn(),
@@ -129,6 +136,8 @@ describe("App", () => {
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
     vi.mocked(list_analysis_strategies).mockResolvedValue([]);
+    vi.mocked(get_focus_selection).mockResolvedValue(null);
+    vi.mocked(list_event_analyses).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
     vi.mocked(list_assets).mockResolvedValue([]);
     vi.mocked(list_folders).mockResolvedValue([]);

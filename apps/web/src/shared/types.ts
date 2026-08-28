@@ -255,7 +255,7 @@ type AnalysisStage =
   | "rejected"
   | "failed";
 
-export type AnalysisMode = "full" | "markers";
+export type AnalysisMode = "full";
 export type AnalysisStrategyPreset =
   | "course_notes"
   | "formula_derivation"
@@ -334,7 +334,6 @@ export type AnalysisJob = {
   asset_id: string;
   operation: AnalysisOperation;
   mode: AnalysisMode;
-  marker_ids: string[];
   ai_model_id: string | null;
   strategy: AnalysisStrategy;
   capabilities: AnalysisCapability[];
@@ -410,6 +409,77 @@ export type MediaMarker = {
 
 export type MarkerImportance = 0 | 1 | 2 | 3 | 4 | 5;
 
+export type FocusSelection = {
+  selection_id: string;
+  asset_id: string;
+  in_seconds: number | null;
+  out_seconds: number | null;
+  revision: number;
+  updated_at: string;
+};
+
+export type EventAnalysisTarget =
+  | {
+      source: "marker";
+      marker_id: string;
+      start_seconds: number;
+      end_seconds: number;
+    }
+  | {
+      source: "focus_selection";
+      selection_id: string;
+      start_seconds: number;
+      end_seconds: number;
+    };
+
+export type EventAnalysisEvidence = {
+  start_seconds: number;
+  end_seconds: number;
+  text: string;
+  source: "transcript" | "timeline" | "visual" | "ocr";
+};
+
+export type EventAnalysis = {
+  event_analysis_id: string;
+  asset_id: string;
+  target: EventAnalysisTarget;
+  title: string;
+  conclusion: string;
+  key_points: string[];
+  evidence: EventAnalysisEvidence[];
+  preset_id: string;
+  preset_version: number;
+  depth: AnalysisDepth;
+  user_input: string | null;
+  ai_model_id: string;
+  source_summary: {
+    transcript_digest: string;
+    target_digest: string;
+    timeline_digest: string;
+  };
+  status: "valid" | "stale";
+  created_at: string;
+  updated_at: string;
+};
+
+export type EventAnalysisJob = {
+  job_id: string;
+  asset_id: string;
+  targets: EventAnalysisTarget[];
+  preset_id: string;
+  preset_version: number;
+  depth: AnalysisDepth;
+  user_input: string | null;
+  ai_model_id: string;
+  stage: "pending" | "running" | "complete" | "failed";
+  progress_percent: number;
+  message: string;
+  result_ids: string[];
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type MediaMarkerCreate = Pick<
   MediaMarker,
   "start_seconds" | "end_seconds"
@@ -463,9 +533,35 @@ export type LibraryFolder = {
 };
 
 export type SummaryDetail = "concise" | "standard" | "detailed";
+export type SummaryPreset = {
+  preset_id: string;
+  title: string;
+  description: string;
+  prompt: string;
+  minimum_context_tokens: number;
+  version: number;
+};
+export type SummaryVersion = {
+  version_id: string;
+  asset_id: string;
+  preset_id: string;
+  preset_version: number;
+  user_input: string | null;
+  ai_model_id: string;
+  detail: SummaryDetail;
+  output_language: string;
+  context_summary: {
+    transcript_digest: string;
+    marker_digest: string;
+    event_analysis_digest: string;
+  };
+  relative_path: string;
+  created_at: string;
+};
 export type SummaryDocument = {
   document_id: string;
   asset_id: string;
+  version_id: string;
   parent_document_id: string | null;
   title: string;
   markdown: string;
@@ -479,9 +575,15 @@ export type SummaryDocument = {
 export type SummaryExportResult = {
   export_id: string;
   relative_path: string;
+  version_id: string;
   file_name: string;
   size_bytes: number;
   exported_at: string;
+};
+export type SummaryGenerationResult = {
+  version: SummaryVersion;
+  documents: SummaryDocument[];
+  context_capacity_unknown: boolean;
 };
 export type AgentSession = {
   session_id: string;

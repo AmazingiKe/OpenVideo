@@ -21,7 +21,6 @@ import { poll_analysis } from "@/shared/poll_analysis";
 import { poll_download } from "@/shared/poll_download";
 import type {
   AnalysisJob,
-  AnalysisMode,
   AnalysisOperation,
   AnalysisStrategy,
   DownloadDestination,
@@ -42,8 +41,6 @@ type TaskManager = {
   retry_download: (job_id: string) => Promise<DownloadJob>;
   start_analysis: (
     asset_id: string,
-    mode: AnalysisMode,
-    marker_ids: string[],
     ai_model_id: string | null,
     strategy: AnalysisStrategy,
   ) => Promise<AnalysisJob>;
@@ -233,20 +230,11 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const start_analysis = useCallback(
     (
       asset_id: string,
-      mode: AnalysisMode,
-      marker_ids: string[],
       ai_model_id: string | null,
       strategy: AnalysisStrategy,
     ) =>
       run_analysis_operation(asset_id, "analysis", (signal) =>
-        analyze_asset(
-          asset_id,
-          mode,
-          marker_ids,
-          ai_model_id,
-          strategy,
-          signal,
-        ),
+        analyze_asset(asset_id, ai_model_id, strategy, signal),
       ),
     [run_analysis_operation],
   );

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
+  EventAnalysis,
   MediaMarker,
   MediaSegment,
   TranscriptSegment,
@@ -19,6 +20,7 @@ import {
   normalize_wheel_delta,
   round_marker_time,
   timeline_content_duration,
+  type MediaTimelineAction,
   type TimelineRow,
 } from "./media_timeline_calculations";
 
@@ -177,6 +179,104 @@ describe("media timeline calculations", () => {
     expect(rows[0]?.actions[0]?.end).toBeLessThanOrEqual(10);
     expect(rows[1]?.actions).toHaveLength(1);
     expect(rows[2]?.actions).toHaveLength(1);
+  });
+
+  it("groups identical event targets and assigns overlapping targets to stable lanes", () => {
+    const source_summary = {
+      transcript_digest: "transcript",
+      target_digest: "target",
+      timeline_digest: "timeline",
+    };
+    const base_analysis = {
+      asset_id: "asset-01890f4c7a2b7cc298c4dc0c0c07398f",
+      conclusion: "conclusion",
+      key_points: [],
+      evidence: [],
+      preset_id: "course_notes",
+      preset_version: 1,
+      depth: "balanced" as const,
+      user_input: null,
+      ai_model_id: "model-01890f4c7a2b7cc298c4dc0c0c07398f",
+      source_summary,
+      status: "valid" as const,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const analyses: EventAnalysis[] = [
+      {
+        ...base_analysis,
+        event_analysis_id: "event-analysis-01890f4c7a2b7cc298c4dc0c0c073981",
+        target: {
+          source: "marker",
+          marker_id: "marker-01890f4c7a2b7cc298c4dc0c0c073981",
+          start_seconds: 10,
+          end_seconds: 20,
+        },
+        title: "first",
+      },
+      {
+        ...base_analysis,
+        event_analysis_id: "event-analysis-01890f4c7a2b7cc298c4dc0c0c073982",
+        target: {
+          source: "marker",
+          marker_id: "marker-01890f4c7a2b7cc298c4dc0c0c073981",
+          start_seconds: 10,
+          end_seconds: 20,
+        },
+        title: "second",
+      },
+      {
+        ...base_analysis,
+        event_analysis_id: "event-analysis-01890f4c7a2b7cc298c4dc0c0c073983",
+        target: {
+          source: "focus_selection",
+          selection_id: "focus-selection-01890f4c7a2b7cc298c4dc0c0c073981",
+          start_seconds: 15,
+          end_seconds: 25,
+        },
+        title: "overlap",
+      },
+      {
+        ...base_analysis,
+        event_analysis_id: "event-analysis-01890f4c7a2b7cc298c4dc0c0c073984",
+        target: {
+          source: "marker",
+          marker_id: "marker-01890f4c7a2b7cc298c4dc0c0c073984",
+          start_seconds: 25,
+          end_seconds: 30,
+        },
+        title: "after",
+      },
+    ];
+
+    const rows = build_timeline_rows({
+      transcript_segments: [],
+      segments: [],
+      markers: [],
+      candidate_markers: [],
+      analysis_strategy: DEFAULT_ANALYSIS_STRATEGY,
+      duration: 40,
+      selected_marker_id: null,
+      event_analyses: analyses,
+    });
+    const event_rows = rows.filter((row) =>
+      row.id.startsWith(TIMELINE_TRACK_IDS.event_analysis_prefix),
+    );
+    const first_lane_actions = event_rows[0]?.actions as MediaTimelineAction[];
+
+    expect(event_rows).toHaveLength(2);
+    expect(first_lane_actions).toHaveLength(2);
+    expect(first_lane_actions[0]?.data.event_analysis_ids).toEqual([
+      analyses[0]?.event_analysis_id,
+      analyses[1]?.event_analysis_id,
+    ]);
+    expect(first_lane_actions[1]?.data.event_analysis_ids).toEqual([
+      analyses[3]?.event_analysis_id,
+    ]);
+    expect(
+      (event_rows[1]?.actions[0] as MediaTimelineAction).data
+        .event_analysis_ids,
+    ).toEqual([analyses[2]?.event_analysis_id]);
   });
 
   it("derives content duration and rounds marker time consistently", () => {

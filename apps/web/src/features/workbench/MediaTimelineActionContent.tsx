@@ -105,7 +105,13 @@ function timeline_action_aria_label(action: MediaTimelineAction): string {
     return `转写：${action.data.label}，只读，${time_range}`;
   }
   if (action.data.kind === "event") {
-    return `分析事件：${action.data.label}，只读，${time_range}`;
+    return `全片分析：${action.data.label}，只读，${time_range}`;
+  }
+  if (action.data.kind === "focus") {
+    return `焦点选区：${action.data.label}，只读，${time_range}`;
+  }
+  if (action.data.kind === "event_analysis") {
+    return `事件分析：${action.data.label}，只读，${time_range}`;
   }
   const shape =
     action.data.marker_shape === MARKER_SHAPE_VALUES.point

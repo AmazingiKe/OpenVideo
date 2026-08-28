@@ -1,4 +1,4 @@
-import { CircleCheck, PanelLeft, PanelRight } from "lucide-react";
+import { CircleCheck, FilePlus2, PanelLeft, PanelRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { AgentPanel } from "@/components/AgentPanel";
@@ -17,10 +17,18 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
   AgentArtifact,
   AiModelSummary,
   SummaryDocument,
+  SummaryVersion,
 } from "@/shared/types";
 import {
   DeleteDocumentDialog,
@@ -59,6 +67,10 @@ type SummaryEditorLayoutProps = {
   save_status: SaveStatus;
   selected_asset_id: string;
   selected_document: SummaryDocument;
+  versions: SummaryVersion[];
+  current_version_id: string | null;
+  on_version_change: (version_id: string) => void;
+  on_generate_version: () => void;
   selection: MarkdownSelection | null;
   select_document: (document_id: string) => void;
   set_agent_sheet_open: (open: boolean) => void;
@@ -100,6 +112,10 @@ export function SummaryEditorLayout({
   save_status,
   selected_asset_id,
   selected_document,
+  versions,
+  current_version_id,
+  on_version_change,
+  on_generate_version,
   selection,
   select_document,
   set_agent_sheet_open,
@@ -129,9 +145,13 @@ export function SummaryEditorLayout({
       agent_id="summary"
       asset_id={selected_asset_id}
       models={models}
-      context={{ document_id: selected_document.document_id }}
+      context={{
+        document_id: selected_document.document_id,
+        version_id: selected_document.version_id,
+      }}
       task_input={{
         document_id: selected_document.document_id,
+        version_id: selected_document.version_id,
         expected_revision: selected_document.revision,
         selection,
       }}
@@ -204,11 +224,32 @@ export function SummaryEditorLayout({
       className="flex h-full min-h-0 flex-col bg-background"
       aria-label="Markdown 总结工作台"
     >
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
+        <Select
+          value={current_version_id ?? ""}
+          onValueChange={on_version_change}
+        >
+          <SelectTrigger className="w-full sm:w-72" aria-label="总结版本">
+            <SelectValue placeholder="选择总结版本" />
+          </SelectTrigger>
+          <SelectContent>
+            {versions.map((version, index) => (
+              <SelectItem key={version.version_id} value={version.version_id}>
+                版本 {versions.length - index} · {version.preset_id}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button type="button" size="sm" onClick={on_generate_version}>
+          <FilePlus2 data-icon="inline-start" aria-hidden="true" />
+          生成新版本
+        </Button>
+      </div>
       {generation_notice ? (
         <div className="shrink-0 px-2 pt-2">
-          <Alert role="status" aria-live="polite" aria-label="已保留单一主文档">
+          <Alert role="status" aria-live="polite" aria-label="生成提示">
             <CircleCheck aria-hidden="true" />
-            <AlertTitle>已保留单一主文档</AlertTitle>
+            <AlertTitle>生成提示</AlertTitle>
             <AlertDescription>{generation_notice}</AlertDescription>
           </Alert>
         </div>

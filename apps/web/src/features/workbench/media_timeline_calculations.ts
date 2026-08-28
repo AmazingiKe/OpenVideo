@@ -3,6 +3,8 @@ import type { TimelineEditor } from "@xzdarcy/react-timeline-editor";
 import { format_marker_label } from "@/shared/marker_labels";
 import type {
   AnalysisStrategy,
+  EventAnalysis,
+  FocusSelection,
   MediaMarker,
   MediaSegment,
   Transcript,
@@ -32,6 +34,8 @@ export const TIMELINE_TRACK_IDS = {
   marker: "timeline-marker-track",
   transcript: "timeline-transcript-track",
   event: "timeline-event-track",
+  focus: "timeline-focus-track",
+  event_analysis_prefix: "timeline-event-analysis-track",
 } as const;
 
 export const MARKER_SHAPE_VALUES = {
@@ -41,7 +45,8 @@ export const MARKER_SHAPE_VALUES = {
 
 export type TimelineRow = TimelineEditor["editorData"][number];
 export type TimelineAction = TimelineRow["actions"][number];
-type TimelineActionKind = "marker" | "candidate" | "transcript" | "event";
+type TimelineActionKind =
+  "marker" | "candidate" | "transcript" | "event" | "focus" | "event_analysis";
 type MarkerShape =
   (typeof MARKER_SHAPE_VALUES)[keyof typeof MARKER_SHAPE_VALUES];
 
@@ -53,6 +58,7 @@ type TimelineActionData = {
   marker_shape?: MarkerShape;
   marker_anchor_seconds?: number;
   rendered_start_seconds?: number;
+  event_analysis_ids?: string[];
 };
 
 export type MediaTimelineAction = TimelineAction & {
@@ -397,6 +403,9 @@ export function build_timeline_rows({
   analysis_strategy,
   duration,
   selected_marker_id,
+  selected_marker_ids,
+  focus_selection = null,
+  event_analyses = [],
 }: {
   transcript_segments: Transcript["segments"];
   segments: MediaSegment[];
@@ -405,7 +414,14 @@ export function build_timeline_rows({
   analysis_strategy: AnalysisStrategy;
   duration: number;
   selected_marker_id: string | null;
+  selected_marker_ids?: Set<string>;
+  focus_selection?: FocusSelection | null;
+  event_analyses?: EventAnalysis[];
 }): TimelineRow[] {
+  const event_analysis_rows = build_event_analysis_rows(
+    event_analyses,
+    duration,
+  );
   return [
     {
       id: TIMELINE_TRACK_IDS.marker,
@@ -417,7 +433,8 @@ export function build_timeline_rows({
             marker,
             analysis_strategy,
             duration,
-            marker.marker_id === selected_marker_id,
+            selected_marker_ids?.has(marker.marker_id) ??
+              marker.marker_id === selected_marker_id,
           ),
         ),
         ...candidate_markers.map((marker) =>
@@ -479,7 +496,123 @@ export function build_timeline_rows({
         }),
       ),
     },
+    ...(focus_selection
+      ? [
+          {
+            id: TIMELINE_TRACK_IDS.focus,
+            rowHeight: TIMELINE_ROW_HEIGHT,
+            classNames: ["timeline_row_focus"],
+            actions: create_focus_actions(focus_selection, duration),
+          },
+        ]
+      : []),
+    ...event_analysis_rows,
   ];
+}
+
+function create_focus_actions(
+  selection: FocusSelection,
+  duration: number,
+): MediaTimelineAction[] {
+  if (selection.in_seconds !== null && selection.out_seconds !== null) {
+    return [
+      create_timeline_action({
+        id: selection.selection_id,
+        start: selection.in_seconds,
+        end: selection.out_seconds,
+        duration,
+        movable: false,
+        flexible: false,
+        data: {
+          kind: "focus",
+          source_id: selection.selection_id,
+          label: "In / Out 焦点选区",
+        },
+      }),
+    ];
+  }
+  return [
+    ["in", selection.in_seconds],
+    ["out", selection.out_seconds],
+  ]
+    .filter((endpoint): endpoint is [string, number] => endpoint[1] !== null)
+    .map(([name, seconds]) =>
+      create_timeline_action({
+        id: `${selection.selection_id}-${name}`,
+        start: seconds,
+        end: seconds + MINIMUM_ACTION_DURATION_SECONDS,
+        duration,
+        movable: false,
+        flexible: false,
+        data: {
+          kind: "focus",
+          source_id: selection.selection_id,
+          label: name === "in" ? "In 端点" : "Out 端点",
+        },
+      }),
+    );
+}
+
+function build_event_analysis_rows(
+  analyses: EventAnalysis[],
+  duration: number,
+): TimelineRow[] {
+  const grouped = new Map<
+    string,
+    { start: number; end: number; ids: string[]; titles: string[] }
+  >();
+  for (const analysis of analyses) {
+    const target_id =
+      analysis.target.source === "marker"
+        ? analysis.target.marker_id
+        : analysis.target.selection_id;
+    const key = `${analysis.target.source}:${target_id}:${analysis.target.start_seconds}:${analysis.target.end_seconds}`;
+    const group = grouped.get(key) ?? {
+      start: analysis.target.start_seconds,
+      end: analysis.target.end_seconds,
+      ids: [],
+      titles: [],
+    };
+    group.ids.push(analysis.event_analysis_id);
+    group.titles.push(analysis.title);
+    grouped.set(key, group);
+  }
+  const groups = [...grouped.values()].sort(
+    (left, right) => left.start - right.start || left.end - right.end,
+  );
+  const lanes: (typeof groups)[] = [];
+  for (const group of groups) {
+    const lane_index = lanes.findIndex((lane) => {
+      const previous = lane.at(-1);
+      return previous === undefined || previous.end <= group.start;
+    });
+    if (lane_index === -1) lanes.push([group]);
+    else lanes[lane_index]?.push(group);
+  }
+  return lanes.map((lane, lane_index) => ({
+    id: `${TIMELINE_TRACK_IDS.event_analysis_prefix}-${lane_index}`,
+    rowHeight: TIMELINE_ROW_HEIGHT,
+    classNames: ["timeline_row_event_analyses"],
+    actions: lane.map((group, group_index) =>
+      create_timeline_action({
+        id: `event-analysis-${lane_index}-${group_index}`,
+        start: group.start,
+        end: group.end,
+        duration,
+        movable: false,
+        flexible: false,
+        data: {
+          kind: "event_analysis",
+          source_id: group.ids[0],
+          event_analysis_ids: group.ids,
+          label:
+            group.ids.length === 1
+              ? (group.titles[0] ?? "事件分析")
+              : `${group.ids.length} 条事件分析`,
+        },
+      }),
+    ),
+  }));
 }
 
 function create_marker_action(

@@ -29,11 +29,23 @@ import { FloatingError } from "@/components/FloatingError";
 import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
-import { resolve_analysis_proposal } from "@/shared/api";
+import {
+  clear_focus_selection,
+  create_event_analysis_job,
+  delete_event_analysis,
+  get_event_analysis_job,
+  get_focus_selection,
+  list_event_analyses,
+  resolve_analysis_proposal,
+  update_focus_selection,
+} from "@/shared/api";
 import type {
+  AnalysisDepth,
   AnalysisJob,
-  AnalysisMode,
   AnalysisStrategy,
+  EventAnalysis,
+  EventAnalysisJob,
+  FocusSelection,
   MediaMarker,
   TranscriptionOptions,
 } from "@/shared/types";
@@ -46,6 +58,7 @@ const MediaTimeline = lazy(() =>
 
 // 比样式表里 220ms 的面板过渡多留一拍，确保过渡结束前过渡类不被移除
 const PANEL_TOGGLE_TRANSITION_MS = 280;
+const EVENT_ANALYSIS_POLL_MS = 500;
 
 export function MarkersPage() {
   const navigate = useNavigate();
@@ -76,6 +89,14 @@ export function MarkersPage() {
   const [page_error, set_page_error] = useState<string | null>(null);
   const [analysis_proposal, set_analysis_proposal] =
     useState<AnalysisJob | null>(null);
+  const [focus_selection, set_focus_selection] =
+    useState<FocusSelection | null>(null);
+  const [event_analyses, set_event_analyses] = useState<EventAnalysis[]>([]);
+  const [event_analysis_job, set_event_analysis_job] =
+    useState<EventAnalysisJob | null>(null);
+  const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
+    new Set(),
+  );
   const [candidate_markers, set_candidate_markers] = useState<MediaMarker[]>(
     [],
   );
@@ -91,6 +112,7 @@ export function MarkersPage() {
   const left_panel_ref = useRef<PanelImperativeHandle>(null);
   const tool_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
+  const active_asset_id_ref = useRef<string | null>(selected_asset_id);
   const is_compact_layout = use_compact_markers_layout();
   const {
     markers,
@@ -100,6 +122,18 @@ export function MarkersPage() {
     remove_marker,
     reload_markers,
   } = use_asset_markers(selected_asset_id ?? "");
+  const marker_selection_key = markers
+    .map((marker) => marker.marker_id)
+    .sort()
+    .join("|");
+  const visible_event_analyses =
+    selected_marker_ids.size === 0
+      ? event_analyses
+      : event_analyses.filter(
+          (analysis) =>
+            analysis.target.source === "marker" &&
+            selected_marker_ids.has(analysis.target.marker_id),
+        );
 
   useEffect(() => {
     mounted_ref.current = true;
@@ -109,12 +143,47 @@ export function MarkersPage() {
   }, []);
 
   useEffect(() => {
+    active_asset_id_ref.current = selected_asset_id;
     set_current_time(0);
     set_is_paused(true);
     set_playback_rate(1);
     set_selected_transcript_indices([]);
     set_candidate_markers([]);
     set_analysis_proposal(null);
+    set_focus_selection(null);
+    set_event_analyses([]);
+    set_event_analysis_job(null);
+    set_selected_marker_ids(new Set());
+  }, [selected_asset_id]);
+
+  useEffect(() => {
+    const available_marker_ids = new Set(
+      marker_selection_key ? marker_selection_key.split("|") : [],
+    );
+    set_selected_marker_ids((current) => {
+      const retained = new Set(
+        [...current].filter((marker_id) => available_marker_ids.has(marker_id)),
+      );
+      return retained.size === current.size ? current : retained;
+    });
+  }, [marker_selection_key, selected_asset_id]);
+
+  useEffect(() => {
+    if (!selected_asset_id) return;
+    const controller = new AbortController();
+    void Promise.all([
+      get_focus_selection(selected_asset_id, controller.signal),
+      list_event_analyses(selected_asset_id, controller.signal),
+    ])
+      .then(([selection, analyses]) => {
+        if (!mounted_ref.current) return;
+        set_focus_selection(selection);
+        set_event_analyses(analyses);
+      })
+      .catch((error) => {
+        if (!is_abort_error(error)) set_page_error(error_message(error));
+      });
+    return () => controller.abort();
   }, [selected_asset_id]);
 
   useEffect(
@@ -148,8 +217,6 @@ export function MarkersPage() {
   }
 
   async function run_analysis(
-    mode: AnalysisMode,
-    marker_ids: string[],
     ai_model_id: string | null,
     strategy: AnalysisStrategy,
   ) {
@@ -158,8 +225,6 @@ export function MarkersPage() {
     try {
       const job = await start_analysis(
         selected_asset_id,
-        mode,
-        marker_ids,
         ai_model_id,
         strategy,
       );
@@ -168,6 +233,81 @@ export function MarkersPage() {
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
         set_page_error(error_message(error));
+    }
+  }
+
+  async function run_event_analysis(request: {
+    marker_ids: string[];
+    use_focus_selection: boolean;
+    preset_id: string;
+    preset_version: number;
+    depth: AnalysisDepth;
+    user_input: string | null;
+    ai_model_id: string;
+  }) {
+    if (!selected_asset_id) return;
+    const asset_id = selected_asset_id;
+    set_page_error(null);
+    try {
+      let job = await create_event_analysis_job(asset_id, request);
+      set_event_analysis_job(job);
+      while (job.stage === "pending" || job.stage === "running") {
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, EVENT_ANALYSIS_POLL_MS),
+        );
+        job = await get_event_analysis_job(job.job_id);
+        if (!mounted_ref.current || active_asset_id_ref.current !== asset_id)
+          return;
+        set_event_analysis_job(job);
+      }
+      if (job.stage === "failed") {
+        throw new Error(job.error_message ?? "事件分析失败");
+      }
+      set_event_analyses(await list_event_analyses(asset_id));
+    } catch (error) {
+      if (mounted_ref.current && !is_abort_error(error)) {
+        set_page_error(error_message(error));
+      }
+    }
+  }
+
+  async function set_focus_endpoint(
+    endpoint: "in_seconds" | "out_seconds",
+    seconds: number,
+  ) {
+    if (!selected_asset_id) return;
+    try {
+      set_focus_selection(
+        await update_focus_selection(selected_asset_id, {
+          [endpoint]: seconds,
+        }),
+      );
+    } catch (error) {
+      set_page_error(error_message(error));
+    }
+  }
+
+  async function clear_focus() {
+    if (!selected_asset_id) return;
+    try {
+      await clear_focus_selection(selected_asset_id);
+      set_focus_selection(null);
+    } catch (error) {
+      set_page_error(error_message(error));
+    }
+  }
+
+  async function remove_event_analysis(event_analysis_id: string) {
+    try {
+      await delete_event_analysis(event_analysis_id);
+      set_event_analyses((current) =>
+        current.filter(
+          (analysis) => analysis.event_analysis_id !== event_analysis_id,
+        ),
+      );
+    } catch (error) {
+      set_page_error(error_message(error));
+      throw error;
     }
   }
 
@@ -297,9 +437,14 @@ export function MarkersPage() {
       analysis_strategies={analysis_strategies}
       analysis_strategy={analysis_strategy}
       set_analysis_strategy={set_analysis_strategy}
-      on_start_analysis={(mode, marker_ids, ai_model_id, strategy) =>
-        void run_analysis(mode, marker_ids, ai_model_id, strategy)
+      focus_selection={focus_selection}
+      event_analysis_job={event_analysis_job}
+      selected_marker_ids={selected_marker_ids}
+      set_selected_marker_ids={set_selected_marker_ids}
+      on_start_analysis={(ai_model_id, strategy) =>
+        void run_analysis(ai_model_id, strategy)
       }
+      on_start_event_analysis={(request) => void run_event_analysis(request)}
       analysis_proposal={analysis_proposal}
       on_resolve_analysis={(action) => void resolve_analysis(action)}
       selected_transcript_indices={selected_transcript_indices}
@@ -429,6 +574,9 @@ export function MarkersPage() {
           segments={segments}
           markers={markers}
           candidate_markers={candidate_markers}
+          focus_selection={focus_selection}
+          event_analyses={visible_event_analyses}
+          selected_marker_ids={selected_marker_ids}
           analysis_strategy={analysis_strategy}
           marker_error={marker_error}
           on_scrub={preview_player}
@@ -440,6 +588,15 @@ export function MarkersPage() {
           on_selected_transcript_indices_change={
             set_selected_transcript_indices
           }
+          on_selected_marker_ids_change={set_selected_marker_ids}
+          on_set_focus_in={(seconds) =>
+            void set_focus_endpoint("in_seconds", seconds)
+          }
+          on_set_focus_out={(seconds) =>
+            void set_focus_endpoint("out_seconds", seconds)
+          }
+          on_clear_focus={() => void clear_focus()}
+          on_delete_event_analysis={remove_event_analysis}
           on_add_marker={add_marker}
           on_update_marker={update_marker}
           on_delete_marker={remove_marker}

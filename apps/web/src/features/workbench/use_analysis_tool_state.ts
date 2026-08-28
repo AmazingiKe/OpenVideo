@@ -4,10 +4,8 @@ import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import {
   IMAGE_INPUT_MODALITY,
   type AiModelSummary,
-  type AnalysisMode,
   type AnalysisStrategy,
   type AnalysisStrategyPresetDescriptor,
-  type MediaMarker,
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
 } from "@/shared/types";
@@ -25,7 +23,6 @@ type AnalysisToolStateOptions = {
   analysis_strategy: AnalysisStrategy;
   asset_id: string | null;
   default_transcription: TranscriptionOptions | null;
-  markers: MediaMarker[];
   transcription_models: TranscriptionModelDescriptor[];
 };
 
@@ -35,16 +32,11 @@ export function use_analysis_tool_state({
   analysis_strategy,
   asset_id,
   default_transcription,
-  markers,
   transcription_models,
 }: AnalysisToolStateOptions) {
-  const [analysis_mode, set_analysis_mode] = useState<AnalysisMode>("full");
   const [advanced_strategy_open, set_advanced_strategy_open] = useState(false);
   const [transcription_options, set_transcription_options] =
     useState<TranscriptionOptions | null>(default_transcription);
-  const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
-    new Set(),
-  );
   const [correction_scope, set_correction_scope] = useState<
     "all" | "selection"
   >("all");
@@ -90,10 +82,6 @@ export function use_analysis_tool_state({
   );
 
   useEffect(() => {
-    set_selected_marker_ids(new Set(markers.map((marker) => marker.marker_id)));
-  }, [asset_id, markers]);
-
-  useEffect(() => {
     set_transcription_options(default_transcription);
   }, [asset_id, default_transcription]);
 
@@ -107,19 +95,15 @@ export function use_analysis_tool_state({
 
   return {
     advanced_strategy_open,
-    analysis_mode,
     available_transcription_models,
     correction_scope,
     image_input_models,
     image_model_id,
     resolved_strategy_presets,
-    selected_marker_ids,
     selected_transcription_model,
     set_advanced_strategy_open,
-    set_analysis_mode,
     set_correction_scope,
     set_image_model_id,
-    set_selected_marker_ids,
     set_transcription_options,
     strategy_name,
     transcription_options,

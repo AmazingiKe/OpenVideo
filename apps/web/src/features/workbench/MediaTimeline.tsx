@@ -2,6 +2,7 @@ import { Timeline, type TimelineEditor } from "@xzdarcy/react-timeline-editor";
 import "@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css";
 import {
   Captions,
+  Crosshair,
   Flag,
   LockKeyhole,
   ScanSearch,
@@ -20,6 +21,16 @@ import {
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuGroup,
@@ -29,9 +40,18 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { format_marker_importance } from "@/shared/marker_labels";
 import type {
   AnalysisStrategy,
+  EventAnalysis,
+  FocusSelection,
   MarkerImportance,
   MediaMarker,
   MediaMarkerUpdate,
@@ -39,6 +59,7 @@ import type {
   Transcript,
 } from "@/shared/types";
 import { TimelineRulerCanvas } from "./TimelineRulerCanvas";
+import { EventAnalysisCard } from "./EventAnalysisCard";
 import { MediaTimelineMarkerEditor } from "./MediaTimelineMarkerEditor";
 import { MediaTimelineActionContent } from "./MediaTimelineActionContent";
 import { MediaTimelineToolbar } from "./MediaTimelineToolbar";
@@ -65,6 +86,7 @@ import { use_media_timeline_viewport } from "./use_media_timeline_viewport";
 const TIMELINE_SCALE_SECONDS = 1;
 const TIMELINE_SCALE_SPLIT_COUNT = 1;
 const EMPTY_MARKERS: MediaMarker[] = [];
+const EMPTY_EVENT_ANALYSES: EventAnalysis[] = [];
 const EMPTY_TIMELINE_EFFECTS: TimelineEditor["effects"] = {};
 const MARKER_IMPORTANCE_VALUES: MarkerImportance[] = [0, 1, 2, 3, 4, 5];
 
@@ -91,7 +113,7 @@ const TIMELINE_TRACK_PRESENTATIONS: TimelineTrackPresentation[] = [
   {
     id: TIMELINE_TRACK_IDS.event,
     icon: ScanSearch,
-    name: "分析事件",
+    name: "全片分析",
     state: "只读",
   },
 ];
@@ -107,6 +129,9 @@ type MediaTimelineProps = {
   segments: MediaSegment[];
   markers: MediaMarker[];
   candidate_markers?: MediaMarker[];
+  focus_selection?: FocusSelection | null;
+  event_analyses?: EventAnalysis[];
+  selected_marker_ids?: Set<string>;
   analysis_strategy: AnalysisStrategy;
   marker_error: string | null;
   on_scrub: (seconds: number) => void;
@@ -124,6 +149,11 @@ type MediaTimelineProps = {
   ) => Promise<void>;
   on_delete_marker: (marker_id: string) => Promise<void>;
   on_update_transcript: (segment_index: number, text: string) => Promise<void>;
+  on_selected_marker_ids_change?: (marker_ids: Set<string>) => void;
+  on_set_focus_in?: (seconds: number) => void;
+  on_set_focus_out?: (seconds: number) => void;
+  on_clear_focus?: () => void;
+  on_delete_event_analysis?: (event_analysis_id: string) => Promise<void>;
 };
 
 export function MediaTimeline({
@@ -137,6 +167,9 @@ export function MediaTimeline({
   segments,
   markers,
   candidate_markers = EMPTY_MARKERS,
+  focus_selection = null,
+  event_analyses = EMPTY_EVENT_ANALYSES,
+  selected_marker_ids,
   analysis_strategy,
   marker_error,
   on_scrub,
@@ -148,6 +181,11 @@ export function MediaTimeline({
   on_update_marker,
   on_delete_marker,
   on_update_transcript,
+  on_selected_marker_ids_change,
+  on_set_focus_in,
+  on_set_focus_out,
+  on_clear_focus,
+  on_delete_event_analysis,
 }: MediaTimelineProps) {
   const [selected_marker_id, set_selected_marker_id] = useState<string | null>(
     null,
@@ -157,6 +195,11 @@ export function MediaTimeline({
   );
   const [interaction_revision, set_interaction_revision] = useState(0);
   const [interaction_error, set_interaction_error] = useState<string | null>(
+    null,
+  );
+  const [selected_event_analysis_ids, set_selected_event_analysis_ids] =
+    useState<string[]>([]);
+  const [delete_analysis, set_delete_analysis] = useState<EventAnalysis | null>(
     null,
   );
   const ruler_pointer_id_ref = useRef<number | null>(null);
@@ -244,6 +287,9 @@ export function MediaTimeline({
         analysis_strategy,
         duration,
         selected_marker_id,
+        selected_marker_ids,
+        focus_selection,
+        event_analyses,
       }),
     // 第三方编辑器会修改 action；保存失败时必须用新对象覆盖其本地变更。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -251,10 +297,13 @@ export function MediaTimeline({
       analysis_strategy,
       candidate_markers,
       duration,
+      event_analyses,
+      focus_selection,
       interaction_revision,
       markers,
       segments,
       selected_marker_id,
+      selected_marker_ids,
       transcript_segments,
     ],
   );
@@ -267,11 +316,38 @@ export function MediaTimeline({
     (marker) => marker.marker_id === context_marker_id,
   );
   const timeline_error = interaction_error ?? transcript_error ?? marker_error;
+  const selected_event_analyses = event_analyses.filter((analysis) =>
+    selected_event_analysis_ids.includes(analysis.event_analysis_id),
+  );
+  const track_presentations = [
+    ...TIMELINE_TRACK_PRESENTATIONS,
+    ...(full_editor_data.some((row) => row.id === TIMELINE_TRACK_IDS.focus)
+      ? [
+          {
+            id: TIMELINE_TRACK_IDS.focus,
+            icon: Crosshair,
+            name: "焦点选区",
+            state: "只读" as const,
+          },
+        ]
+      : []),
+    ...full_editor_data
+      .filter((row) =>
+        row.id.startsWith(TIMELINE_TRACK_IDS.event_analysis_prefix),
+      )
+      .map((row, index) => ({
+        id: row.id,
+        icon: ScanSearch,
+        name: index === 0 ? "事件分析" : `事件分析 ${index + 1}`,
+        state: "只读" as const,
+      })),
+  ];
 
   useEffect(() => {
     set_selected_marker_id(null);
     set_context_marker_id(null);
     set_interaction_error(null);
+    set_selected_event_analysis_ids([]);
   }, [asset_id]);
 
   const add_marker_and_select = useCallback(
@@ -284,14 +360,17 @@ export function MediaTimeline({
           round_marker_time(start_seconds),
           end_seconds === null ? null : round_marker_time(end_seconds),
         );
-        if (marker) set_selected_marker_id(marker.marker_id);
+        if (marker) {
+          set_selected_marker_id(marker.marker_id);
+          on_selected_marker_ids_change?.(new Set([marker.marker_id]));
+        }
         return marker;
       } catch {
         set_interaction_error("标记添加失败，请稍后重试");
         return undefined;
       }
     },
-    [on_add_marker],
+    [on_add_marker, on_selected_marker_ids_change],
   );
 
   useEffect(() => {
@@ -301,6 +380,24 @@ export function MediaTimeline({
         event.preventDefault();
         void add_marker_and_select(bounded_time);
         return;
+      }
+      if (
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey
+      ) {
+        const key = event.key.toLowerCase();
+        if (key === "i") {
+          event.preventDefault();
+          on_set_focus_in?.(bounded_time);
+          return;
+        }
+        if (key === "o") {
+          event.preventDefault();
+          on_set_focus_out?.(bounded_time);
+          return;
+        }
       }
       if (
         selected_marker_id === null ||
@@ -324,20 +421,35 @@ export function MediaTimeline({
     add_marker_and_select,
     bounded_time,
     on_update_marker,
+    on_set_focus_in,
+    on_set_focus_out,
     selected_marker_id,
   ]);
 
-  function select_action(action: TimelineAction) {
+  function select_action(action: TimelineAction, toggle_selection = false) {
     const media_action = action as MediaTimelineAction;
     const { data } = media_action;
     set_interaction_error(null);
     if (data.kind === "marker" && data.source_id) {
       set_selected_marker_id(data.source_id);
+      const next_selection = toggle_selection
+        ? toggle_marker_selection(
+            selected_marker_ids ?? new Set<string>(),
+            data.source_id,
+          )
+        : new Set([data.source_id]);
+      on_selected_marker_ids_change?.(next_selection);
       on_seek(data.marker_anchor_seconds ?? media_action.start);
       cancel_transcript_edit();
       return;
     }
+    if (data.kind === "event_analysis" && data.event_analysis_ids) {
+      set_selected_event_analysis_ids(data.event_analysis_ids);
+      on_seek(media_action.start);
+      return;
+    }
     set_selected_marker_id(null);
+    on_selected_marker_ids_change?.(new Set());
     on_seek(media_action.start);
     if (data.kind === "transcript" && data.source_index !== undefined) {
       on_selected_transcript_indices_change([data.source_index]);
@@ -350,6 +462,7 @@ export function MediaTimeline({
   ) {
     const data = (action as MediaTimelineAction).data;
     if (data.kind === "marker" && data.source_id) {
+      on_selected_marker_ids_change?.(new Set([data.source_id]));
       edit_marker(data.source_id, pointer_position);
       return;
     }
@@ -370,6 +483,7 @@ export function MediaTimeline({
     }
     set_context_marker_id(data.source_id);
     set_selected_marker_id(data.source_id);
+    on_selected_marker_ids_change?.(new Set([data.source_id]));
     on_seek(data.marker_anchor_seconds ?? action.start);
   }
 
@@ -431,6 +545,10 @@ export function MediaTimeline({
         on_playback_rate_change={on_playback_rate_change}
         on_add_marker={(seconds) => void add_marker_and_select(seconds)}
         on_zoom_change={zoom_to}
+        on_set_focus_in={(seconds) => on_set_focus_in?.(seconds)}
+        on_set_focus_out={(seconds) => on_set_focus_out?.(seconds)}
+        on_clear_focus={() => on_clear_focus?.()}
+        has_focus_selection={focus_selection !== null}
       />
 
       <MediaTimelineTranscriptEditor
@@ -460,7 +578,7 @@ export function MediaTimeline({
       <div className="media_timeline_editor_shell">
         <aside className="media_timeline_track_labels" aria-label="时间线轨道">
           <div className="media_timeline_track_labels_header">轨道</div>
-          {TIMELINE_TRACK_PRESENTATIONS.map((track) => {
+          {track_presentations.map((track) => {
             const TrackIcon = track.icon;
             return (
               <div
@@ -545,7 +663,7 @@ export function MediaTimeline({
                 }}
                 onClickActionOnly={(event, { action }) => {
                   event.stopPropagation();
-                  select_action(action);
+                  select_action(action, event.ctrlKey || event.metaKey);
                 }}
                 onDoubleClickAction={(event, { action }) => {
                   event.stopPropagation();
@@ -608,6 +726,68 @@ export function MediaTimeline({
           <AlertDescription>{timeline_error}</AlertDescription>
         </Alert>
       ) : null}
+      <Sheet
+        open={selected_event_analysis_ids.length > 0}
+        onOpenChange={(open) => {
+          if (!open) set_selected_event_analysis_ids([]);
+        }}
+      >
+        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>事件分析结果</SheetTitle>
+            <SheetDescription>
+              同一目标的历史结果会一起展示，过期结果仍可追溯。
+            </SheetDescription>
+          </SheetHeader>
+          <div className="grid gap-3 px-4 pb-4">
+            {selected_event_analyses.map((analysis) => (
+              <EventAnalysisCard
+                key={analysis.event_analysis_id}
+                analysis={analysis}
+                on_seek={on_seek}
+                on_delete={set_delete_analysis}
+              />
+            ))}
+          </div>
+        </SheetContent>
+      </Sheet>
+      <AlertDialog
+        open={delete_analysis !== null}
+        onOpenChange={(open) => {
+          if (!open) set_delete_analysis(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除事件分析？</AlertDialogTitle>
+            <AlertDialogDescription>
+              结果会从资料库中移除，此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!delete_analysis || !on_delete_event_analysis) return;
+                void on_delete_event_analysis(delete_analysis.event_analysis_id)
+                  .then(() => {
+                    set_selected_event_analysis_ids((current) =>
+                      current.filter(
+                        (id) => id !== delete_analysis.event_analysis_id,
+                      ),
+                    );
+                    set_delete_analysis(null);
+                  })
+                  .catch(() =>
+                    set_interaction_error("事件分析删除失败，请稍后重试"),
+                  );
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 
@@ -693,7 +873,17 @@ function is_text_editing_target(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
     target.closest(
-      "input, textarea, [contenteditable]:not([contenteditable='false'])",
+      "input, textarea, [role='combobox'], [contenteditable]:not([contenteditable='false'])",
     ) !== null
   );
+}
+
+function toggle_marker_selection(
+  current: Set<string>,
+  marker_id: string,
+): Set<string> {
+  const next = new Set(current);
+  if (next.has(marker_id)) next.delete(marker_id);
+  else next.add(marker_id);
+  return next;
 }

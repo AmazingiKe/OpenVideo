@@ -152,7 +152,12 @@ const meta = {
     analysis_strategies: ANALYSIS_STRATEGIES,
     analysis_strategy: DEFAULT_ANALYSIS_STRATEGY,
     set_analysis_strategy: () => undefined,
+    focus_selection: null,
+    event_analysis_job: null,
+    selected_marker_ids: new Set<string>(),
+    set_selected_marker_ids: () => undefined,
     on_start_analysis: () => undefined,
+    on_start_event_analysis: () => undefined,
     analysis_proposal: null,
     on_resolve_analysis: () => undefined,
     selected_transcript_indices: [],
@@ -215,7 +220,7 @@ export const CustomStrategy: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: "高级设置" }));
-    const slider = canvas.getByRole("slider", { name: "核心概念权重" });
+    const slider = canvas.getByRole("slider", { name: "标记优先级" });
     slider.focus();
     await userEvent.keyboard("{ArrowLeft}");
     await expect(

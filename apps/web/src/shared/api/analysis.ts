@@ -1,7 +1,6 @@
 import { DEFAULT_ANALYSIS_STRATEGY } from "../analysis";
 import type {
   AnalysisJob,
-  AnalysisMode,
   AnalysisStrategy,
   AnalysisStrategyPresetDescriptor,
   MediaSegment,
@@ -12,8 +11,6 @@ import { request_json } from "./client";
 
 export function analyze_asset(
   asset_id: string,
-  mode: AnalysisMode,
-  marker_ids: string[],
   ai_model_id: string | null,
   strategy: AnalysisStrategy = DEFAULT_ANALYSIS_STRATEGY,
   signal?: AbortSignal,
@@ -24,8 +21,7 @@ export function analyze_asset(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        mode,
-        marker_ids,
+        mode: "full",
         ai_model_id,
         strategy,
         force: true,

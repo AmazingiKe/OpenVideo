@@ -1,4 +1,14 @@
-import { Flag, Minus, Pause, Play, Plus, RotateCcw } from "lucide-react";
+import {
+  Eraser,
+  Flag,
+  LogIn,
+  LogOut,
+  Minus,
+  Pause,
+  Play,
+  Plus,
+  RotateCcw,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +39,10 @@ type MediaTimelineToolbarProps = {
   on_toggle_playback: () => void;
   on_playback_rate_change: (rate: number) => void;
   on_add_marker: (seconds: number) => void;
+  on_set_focus_in: (seconds: number) => void;
+  on_set_focus_out: (seconds: number) => void;
+  on_clear_focus: () => void;
+  has_focus_selection: boolean;
   on_zoom_change: (zoom_pixels_per_second: number) => void;
 };
 
@@ -41,6 +55,10 @@ export function MediaTimelineToolbar({
   on_toggle_playback,
   on_playback_rate_change,
   on_add_marker,
+  on_set_focus_in,
+  on_set_focus_out,
+  on_clear_focus,
+  has_focus_selection,
   on_zoom_change,
 }: MediaTimelineToolbarProps) {
   const bounded_time = current_time;
@@ -93,6 +111,34 @@ export function MediaTimelineToolbar({
         >
           <Flag data-icon="inline-start" aria-hidden="true" />
           <span className="media_timeline_add_label">添加标记</span>
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title="设置 In（I）"
+          onClick={() => on_set_focus_in(bounded_time)}
+        >
+          <LogIn data-icon="inline-start" aria-hidden="true" /> In
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title="设置 Out（O）"
+          onClick={() => on_set_focus_out(bounded_time)}
+        >
+          <LogOut data-icon="inline-start" aria-hidden="true" /> Out
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          disabled={!has_focus_selection}
+          onClick={on_clear_focus}
+          aria-label="清除 In / Out 焦点选区"
+        >
+          <Eraser aria-hidden="true" />
         </Button>
       </div>
       <div className="media_timeline_zoom" aria-label="时间线缩放">

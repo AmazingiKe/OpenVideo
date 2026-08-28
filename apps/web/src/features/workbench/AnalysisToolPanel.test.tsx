@@ -7,7 +7,7 @@ import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import {
   DEFAULT_MODEL_CAPABILITY_OVERRIDES,
   unknown_model_profile,
-  type AnalysisMode,
+  type AnalysisStrategy,
   type AnalysisToolSection,
   type AiModelSummary,
   type MediaAsset,
@@ -26,7 +26,7 @@ const MARKERS: MediaMarker[] = [
     marker_id: "marker-0123456789abcdef0123456789abcdef",
     asset_id: ASSET_ID,
     start_seconds: 30,
-    end_seconds: null,
+    end_seconds: 50,
     importance: 5,
   },
   {
@@ -89,41 +89,30 @@ describe("AnalysisToolPanel", () => {
     );
   });
 
-  it("lets the user analyze only selected markers", () => {
+  it("keeps full analysis and event analysis as separate workflows", () => {
     const start_analysis = vi.fn();
     render_panel(["analysis"], { start_analysis });
 
-    fireEvent.click(screen.getByRole("radio", { name: "标记" }));
-    const marker_options = screen.getAllByRole("checkbox");
-    expect(marker_options).toHaveLength(2);
-    expect(
-      screen.getByRole("button", { name: "按课程笔记分析 2 个标记" }),
-    ).toBeEnabled();
-
-    fireEvent.click(marker_options[0]);
-    fireEvent.click(
-      screen.getByRole("button", { name: "按课程笔记分析 1 个标记" }),
-    );
-
+    fireEvent.click(screen.getByRole("button", { name: "按课程笔记分析全片" }));
     expect(start_analysis).toHaveBeenCalledWith(
-      "markers",
-      ["marker-1123456789abcdef0123456789abcdef"],
       null,
       expect.objectContaining({ preset: "course_notes" }),
     );
+
+    expect(screen.getByRole("tab", { name: "事件分析" })).toBeInTheDocument();
   });
 
-  it("adjusts marker priority without opening advanced settings", () => {
+  it("keeps marker priority in advanced settings", () => {
     render_panel(["analysis"]);
 
+    expect(
+      screen.queryByRole("slider", { name: "标记优先级" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     const marker_priority = screen.getByRole("slider", {
       name: "标记优先级",
     });
     expect(marker_priority).toHaveAttribute("aria-valuenow", "100");
-
-    fireEvent.click(screen.getByRole("radio", { name: "较高" }));
-    expect(marker_priority).toHaveAttribute("aria-valuenow", "75");
-    expect(screen.getByText("较高 · 75")).toBeInTheDocument();
   });
 
   it("toggles one section normally and all sections with Shift", () => {
@@ -144,22 +133,15 @@ describe("AnalysisToolPanel", () => {
     ]);
   });
 
-  it("edits the default marker ranges independently in advanced settings", () => {
+  it("offers a focused advanced setting without changing event targets", () => {
     render_panel(["analysis"]);
 
     fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
-    const before_slider = screen.getByRole("slider", {
-      name: "标记前范围秒数",
+    const marker_weight = screen.getByRole("slider", {
+      name: "标记优先级",
     });
-    const after_slider = screen.getByRole("slider", {
-      name: "标记后范围秒数",
-    });
-    expect(before_slider).toHaveAttribute("aria-valuenow", "10");
-    expect(after_slider).toHaveAttribute("aria-valuenow", "20");
-
-    fireEvent.keyDown(before_slider, { key: "ArrowRight" });
-    expect(before_slider).toHaveAttribute("aria-valuenow", "15");
-    expect(after_slider).toHaveAttribute("aria-valuenow", "20");
+    fireEvent.keyDown(marker_weight, { key: "ArrowLeft" });
+    expect(marker_weight).toHaveAttribute("aria-valuenow", "95");
   });
 
   it("collapses all sections with Shift plus keyboard activation", () => {
@@ -197,7 +179,12 @@ describe("AnalysisToolPanel", () => {
         ai_models={AI_MODELS}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         set_analysis_strategy={vi.fn()}
+        focus_selection={null}
+        event_analysis_job={null}
+        selected_marker_ids={new Set()}
+        set_selected_marker_ids={vi.fn()}
         on_start_analysis={vi.fn()}
+        on_start_event_analysis={vi.fn()}
         analysis_proposal={null}
         on_resolve_analysis={vi.fn()}
         selected_transcript_indices={[]}
@@ -274,7 +261,10 @@ describe("AnalysisToolPanel", () => {
 function render_panel(
   open_sections: AnalysisToolSection[],
   options: {
-    start_analysis?: (mode: AnalysisMode, marker_ids: string[]) => void;
+    start_analysis?: (
+      ai_model_id: string | null,
+      strategy: AnalysisStrategy,
+    ) => void;
     start_transcription?: (options: TranscriptionOptions) => void;
     change_sections?: (sections: AnalysisToolSection[]) => void;
     selected_transcript_indices?: number[];
@@ -285,6 +275,9 @@ function render_panel(
   function AnalysisToolPanelHarness() {
     const [analysis_strategy, set_analysis_strategy] = useState(
       structuredClone(DEFAULT_ANALYSIS_STRATEGY),
+    );
+    const [selected_marker_ids, set_selected_marker_ids] = useState(
+      new Set(MARKERS.map((marker) => marker.marker_id)),
     );
     return (
       <AnalysisToolPanel
@@ -302,7 +295,12 @@ function render_panel(
         ai_models={AI_MODELS}
         analysis_strategy={analysis_strategy}
         set_analysis_strategy={set_analysis_strategy}
+        focus_selection={null}
+        event_analysis_job={null}
+        selected_marker_ids={selected_marker_ids}
+        set_selected_marker_ids={set_selected_marker_ids}
         on_start_analysis={options.start_analysis ?? vi.fn()}
+        on_start_event_analysis={vi.fn()}
         analysis_proposal={null}
         on_resolve_analysis={vi.fn()}
         selected_transcript_indices={options.selected_transcript_indices ?? []}

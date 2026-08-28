@@ -36,7 +36,8 @@ import { format_duration } from "@/shared/format";
 import { transcription_runtime_profile } from "@/shared/transcription";
 import {
   type AnalysisJob,
-  type AnalysisMode,
+  type EventAnalysisJob,
+  type FocusSelection,
   type AnalysisStrategy,
   type AnalysisStrategyPresetDescriptor,
   type AnalysisToolSection,
@@ -78,12 +79,23 @@ type AnalysisToolPanelProps = {
   analysis_strategies?: AnalysisStrategyPresetDescriptor[];
   analysis_strategy: AnalysisStrategy;
   set_analysis_strategy: Dispatch<SetStateAction<AnalysisStrategy>>;
+  focus_selection: FocusSelection | null;
+  event_analysis_job: EventAnalysisJob | null;
+  selected_marker_ids: Set<string>;
+  set_selected_marker_ids: Dispatch<SetStateAction<Set<string>>>;
   on_start_analysis: (
-    mode: AnalysisMode,
-    marker_ids: string[],
     ai_model_id: string | null,
     strategy: AnalysisStrategy,
   ) => void;
+  on_start_event_analysis: (request: {
+    marker_ids: string[];
+    use_focus_selection: boolean;
+    preset_id: string;
+    preset_version: number;
+    depth: AnalysisStrategy["depth"];
+    user_input: string | null;
+    ai_model_id: string;
+  }) => void;
   analysis_proposal: AnalysisJob | null;
   on_resolve_analysis: (action: "approve" | "reject") => void;
   selected_transcript_indices: number[];
@@ -108,7 +120,12 @@ export function AnalysisToolPanel({
   analysis_strategies = [],
   analysis_strategy,
   set_analysis_strategy,
+  focus_selection,
+  event_analysis_job,
+  selected_marker_ids,
+  set_selected_marker_ids,
   on_start_analysis,
+  on_start_event_analysis,
   analysis_proposal,
   on_resolve_analysis,
   selected_transcript_indices,
@@ -120,19 +137,15 @@ export function AnalysisToolPanel({
 }: AnalysisToolPanelProps) {
   const {
     advanced_strategy_open,
-    analysis_mode,
     available_transcription_models,
     correction_scope,
     image_input_models,
     image_model_id,
     resolved_strategy_presets,
-    selected_marker_ids,
     selected_transcription_model,
     set_advanced_strategy_open,
-    set_analysis_mode,
     set_correction_scope,
     set_image_model_id,
-    set_selected_marker_ids,
     set_transcription_options,
     strategy_name,
     transcription_options,
@@ -142,7 +155,6 @@ export function AnalysisToolPanel({
     analysis_strategy,
     asset_id: asset?.asset_id ?? null,
     default_transcription,
-    markers,
     transcription_models,
   });
 
@@ -402,23 +414,25 @@ export function AnalysisToolPanel({
         </AccordionItem>
         <AnalysisConfigurationSection
           advanced_strategy_open={advanced_strategy_open}
-          analysis_mode={analysis_mode}
           analysis_proposal={analysis_proposal}
           analysis_strategy={analysis_strategy}
+          event_analysis_job={event_analysis_job}
+          focus_selection={focus_selection}
           handle_trigger_click={handle_trigger_click}
           handle_trigger_key_down={handle_trigger_key_down}
           has_transcript={has_transcript}
           image_input_models={image_input_models}
+          models={ai_models}
           image_model_id={image_model_id}
           is_analyzing={is_analyzing}
           is_transcribing={is_transcribing}
           markers={markers}
           on_resolve_analysis={on_resolve_analysis}
           on_start_analysis={on_start_analysis}
+          on_start_event_analysis={on_start_event_analysis}
           resolved_strategy_presets={resolved_strategy_presets}
           selected_marker_ids={selected_marker_ids}
           set_advanced_strategy_open={set_advanced_strategy_open}
-          set_analysis_mode={set_analysis_mode}
           set_analysis_strategy={set_analysis_strategy}
           set_image_model_id={set_image_model_id}
           set_selected_marker_ids={set_selected_marker_ids}

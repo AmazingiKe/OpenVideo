@@ -388,12 +388,11 @@ describe("api client", () => {
     );
   });
 
-  it("submits a marker-scoped analysis request", async () => {
+  it("submits a full timeline analysis request", async () => {
     const response = {
       job_id: "job-1",
       asset_id: "asset-1",
-      mode: "markers",
-      marker_ids: ["marker-1"],
+      mode: "full",
       capabilities: [],
       stage: "pending",
       progress_percent: 0,
@@ -408,17 +407,16 @@ describe("api client", () => {
         new Response(JSON.stringify(response), { status: 202 }),
       );
 
-    await expect(
-      analyze_asset("asset-1", "markers", ["marker-1"], "model-1"),
-    ).resolves.toEqual(response);
+    await expect(analyze_asset("asset-1", "model-1")).resolves.toEqual(
+      response,
+    );
     expect(fetch_mock).toHaveBeenCalledWith(
       "/api/media/assets/asset-1/analyze",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mode: "markers",
-          marker_ids: ["marker-1"],
+          mode: "full",
           ai_model_id: "model-1",
           strategy: {
             preset: "course_notes",

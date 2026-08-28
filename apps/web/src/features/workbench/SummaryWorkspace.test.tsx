@@ -15,11 +15,23 @@ import {
   list_agent_sessions,
   list_ai_models,
   list_summary_documents,
+  list_summary_presets,
+  list_summary_versions,
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
 import { ApplicationQueryProvider } from "@/app/query_cache";
-import type { MediaAsset, SummaryDocument, Transcript } from "@/shared/types";
+import type {
+  AiModelSummary,
+  MediaAsset,
+  SummaryDocument,
+  SummaryVersion,
+  Transcript,
+} from "@/shared/types";
+import {
+  DEFAULT_MODEL_CAPABILITY_OVERRIDES,
+  unknown_model_profile,
+} from "@/shared/types";
 import { SummaryWorkspace } from "./SummaryWorkspace";
 import { reorder_document_ids } from "./SummaryWorkspacePanels";
 
@@ -67,6 +79,8 @@ vi.mock("@/shared/api", async (import_original) => {
     generate_summary_documents: vi.fn(),
     list_ai_models: vi.fn(),
     list_summary_documents: vi.fn(),
+    list_summary_presets: vi.fn(),
+    list_summary_versions: vi.fn(),
     reorder_summary_children: vi.fn(),
     subscribe_summary_documents: vi.fn(),
     update_summary_document: vi.fn(),
@@ -116,6 +130,7 @@ const TRANSCRIPT: Transcript = {
 const DOCUMENT: SummaryDocument = {
   document_id: "document-01890f4c7a2b7cc298c4dc0c0c07398f",
   asset_id: ASSET.asset_id,
+  version_id: "summary-version-01890f4c7a2b7cc298c4dc0c0c07398f",
   parent_document_id: null,
   title: "课程总结",
   markdown: "# 原内容\n",
@@ -137,6 +152,33 @@ const CHILD_DOCUMENT: SummaryDocument = {
   position: 1,
 };
 
+const SUMMARY_VERSION: SummaryVersion = {
+  version_id: DOCUMENT.version_id,
+  asset_id: ASSET.asset_id,
+  preset_id: "knowledge_notes",
+  preset_version: 1,
+  user_input: null,
+  ai_model_id: "model-1",
+  detail: "standard",
+  output_language: "zh-CN",
+  context_summary: {
+    transcript_digest: "transcript",
+    marker_digest: "markers",
+    event_analysis_digest: "events",
+  },
+  relative_path: `summary/versions/${DOCUMENT.version_id}`,
+  created_at: "2026-01-01T00:00:00Z",
+};
+
+const SUMMARY_MODEL: AiModelSummary = {
+  model_id: "model-1",
+  name: "总结模型",
+  litellm_model: "openai/test-model",
+  input_modalities: ["text"],
+  capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
+  profile: unknown_model_profile("openai", "test-model"),
+};
+
 describe("SummaryWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -149,7 +191,18 @@ describe("SummaryWorkspace", () => {
         removeEventListener: vi.fn(),
       })),
     });
-    vi.mocked(list_ai_models).mockResolvedValue([]);
+    vi.mocked(list_ai_models).mockResolvedValue([SUMMARY_MODEL]);
+    vi.mocked(list_summary_versions).mockResolvedValue([SUMMARY_VERSION]);
+    vi.mocked(list_summary_presets).mockResolvedValue([
+      {
+        preset_id: "knowledge_notes",
+        title: "知识笔记",
+        description: "整理完整知识结构。",
+        prompt: "生成知识笔记。",
+        minimum_context_tokens: 8_000,
+        version: 1,
+      },
+    ]);
     vi.mocked(list_agent_definitions).mockResolvedValue([]);
     vi.mocked(list_agent_sessions).mockResolvedValue([]);
     vi.mocked(subscribe_summary_documents).mockReturnValue(() => undefined);
@@ -157,7 +210,11 @@ describe("SummaryWorkspace", () => {
 
   it("generates the document only after explicit confirmation", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([]);
-    vi.mocked(generate_summary_documents).mockResolvedValue([DOCUMENT]);
+    vi.mocked(generate_summary_documents).mockResolvedValue({
+      version: SUMMARY_VERSION,
+      documents: [DOCUMENT],
+      context_capacity_unknown: false,
+    });
 
     render(
       <SummaryWorkspace
@@ -174,15 +231,21 @@ describe("SummaryWorkspace", () => {
         ASSET.asset_id,
         expect.objectContaining({
           detail: "standard",
-          create_subdocuments: false,
+          ai_model_id: "model-1",
+          preset_id: "knowledge_notes",
+          output_language: "zh-CN",
         }),
       ),
     );
   });
 
-  it("explains when requested subdocuments are not suitable", async () => {
+  it("reports an unknown model capacity after a successful attempt", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([]);
-    vi.mocked(generate_summary_documents).mockResolvedValue([DOCUMENT]);
+    vi.mocked(generate_summary_documents).mockResolvedValue({
+      version: SUMMARY_VERSION,
+      documents: [DOCUMENT],
+      context_capacity_unknown: true,
+    });
 
     render(
       <SummaryWorkspace
@@ -192,14 +255,11 @@ describe("SummaryWorkspace", () => {
       />,
     );
 
-    fireEvent.click(
-      await screen.findByRole("checkbox", { name: "适合时按章节拆分" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "生成主文档" }));
+    fireEvent.click(await screen.findByRole("button", { name: "生成主文档" }));
 
     expect(
-      await screen.findByRole("status", { name: "已保留单一主文档" }),
-    ).toHaveTextContent("当前内容不足以形成独立章节");
+      await screen.findByRole("status", { name: "生成提示" }),
+    ).toHaveTextContent("模型容量未知");
   });
 
   it("auto-saves markdown with the expected revision", async () => {
@@ -401,6 +461,7 @@ describe("SummaryWorkspace", () => {
     vi.mocked(create_summary_export).mockResolvedValue({
       export_id: "export-01890f4c7a2b7cc298c4dc0c0c07398f",
       relative_path: "summary_output/summary-test.zip",
+      version_id: DOCUMENT.version_id,
       file_name: "summary-test.zip",
       size_bytes: 128,
       exported_at: "2026-01-01T00:00:00+08:00",
@@ -419,7 +480,10 @@ describe("SummaryWorkspace", () => {
     expect(
       await screen.findByText(/summary_output\/summary-test\.zip/),
     ).toHaveTextContent("summary_output/summary-test.zip");
-    expect(create_summary_export).toHaveBeenCalledWith(ASSET.asset_id);
+    expect(create_summary_export).toHaveBeenCalledWith(
+      ASSET.asset_id,
+      SUMMARY_VERSION.version_id,
+    );
     expect(
       screen.queryByRole("link", { name: "导出 ZIP" }),
     ).not.toBeInTheDocument();

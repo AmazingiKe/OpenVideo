@@ -28,7 +28,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogClose,
@@ -77,6 +76,7 @@ import type {
   MediaAsset,
   SummaryDetail,
   SummaryDocument,
+  SummaryPreset,
   Transcript,
 } from "@/shared/types";
 
@@ -91,32 +91,47 @@ export type SaveStatus = "saved" | "pending" | "saving" | "failed" | "conflict";
 export function SummaryGeneration({
   asset,
   transcript,
-  segment_count,
   models,
+  presets,
   model_id,
   on_model_change,
   detail,
   on_detail_change,
-  create_subdocuments,
-  on_create_subdocuments_change,
+  preset_id,
+  on_preset_change,
+  user_input,
+  on_user_input_change,
+  output_language,
+  on_output_language_change,
   is_generating,
   on_generate,
+  compact = false,
 }: {
   asset: MediaAsset;
   transcript: Transcript | null;
-  segment_count: number;
   models: AiModelSummary[];
+  presets: SummaryPreset[];
   model_id: string | null;
   on_model_change: (model_id: string | null) => void;
   detail: SummaryDetail;
   on_detail_change: (detail: SummaryDetail) => void;
-  create_subdocuments: boolean;
-  on_create_subdocuments_change: (checked: boolean) => void;
+  preset_id: string;
+  on_preset_change: (preset_id: string) => void;
+  user_input: string;
+  on_user_input_change: (user_input: string) => void;
+  output_language: string;
+  on_output_language_change: (language: string) => void;
   is_generating: boolean;
   on_generate: () => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl items-center px-4 py-8">
+    <div
+      className={cn(
+        "mx-auto flex w-full max-w-3xl items-center",
+        compact ? "" : "h-full px-4 py-8",
+      )}
+    >
       <Card className="w-full">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -135,10 +150,28 @@ export function SummaryGeneration({
               models={models}
               value={model_id}
               on_change={on_model_change}
-              allow_without_model
               disabled={is_generating}
-              description="不选择模型时使用时间轴结果生成；选择后由模型整理知识文档。"
+              description="总结始终使用完整上下文，不会检索或静默截断。"
             />
+            <Field>
+              <FieldLabel htmlFor="summary_preset">角色预设</FieldLabel>
+              <Select value={preset_id} onValueChange={on_preset_change}>
+                <SelectTrigger id="summary_preset" className="w-full">
+                  <SelectValue placeholder="选择总结角色" />
+                </SelectTrigger>
+                <SelectContent>
+                  {presets.map((preset) => (
+                    <SelectItem key={preset.preset_id} value={preset.preset_id}>
+                      {preset.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                {presets.find((preset) => preset.preset_id === preset_id)
+                  ?.description ?? "角色决定文档组织方式。"}
+              </FieldDescription>
+            </Field>
             <Field>
               <FieldLabel htmlFor="summary_detail">文档详细度</FieldLabel>
               <Select
@@ -159,33 +192,45 @@ export function SummaryGeneration({
                 </SelectContent>
               </Select>
             </Field>
-            <Field className="flex-row items-start">
-              <Checkbox
-                id="create_subdocuments"
-                checked={create_subdocuments}
-                onCheckedChange={(checked) =>
-                  on_create_subdocuments_change(checked === true)
-                }
+            <Field>
+              <FieldLabel htmlFor="summary_language">输出语言</FieldLabel>
+              <Select
+                value={output_language}
+                onValueChange={on_output_language_change}
+              >
+                <SelectTrigger id="summary_language" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="zh-CN">简体中文</SelectItem>
+                  <SelectItem value="en">English</SelectItem>
+                  <SelectItem value="ja">日本語</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="summary_user_input">本次补充要求</FieldLabel>
+              <Textarea
+                id="summary_user_input"
+                value={user_input}
+                onChange={(event) => on_user_input_change(event.target.value)}
+                placeholder="例如：保留术语原文，并在每章末尾列出复习问题"
+                disabled={is_generating}
               />
-              <div className="flex flex-col gap-1">
-                <FieldLabel htmlFor="create_subdocuments">
-                  适合时按章节拆分
-                </FieldLabel>
-                <FieldDescription>
-                  仅在内容形成明确章节时生成；否则保留单一主文档。
-                </FieldDescription>
-              </div>
             </Field>
           </FieldGroup>
           <div className="mt-6 flex flex-wrap gap-2" aria-label="可用分析内容">
             <Badge variant="secondary">
               转写 {transcript?.segments.length ?? 0} 段
             </Badge>
-            <Badge variant="secondary">分析事件 {segment_count} 个</Badge>
+            <Badge variant="secondary">正式标记与有效事件分析</Badge>
           </div>
         </CardContent>
         <CardFooter>
-          <Button onClick={on_generate} disabled={!transcript || is_generating}>
+          <Button
+            onClick={on_generate}
+            disabled={!transcript || !model_id || !preset_id || is_generating}
+          >
             {is_generating ? (
               <Spinner data-icon="inline-start" />
             ) : (

@@ -14,6 +14,8 @@ import type {
 
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
+  EventAnalysis,
+  FocusSelection,
   MediaMarker,
   MediaMarkerUpdate,
   MediaSegment,
@@ -24,7 +26,14 @@ import { MediaTimeline } from "./MediaTimeline";
 type MockTimelineAction =
   TimelineEditor["editorData"][number]["actions"][number] & {
     data: {
-      kind: "marker" | "candidate" | "transcript" | "event";
+      kind:
+        | "marker"
+        | "candidate"
+        | "transcript"
+        | "event"
+        | "focus"
+        | "event_analysis";
+      label: string;
       source_id?: string;
       source_index?: number;
       marker_shape?: "point" | "range";
@@ -214,6 +223,8 @@ function render_timeline(options?: {
   read_playback_time?: () => number;
   transcript_segments?: TranscriptSegment[];
   analysis_segments?: MediaSegment[];
+  focus_selection?: FocusSelection;
+  event_analyses?: EventAnalysis[];
   update_marker?: (
     marker_id: string,
     update: MediaMarkerUpdate,
@@ -234,6 +245,11 @@ function render_timeline(options?: {
     delete_marker: vi.fn().mockResolvedValue(undefined),
     update_transcript: vi.fn().mockResolvedValue(undefined),
     change_selected_transcript_indices: vi.fn(),
+    change_selected_marker_ids: vi.fn(),
+    set_focus_in: vi.fn(),
+    set_focus_out: vi.fn(),
+    clear_focus: vi.fn(),
+    delete_event_analysis: vi.fn().mockResolvedValue(undefined),
   };
   const default_transcript_segments: TranscriptSegment[] = [
     {
@@ -288,6 +304,8 @@ function render_timeline(options?: {
         segments={options?.analysis_segments ?? default_analysis_segments}
         markers={markers}
         candidate_markers={options?.candidate_markers}
+        focus_selection={options?.focus_selection}
+        event_analyses={options?.event_analyses}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={null}
         on_scrub={callbacks.scrub_to}
@@ -297,6 +315,11 @@ function render_timeline(options?: {
         on_selected_transcript_indices_change={
           callbacks.change_selected_transcript_indices
         }
+        on_selected_marker_ids_change={callbacks.change_selected_marker_ids}
+        on_set_focus_in={callbacks.set_focus_in}
+        on_set_focus_out={callbacks.set_focus_out}
+        on_clear_focus={callbacks.clear_focus}
+        on_delete_event_analysis={callbacks.delete_event_analysis}
         on_add_marker={callbacks.add_marker}
         on_update_marker={callbacks.update_marker}
         on_delete_marker={callbacks.delete_marker}
@@ -362,7 +385,7 @@ describe("MediaTimeline", () => {
     expect(source_markers).toEqual(source_snapshot);
     expect(screen.getByLabelText("标记，可编辑")).toBeInTheDocument();
     expect(screen.getByLabelText("转写，只读")).toBeInTheDocument();
-    expect(screen.getByLabelText("分析事件，只读")).toBeInTheDocument();
+    expect(screen.getByLabelText("全片分析，只读")).toBeInTheDocument();
   });
 
   it("normalizes accessibility semantics only for newly added subtrees", async () => {
@@ -620,6 +643,41 @@ describe("MediaTimeline", () => {
     expect(add_marker).toHaveBeenNthCalledWith(1, 30, null);
     expect(add_marker).toHaveBeenNthCalledWith(2, 30, null);
     expect(add_marker).toHaveBeenNthCalledWith(3, 22.05, null);
+  });
+
+  it("sets focus endpoints from buttons and shortcuts without hijacking editors", () => {
+    const { set_focus_in, set_focus_out, clear_focus } = render_timeline({
+      focus_selection: {
+        selection_id: "focus-selection-0198d12345677890abcdef1234567890",
+        asset_id: ASSET_ID,
+        in_seconds: 10,
+        out_seconds: 40,
+        revision: 2,
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "In" }));
+    fireEvent.click(screen.getByRole("button", { name: "Out" }));
+    fireEvent.keyDown(window, { key: "i" });
+    fireEvent.keyDown(window, { key: "O" });
+    expect(set_focus_in).toHaveBeenCalledTimes(2);
+    expect(set_focus_out).toHaveBeenCalledTimes(2);
+    expect(action_by_kind("focus").data.label).toBe("In / Out 焦点选区");
+
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: "i" });
+    fireEvent.keyDown(input, { key: "o" });
+    expect(set_focus_in).toHaveBeenCalledTimes(2);
+    expect(set_focus_out).toHaveBeenCalledTimes(2);
+    input.remove();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "清除 In / Out 焦点选区" }),
+    );
+    expect(clear_focus).toHaveBeenCalledOnce();
   });
 
   it("selects, seeks, edits, and saves transcript actions", async () => {

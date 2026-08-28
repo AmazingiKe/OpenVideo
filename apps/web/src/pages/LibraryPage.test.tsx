@@ -8,6 +8,7 @@ import {
   list_assets,
   list_folders,
   list_summary_documents,
+  list_summary_versions,
 } from "@/shared/api";
 import type { MediaAsset, SummaryDocument } from "@/shared/types";
 
@@ -53,6 +54,7 @@ vi.mock("@/shared/api", () => ({
   list_assets: vi.fn(),
   list_folders: vi.fn(),
   list_summary_documents: vi.fn(),
+  list_summary_versions: vi.fn(),
   media_url: (path: string) => path,
   move_assets: vi.fn(),
   move_folder: vi.fn(),
@@ -64,6 +66,7 @@ describe("LibraryPage", () => {
     vi.clearAllMocks();
     vi.mocked(list_folders).mockResolvedValue([]);
     vi.mocked(list_assets).mockResolvedValue([ASSET]);
+    vi.mocked(list_summary_versions).mockResolvedValue([]);
   });
 
   it("opens the summary workspace when the cached project has documents", async () => {
@@ -139,6 +142,7 @@ function summary_document(): SummaryDocument {
   return {
     document_id: "document-019c0000000070008000000000000001",
     asset_id: ASSET_ID,
+    version_id: "summary-version-019c0000000070008000000000000001",
     parent_document_id: null,
     title: "课程总结",
     markdown: "# 总结",

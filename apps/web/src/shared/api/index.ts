@@ -2,6 +2,7 @@ export { ApiError } from "./client";
 export * from "./agents";
 export * from "./analysis";
 export * from "./downloads";
+export * from "./event_analysis";
 export * from "./health";
 export * from "./library";
 export * from "./markers";

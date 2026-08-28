@@ -43,6 +43,7 @@ const DOCUMENTS: SummaryDocument[] = [
   {
     document_id: ROOT_DOCUMENT_ID,
     asset_id: ASSET_ID,
+    version_id: "summary-version-0198dbfa12347abc8123456789abcdef",
     parent_document_id: null,
     title: "镜头语言课程笔记",
     markdown:
@@ -57,6 +58,7 @@ const DOCUMENTS: SummaryDocument[] = [
   {
     document_id: CHILD_DOCUMENT_ID,
     asset_id: ASSET_ID,
+    version_id: "summary-version-0198dbfa12347abc8123456789abcdef",
     parent_document_id: ROOT_DOCUMENT_ID,
     title: "案例拆解",
     markdown:
@@ -145,6 +147,7 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
     return Promise.resolve(
       json_response({
         export_id: "export-0198dbfa12347abc8123456789abcdef",
+        version_id: "summary-version-0198dbfa12347abc8123456789abcdef",
         relative_path:
           "summary_output/summary-20260824-143015-382-export-0198dbfa12347abc8123456789abcdef.zip",
         file_name:

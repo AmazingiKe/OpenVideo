@@ -2,6 +2,9 @@ import type {
   SummaryDetail,
   SummaryDocument,
   SummaryExportResult,
+  SummaryGenerationResult,
+  SummaryPreset,
+  SummaryVersion,
 } from "../types";
 import { api_base_url, ApiError, request_json } from "./client";
 
@@ -9,11 +12,47 @@ const SUMMARY_DOCUMENTS_EVENT = "documents";
 
 export function list_summary_documents(
   asset_id: string,
+  version_id?: string | null,
   signal?: AbortSignal,
 ): Promise<SummaryDocument[]> {
+  const query = version_id
+    ? `?version_id=${encodeURIComponent(version_id)}`
+    : "";
   return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents${query}`,
     { signal },
+  );
+}
+
+export function list_summary_presets(
+  signal?: AbortSignal,
+): Promise<SummaryPreset[]> {
+  return request_json("/api/summary-presets", { signal });
+}
+
+export function list_summary_versions(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryVersion[]> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-versions`,
+    { signal },
+  );
+}
+
+export function select_summary_version(
+  asset_id: string,
+  version_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryVersion> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-current-version`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version_id }),
+      signal,
+    },
   );
 }
 
@@ -38,13 +77,14 @@ export function subscribe_summary_documents(
 export function generate_summary_documents(
   asset_id: string,
   options: {
-    ai_model_id: string | null;
+    ai_model_id: string;
+    preset_id: string;
+    user_input: string | null;
     detail: SummaryDetail;
-    create_subdocuments: boolean;
-    subdocument_mode: "chapters";
+    output_language: string;
   },
   signal?: AbortSignal,
-): Promise<SummaryDocument[]> {
+): Promise<SummaryGenerationResult> {
   return request_json(
     `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents/generate`,
     {
@@ -119,10 +159,11 @@ export async function delete_summary_document(
 
 export function create_summary_export(
   asset_id: string,
+  version_id: string,
   signal?: AbortSignal,
 ): Promise<SummaryExportResult> {
   return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-exports`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-exports?version_id=${encodeURIComponent(version_id)}`,
     { method: "POST", signal },
   );
 }
