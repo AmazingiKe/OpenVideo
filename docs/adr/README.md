@@ -15,3 +15,4 @@
 | --- | --- | --- |
 | [0001](./0001-portable-library.md) | 采用可携带的文件夹资料库 | 已接受 |
 | [0002](./0002-model-capabilities-and-agno-runtime.md) | 采用三态模型能力解析与 Agno Agent Runtime | 已接受 |
+| [0003](./0003-marker-event-analysis-and-summary-context.md) | 分离标记事件分析与总结文档生成 | 已接受 |
