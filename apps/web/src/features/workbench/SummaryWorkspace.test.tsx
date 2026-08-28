@@ -456,6 +456,31 @@ describe("SummaryWorkspace", () => {
     expect(screen.queryByText("所见即所得")).not.toBeInTheDocument();
   });
 
+  it("stretches the desktop Agent panel to the bottom of its workspace", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    await screen.findByRole("region", { name: "Markdown 总结工作台" });
+    expect(document.querySelector('[data-slot="agent-panel"]')).toHaveClass(
+      "h-full",
+    );
+  });
+
   it("saves exports in the asset directory without browser download", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
     vi.mocked(create_summary_export).mockResolvedValue({

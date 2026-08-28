@@ -5,6 +5,8 @@ import {
   unknown_model_profile,
   type MediaAsset,
   type SummaryDocument,
+  type SummaryPreset,
+  type SummaryVersion,
   type Transcript,
 } from "@/shared/types";
 import { SummaryWorkspace } from "./SummaryWorkspace";
@@ -13,6 +15,33 @@ const ASSET_ID = "asset-0198dbf112347abc8123456789abcdef";
 const ROOT_DOCUMENT_ID = "document-0198dbf212347abc8123456789abcdef";
 const CHILD_DOCUMENT_ID = "document-0198dbf312347abc8123456789abcdef";
 const CREATED_AT = "2026-08-24T08:00:00Z";
+
+const SUMMARY_VERSION: SummaryVersion = {
+  version_id: "summary-version-0198dbfa12347abc8123456789abcdef",
+  asset_id: ASSET_ID,
+  preset_id: "knowledge_notes",
+  preset_version: 1,
+  user_input: null,
+  ai_model_id: "model-0198dbf912347abc8123456789abcdef",
+  detail: "standard",
+  output_language: "zh-CN",
+  context_summary: {
+    transcript_digest: "storybook-transcript-digest",
+    marker_digest: "storybook-marker-digest",
+    event_analysis_digest: "storybook-event-analysis-digest",
+  },
+  relative_path: "summary/versions/storybook",
+  created_at: CREATED_AT,
+};
+
+const SUMMARY_PRESET: SummaryPreset = {
+  preset_id: "knowledge_notes",
+  title: "知识笔记",
+  description: "整理课程中的概念、论证与结论。",
+  prompt: "生成结构清晰的课程知识笔记。",
+  minimum_context_tokens: 8_000,
+  version: 1,
+};
 
 const ASSET: MediaAsset = {
   asset_id: ASSET_ID,
@@ -142,6 +171,12 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
   }
   if (url.includes("/api/agent-sessions")) {
     return Promise.resolve(json_response([]));
+  }
+  if (url.includes("/api/summary-presets")) {
+    return Promise.resolve(json_response([SUMMARY_PRESET]));
+  }
+  if (url.includes("/summary-versions")) {
+    return Promise.resolve(json_response([SUMMARY_VERSION]));
   }
   if (url.includes("/summary-exports")) {
     return Promise.resolve(

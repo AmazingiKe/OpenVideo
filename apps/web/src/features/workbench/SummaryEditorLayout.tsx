@@ -142,6 +142,7 @@ export function SummaryEditorLayout({
   );
   const agent_panel = (
     <AgentPanel
+      className="h-full"
       agent_id="summary"
       asset_id={selected_asset_id}
       models={models}
