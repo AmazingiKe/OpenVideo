@@ -110,6 +110,8 @@ function TimelineStory({
 }: TimelineStoryProps) {
   const [current_time, set_current_time] = useState(initial_time);
   const [markers, set_markers] = useState(initial_markers);
+  const [selected_transcript_indices, set_selected_transcript_indices] =
+    useState<number[]>([]);
   const [is_paused, set_is_paused] = useState(true);
   const [playback_rate, set_playback_rate] = useState(1);
 
@@ -141,13 +143,15 @@ function TimelineStory({
         segments={analysis_segments}
         markers={markers}
         candidate_markers={candidate_markers}
+        selected_transcript_indices={selected_transcript_indices}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={marker_error}
         on_scrub={set_current_time}
         on_seek={set_current_time}
         on_toggle_playback={() => set_is_paused((current) => !current)}
         on_playback_rate_change={set_playback_rate}
-        on_selected_transcript_indices_change={() => undefined}
+        on_selected_transcript_indices_change={set_selected_transcript_indices}
+        on_request_transcript_correction={() => undefined}
         on_add_marker={async () => undefined}
         on_update_marker={update_marker}
         on_delete_marker={async (marker_id) =>
@@ -156,6 +160,7 @@ function TimelineStory({
           )
         }
         on_update_transcript={async () => undefined}
+        toolbar_tools={null}
       />
     </div>
   );

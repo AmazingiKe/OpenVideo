@@ -1,12 +1,11 @@
 import { type ComponentProps, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-import { TranscriptionToolPanel } from "./TranscriptionToolPanel";
-import type {
-  MediaAsset,
-  ToolPanelSection,
-  TranscriptionModelDescriptor,
-} from "@/shared/types";
+import type { MediaAsset, TranscriptionModelDescriptor } from "@/shared/types";
+import {
+  TranscriptionToolbarTools,
+  type TranscriptCorrectionScope,
+} from "./TranscriptionToolbarTools";
 
 const TRANSCRIPTION_MODELS: TranscriptionModelDescriptor[] = [
   {
@@ -20,7 +19,7 @@ const TRANSCRIPTION_MODELS: TranscriptionModelDescriptor[] = [
     repository: "dropbox-dash/faster-whisper-large-v3-turbo",
     recommended: true,
     integration_status: "available",
-    installation_status: "not_installed",
+    installation_status: "installed",
     download_job: null,
   },
 ];
@@ -61,27 +60,35 @@ function agent_fetch(input: RequestInfo | URL): Promise<Response> {
   return Promise.resolve(Response.json({}));
 }
 
-function ControlledTranscriptionToolPanel(
-  props: ComponentProps<typeof TranscriptionToolPanel>,
+function ControlledTranscriptionToolbarTools(
+  props: ComponentProps<typeof TranscriptionToolbarTools>,
 ) {
-  const [open_sections, set_open_sections] = useState<ToolPanelSection[]>(
-    props.open_sections,
+  const [correction_open, set_correction_open] = useState(
+    props.correction_open,
   );
+  const [correction_scope, set_correction_scope] =
+    useState<TranscriptCorrectionScope>(props.correction_scope);
   return (
-    <TranscriptionToolPanel
-      {...props}
-      open_sections={open_sections}
-      on_open_sections_change={set_open_sections}
-    />
+    <div className="media_timeline_toolbar">
+      <div className="media_timeline_transport">
+        <TranscriptionToolbarTools
+          {...props}
+          correction_open={correction_open}
+          correction_scope={correction_scope}
+          on_correction_open_change={set_correction_open}
+          on_correction_scope_change={set_correction_scope}
+        />
+      </div>
+    </div>
   );
 }
 
 const meta = {
-  title: "Workbench/TranscriptionToolPanel",
-  component: TranscriptionToolPanel,
+  title: "Workbench/TranscriptionToolbarTools",
+  component: TranscriptionToolbarTools,
   args: {
     asset: ASSET,
-    has_transcript: false,
+    has_transcript: true,
     is_transcribing: false,
     on_start_transcription: () => undefined,
     transcription_models: TRANSCRIPTION_MODELS,
@@ -96,11 +103,12 @@ const meta = {
     ai_models: [],
     selected_transcript_indices: [],
     on_transcript_changed: () => undefined,
-    open_sections: ["transcription"],
-    on_open_sections_change: () => undefined,
-    on_collapsed_change: () => undefined,
+    correction_open: false,
+    correction_scope: "all",
+    on_correction_open_change: () => undefined,
+    on_correction_scope_change: () => undefined,
   },
-  render: (args) => <ControlledTranscriptionToolPanel {...args} />,
+  render: (args) => <ControlledTranscriptionToolbarTools {...args} />,
   beforeEach() {
     const original_fetch = window.fetch;
     window.fetch = agent_fetch;
@@ -110,54 +118,34 @@ const meta = {
   },
   decorators: [
     (StoryComponent) => (
-      <div className="h-[640px] w-[320px] overflow-hidden bg-background text-foreground">
+      <div className="flex h-48 items-end bg-background text-foreground">
         <StoryComponent />
       </div>
     ),
   ],
-} satisfies Meta<typeof TranscriptionToolPanel>;
+} satisfies Meta<typeof TranscriptionToolbarTools>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
 
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark h-full bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};
-
-export const TranscriptReady: Story = {
-  args: {
-    has_transcript: true,
-    open_sections: ["transcription", "transcript_correction"],
-  },
-};
-
 export const Transcribing: Story = {
-  args: {
-    is_transcribing: true,
-  },
+  args: { is_transcribing: true },
 };
 
 export const CorrectionSelection: Story = {
   args: {
-    has_transcript: true,
-    selected_transcript_indices: [0],
-    open_sections: ["transcript_correction"],
+    selected_transcript_indices: [0, 1],
+    correction_open: true,
+    correction_scope: "selection",
   },
 };
 
-export const Collapsed: Story = {
-  args: { collapsed: true },
+export const Dark: Story = {
   decorators: [
     (StoryComponent) => (
-      <div className="h-[640px] w-12 overflow-hidden">
+      <div className="dark flex h-full items-end bg-background text-foreground">
         <StoryComponent />
       </div>
     ),

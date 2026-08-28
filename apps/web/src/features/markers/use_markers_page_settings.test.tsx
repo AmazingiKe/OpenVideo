@@ -37,7 +37,7 @@ describe("use_markers_page_settings", () => {
 
     act(() => {
       result.current.update_settings({ left_panel_size_percent: 28 });
-      result.current.update_settings({ tool_panel_size_percent: 24 });
+      result.current.update_settings({ left_panel_tab: "agent" });
     });
     await act(async () => vi.advanceTimersByTimeAsync(299));
     expect(update_markers_page_settings).not.toHaveBeenCalled();
@@ -48,7 +48,7 @@ describe("use_markers_page_settings", () => {
       {
         ...DEFAULT_MARKERS_PAGE_SETTINGS,
         left_panel_size_percent: 28,
-        tool_panel_size_percent: 24,
+        left_panel_tab: "agent",
       },
       expect.any(AbortSignal),
     );
@@ -78,10 +78,10 @@ describe("use_markers_page_settings", () => {
     });
     await act(async () => vi.advanceTimersByTimeAsync(0));
 
-    act(() => result.current.update_settings({ tool_panel_collapsed: true }));
+    act(() => result.current.update_settings({ left_panel_collapsed: true }));
     await act(async () => vi.advanceTimersByTimeAsync(300));
 
-    expect(result.current.settings.tool_panel_collapsed).toBe(true);
+    expect(result.current.settings.left_panel_collapsed).toBe(true);
     expect(result.current.settings_error).toBe("设置保存失败");
   });
 });

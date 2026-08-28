@@ -404,6 +404,7 @@ export function build_timeline_rows({
   duration,
   selected_marker_id,
   selected_marker_ids,
+  selected_transcript_indices,
   focus_selection = null,
   event_analyses = [],
 }: {
@@ -415,6 +416,7 @@ export function build_timeline_rows({
   duration: number;
   selected_marker_id: string | null;
   selected_marker_ids?: Set<string>;
+  selected_transcript_indices?: ReadonlySet<number>;
   focus_selection?: FocusSelection | null;
   event_analyses?: EventAnalysis[];
 }): TimelineRow[] {
@@ -466,6 +468,7 @@ export function build_timeline_rows({
           start: segment.start_seconds,
           end: segment.end_seconds,
           duration,
+          selected: selected_transcript_indices?.has(index) ?? false,
           movable: false,
           flexible: false,
           data: {

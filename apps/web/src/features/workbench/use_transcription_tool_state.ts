@@ -18,9 +18,6 @@ export function use_transcription_tool_state({
 }: TranscriptionToolStateOptions) {
   const [transcription_options, set_transcription_options] =
     useState<TranscriptionOptions | null>(default_transcription);
-  const [correction_scope, set_correction_scope] = useState<
-    "all" | "selection"
-  >("all");
   const available_transcription_models = useMemo(
     () =>
       transcription_models.filter(
@@ -46,9 +43,7 @@ export function use_transcription_tool_state({
 
   return {
     available_transcription_models,
-    correction_scope,
     selected_transcription_model,
-    set_correction_scope,
     set_transcription_options,
     transcription_options,
   };

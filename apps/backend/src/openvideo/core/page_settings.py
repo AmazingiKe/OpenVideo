@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from openvideo.configuration import migrate_configuration_file
 
@@ -14,10 +14,6 @@ LEGACY_PAGE_SETTINGS_FILE_NAME = "page_setting.json"
 PAGE_SETTINGS_FILE_NAME_TEMPLATE = "page-settings-{library_id}.json"
 PAGE_SETTINGS_VERSION = 5
 
-ToolSection = Literal[
-    "transcription",
-    "transcript_correction",
-]
 LeftPanelTab = Literal["library", "agent"]
 
 
@@ -27,18 +23,6 @@ class MarkersPageSettings(BaseModel):
     left_panel_size_percent: float = Field(default=24, ge=18, le=40)
     left_panel_collapsed: bool = False
     left_panel_tab: LeftPanelTab = "library"
-    tool_panel_size_percent: float = Field(default=16, ge=14, le=32)
-    tool_panel_collapsed: bool = False
-    open_tool_sections: list[ToolSection] = Field(
-        default_factory=lambda: ["transcription"]
-    )
-
-    @field_validator("open_tool_sections")
-    @classmethod
-    def validate_unique_sections(cls, sections: list[ToolSection]) -> list[ToolSection]:
-        if len(sections) != len(set(sections)):
-            raise ValueError("工具模块不能重复")
-        return sections
 
 
 class PageSettingsDocument(BaseModel):

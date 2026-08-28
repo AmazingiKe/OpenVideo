@@ -127,9 +127,6 @@ describe("App", () => {
       left_panel_size_percent: 24,
       left_panel_collapsed: false,
       left_panel_tab: "library",
-      tool_panel_size_percent: 16,
-      tool_panel_collapsed: false,
-      open_tool_sections: ["transcription"],
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
     vi.mocked(get_focus_selection).mockResolvedValue(null);
@@ -293,7 +290,13 @@ describe("App", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
-    expect(screen.getByText("转录工具")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "转录" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "字幕修正" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("工具面板")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "视频信息" }),
     ).not.toBeInTheDocument();

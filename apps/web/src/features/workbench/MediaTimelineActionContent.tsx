@@ -34,7 +34,8 @@ export function MediaTimelineActionContent({
       data-selected={media_action.selected || undefined}
       aria-label={timeline_action_aria_label(media_action)}
       aria-pressed={
-        media_action.data.kind === "marker"
+        media_action.data.kind === "marker" ||
+        media_action.data.kind === "transcript"
           ? Boolean(media_action.selected)
           : undefined
       }

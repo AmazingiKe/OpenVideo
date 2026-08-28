@@ -19,7 +19,6 @@ def test_missing_settings_use_markers_defaults(tmp_path: Path):
     settings = PageSettingsStore(tmp_path, LIBRARY_ID).load_markers()
 
     assert settings == MarkersPageSettings()
-    assert settings.open_tool_sections == ["transcription"]
 
 
 def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
@@ -28,9 +27,6 @@ def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
         left_panel_size_percent=30,
         left_panel_collapsed=True,
         left_panel_tab="agent",
-        tool_panel_size_percent=24,
-        tool_panel_collapsed=False,
-        open_tool_sections=["transcription", "transcript_correction"],
     )
 
     store.save_markers(expected)

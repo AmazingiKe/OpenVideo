@@ -9,6 +9,7 @@ import {
   Plus,
   RotateCcw,
 } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +45,7 @@ type MediaTimelineToolbarProps = {
   on_clear_focus: () => void;
   has_focus_selection: boolean;
   on_zoom_change: (zoom_pixels_per_second: number) => void;
+  tools: ReactNode;
 };
 
 export function MediaTimelineToolbar({
@@ -60,6 +62,7 @@ export function MediaTimelineToolbar({
   on_clear_focus,
   has_focus_selection,
   on_zoom_change,
+  tools,
 }: MediaTimelineToolbarProps) {
   const bounded_time = current_time;
   return (
@@ -112,6 +115,7 @@ export function MediaTimelineToolbar({
           <Flag data-icon="inline-start" aria-hidden="true" />
           <span className="media_timeline_add_label">添加标记</span>
         </Button>
+        {tools}
         <Button
           type="button"
           size="sm"

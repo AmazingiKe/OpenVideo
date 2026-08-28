@@ -198,15 +198,10 @@ export type AiModelTestResult = {
   profile: ModelProfile;
 };
 
-export type ToolPanelSection = "transcription" | "transcript_correction";
-
 export type MarkersPageSettings = {
   left_panel_size_percent: number;
   left_panel_collapsed: boolean;
   left_panel_tab: "library" | "agent";
-  tool_panel_size_percent: number;
-  tool_panel_collapsed: boolean;
-  open_tool_sections: ToolPanelSection[];
 };
 
 type DownloadStage =

@@ -16,7 +16,10 @@ import { MarkerAgentPanel } from "@/features/markers/MarkerAgentPanel";
 import { MarkerLeftPanel } from "@/features/markers/MarkerLeftPanel";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
-import { TranscriptionToolPanel } from "@/features/workbench/TranscriptionToolPanel";
+import {
+  TranscriptionToolbarTools,
+  type TranscriptCorrectionScope,
+} from "@/features/workbench/TranscriptionToolbarTools";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import {
@@ -76,6 +79,10 @@ export function MarkersPage() {
   const [playback_rate, set_playback_rate] = useState(1);
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
+  const [transcript_correction_open, set_transcript_correction_open] =
+    useState(false);
+  const [transcript_correction_scope, set_transcript_correction_scope] =
+    useState<TranscriptCorrectionScope>("all");
   const [page_error, set_page_error] = useState<string | null>(null);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
@@ -94,7 +101,6 @@ export function MarkersPage() {
   const panel_transition_timeout_ref = useRef<number | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
   const left_panel_ref = useRef<PanelImperativeHandle>(null);
-  const tool_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
   const is_compact_layout = use_compact_markers_layout();
   const {
@@ -130,6 +136,8 @@ export function MarkersPage() {
     set_is_paused(true);
     set_playback_rate(1);
     set_selected_transcript_indices([]);
+    set_transcript_correction_open(false);
+    set_transcript_correction_scope("all");
     set_candidate_markers([]);
     set_focus_selection(null);
     set_event_analyses([]);
@@ -248,13 +256,6 @@ export function MarkersPage() {
     }
   }
 
-  function set_tool_panel_collapsed(collapsed: boolean) {
-    animate_panel_size_change();
-    if (collapsed) tool_panel_ref.current?.collapse();
-    else tool_panel_ref.current?.resize(`${settings.tool_panel_size_percent}%`);
-    update_settings({ tool_panel_collapsed: collapsed });
-  }
-
   function set_left_panel_collapsed(collapsed: boolean) {
     animate_panel_size_change();
     if (collapsed) left_panel_ref.current?.collapse();
@@ -265,18 +266,21 @@ export function MarkersPage() {
   function save_desktop_layout(layout: Record<string, number>) {
     const left_panel_collapsed =
       left_panel_ref.current?.isCollapsed() ?? settings.left_panel_collapsed;
-    const tool_panel_collapsed = tool_panel_ref.current?.isCollapsed() ?? false;
     const patch: Parameters<typeof update_settings>[0] = {
       left_panel_collapsed,
-      tool_panel_collapsed,
     };
     if (!left_panel_collapsed && layout["left-panel"] !== undefined) {
       patch.left_panel_size_percent = layout["left-panel"];
     }
-    if (!tool_panel_collapsed && layout["tool-panel"] !== undefined) {
-      patch.tool_panel_size_percent = layout["tool-panel"];
-    }
     update_settings(patch);
+  }
+
+  function open_transcript_correction(segment_indices: number[]) {
+    set_selected_transcript_indices(segment_indices);
+    set_transcript_correction_scope(
+      segment_indices.length > 0 ? "selection" : "all",
+    );
+    set_transcript_correction_open(true);
   }
 
   const is_transcribing = selected_asset_id
@@ -325,8 +329,8 @@ export function MarkersPage() {
       on_playback_rate_change={set_playback_rate}
     />
   );
-  const tool_panel = (
-    <TranscriptionToolPanel
+  const transcription_tools = (
+    <TranscriptionToolbarTools
       asset={selected_asset}
       has_transcript={transcript !== null}
       is_transcribing={is_transcribing}
@@ -342,14 +346,10 @@ export function MarkersPage() {
       ai_models={ai_models}
       selected_transcript_indices={selected_transcript_indices}
       on_transcript_changed={() => void reload_analysis()}
-      open_sections={settings.open_tool_sections}
-      on_open_sections_change={(open_tool_sections) =>
-        update_settings({ open_tool_sections })
-      }
-      collapsed={!is_compact_layout && settings.tool_panel_collapsed}
-      on_collapsed_change={
-        is_compact_layout ? undefined : set_tool_panel_collapsed
-      }
+      correction_open={transcript_correction_open}
+      correction_scope={transcript_correction_scope}
+      on_correction_open_change={set_transcript_correction_open}
+      on_correction_scope_change={set_transcript_correction_scope}
     />
   );
 
@@ -376,10 +376,9 @@ export function MarkersPage() {
             正在恢复工作台布局
           </div>
         ) : is_compact_layout ? (
-          <div className="flex min-h-full flex-col [&>[data-slot=marker-left-panel]]:h-[32rem] [&>[data-slot=marker-left-panel]]:shrink-0 [&>[data-slot=marker-left-panel]]:border-b [&>[data-slot=transcription-tools]]:min-h-72 [&>[data-slot=transcription-tools]]:shrink-0 [&>[data-slot=transcription-tools]]:border-t [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
+          <div className="flex min-h-full flex-col [&>[data-slot=marker-left-panel]]:h-[32rem] [&>[data-slot=marker-left-panel]]:shrink-0 [&>[data-slot=marker-left-panel]]:border-b [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
             {left_panel}
             {video_workspace}
-            {tool_panel}
           </div>
         ) : (
           <ResizablePanelGroup
@@ -418,26 +417,6 @@ export function MarkersPage() {
             <ResizablePanel id="video-player" minSize="400px">
               {video_workspace}
             </ResizablePanel>
-            <ResizableHandle
-              className="hover:bg-primary"
-              withHandle
-              aria-label="调整工具面板宽度"
-            />
-            <ResizablePanel
-              id="tool-panel"
-              panelRef={tool_panel_ref}
-              defaultSize={
-                settings.tool_panel_collapsed
-                  ? `${PANEL_RAIL_WIDTH_PX}px`
-                  : `${settings.tool_panel_size_percent}%`
-              }
-              minSize="14%"
-              maxSize="32%"
-              collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
-              collapsible
-            >
-              {tool_panel}
-            </ResizablePanel>
           </ResizablePanelGroup>
         )}
       </div>
@@ -470,6 +449,7 @@ export function MarkersPage() {
           focus_selection={focus_selection}
           event_analyses={visible_event_analyses}
           selected_marker_ids={selected_marker_ids}
+          selected_transcript_indices={selected_transcript_indices}
           analysis_strategy={analysis_strategy}
           marker_error={marker_error}
           on_scrub={preview_player}
@@ -481,6 +461,7 @@ export function MarkersPage() {
           on_selected_transcript_indices_change={
             set_selected_transcript_indices
           }
+          on_request_transcript_correction={open_transcript_correction}
           on_selected_marker_ids_change={set_selected_marker_ids}
           on_set_focus_in={(seconds) =>
             void set_focus_endpoint("in_seconds", seconds)
@@ -494,6 +475,7 @@ export function MarkersPage() {
           on_update_marker={update_marker}
           on_delete_marker={remove_marker}
           on_update_transcript={save_transcript_segment}
+          toolbar_tools={transcription_tools}
         />
       </Suspense>
       {error ? <FloatingError message={error} /> : null}

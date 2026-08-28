@@ -5,7 +5,9 @@ import {
   Crosshair,
   Flag,
   LockKeyhole,
+  Pencil,
   ScanSearch,
+  WandSparkles,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -17,6 +19,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -34,6 +37,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuGroup,
+  ContextMenuItem,
   ContextMenuLabel,
   ContextMenuRadioGroup,
   ContextMenuRadioItem,
@@ -132,6 +136,7 @@ type MediaTimelineProps = {
   focus_selection?: FocusSelection | null;
   event_analyses?: EventAnalysis[];
   selected_marker_ids?: Set<string>;
+  selected_transcript_indices: number[];
   analysis_strategy: AnalysisStrategy;
   marker_error: string | null;
   on_scrub: (seconds: number) => void;
@@ -139,6 +144,7 @@ type MediaTimelineProps = {
   on_toggle_playback: () => void;
   on_playback_rate_change: (rate: number) => void;
   on_selected_transcript_indices_change: (segment_indices: number[]) => void;
+  on_request_transcript_correction: (segment_indices: number[]) => void;
   on_add_marker: (
     start_seconds: number,
     end_seconds?: number | null,
@@ -154,6 +160,7 @@ type MediaTimelineProps = {
   on_set_focus_out?: (seconds: number) => void;
   on_clear_focus?: () => void;
   on_delete_event_analysis?: (event_analysis_id: string) => Promise<void>;
+  toolbar_tools: ReactNode;
 };
 
 export function MediaTimeline({
@@ -170,6 +177,7 @@ export function MediaTimeline({
   focus_selection = null,
   event_analyses = EMPTY_EVENT_ANALYSES,
   selected_marker_ids,
+  selected_transcript_indices,
   analysis_strategy,
   marker_error,
   on_scrub,
@@ -177,6 +185,7 @@ export function MediaTimeline({
   on_toggle_playback,
   on_playback_rate_change,
   on_selected_transcript_indices_change,
+  on_request_transcript_correction,
   on_add_marker,
   on_update_marker,
   on_delete_marker,
@@ -186,6 +195,7 @@ export function MediaTimeline({
   on_set_focus_out,
   on_clear_focus,
   on_delete_event_analysis,
+  toolbar_tools,
 }: MediaTimelineProps) {
   const [selected_marker_id, set_selected_marker_id] = useState<string | null>(
     null,
@@ -193,6 +203,9 @@ export function MediaTimeline({
   const [context_marker_id, set_context_marker_id] = useState<string | null>(
     null,
   );
+  const [context_transcript_indices, set_context_transcript_indices] = useState<
+    number[]
+  >([]);
   const [interaction_revision, set_interaction_revision] = useState(0);
   const [interaction_error, set_interaction_error] = useState<string | null>(
     null,
@@ -207,6 +220,10 @@ export function MediaTimeline({
   const transcript_segments = useMemo(
     () => transcript?.segments ?? [],
     [transcript],
+  );
+  const selected_transcript_index_set = useMemo(
+    () => new Set(selected_transcript_indices),
+    [selected_transcript_indices],
   );
   const {
     cancel_marker_edit,
@@ -288,6 +305,7 @@ export function MediaTimeline({
         duration,
         selected_marker_id,
         selected_marker_ids,
+        selected_transcript_indices: selected_transcript_index_set,
         focus_selection,
         event_analyses,
       }),
@@ -304,6 +322,7 @@ export function MediaTimeline({
       segments,
       selected_marker_id,
       selected_marker_ids,
+      selected_transcript_index_set,
       transcript_segments,
     ],
   );
@@ -346,6 +365,7 @@ export function MediaTimeline({
   useEffect(() => {
     set_selected_marker_id(null);
     set_context_marker_id(null);
+    set_context_transcript_indices([]);
     set_interaction_error(null);
     set_selected_event_analysis_ids([]);
   }, [asset_id]);
@@ -439,12 +459,14 @@ export function MediaTimeline({
           )
         : new Set([data.source_id]);
       on_selected_marker_ids_change?.(next_selection);
+      on_selected_transcript_indices_change([]);
       on_seek(data.marker_anchor_seconds ?? media_action.start);
       cancel_transcript_edit();
       return;
     }
     if (data.kind === "event_analysis" && data.event_analysis_ids) {
       set_selected_event_analysis_ids(data.event_analysis_ids);
+      on_selected_transcript_indices_change([]);
       on_seek(media_action.start);
       return;
     }
@@ -452,8 +474,16 @@ export function MediaTimeline({
     on_selected_marker_ids_change?.(new Set());
     on_seek(media_action.start);
     if (data.kind === "transcript" && data.source_index !== undefined) {
-      on_selected_transcript_indices_change([data.source_index]);
+      const next_selection = toggle_selection
+        ? toggle_transcript_selection(
+            selected_transcript_indices,
+            data.source_index,
+          )
+        : [data.source_index];
+      on_selected_transcript_indices_change(next_selection);
+      return;
     }
+    on_selected_transcript_indices_change([]);
   }
 
   function open_action_editor(
@@ -477,14 +507,30 @@ export function MediaTimeline({
     action: TimelineAction,
   ) {
     const data = (action as MediaTimelineAction).data;
-    if (data.kind !== "marker" || !data.source_id) {
-      event.preventDefault();
+    set_context_marker_id(null);
+    set_context_transcript_indices([]);
+    if (data.kind === "marker" && data.source_id) {
+      set_context_marker_id(data.source_id);
+      set_selected_marker_id(data.source_id);
+      on_selected_marker_ids_change?.(new Set([data.source_id]));
+      on_selected_transcript_indices_change([]);
+      on_seek(data.marker_anchor_seconds ?? action.start);
       return;
     }
-    set_context_marker_id(data.source_id);
-    set_selected_marker_id(data.source_id);
-    on_selected_marker_ids_change?.(new Set([data.source_id]));
-    on_seek(data.marker_anchor_seconds ?? action.start);
+    if (data.kind === "transcript" && data.source_index !== undefined) {
+      const context_selection = selected_transcript_index_set.has(
+        data.source_index,
+      )
+        ? selected_transcript_indices
+        : [data.source_index];
+      set_context_transcript_indices(context_selection);
+      set_selected_marker_id(null);
+      on_selected_marker_ids_change?.(new Set());
+      on_selected_transcript_indices_change(context_selection);
+      on_seek(action.start);
+      return;
+    }
+    event.preventDefault();
   }
 
   async function persist_marker_bounds(
@@ -549,6 +595,7 @@ export function MediaTimeline({
         on_set_focus_out={(seconds) => on_set_focus_out?.(seconds)}
         on_clear_focus={() => on_clear_focus?.()}
         has_focus_selection={focus_selection !== null}
+        tools={toolbar_tools}
       />
 
       <MediaTimelineTranscriptEditor
@@ -715,6 +762,38 @@ export function MediaTimeline({
                     </ContextMenuRadioItem>
                   ))}
                 </ContextMenuRadioGroup>
+              </ContextMenuGroup>
+            </ContextMenuContent>
+          ) : context_transcript_indices.length > 0 ? (
+            <ContextMenuContent className="min-w-48">
+              <ContextMenuLabel>
+                {context_transcript_indices.length === 1
+                  ? "字幕"
+                  : `已选择 ${context_transcript_indices.length} 条字幕`}
+              </ContextMenuLabel>
+              <ContextMenuGroup>
+                <ContextMenuItem
+                  onSelect={() =>
+                    on_request_transcript_correction(context_transcript_indices)
+                  }
+                >
+                  <WandSparkles aria-hidden="true" />
+                  修正字幕
+                </ContextMenuItem>
+                {context_transcript_indices.length === 1 ? (
+                  <ContextMenuItem
+                    onSelect={() => {
+                      const transcript_index = context_transcript_indices[0];
+                      if (transcript_index !== undefined) {
+                        edit_transcript(transcript_index);
+                      }
+                    }}
+                  >
+                    <Pencil aria-hidden="true" />
+                    编辑文字
+                    <ContextMenuShortcut>Enter</ContextMenuShortcut>
+                  </ContextMenuItem>
+                ) : null}
               </ContextMenuGroup>
             </ContextMenuContent>
           ) : null}
@@ -886,4 +965,13 @@ function toggle_marker_selection(
   if (next.has(marker_id)) next.delete(marker_id);
   else next.add(marker_id);
   return next;
+}
+
+function toggle_transcript_selection(
+  current: number[],
+  transcript_index: number,
+): number[] {
+  return current.includes(transcript_index)
+    ? current.filter((index) => index !== transcript_index)
+    : [...current, transcript_index].sort((left, right) => left - right);
 }

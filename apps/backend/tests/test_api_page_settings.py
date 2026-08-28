@@ -29,18 +29,12 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
             "left_panel_size_percent": 24.0,
             "left_panel_collapsed": False,
             "left_panel_tab": "library",
-            "tool_panel_size_percent": 16.0,
-            "tool_panel_collapsed": False,
-            "open_tool_sections": ["transcription"],
         }
 
         payload = {
             "left_panel_size_percent": 28,
             "left_panel_collapsed": True,
             "left_panel_tab": "agent",
-            "tool_panel_size_percent": 26,
-            "tool_panel_collapsed": False,
-            "open_tool_sections": ["transcription", "transcript_correction"],
         }
         saved = client.put("/api/page-settings/markers", json=payload)
         assert saved.status_code == 200
@@ -50,24 +44,11 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
             "/api/page-settings/markers",
             json={**payload, "left_panel_size_percent": 17},
         )
-        invalid_section = client.put(
-            "/api/page-settings/markers",
-            json={**payload, "open_tool_sections": ["unknown"]},
-        )
-        duplicate_section = client.put(
-            "/api/page-settings/markers",
-            json={
-                **payload,
-                "open_tool_sections": ["transcription", "transcription"],
-            },
-        )
         invalid_tab = client.put(
             "/api/page-settings/markers",
             json={**payload, "left_panel_tab": "unknown"},
         )
         assert invalid_size.status_code == 422
-        assert invalid_section.status_code == 422
-        assert duplicate_section.status_code == 422
         assert invalid_tab.status_code == 422
         config_path = tmp_path / (
             f"page-settings-{app.state.library.manifest.library_id}.json"
@@ -104,7 +85,7 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
         )
         second_settings = client.get("/api/page-settings/markers").json()
         assert second_settings["left_panel_size_percent"] == 24
-        second_settings["tool_panel_size_percent"] = 28
+        second_settings["left_panel_collapsed"] = True
         assert (
             client.put("/api/page-settings/markers", json=second_settings).status_code
             == 200
@@ -116,7 +97,7 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
         )
         restored = client.get("/api/page-settings/markers").json()
         assert restored["left_panel_size_percent"] == 30
-        assert restored["tool_panel_size_percent"] == 16
+        assert restored["left_panel_collapsed"] is False
 
 
 def test_markers_page_settings_require_an_open_library(tmp_path: Path):

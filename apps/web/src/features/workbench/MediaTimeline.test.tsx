@@ -245,6 +245,7 @@ function render_timeline(options?: {
     delete_marker: vi.fn().mockResolvedValue(undefined),
     update_transcript: vi.fn().mockResolvedValue(undefined),
     change_selected_transcript_indices: vi.fn(),
+    request_transcript_correction: vi.fn(),
     change_selected_marker_ids: vi.fn(),
     set_focus_in: vi.fn(),
     set_focus_out: vi.fn(),
@@ -281,6 +282,8 @@ function render_timeline(options?: {
   function TimelineHarness() {
     const [asset_id, set_asset_id] = useState(ASSET_ID);
     const [markers, set_markers] = useState([POINT_MARKER, RANGE_MARKER]);
+    const [selected_transcript_indices, set_selected_transcript_indices] =
+      useState<number[]>([]);
     const [is_paused, set_is_paused] = useState(options?.is_paused ?? true);
     const [, set_refresh_revision] = useState(0);
     replace_markers = set_markers;
@@ -306,14 +309,19 @@ function render_timeline(options?: {
         candidate_markers={options?.candidate_markers}
         focus_selection={options?.focus_selection}
         event_analyses={options?.event_analyses}
+        selected_transcript_indices={selected_transcript_indices}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={null}
         on_scrub={callbacks.scrub_to}
         on_seek={callbacks.seek_to}
         on_toggle_playback={callbacks.toggle_playback}
         on_playback_rate_change={callbacks.change_playback_rate}
-        on_selected_transcript_indices_change={
-          callbacks.change_selected_transcript_indices
+        on_selected_transcript_indices_change={(segment_indices) => {
+          callbacks.change_selected_transcript_indices(segment_indices);
+          set_selected_transcript_indices(segment_indices);
+        }}
+        on_request_transcript_correction={
+          callbacks.request_transcript_correction
         }
         on_selected_marker_ids_change={callbacks.change_selected_marker_ids}
         on_set_focus_in={callbacks.set_focus_in}
@@ -324,6 +332,7 @@ function render_timeline(options?: {
         on_update_marker={callbacks.update_marker}
         on_delete_marker={callbacks.delete_marker}
         on_update_transcript={callbacks.update_transcript}
+        toolbar_tools={null}
       />
     );
   }
@@ -484,7 +493,7 @@ describe("MediaTimeline", () => {
     ).toBe(initial_by_source_index.get(15));
   });
 
-  it("keeps editor data and viewport stable inside the buffered window", () => {
+  it("keeps selected editor data and viewport stable inside the buffered window", () => {
     const { refresh_parent } = render_timeline();
     const editor_instance = screen.getByTestId("timeline-editor-instance");
     const initial_editor_data = timeline_props().editorData;
@@ -504,10 +513,11 @@ describe("MediaTimeline", () => {
     expect(timeline_props().editorData).toBe(initial_editor_data);
 
     fireEvent.click(screen.getByRole("button", { name: /转写：原始转写/ }));
-    expect(timeline_props().editorData).toBe(initial_editor_data);
+    const selected_editor_data = timeline_props().editorData;
+    expect(selected_editor_data).not.toBe(initial_editor_data);
 
     act(() => refresh_parent());
-    expect(timeline_props().editorData).toBe(initial_editor_data);
+    expect(timeline_props().editorData).toBe(selected_editor_data);
     expect(screen.getByTestId("timeline-editor-instance")).toBe(
       editor_instance,
     );
@@ -699,6 +709,59 @@ describe("MediaTimeline", () => {
     await waitFor(() =>
       expect(update_transcript).toHaveBeenCalledWith(0, "修订后的转写"),
     );
+  });
+
+  it("opens subtitle correction from the transcript context menu", async () => {
+    const {
+      change_selected_transcript_indices,
+      request_transcript_correction,
+    } = render_timeline();
+    const transcript_button = screen.getByRole("button", {
+      name: /转写：原始转写/,
+    });
+
+    fireEvent.contextMenu(transcript_button);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "修正字幕" }));
+
+    expect(change_selected_transcript_indices).toHaveBeenCalledWith([0]);
+    expect(request_transcript_correction).toHaveBeenCalledWith([0]);
+    expect(transcript_button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("preserves a multi-selection when opening correction with the keyboard", async () => {
+    const { request_transcript_correction } = render_timeline({
+      transcript_segments: [
+        {
+          start_seconds: 5,
+          end_seconds: 8,
+          text: "第一条字幕",
+          emotion: null,
+          audio_events: [],
+        },
+        {
+          start_seconds: 8,
+          end_seconds: 11,
+          text: "第二条字幕",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
+    });
+    const first_transcript = screen.getByRole("button", {
+      name: /转写：第一条字幕/,
+    });
+    const second_transcript = screen.getByRole("button", {
+      name: /转写：第二条字幕/,
+    });
+
+    fireEvent.click(first_transcript);
+    fireEvent.click(second_transcript, { ctrlKey: true });
+    fireEvent.keyDown(second_transcript, { key: "F10", shiftKey: true });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "修正字幕" }));
+
+    expect(first_transcript).toHaveAttribute("aria-pressed", "true");
+    expect(second_transcript).toHaveAttribute("aria-pressed", "true");
+    expect(request_transcript_correction).toHaveBeenCalledWith([0, 1]);
   });
 
   it("opens marker editing with Enter and preserves rating and deletion", async () => {
