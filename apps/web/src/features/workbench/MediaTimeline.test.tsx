@@ -399,6 +399,7 @@ describe("MediaTimeline", () => {
   });
 
   it("moves the render window across a boundary without changing source indices", () => {
+    const animation_frames = install_animation_frame_mock();
     const segments: TranscriptSegment[] = Array.from(
       { length: 2_000 },
       (_, index) => ({
@@ -429,6 +430,7 @@ describe("MediaTimeline", () => {
         scrollWidth: segments.length * 80,
       });
     });
+    animation_frames.run_next_frame();
 
     const moved_actions = transcript_actions();
     expect(moved_actions[0]?.data.source_index).toBe(13);
@@ -501,6 +503,38 @@ describe("MediaTimeline", () => {
 
     act(() => timeline_props().onCursorDragEnd?.(42.027));
     expect(seek_to).toHaveBeenCalledWith(42.027);
+  });
+
+  it("scrubs across the full ruler and commits the aligned time on release", () => {
+    const { scrub_to, seek_to } = render_timeline();
+    const ruler = screen.getByRole("slider", { name: "时间线播放头" });
+    vi.spyOn(ruler, "getBoundingClientRect").mockReturnValue({
+      x: 16,
+      y: 0,
+      left: 16,
+      top: 0,
+      right: 816,
+      bottom: 32,
+      width: 800,
+      height: 32,
+      toJSON: () => undefined,
+    });
+    ruler.setPointerCapture = vi.fn();
+    ruler.releasePointerCapture = vi.fn();
+
+    fireEvent.pointerDown(ruler, {
+      button: 0,
+      clientX: 416,
+      pointerId: 7,
+    });
+    fireEvent.pointerMove(ruler, { clientX: 496, pointerId: 7 });
+
+    expect(scrub_to).toHaveBeenLastCalledWith(5.8);
+    expect(seek_to).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(ruler, { clientX: 576, pointerId: 7 });
+    expect(seek_to).toHaveBeenCalledWith(6.8);
+    expect(timeline_mock.set_time).toHaveBeenLastCalledWith(6.8);
   });
 
   it("adds markers from the toolbar, shortcut, and marker row", async () => {
@@ -738,7 +772,7 @@ describe("MediaTimeline", () => {
       deltaMode: WheelEvent.DOM_DELTA_PAGE,
     });
 
-    expect(animation_frames.request_frame).toHaveBeenCalledOnce();
+    expect(animation_frames.frames.size).toBe(1);
     animation_frames.run_next_frame();
     expect(timeline_props().scaleWidth).toBeCloseTo(80 * Math.exp(0.048));
     expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
@@ -877,7 +911,7 @@ describe("MediaTimeline", () => {
       deltaY: -50,
     });
 
-    expect(animation_frames.request_frame).toHaveBeenCalledOnce();
+    expect(animation_frames.frames.size).toBe(1);
     expect(
       (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
     ).toBe(80);
@@ -894,14 +928,14 @@ describe("MediaTimeline", () => {
     const pointer_time_after = (scroll_left + 200 - 16) / zoom;
     expect(zoom).toBeCloseTo(80 * Math.exp(0.15));
     expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
-    expect(timeline_mock.viewport_events[0]).toEqual({
-      type: "scroll",
-      value: scroll_left,
-    });
-    expect(timeline_mock.viewport_events).toContainEqual({
-      type: "render",
-      value: zoom,
-    });
+    const zoom_scroll_index = timeline_mock.viewport_events.findIndex(
+      (event) => event.type === "scroll" && event.value === scroll_left,
+    );
+    const zoom_render_index = timeline_mock.viewport_events.findIndex(
+      (event) => event.type === "render" && event.value === zoom,
+    );
+    expect(zoom_scroll_index).toBeGreaterThanOrEqual(0);
+    expect(zoom_render_index).toBeGreaterThan(zoom_scroll_index);
     expect(
       Math.abs(pointer_time_after - second_pointer_time),
     ).toBeLessThanOrEqual(0.01);

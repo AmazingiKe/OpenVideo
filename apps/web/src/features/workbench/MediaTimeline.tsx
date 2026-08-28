@@ -10,9 +10,11 @@ import {
 import {
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -155,6 +157,8 @@ export function MediaTimeline({
   const [interaction_error, set_interaction_error] = useState<string | null>(
     null,
   );
+  const ruler_pointer_id_ref = useRef<number | null>(null);
+  const ruler_scrub_time_ref = useRef(0);
   const transcript_segments = useMemo(
     () => transcript?.segments ?? [],
     [transcript],
@@ -219,6 +223,11 @@ export function MediaTimeline({
     zoom_to,
     zoom_with_alt,
   } = use_media_timeline_viewport({ asset_id, bounded_time, duration });
+  const playhead_x =
+    TIMELINE_START_LEFT +
+    bounded_time * viewport.zoom_pixels_per_second -
+    viewport.scroll_left;
+  const playhead_is_visible = playhead_x >= 0 && playhead_x <= canvas_width;
   const full_editor_data = useMemo(
     () =>
       build_timeline_rows({
@@ -468,9 +477,8 @@ export function MediaTimeline({
             <div
               ref={timeline_host_ref}
               className="media_timeline_canvas"
-              tabIndex={0}
-              onKeyDown={scrub_with_keyboard}
               onWheelCapture={zoom_with_alt}
+              data-playhead-visible={playhead_is_visible}
               aria-label="时间线画布；双击标记轨道空白处添加标记，Enter 编辑片段，Shift+F10 打开菜单"
             >
               <TimelineRulerCanvas
@@ -479,6 +487,22 @@ export function MediaTimeline({
                 scroll_left={viewport.scroll_left}
                 start_left={TIMELINE_START_LEFT}
                 zoom_pixels_per_second={viewport.zoom_pixels_per_second}
+              />
+              <div
+                className="timeline_ruler_interaction"
+                role="slider"
+                tabIndex={0}
+                aria-label="时间线播放头"
+                aria-description="点击或拖动以定位播放时间"
+                aria-valuemin={0}
+                aria-valuemax={duration}
+                aria-valuenow={bounded_time}
+                aria-valuetext={format_ruler_accessible_time(bounded_time)}
+                onKeyDown={scrub_with_keyboard}
+                onPointerDown={start_ruler_scrub}
+                onPointerMove={continue_ruler_scrub}
+                onPointerUp={finish_ruler_scrub}
+                onPointerCancel={cancel_ruler_scrub}
               />
               <Timeline
                 ref={timeline_ref}
@@ -585,12 +609,74 @@ export function MediaTimeline({
     on_scrub(Math.min(Math.max(seconds, 0), duration));
   }
 
+  function ruler_time_from_pointer(event: PointerEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const pointer_x = event.clientX - bounds.left;
+    return Math.min(
+      Math.max(
+        (viewport.scroll_left + pointer_x - TIMELINE_START_LEFT) /
+          viewport.zoom_pixels_per_second,
+        0,
+      ),
+      duration,
+    );
+  }
+
+  function start_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || ruler_pointer_id_ref.current !== null) return;
+    event.preventDefault();
+    ruler_pointer_id_ref.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const time = ruler_time_from_pointer(event);
+    ruler_scrub_time_ref.current = time;
+    timeline_ref.current?.setTime(time);
+    on_scrub_bounded(time);
+  }
+
+  function continue_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
+    if (ruler_pointer_id_ref.current !== event.pointerId) return;
+    const time = ruler_time_from_pointer(event);
+    ruler_scrub_time_ref.current = time;
+    timeline_ref.current?.setTime(time);
+    on_scrub_bounded(time);
+  }
+
+  function finish_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
+    if (ruler_pointer_id_ref.current !== event.pointerId) return;
+    const time = ruler_time_from_pointer(event);
+    ruler_pointer_id_ref.current = null;
+    ruler_scrub_time_ref.current = time;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    timeline_ref.current?.setTime(time);
+    on_seek_bounded(time);
+  }
+
+  function cancel_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
+    if (ruler_pointer_id_ref.current !== event.pointerId) return;
+    ruler_pointer_id_ref.current = null;
+    on_seek_bounded(ruler_scrub_time_ref.current);
+  }
+
   function scrub_with_keyboard(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Home") {
+      event.preventDefault();
+      on_seek_bounded(0);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      on_seek_bounded(duration);
+      return;
+    }
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const direction = event.key === "ArrowLeft" ? -1 : 1;
     on_seek_bounded(bounded_time + direction);
   }
+}
+
+function format_ruler_accessible_time(seconds: number): string {
+  return `${round_marker_time(seconds).toFixed(2)} 秒`;
 }
 
 function is_text_editing_target(target: EventTarget | null): boolean {

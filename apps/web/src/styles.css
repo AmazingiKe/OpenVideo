@@ -183,6 +183,8 @@
   --timeline-ruler-height: 32px;
   --timeline-ruler-font: 500 10px ui-monospace, SFMono-Regular, Menlo, Consolas,
     monospace;
+  --timeline-scrollbar-size: 12px;
+  --timeline-scrollbar-border-size: 2px;
 
   --browser-theme-color: #0b141a;
   --browser-icon-background: #0b141a;
@@ -723,8 +725,20 @@
   pointer-events: none;
 }
 
-.media_timeline_canvas:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--timeline-color-accent);
+.timeline_ruler_interaction {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--timeline-ruler-height);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.timeline_ruler_interaction:focus-visible {
+  outline: 2px solid var(--timeline-color-accent);
+  outline-offset: -2px;
 }
 
 .media_timeline .timeline-editor {
@@ -741,6 +755,16 @@
   height: var(--timeline-ruler-height);
   border-bottom: 1px solid var(--timeline-color-border-subtle);
   background: var(--timeline-color-ruler-background);
+}
+
+.media_timeline .timeline-editor-time-area .ReactVirtualized__Grid {
+  scrollbar-width: none;
+}
+
+.media_timeline .timeline-editor-time-area .ReactVirtualized__Grid::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .media_timeline .timeline-editor-time-unit {
@@ -890,14 +914,32 @@
 }
 
 .media_timeline .timeline-editor-cursor {
+  top: 0;
+  height: 100%;
   border-color: var(--timeline-color-accent);
+}
+
+.media_timeline_canvas[data-playhead-visible="false"]
+  .timeline-editor-cursor {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .media_timeline .timeline-editor-cursor-top path {
   fill: var(--timeline-color-accent);
 }
 
+.media_timeline .timeline-editor-edit-area .ReactVirtualized__Grid {
+  scrollbar-width: auto;
+}
+
+.media_timeline .timeline-editor-edit-area .ReactVirtualized__Grid::-webkit-scrollbar {
+  width: var(--timeline-scrollbar-size);
+  height: var(--timeline-scrollbar-size);
+}
+
 .media_timeline .timeline-editor-edit-area .ReactVirtualized__Grid::-webkit-scrollbar-thumb {
+  border-width: var(--timeline-scrollbar-border-size);
   background: var(--timeline-color-scrollbar-thumb);
 }
 
