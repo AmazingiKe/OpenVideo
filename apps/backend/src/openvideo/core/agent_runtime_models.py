@@ -8,12 +8,23 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from openvideo.core.identifiers import is_prefixed_uuid7
+from openvideo.core.identifiers import is_prefixed_uuid7, is_uuid7
+from openvideo.core.agent_governance_models import (
+    AgentModelRole,
+    AgentRetrievalScope,
+    AgentThinkingMode,
+)
 
 
 class AgentMode(StrEnum):
     CHAT = "chat"
     TASK = "task"
+
+
+class AgentContextAttachmentKind(StrEnum):
+    SUMMARY_SELECTION = "summary_selection"
+    TRANSCRIPT_SELECTION = "transcript_selection"
+    TIME_RANGE = "time_range"
 
 
 class AgentCapability(StrEnum):
@@ -30,6 +41,7 @@ class AgentEventType(StrEnum):
     TOOL_STATUS = "tool.status"
     ARTIFACT_CREATED = "artifact.created"
     CONTEXT_COMPRESSED = "context.compressed"
+    RUN_METRICS = "run.metrics"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
     RUN_CANCELLED = "run.cancelled"
@@ -45,6 +57,13 @@ class AgentRunStage(StrEnum):
     INTERRUPTED = "interrupted"
 
 
+class AgentRunPhase(StrEnum):
+    MODEL_WAIT = "model_wait"
+    REASONING = "reasoning"
+    TOOL = "tool"
+    GENERATION = "generation"
+
+
 TERMINAL_AGENT_RUN_STAGES = {
     AgentRunStage.WAITING_FOR_APPROVAL,
     AgentRunStage.COMPLETE,
@@ -56,9 +75,11 @@ TERMINAL_AGENT_RUN_STAGES = {
 
 class AgentArtifactStatus(StrEnum):
     PENDING = "pending"
+    APPLYING = "applying"
     APPROVED = "approved"
     REJECTED = "rejected"
     STALE = "stale"
+    FAILED = "failed"
 
 
 class AgentToolDescriptor(BaseModel):
@@ -124,6 +145,25 @@ class AgentEvent(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class AgentRunMetrics(BaseModel):
+    """保留定位慢任务所需的阶段指标，不记录模型原始思维链。"""
+
+    total_ms: int = Field(default=0, ge=0)
+    time_to_first_token_ms: int | None = Field(default=None, ge=0)
+    routing_ms: int = Field(default=0, ge=0)
+    retrieval_ms: int = Field(default=0, ge=0)
+    vision_ms: int = Field(default=0, ge=0)
+    model_wait_ms: int = Field(default=0, ge=0)
+    generation_ms: int = Field(default=0, ge=0)
+    tool_ms: int = Field(default=0, ge=0)
+    retry_count: int = Field(default=0, ge=0)
+    tool_count: int = Field(default=0, ge=0)
+    model_role: AgentModelRole | None = None
+    selected_model_id: str | None = None
+    final_status: AgentRunStage | None = None
+    tool_durations_ms: dict[str, int] = Field(default_factory=dict)
+
+
 class AgentRun(BaseModel):
     run_id: str
     session_id: str
@@ -133,6 +173,7 @@ class AgentRun(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     latest_event_sequence: int = 0
+    metrics: AgentRunMetrics = Field(default_factory=AgentRunMetrics)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -171,6 +212,66 @@ class AgentContextMessage(BaseModel):
     tool_calls: list[dict[str, Any]] | None = None
 
 
+class AgentContextAttachment(BaseModel):
+    """把用户可见选择绑定到单条消息，同时保留可复现的来源快照。"""
+
+    attachment_id: str
+    kind: AgentContextAttachmentKind
+    asset_id: str
+    label: str = Field(min_length=1, max_length=200)
+    reference_id: str | None = Field(default=None, min_length=1, max_length=200)
+    version_id: str | None = Field(default=None, min_length=1, max_length=200)
+    start_seconds: float | None = Field(default=None, ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+    snapshot_text: str | None = Field(default=None, max_length=100_000)
+    content_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    selection_start: int | None = Field(default=None, ge=0)
+    selection_end: int | None = Field(default=None, ge=0)
+
+    @field_validator("attachment_id")
+    @classmethod
+    def validate_attachment_id(cls, value: str) -> str:
+        if not is_prefixed_uuid7(value, "attachment-"):
+            raise ValueError("上下文附件标识必须使用 attachment- 前缀和 UUIDv7 十六进制")
+        return value
+
+    @field_validator("asset_id")
+    @classmethod
+    def validate_asset_id(cls, value: str) -> str:
+        if not is_uuid7(value):
+            raise ValueError("上下文附件必须引用 UUIDv7 媒体资源标识")
+        return value
+
+    @model_validator(mode="after")
+    def validate_attachment_payload(self) -> "AgentContextAttachment":
+        is_time_range = self.kind == AgentContextAttachmentKind.TIME_RANGE
+        if is_time_range:
+            if (
+                self.start_seconds is None
+                or self.end_seconds is None
+                or self.end_seconds <= self.start_seconds
+            ):
+                raise ValueError("时间范围附件必须提供有效的起止时间")
+            if self.snapshot_text is not None:
+                raise ValueError("时间范围附件只保存引用，不能携带文本快照")
+            if self.selection_start is not None or self.selection_end is not None:
+                raise ValueError("时间范围附件不能携带文本选择位置")
+            return self
+        if self.snapshot_text is None or self.content_digest is None:
+            raise ValueError("文本选择附件必须保存文本快照与内容摘要")
+        if self.start_seconds is not None or self.end_seconds is not None:
+            raise ValueError("文本选择附件不能携带时间范围")
+        if (self.selection_start is None) != (self.selection_end is None):
+            raise ValueError("文本选择位置必须同时提供起点与终点")
+        if (
+            self.selection_start is not None
+            and self.selection_end is not None
+            and self.selection_end <= self.selection_start
+        ):
+            raise ValueError("文本选择终点必须晚于起点")
+        return self
+
+
 class AgentSessionCreate(BaseModel):
     agent_id: str
     asset_id: str
@@ -182,6 +283,11 @@ class AgentRunCreate(BaseModel):
     request_key: str
     ai_model_id: str
     content: str = Field(default="", max_length=100_000)
+    thinking_mode: AgentThinkingMode = AgentThinkingMode.AUTO
+    retrieval_scope: AgentRetrievalScope = AgentRetrievalScope.CURRENT_ASSET
+    context_attachments: list[AgentContextAttachment] = Field(
+        default_factory=list, max_length=32
+    )
     task_input: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("request_key")

@@ -38,8 +38,8 @@ from openvideo.llm.model_profile import ModelProfile, Support
 
 
 AgnoEventHandler = Callable[[LlmAgentEvent], None]
-STREAM_DELTA_CHARACTER_LIMIT = 32
-STREAM_DELTA_INTERVAL_SECONDS = 0.05
+STREAM_DELTA_CHARACTER_LIMIT = 256
+STREAM_DELTA_INTERVAL_SECONDS = 0.2
 REQUIRED_TOOL_RECOVERY_INSTRUCTION = (
     "上一步没有完成 Agent 声明的必需工具。不要继续解释过程，也不要普通回答。"
     "先调用尚未完成的前置工具，然后调用必需工具并提交结构化参数。"
@@ -148,6 +148,7 @@ class AgnoAgentExecutor:
             tool_call_count=(
                 first_result.tool_call_count + recovery_result.tool_call_count
             ),
+            retry_count=first_result.retry_count + recovery_result.retry_count + 1,
         )
 
     @staticmethod
@@ -314,6 +315,7 @@ class AgnoAgentExecutor:
         tool_call_count = 0
         pending_deltas: list[tuple[LlmAgentEventType, str]] = []
         pending_character_count = 0
+        published_delta_types: set[LlmAgentEventType] = set()
         last_delta_flush = monotonic()
         publish_text = not required_tools
 
@@ -333,6 +335,10 @@ class AgnoAgentExecutor:
 
         def queue_delta(event_type: LlmAgentEventType, content: str) -> None:
             nonlocal pending_character_count
+            if event_type not in published_delta_types:
+                published_delta_types.add(event_type)
+                on_event(LlmAgentEvent(event_type=event_type, content=content))
+                return
             if pending_deltas and pending_deltas[-1][0] == event_type:
                 previous_type, previous_content = pending_deltas[-1]
                 pending_deltas[-1] = (previous_type, previous_content + content)

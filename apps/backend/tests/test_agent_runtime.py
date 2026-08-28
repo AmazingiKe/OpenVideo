@@ -16,6 +16,7 @@ from openvideo.agent_runtime import (
 )
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
+    AgentContextAttachment,
     AgentDefinition,
     AgentEvent,
     AgentEventType,
@@ -77,6 +78,13 @@ class MemoryRepository:
             payload=payload,
         )
         self.events[session_id].append(event)
+        if run_id is not None and run_id in self.runs:
+            self.runs[run_id] = self.runs[run_id].model_copy(
+                update={
+                    "latest_event_sequence": event.sequence,
+                    "updated_at": event.created_at,
+                }
+            )
         return event
 
     def load_agent_events(
@@ -201,6 +209,105 @@ async def test_plain_reply_uses_standardized_events():
 
 
 @pytest.mark.asyncio
+async def test_runtime_persists_phase_metrics_without_raw_reasoning(monkeypatch):
+    clock = iter((1.0, 1.1, 1.2, 1.3))
+    monkeypatch.setattr("openvideo.agent_runtime.monotonic", lambda: next(clock))
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(
+            content="最终答案",
+            reasoning_content="不应持久化的原始推理",
+            retry_count=2,
+        ),
+        [
+            LlmAgentEvent(
+                event_type=LlmAgentEventType.REASONING_DELTA,
+                content="不应持久化的原始推理",
+            ),
+            LlmAgentEvent(
+                event_type=LlmAgentEventType.TEXT_DELTA,
+                content="最终答案",
+            ),
+        ],
+    )
+
+    finished = await runtime.run(run, model, profile, definition, "复杂问题")
+
+    events = repository.events[run.session_id]
+    serialized_events = [event.model_dump(mode="json") for event in events]
+    assert "不应持久化的原始推理" not in str(serialized_events)
+    assert AgentEventType.REASONING_DELTA not in {
+        event.event_type for event in events
+    }
+    phase_event = next(
+        event
+        for event in events
+        if event.event_type == AgentEventType.RUN_STATUS
+        and event.payload.get("phase") == "reasoning"
+    )
+    assert phase_event.payload == {"stage": "running", "phase": "reasoning"}
+    metrics_event = next(
+        event for event in events if event.event_type == AgentEventType.RUN_METRICS
+    )
+    assert metrics_event.payload == {
+        "total_ms": 300,
+        "time_to_first_token_ms": 200,
+        "routing_ms": 0,
+        "retrieval_ms": 0,
+        "vision_ms": 0,
+        "model_wait_ms": 100,
+        "generation_ms": 200,
+        "tool_ms": 0,
+        "retry_count": 2,
+        "tool_count": 0,
+        "model_role": None,
+        "selected_model_id": run.model_id,
+        "final_status": "complete",
+        "tool_durations_ms": {},
+    }
+    assert finished.metrics.model_dump(mode="json") == metrics_event.payload
+
+
+@pytest.mark.asyncio
+async def test_runtime_records_tool_latency_and_retry_count(monkeypatch):
+    clock = iter((1.0, 1.05, 1.15, 1.2, 1.3))
+    monkeypatch.setattr("openvideo.agent_runtime.monotonic", lambda: next(clock))
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(
+            content="完成",
+            successful_tools={"echo"},
+            tool_call_count=1,
+            retry_count=1,
+        ),
+        [
+            LlmAgentEvent(
+                event_type=LlmAgentEventType.TOOL_CALL_STARTED,
+                call_id="call-1",
+                name="echo",
+            ),
+            LlmAgentEvent(
+                event_type=LlmAgentEventType.TOOL_CALL_COMPLETED,
+                call_id="call-1",
+                name="echo",
+                result={"ok": True},
+            ),
+            LlmAgentEvent(
+                event_type=LlmAgentEventType.TEXT_DELTA,
+                content="完成",
+            ),
+        ],
+    )
+
+    finished = await runtime.run(run, model, profile, definition, "执行工具")
+
+    assert finished.metrics.tool_count == 1
+    assert finished.metrics.tool_ms == 100
+    assert finished.metrics.tool_durations_ms == {"echo": 100}
+    assert finished.metrics.retry_count == 1
+    assert finished.metrics.model_wait_ms == 50
+    assert finished.metrics.time_to_first_token_ms == 200
+
+
+@pytest.mark.asyncio
 async def test_invalid_tool_arguments_are_retryable_for_agno_loop():
     _, registry, _, _, _, _, _, definition = setup_runtime(AgentExecutionResult())
 
@@ -294,3 +401,47 @@ def test_provider_schema_resolves_references_nullable_and_defaults():
     assert "default" not in str(schema)
     assert schema["additionalProperties"] is False
     assert schema["properties"]["note"]["nullable"] is True
+
+
+def test_context_attachments_enforce_snapshot_and_time_range_contracts():
+    asset_id = str(uuid7())
+    text_attachment = AgentContextAttachment(
+        attachment_id=f"attachment-{uuid7().hex}",
+        kind="summary_selection",
+        asset_id=asset_id,
+        label="总结选区",
+        snapshot_text="选中的总结内容",
+        content_digest="a" * 64,
+        selection_start=2,
+        selection_end=10,
+    )
+    time_attachment = AgentContextAttachment(
+        attachment_id=f"attachment-{uuid7().hex}",
+        kind="time_range",
+        asset_id=asset_id,
+        label="时间线区域",
+        start_seconds=10,
+        end_seconds=20,
+    )
+
+    assert text_attachment.snapshot_text == "选中的总结内容"
+    assert time_attachment.snapshot_text is None
+
+    with pytest.raises(ValueError, match="文本快照"):
+        AgentContextAttachment(
+            attachment_id=f"attachment-{uuid7().hex}",
+            kind="time_range",
+            asset_id=asset_id,
+            label="无效时间线区域",
+            start_seconds=10,
+            end_seconds=20,
+            snapshot_text="不应附加",
+        )
+    with pytest.raises(ValueError, match="内容摘要"):
+        AgentContextAttachment(
+            attachment_id=f"attachment-{uuid7().hex}",
+            kind="transcript_selection",
+            asset_id=asset_id,
+            label="无效字幕选区",
+            snapshot_text="缺少摘要",
+        )

@@ -223,7 +223,60 @@ async def test_stream_deltas_are_coalesced_before_persistence(monkeypatch):
         if event.event_type == LlmAgentEventType.TEXT_DELTA
     ]
     assert result.content == "字" * 20
-    assert [event.content for event in text_events] == ["字" * 20]
+    assert "".join(event.content for event in text_events) == result.content
+    assert len(text_events) <= 2
+
+
+@pytest.mark.asyncio
+async def test_long_stream_limits_persisted_delta_frequency(monkeypatch):
+    character_count = 1_024
+
+    def arun(self, input, **_options):
+        async def events():
+            for _ in range(character_count):
+                yield RunContentEvent(content="字")
+            yield RunCompletedEvent(content="字" * character_count)
+
+        return events()
+
+    monkeypatch.setattr(Agent, "arun", arun)
+    definition = AgentDefinition(
+        agent_id="test",
+        title="测试",
+        description="验证长输出不会放大持久化写入",
+        mode=AgentMode.CHAT,
+        prompt="直接回答",
+    )
+    model = AiModelConfiguration(
+        name="实验模型",
+        litellm_model="deepseek/deepseek-v4-flash-vision-exp",
+        api_key="secret",
+    )
+    profile = ModelProfile(
+        provider="deepseek",
+        model="deepseek-v4-flash-vision-exp",
+    )
+    captured_events = []
+
+    result = await AgnoAgentExecutor().run(
+        model,
+        profile,
+        definition,
+        [{"role": "user", "content": "执行"}],
+        AgentToolRegistry(),
+        captured_events.append,
+        max_tool_calls=4,
+        tool_timeout_seconds=5,
+    )
+
+    text_events = [
+        event.content
+        for event in captured_events
+        if event.event_type == LlmAgentEventType.TEXT_DELTA
+    ]
+    assert result.content == "字" * character_count
+    assert "".join(text_events) == result.content
+    assert len(text_events) <= 5
 
 
 @pytest.mark.asyncio

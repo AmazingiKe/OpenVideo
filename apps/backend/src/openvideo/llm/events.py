@@ -29,3 +29,4 @@ class AgentExecutionResult(BaseModel):
     reasoning_content: str = ""
     successful_tools: set[str] = Field(default_factory=set)
     tool_call_count: int = Field(default=0, ge=0)
+    retry_count: int = Field(default=0, ge=0)

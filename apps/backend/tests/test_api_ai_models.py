@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.llm.errors import ToolCallingUnsupportedError
 from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.llm.models_dev import ModelsDevCatalog
@@ -224,3 +225,38 @@ def test_preferences_patch_persists_default_transcription(tmp_path: Path):
     assert response.status_code == 200
     assert response.json()["default_transcription"]["model"] == "large-v3-turbo"
     assert store.load().default_transcription.model == "large-v3-turbo"
+
+
+def test_preferences_patch_persists_agent_roles_and_permission_mode(tmp_path: Path):
+    store = PreferenceStore(tmp_path / "config" / "preferences.json")
+    model = AiModelConfiguration.model_validate(MODEL_REQUEST)
+    with TestClient(api.create_app(Settings(ai_models=[model]), store)) as client:
+        response = client.patch(
+            "/api/preferences",
+            json={
+                "agent": {
+                    "permission_mode": "smart_approval",
+                    "fast_model_id": MODEL_ID,
+                    "complex_model_id": MODEL_ID,
+                    "vision_model_id": MODEL_ID,
+                    "default_thinking_mode": "auto",
+                    "max_concurrent_runs": 6,
+                }
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["agent"]["max_concurrent_runs"] == 6
+    assert store.load().agent.fast_model_id == MODEL_ID
+
+
+def test_preferences_patch_rejects_unregistered_agent_model_role(tmp_path: Path):
+    store = PreferenceStore(tmp_path / "config" / "preferences.json")
+    with TestClient(api.create_app(Settings(), store)) as client:
+        response = client.patch(
+            "/api/preferences",
+            json={"agent": {"fast_model_id": MODEL_ID}},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Agent 模型角色必须从已注册模型中选择"
