@@ -1,4 +1,4 @@
-import { type ComponentProps, useState } from "react";
+import { type ComponentProps, useEffect, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import type { MediaAsset, TranscriptionModelDescriptor } from "@/shared/types";
@@ -83,6 +83,16 @@ function ControlledTranscriptionToolbarTools(
   );
 }
 
+function DarkTranscriptionToolbarTools(
+  props: ComponentProps<typeof TranscriptionToolbarTools>,
+) {
+  useEffect(() => {
+    document.documentElement.classList.add("dark");
+    return () => document.documentElement.classList.remove("dark");
+  }, []);
+  return <ControlledTranscriptionToolbarTools {...props} />;
+}
+
 const meta = {
   title: "Workbench/TranscriptionToolbarTools",
   component: TranscriptionToolbarTools,
@@ -118,7 +128,7 @@ const meta = {
   },
   decorators: [
     (StoryComponent) => (
-      <div className="flex h-48 items-end bg-background text-foreground">
+      <div className="flex min-h-screen w-full items-end bg-background text-foreground">
         <StoryComponent />
       </div>
     ),
@@ -143,11 +153,5 @@ export const CorrectionSelection: Story = {
 };
 
 export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark flex h-full items-end bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
+  render: (args) => <DarkTranscriptionToolbarTools {...args} />,
 };

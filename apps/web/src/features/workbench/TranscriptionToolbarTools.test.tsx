@@ -100,9 +100,16 @@ describe("TranscriptionToolbarTools", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "字幕修正" }));
 
+    const correction_dialog = screen.getByRole("dialog", {
+      name: "字幕修正",
+    });
+    expect(correction_dialog).toBeInTheDocument();
     expect(
-      screen.getByRole("dialog", { name: "字幕修正" }),
+      correction_dialog.closest('[data-slot="popover-content"]'),
     ).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-slot="sheet-content"]'),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "时间线选择" })).toBeChecked();
     expect(screen.getByText("已选择 2 条")).toBeInTheDocument();
     expect(screen.getByTestId("transcript-correction-agent")).toHaveTextContent(

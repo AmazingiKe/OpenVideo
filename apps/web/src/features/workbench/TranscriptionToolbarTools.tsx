@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Captions, WandSparkles } from "lucide-react";
 
 import { AgentPanel } from "@/components/AgentPanel";
@@ -26,13 +27,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { transcription_runtime_profile } from "@/shared/transcription";
@@ -79,6 +73,8 @@ export function TranscriptionToolbarTools({
   on_correction_open_change,
   on_correction_scope_change,
 }: TranscriptionToolbarToolsProps) {
+  const transcription_title_id = useId();
+  const correction_title_id = useId();
   const {
     available_transcription_models,
     selected_transcription_model,
@@ -90,11 +86,13 @@ export function TranscriptionToolbarTools({
     transcription_models,
   });
 
-  function open_correction() {
-    on_correction_scope_change(
-      selected_transcript_indices.length > 0 ? "selection" : "all",
-    );
-    on_correction_open_change(true);
+  function change_correction_open(open: boolean) {
+    if (open) {
+      on_correction_scope_change(
+        selected_transcript_indices.length > 0 ? "selection" : "all",
+      );
+    }
+    on_correction_open_change(open);
   }
 
   return (
@@ -106,9 +104,14 @@ export function TranscriptionToolbarTools({
             <span className="media_timeline_tool_label">转录</span>
           </Button>
         </PopoverTrigger>
-        <PopoverContent side="top" align="start" className="w-80 gap-4 p-4">
+        <PopoverContent
+          side="top"
+          align="start"
+          className="w-80 gap-4 p-4"
+          aria-labelledby={transcription_title_id}
+        >
           <PopoverHeader>
-            <PopoverTitle>转录</PopoverTitle>
+            <PopoverTitle id={transcription_title_id}>转录</PopoverTitle>
             <PopoverDescription>
               选择本地语音模型，为当前视频生成可编辑字幕。
             </PopoverDescription>
@@ -207,27 +210,32 @@ export function TranscriptionToolbarTools({
         </PopoverContent>
       </Popover>
 
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        disabled={!has_transcript}
-        onClick={open_correction}
-        aria-label="字幕修正"
-      >
-        <WandSparkles data-icon="inline-start" aria-hidden="true" />
-        <span className="media_timeline_tool_label">字幕修正</span>
-      </Button>
-
-      <Sheet open={correction_open} onOpenChange={on_correction_open_change}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
-          <SheetHeader>
-            <SheetTitle>字幕修正</SheetTitle>
-            <SheetDescription>
+      <Popover open={correction_open} onOpenChange={change_correction_open}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={!has_transcript}
+            aria-label="字幕修正"
+          >
+            <WandSparkles data-icon="inline-start" aria-hidden="true" />
+            <span className="media_timeline_tool_label">字幕修正</span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          side="top"
+          align="end"
+          className="max-h-[calc(100dvh-4rem)] w-96 max-w-[calc(100vw-2rem)] gap-4 overflow-y-auto p-4"
+          aria-labelledby={correction_title_id}
+        >
+          <PopoverHeader>
+            <PopoverTitle id={correction_title_id}>字幕修正</PopoverTitle>
+            <PopoverDescription>
               校对字幕文字并预览变化；时间边界保持不变。
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4">
+            </PopoverDescription>
+          </PopoverHeader>
+          <div className="flex min-h-0 flex-col gap-4">
             <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
               <span>处理范围</span>
               <Badge variant="secondary">
@@ -259,7 +267,7 @@ export function TranscriptionToolbarTools({
               </ToggleGroupItem>
             </ToggleGroup>
             <AgentPanel
-              className="min-h-[28rem] flex-1"
+              className="h-96"
               agent_id="transcript_correction"
               asset_id={has_transcript ? (asset?.asset_id ?? null) : null}
               models={ai_models}
@@ -275,8 +283,8 @@ export function TranscriptionToolbarTools({
               }}
             />
           </div>
-        </SheetContent>
-      </Sheet>
+        </PopoverContent>
+      </Popover>
     </>
   );
 }
