@@ -7,8 +7,9 @@ import inspect
 import json
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
@@ -19,6 +20,8 @@ from openvideo.core.agent_runtime_models import (
     AgentEvent,
     AgentEventType,
     AgentRun,
+    AgentRunMetrics,
+    AgentRunPhase,
     AgentRunStage,
     AgentSession,
     AgentToolCall,
@@ -107,15 +110,6 @@ class AgentSessionStore:
         event = self.repository.append_agent_event(
             session_id, run_id, event_type, payload or {}
         )
-        if run_id and (run := self.repository.load_agent_run(run_id)) is not None:
-            self.repository.save_agent_run(
-                run.model_copy(
-                    update={
-                        "latest_event_sequence": event.sequence,
-                        "updated_at": event.created_at,
-                    }
-                )
-            )
         return event
 
     def events(self, session_id: str, *, after_sequence: int = 0) -> list[AgentEvent]:
@@ -233,6 +227,63 @@ class AgentToolRegistry:
             return _tool_error("tool_execution_failed", str(error) or "工具执行失败")
 
 
+@dataclass
+class AgentRunMetricTracker:
+    started_at: float
+    first_response_at: float | None = None
+    first_text_at: float | None = None
+    active_tools: dict[str, tuple[str, float]] = field(default_factory=dict)
+    tool_durations_ms: dict[str, int] = field(default_factory=dict)
+    retry_count: int = 0
+    tool_count: int = 0
+    reasoning_phase_reported: bool = False
+
+    def record(self, event: LlmAgentEvent) -> None:
+        now = monotonic()
+        if self.first_response_at is None:
+            self.first_response_at = now
+        if event.event_type == LlmAgentEventType.TEXT_DELTA and self.first_text_at is None:
+            self.first_text_at = now
+        if event.event_type == LlmAgentEventType.TOOL_CALL_STARTED:
+            self.tool_count += 1
+            if event.call_id and event.name:
+                self.active_tools[event.call_id] = (event.name, now)
+        elif event.event_type == LlmAgentEventType.TOOL_CALL_COMPLETED and event.call_id:
+            started = self.active_tools.pop(event.call_id, None)
+            if started is not None:
+                tool_name, tool_started_at = started
+                duration_ms = round((now - tool_started_at) * 1_000)
+                self.tool_durations_ms[tool_name] = (
+                    self.tool_durations_ms.get(tool_name, 0) + duration_ms
+                )
+
+    def finish(self, stage: AgentRunStage, model_id: str) -> AgentRunMetrics:
+        finished_at = monotonic()
+        total_ms = round((finished_at - self.started_at) * 1_000)
+        model_wait_ms = round(
+            ((self.first_response_at or finished_at) - self.started_at) * 1_000
+        )
+        time_to_first_token_ms = (
+            round((self.first_text_at - self.started_at) * 1_000)
+            if self.first_text_at is not None
+            else None
+        )
+        tool_ms = sum(self.tool_durations_ms.values())
+        generation_ms = max(0, total_ms - model_wait_ms - tool_ms)
+        return AgentRunMetrics(
+            total_ms=total_ms,
+            time_to_first_token_ms=time_to_first_token_ms,
+            model_wait_ms=model_wait_ms,
+            generation_ms=generation_ms,
+            tool_ms=tool_ms,
+            retry_count=self.retry_count,
+            tool_count=self.tool_count,
+            selected_model_id=model_id,
+            final_status=stage,
+            tool_durations_ms=self.tool_durations_ms,
+        )
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -245,6 +296,7 @@ class AgentRuntime:
         self.executor = executor
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._active_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._metric_trackers: dict[str, AgentRunMetricTracker] = {}
 
     def cancel(self, run_id: str) -> None:
         self._cancel_events.setdefault(run_id, asyncio.Event()).set()
@@ -275,6 +327,7 @@ class AgentRuntime:
         if current_task is not None:
             self._active_tasks[run.run_id] = current_task
         started_at = datetime.now(UTC)
+        self._metric_trackers[run.run_id] = AgentRunMetricTracker(monotonic())
         running = run.model_copy(
             update={
                 "stage": AgentRunStage.RUNNING,
@@ -347,6 +400,7 @@ class AgentRuntime:
         finally:
             self._cancel_events.pop(run.run_id, None)
             self._active_tasks.pop(run.run_id, None)
+            self._metric_trackers.pop(run.run_id, None)
 
     async def _run_agent(
         self,
@@ -376,13 +430,15 @@ class AgentRuntime:
             tool_timeout_seconds=tool_timeout_seconds,
         )
         self._raise_if_cancelled(cancel_event)
+        tracker = self._metric_trackers[run.run_id]
+        tracker.retry_count = result.retry_count
+        tracker.tool_count = max(tracker.tool_count, result.tool_call_count)
         self.store.append(
             run.session_id,
             run.run_id,
             AgentEventType.MESSAGE_COMPLETED,
             {
                 "content": result.content,
-                "reasoning_content": result.reasoning_content,
             },
         )
         missing = definition.required_tools - result.successful_tools
@@ -402,6 +458,8 @@ class AgentRuntime:
         return self._finish(run, stage)
 
     def _append_executor_event(self, run: AgentRun, event: LlmAgentEvent) -> None:
+        tracker = self._metric_trackers[run.run_id]
+        tracker.record(event)
         if event.event_type == LlmAgentEventType.TEXT_DELTA:
             self.store.append(
                 run.session_id,
@@ -410,12 +468,17 @@ class AgentRuntime:
                 {"content": event.content},
             )
         elif event.event_type == LlmAgentEventType.REASONING_DELTA:
-            self.store.append(
-                run.session_id,
-                run.run_id,
-                AgentEventType.REASONING_DELTA,
-                {"content": event.content},
-            )
+            if not tracker.reasoning_phase_reported:
+                tracker.reasoning_phase_reported = True
+                self.store.append(
+                    run.session_id,
+                    run.run_id,
+                    AgentEventType.RUN_STATUS,
+                    {
+                        "stage": AgentRunStage.RUNNING.value,
+                        "phase": AgentRunPhase.REASONING.value,
+                    },
+                )
         elif event.event_type == LlmAgentEventType.TOOL_CALL_STARTED:
             self.store.append(
                 run.session_id,
@@ -478,6 +541,16 @@ class AgentRuntime:
         error_message: str | None = None,
     ) -> AgentRun:
         completed_at = datetime.now(UTC)
+        tracker = self._metric_trackers.get(run.run_id)
+        metrics = (
+            tracker.finish(stage, run.model_id) if tracker is not None else run.metrics
+        )
+        self.store.append(
+            run.session_id,
+            run.run_id,
+            AgentEventType.RUN_METRICS,
+            metrics.model_dump(mode="json"),
+        )
         event_type = {
             AgentRunStage.COMPLETE: AgentEventType.RUN_COMPLETED,
             AgentRunStage.WAITING_FOR_APPROVAL: AgentEventType.RUN_COMPLETED,
@@ -500,6 +573,7 @@ class AgentRuntime:
                 "error_code": error_code,
                 "error_message": error_message,
                 "latest_event_sequence": event.sequence,
+                "metrics": metrics,
                 "updated_at": completed_at,
                 "completed_at": completed_at,
             }

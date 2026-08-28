@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
+    AgentArtifactStatus,
     AgentEvent,
     AgentEventType,
     AgentRun,
@@ -189,7 +190,9 @@ class LibraryGeneratedStorageMixin:
 
     def save_agent_run(self, run: AgentRun) -> None:
         self._validate_identifier(run.run_id, "run")
-        self._upsert_runtime_model("agent_runs", run.model_dump(mode="json"))
+        values = run.model_dump(mode="json")
+        values["metrics"] = json.dumps(values["metrics"], ensure_ascii=False)
+        self._upsert_runtime_model("agent_runs", values)
 
     def load_agent_run(self, run_id: str) -> AgentRun | None:
         self._validate_identifier(run_id, "run")
@@ -198,7 +201,7 @@ class LibraryGeneratedStorageMixin:
             .execute("SELECT * FROM agent_runs WHERE run_id = ?", (run_id,))
             .fetchone()
         )
-        return AgentRun.model_validate(dict(row)) if row else None
+        return self._agent_run_from_row(row) if row else None
 
     def load_agent_runs(self, session_id: str | None = None) -> list[AgentRun]:
         if session_id is None:
@@ -217,7 +220,7 @@ class LibraryGeneratedStorageMixin:
                 )
                 .fetchall()
             )
-        return [AgentRun.model_validate(dict(row)) for row in rows]
+        return [self._agent_run_from_row(row) for row in rows]
 
     def load_agent_run_by_request_key(self, request_key: str) -> AgentRun | None:
         row = (
@@ -225,7 +228,7 @@ class LibraryGeneratedStorageMixin:
             .execute("SELECT * FROM agent_runs WHERE request_key = ?", (request_key,))
             .fetchone()
         )
-        return AgentRun.model_validate(dict(row)) if row else None
+        return self._agent_run_from_row(row) if row else None
 
     def append_agent_event(
         self,
@@ -267,6 +270,12 @@ class LibraryGeneratedStorageMixin:
                 "UPDATE agent_sessions SET updated_at = ? WHERE session_id = ?",
                 (event.created_at.isoformat(), session_id),
             )
+            if run_id is not None:
+                self._db().execute(
+                    "UPDATE agent_runs SET latest_event_sequence = ?, updated_at = ? "
+                    "WHERE run_id = ?",
+                    (event.sequence, event.created_at.isoformat(), run_id),
+                )
         return event
 
     def load_agent_events(
@@ -298,7 +307,7 @@ class LibraryGeneratedStorageMixin:
             .fetchall()
         )
         for row in rows:
-            run = AgentRun.model_validate(dict(row)).model_copy(
+            run = self._agent_run_from_row(row).model_copy(
                 update={
                     "stage": AgentRunStage.INTERRUPTED,
                     "error_message": "应用重启中断了 Agent 运行",
@@ -313,11 +322,85 @@ class LibraryGeneratedStorageMixin:
                 {"stage": AgentRunStage.INTERRUPTED.value},
             )
 
+    @staticmethod
+    def _agent_run_from_row(row: sqlite3.Row) -> AgentRun:
+        values = dict(row)
+        values["metrics"] = json.loads(values["metrics"])
+        return AgentRun.model_validate(values)
+
     def save_agent_artifact(self, artifact: AgentArtifact) -> None:
         self._validate_identifier(artifact.artifact_id, "artifact")
         values = artifact.model_dump(mode="json")
         values["payload"] = json.dumps(values["payload"], ensure_ascii=False)
         self._upsert_runtime_model("agent_artifacts", values)
+
+    def claim_agent_artifact(self, artifact_id: str) -> AgentArtifact | None:
+        """用数据库比较并交换取得唯一执行权，防止并发审批重复产生副作用。"""
+
+        return self._transition_agent_artifact(
+            artifact_id,
+            AgentArtifactStatus.PENDING,
+            AgentArtifactStatus.APPLYING,
+        )
+
+    def finish_agent_artifact(
+        self,
+        artifact_id: str,
+        status: AgentArtifactStatus,
+        error_message: str | None = None,
+    ) -> AgentArtifact | None:
+        """只有已取得执行权的审批才能落入唯一终态。"""
+
+        if status not in {
+            AgentArtifactStatus.APPROVED,
+            AgentArtifactStatus.STALE,
+            AgentArtifactStatus.FAILED,
+        }:
+            raise ValueError("审批执行只能结束为已批准、已过期或失败")
+        return self._transition_agent_artifact(
+            artifact_id,
+            AgentArtifactStatus.APPLYING,
+            status,
+            error_message,
+        )
+
+    def reject_agent_artifact(self, artifact_id: str) -> AgentArtifact | None:
+        """拒绝只允许从待审批状态发生，不能覆盖正在应用的操作。"""
+
+        return self._transition_agent_artifact(
+            artifact_id,
+            AgentArtifactStatus.PENDING,
+            AgentArtifactStatus.REJECTED,
+        )
+
+    def _transition_agent_artifact(
+        self,
+        artifact_id: str,
+        expected_status: AgentArtifactStatus,
+        target_status: AgentArtifactStatus,
+        error_message: str | None = None,
+    ) -> AgentArtifact | None:
+        self._validate_identifier(artifact_id, "artifact")
+        updated_at = datetime.now(UTC)
+        with self._lock, self._db():
+            cursor = self._db().execute(
+                "UPDATE agent_artifacts SET status = ?, error_message = ?, updated_at = ? "
+                "WHERE artifact_id = ? AND status = ?",
+                (
+                    target_status.value,
+                    error_message,
+                    updated_at.isoformat(),
+                    artifact_id,
+                    expected_status.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = self._db().execute(
+                "SELECT * FROM agent_artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        return self._agent_artifact_from_row(row) if row else None
 
     def load_agent_artifact(self, artifact_id: str) -> AgentArtifact | None:
         self._validate_identifier(artifact_id, "artifact")

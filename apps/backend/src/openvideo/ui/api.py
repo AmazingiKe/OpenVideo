@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from openvideo.core.agent_governance_models import AgentPreferences
 from openvideo.agent_service import (
     AgentService,
 )
@@ -19,6 +20,7 @@ from openvideo.event_analysis_manager import EventAnalysisManager
 from openvideo.summary_manager import SummaryManager
 from openvideo.core.ai_models import (
     AiModelCollection,
+    AiModelConfiguration,
 )
 from openvideo.core.transcription_models import (
     TranscriptionEngine,
@@ -38,6 +40,7 @@ from openvideo.core.page_settings import (
 )
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import (
+    AGENT_PREFERENCES_FIELD,
     AI_MODELS_FIELD,
     DEFAULT_TRANSCRIPTION_FIELD,
     MODELS_DIRECTORY_FIELD,
@@ -89,12 +92,14 @@ class PreferencesPatch(AiModelCollection):
     tools_directory: str | None = None
     models_directory: str | None = None
     default_transcription: TranscriptionOptions | None = None
+    agent: AgentPreferences | None = None
 
 
 class PreferencesResponse(AiModelCollection):
     tools_directory: str | None
     models_directory: str | None
     default_transcription: TranscriptionOptions
+    agent: AgentPreferences
     managed_fields: list[str]
     library_path_managed: bool
 
@@ -397,6 +402,19 @@ def create_app(
     def update_preferences(request: PreferencesPatch) -> PreferencesResponse:
         provided_fields = request.model_fields_set
         managed_fields = resolved_settings.managed_fields
+        candidate_models = (
+            request.ai_models
+            if AI_MODELS_FIELD in provided_fields
+            and AI_MODELS_FIELD not in managed_fields
+            else resolved_settings.ai_models
+        )
+        candidate_agent = (
+            request.agent
+            if AGENT_PREFERENCES_FIELD in provided_fields
+            and request.agent is not None
+            else resolved_settings.agent
+        )
+        _validate_agent_model_roles(candidate_agent, candidate_models)
         if (
             TOOLS_DIRECTORY_FIELD in provided_fields
             and TOOLS_DIRECTORY_FIELD not in managed_fields
@@ -414,6 +432,8 @@ def create_app(
             and request.default_transcription is not None
         ):
             resolved_settings.default_transcription = request.default_transcription
+        if AGENT_PREFERENCES_FIELD in provided_fields and request.agent is not None:
+            resolved_settings.agent = request.agent
         save_current_path(str(library.library_path) if library else None)
         return _preferences_response(resolved_settings)
 
@@ -534,6 +554,29 @@ def _preferences_response(settings: Settings) -> PreferencesResponse:
         managed_fields=sorted(settings.managed_fields),
         library_path_managed=os.getenv("OPENVIDEO_LIBRARY_PATH") is not None,
     )
+
+
+def _validate_agent_model_roles(
+    agent: AgentPreferences,
+    models: list[AiModelConfiguration],
+) -> None:
+    """模型角色必须引用同一份用户模型注册表，避免运行时才发现悬空配置。"""
+
+    registered_model_ids = {model.model_id for model in models}
+    role_model_ids = {
+        model_id
+        for model_id in (
+            agent.fast_model_id,
+            agent.complex_model_id,
+            agent.vision_model_id,
+        )
+        if model_id is not None
+    }
+    if role_model_ids - registered_model_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="Agent 模型角色必须从已注册模型中选择",
+        )
 
 
 app = create_app()

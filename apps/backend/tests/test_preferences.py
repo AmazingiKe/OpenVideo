@@ -9,7 +9,16 @@ from openvideo.configuration import (
     OPENVIDEO_CONFIG_DIRECTORY,
     migrate_configuration_file,
 )
+from openvideo.core.agent_governance_models import (
+    AgentPermissionGrant,
+    AgentPermissionGrantScope,
+    AgentPermissionMode,
+    AgentPreferences,
+    AgentResourceScope,
+    AgentThinkingMode,
+)
 from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.identifiers import uuid7
 from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
 from openvideo.preferences import PreferenceStore, Preferences
 from openvideo.settings import (
@@ -89,6 +98,29 @@ def test_preferences_persist_default_transcription(tmp_path: Path):
     store.save(Preferences(default_transcription=expected))
 
     assert store.load().default_transcription == expected
+
+
+def test_preferences_persist_agent_roles_permissions_and_limits(tmp_path: Path):
+    store = PreferenceStore(tmp_path / "preferences.json")
+    model_id = f"model-{uuid7().hex}"
+    grant = AgentPermissionGrant(
+        capability="summary.edit",
+        resource_scope=AgentResourceScope.CURRENT_ITEM,
+        scope=AgentPermissionGrantScope.ALWAYS,
+    )
+    expected = AgentPreferences(
+        permission_mode=AgentPermissionMode.FULL_ACCESS,
+        fast_model_id=model_id,
+        complex_model_id=model_id,
+        vision_model_id=model_id,
+        default_thinking_mode=AgentThinkingMode.COMPLEX,
+        max_concurrent_runs=8,
+        always_allowed_grants=[grant],
+    )
+
+    store.save(Preferences(agent=expected))
+
+    assert store.load().agent == expected
 
 
 def test_library_has_no_project_default(tmp_path: Path):

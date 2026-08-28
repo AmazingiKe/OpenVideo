@@ -19,7 +19,7 @@ from openvideo.core.folder_models import Folder, FolderManifest
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 18
+DATABASE_VERSION = 19
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -336,6 +336,9 @@ def _database_matches_schema(database_path: Path) -> bool:
         artifact_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(agent_artifacts)")
         }
+        run_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")
+        }
         asset_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(assets)")
         }
@@ -348,6 +351,7 @@ def _database_matches_schema(database_path: Path) -> bool:
         and REQUIRED_AGENT_TABLES <= tables
         and not LEGACY_AGENT_TABLES & tables
         and {"artifact_id", "result_type", "payload"} <= artifact_columns
+        and "metrics" in run_columns
         and "folders" in tables
         and "folder_id" in asset_columns
     )
@@ -618,6 +622,7 @@ CREATE TABLE agent_runs (
     run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
     request_key TEXT NOT NULL UNIQUE, model_id TEXT NOT NULL, stage TEXT NOT NULL,
     error_code TEXT, error_message TEXT, latest_event_sequence INTEGER NOT NULL,
+    metrics TEXT NOT NULL,
     created_at TEXT NOT NULL, started_at TEXT, updated_at TEXT NOT NULL, completed_at TEXT
 );
 CREATE TABLE agent_events (

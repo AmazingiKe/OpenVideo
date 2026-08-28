@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import Field
 
+from openvideo.core.agent_governance_models import AgentPreferences
 from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration
 from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
 from openvideo.preferences import PreferenceStore, Preferences
@@ -16,6 +17,7 @@ AI_MODELS_FIELD = "ai_models"
 MODELS_DIRECTORY_FIELD = "models_directory"
 TOOLS_DIRECTORY_FIELD = "tools_directory"
 DEFAULT_TRANSCRIPTION_FIELD = "default_transcription"
+AGENT_PREFERENCES_FIELD = "agent"
 SETTING_ENVIRONMENTS = {
     "ffmpeg_path": "OPENVIDEO_FFMPEG_PATH",
     "ffprobe_path": "OPENVIDEO_FFPROBE_PATH",
@@ -40,6 +42,7 @@ class Settings(AiModelCollection):
     default_transcription: TranscriptionOptions = Field(
         default_factory=TranscriptionOptions
     )
+    agent: AgentPreferences = Field(default_factory=AgentPreferences)
     managed_fields: set[str] = Field(default_factory=set)
 
     @property

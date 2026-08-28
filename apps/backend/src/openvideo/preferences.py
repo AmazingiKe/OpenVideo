@@ -10,6 +10,7 @@ from openvideo.configuration import (
     OPENVIDEO_CONFIG_DIRECTORY,
     migrate_configuration_file,
 )
+from openvideo.core.agent_governance_models import AgentPreferences
 from openvideo.core.ai_models import AiModelCollection
 from openvideo.core.transcription_models import TranscriptionOptions
 
@@ -24,6 +25,7 @@ class Preferences(AiModelCollection):
     default_transcription: TranscriptionOptions = Field(
         default_factory=TranscriptionOptions
     )
+    agent: AgentPreferences = Field(default_factory=AgentPreferences)
 
 
 class PreferenceStore:
