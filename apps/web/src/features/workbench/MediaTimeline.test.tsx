@@ -185,12 +185,12 @@ function install_animation_frame_mock() {
     request_frame,
     cancel_frame,
     frames,
-    run_next_frame() {
+    run_next_frame(frame_time = performance.now()) {
       const next_frame = frames.entries().next().value as
         [number, FrameRequestCallback] | undefined;
       if (!next_frame) throw new Error("Missing animation frame");
       frames.delete(next_frame[0]);
-      act(() => next_frame[1](performance.now()));
+      act(() => next_frame[1](frame_time));
     },
   };
 }
@@ -199,6 +199,8 @@ function render_timeline(options?: {
   added_marker?: MediaMarker;
   candidate_markers?: MediaMarker[];
   duration_seconds?: number;
+  is_paused?: boolean;
+  playback_rate?: number;
   transcript_segments?: TranscriptSegment[];
   analysis_segments?: MediaSegment[];
   update_marker?: (
@@ -260,8 +262,8 @@ function render_timeline(options?: {
         asset_id={asset_id}
         duration_seconds={options?.duration_seconds ?? 120}
         current_time={30.023}
-        is_paused
-        playback_rate={1}
+        is_paused={options?.is_paused ?? true}
+        playback_rate={options?.playback_rate ?? 1}
         transcript={{
           asset_id: ASSET_ID,
           language: "zh",
@@ -503,6 +505,28 @@ describe("MediaTimeline", () => {
 
     act(() => timeline_props().onCursorDragEnd?.(42.027));
     expect(seek_to).toHaveBeenCalledWith(42.027);
+  });
+
+  it("animates the playback head every display frame while playing", () => {
+    vi.spyOn(performance, "now").mockReturnValue(100);
+    const animation_frames = install_animation_frame_mock();
+    const { result } = render_timeline({
+      is_paused: false,
+      playback_rate: 2,
+    });
+    timeline_mock.set_time.mockClear();
+
+    animation_frames.run_next_frame(116);
+    expect(timeline_mock.set_time.mock.calls.at(-1)?.[0]).toBeCloseTo(30.055);
+    expect(animation_frames.frames.size).toBe(1);
+
+    animation_frames.run_next_frame(132);
+    expect(timeline_mock.set_time.mock.calls.at(-1)?.[0]).toBeCloseTo(30.087);
+    const pending_frame = [...animation_frames.frames.keys()][0];
+
+    result.unmount();
+    expect(animation_frames.cancel_frame).toHaveBeenCalledWith(pending_frame);
+    expect(animation_frames.frames.size).toBe(0);
   });
 
   it("scrubs across the full ruler and commits the aligned time on release", () => {

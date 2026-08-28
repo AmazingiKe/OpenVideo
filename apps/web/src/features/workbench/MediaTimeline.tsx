@@ -222,7 +222,13 @@ export function MediaTimeline({
     viewport,
     zoom_to,
     zoom_with_alt,
-  } = use_media_timeline_viewport({ asset_id, bounded_time, duration });
+  } = use_media_timeline_viewport({
+    asset_id,
+    bounded_time,
+    duration,
+    is_paused,
+    playback_rate,
+  });
   const playhead_x =
     TIMELINE_START_LEFT +
     bounded_time * viewport.zoom_pixels_per_second -
