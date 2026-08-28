@@ -1,10 +1,13 @@
 import type {
   AgentArtifact,
+  AgentContextAttachment,
   AgentDefinitionAvailability,
   AgentEventType,
+  AgentRetrievalScope,
   AgentRun,
   AgentSession,
   AgentSessionState,
+  AgentThinkingMode,
 } from "../types";
 import { api_base_url, ApiError, request_json } from "./client";
 
@@ -57,6 +60,9 @@ export function create_agent_run(
     ai_model_id: string;
     content?: string;
     task_input?: Record<string, unknown>;
+    thinking_mode?: AgentThinkingMode;
+    retrieval_scope?: AgentRetrievalScope;
+    context_attachments?: AgentContextAttachment[];
   },
   signal?: AbortSignal,
 ): Promise<AgentRun> {

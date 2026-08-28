@@ -120,6 +120,15 @@ describe("App", () => {
         compute_type: "int8",
       },
       ai_models: [],
+      agent: {
+        permission_mode: "smart_approval",
+        fast_model_id: null,
+        complex_model_id: null,
+        vision_model_id: null,
+        default_thinking_mode: "auto",
+        max_concurrent_runs: 4,
+        always_allowed_grants: [],
+      },
       managed_fields: [],
       library_path_managed: false,
     });

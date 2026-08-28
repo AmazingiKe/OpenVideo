@@ -57,6 +57,15 @@ const preferences = {
     compute_type: "int8" as const,
   },
   ai_models: [],
+  agent: {
+    permission_mode: "smart_approval" as const,
+    fast_model_id: null,
+    complex_model_id: null,
+    vision_model_id: null,
+    default_thinking_mode: "auto" as const,
+    max_concurrent_runs: 4,
+    always_allowed_grants: [],
+  },
   managed_fields: ["tools_directory"],
   library_path_managed: false,
 };
@@ -150,6 +159,28 @@ describe("SettingsPage", () => {
         expect.objectContaining({
           models_directory: "D:\\Models",
           default_transcription: preferences.default_transcription,
+          agent: preferences.agent,
+        }),
+        expect.any(AbortSignal),
+      ),
+    );
+  });
+
+  it("shows safe Agent defaults and saves explicit permission changes", async () => {
+    render(<SettingsPage />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Agent 偏好" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "仅风险询问" })).toBeChecked();
+
+    fireEvent.click(screen.getByRole("radio", { name: "完全访问" }));
+    expect(screen.getByText("完全访问会跳过逐次批准")).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(update_preferences).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent: expect.objectContaining({ permission_mode: "full_access" }),
         }),
         expect.any(AbortSignal),
       ),

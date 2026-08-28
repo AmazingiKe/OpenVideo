@@ -20,8 +20,16 @@ import type {
   AgentRun,
   AgentSession,
   AgentSessionState,
+  AgentRetrievalScope,
+  AgentThinkingMode,
   AiModelSummary,
 } from "@/shared/types";
+import {
+  agent_scope_key,
+  materialize_context_attachments,
+  session_context_matches_scope,
+  type AgentContextAttachmentDraft,
+} from "./agent_context";
 
 const TERMINAL_RUN_STAGES = new Set<AgentRun["stage"]>([
   "waiting_for_approval",
@@ -47,6 +55,7 @@ type AgentPanelStateOptions = {
   on_artifact_change?: (artifact: AgentArtifact) => void | Promise<void>;
   run_options: AgentRunOption[];
   task_input: Record<string, unknown>;
+  default_thinking_mode: AgentThinkingMode;
 };
 
 export function use_agent_panel({
@@ -57,6 +66,7 @@ export function use_agent_panel({
   on_artifact_change,
   run_options,
   task_input,
+  default_thinking_mode,
 }: AgentPanelStateOptions) {
   const [definition, set_definition] = useState<
     Awaited<ReturnType<typeof list_agent_definitions>>[number] | null
@@ -68,10 +78,16 @@ export function use_agent_panel({
     run_options[0]?.value ?? "",
   );
   const [draft, set_draft] = useState("");
+  const [thinking_mode, set_thinking_mode] = useState<AgentThinkingMode>(
+    default_thinking_mode,
+  );
+  const [retrieval_scope, set_retrieval_scope] =
+    useState<AgentRetrievalScope>("current_asset");
+  const [scope_pinned, set_scope_pinned] = useState(false);
+  const [preparing_attachments, set_preparing_attachments] = useState(false);
   const [last_content, set_last_content] = useState("");
   const [active_run, set_active_run] = useState<AgentRun | null>(null);
   const [stream_text, set_stream_text] = useState("");
-  const [stream_reasoning, set_stream_reasoning] = useState("");
   const [connection_message, set_connection_message] = useState<string | null>(
     null,
   );
@@ -79,6 +95,11 @@ export function use_agent_panel({
   const connection_ref = useRef<AbortController | null>(null);
   const run_sequence_ref = useRef(new Map<string, number>());
   const restore_panel_event = useEffectEvent(restore_panel);
+  const scope_key = useMemo(
+    () =>
+      asset_id ? agent_scope_key(agent_id, asset_id, context) : "no-asset",
+    [agent_id, asset_id, context],
+  );
 
   const selected_run_option =
     run_options.find((option) => option.value === run_option_value) ??
@@ -118,7 +139,10 @@ export function use_agent_panel({
     set_state(null);
     set_active_run(null);
     set_stream_text("");
-    set_stream_reasoning("");
+    set_thinking_mode(default_thinking_mode);
+    set_retrieval_scope("current_asset");
+    set_scope_pinned(false);
+    set_preparing_attachments(false);
     run_sequence_ref.current.clear();
     set_error(null);
     if (!asset_id) return () => controller.abort();
@@ -127,7 +151,7 @@ export function use_agent_panel({
       controller.abort();
       connection_ref.current?.abort();
     };
-  }, [agent_id, asset_id]);
+  }, [agent_id, asset_id, default_thinking_mode, scope_key]);
 
   async function restore_panel(asset: string, signal: AbortSignal) {
     try {
@@ -139,10 +163,13 @@ export function use_agent_panel({
         (item) => item.definition.agent_id === agent_id,
       );
       set_definition(next_definition ?? null);
-      set_sessions(loaded_sessions);
-      if (!loaded_sessions[0]) return;
+      const matching_sessions = loaded_sessions.filter((session) =>
+        session_context_matches_scope(session.context, scope_key, context),
+      );
+      set_sessions(matching_sessions);
+      if (!matching_sessions[0]) return;
       const restored = await get_agent_session(
-        loaded_sessions[0].session_id,
+        matching_sessions[0].session_id,
         signal,
       );
       set_state(restored);
@@ -161,7 +188,11 @@ export function use_agent_panel({
   async function ensure_session(): Promise<AgentSessionState> {
     if (state) return state;
     if (!asset_id) throw new Error("未选择素材");
-    const session = await create_agent_session({ agent_id, asset_id, context });
+    const session = await create_agent_session({
+      agent_id,
+      asset_id,
+      context: { ...context, scope_key },
+    });
     const created_state = await get_agent_session(session.session_id);
     set_sessions((current) => [session, ...current]);
     set_state(created_state);
@@ -175,7 +206,6 @@ export function use_agent_panel({
       set_state(selected);
       set_active_run(null);
       set_stream_text("");
-      set_stream_reasoning("");
       set_error(null);
       const running = [...selected.runs]
         .reverse()
@@ -189,32 +219,46 @@ export function use_agent_panel({
     }
   }
 
-  async function submit(content_override?: string) {
+  async function submit(
+    content_override?: string,
+    context_attachment_drafts: AgentContextAttachmentDraft[] = [],
+  ): Promise<boolean> {
     const next_content = content_override ?? draft;
     if (
       !model_id ||
       (!next_content.trim() && definition?.definition.input_mode !== "task")
     ) {
-      return;
+      return false;
     }
     const content = next_content.trim();
-    set_last_content(content);
-    set_draft("");
     set_error(null);
     set_stream_text("");
-    set_stream_reasoning("");
+    set_preparing_attachments(true);
     try {
+      const context_attachments = await materialize_context_attachments(
+        context_attachment_drafts,
+      );
       const current = await ensure_session();
       const run = await create_agent_run(current.session.session_id, {
         request_key: `request-${uuid7().replaceAll("-", "")}`,
         ai_model_id: model_id,
         content,
         task_input: { ...task_input, ...selected_run_option?.task_input },
+        thinking_mode,
+        retrieval_scope,
+        context_attachments,
       });
+      set_last_content(content);
+      set_draft("");
       set_active_run(run);
       void follow_run(run, current.events);
+      if (!scope_pinned) set_retrieval_scope("current_asset");
+      return true;
     } catch (caught) {
       set_error(error_message(caught));
+      return false;
+    } finally {
+      set_preparing_attachments(false);
     }
   }
 
@@ -244,11 +288,6 @@ export function use_agent_panel({
           run_sequence_ref.current.set(run.run_id, last_sequence);
           if (event === "message.delta") {
             set_stream_text((current) => current + String(data.content ?? ""));
-          }
-          if (event === "reasoning.delta") {
-            set_stream_reasoning(
-              (current) => current + String(data.content ?? ""),
-            );
           }
           if (event !== "message.delta" && event !== "reasoning.delta") {
             set_state((current) => {
@@ -289,7 +328,6 @@ export function use_agent_panel({
           }
           if (event === "message.completed") {
             set_stream_text("");
-            set_stream_reasoning("");
           }
         },
         controller.signal,
@@ -363,6 +401,7 @@ export function use_agent_panel({
     last_content,
     model_id,
     pending: active_run !== null && !TERMINAL_RUN_STAGES.has(active_run.stage),
+    preparing_attachments,
     resolve_artifact,
     run_option_value,
     selected_run_option,
@@ -370,10 +409,16 @@ export function use_agent_panel({
     sessions,
     set_draft,
     set_model_id,
+    set_retrieval_scope,
     set_run_option_value,
+    set_scope_pinned,
+    set_thinking_mode,
+    scope_key,
+    scope_pinned,
     state,
-    stream_reasoning,
     stream_text,
     submit,
+    thinking_mode,
+    retrieval_scope,
   };
 }

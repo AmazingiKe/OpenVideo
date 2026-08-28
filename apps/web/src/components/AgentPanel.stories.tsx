@@ -3,12 +3,20 @@ import { expect, fn } from "storybook/test";
 
 import {
   AgentArtifactCard,
-  AgentReasoning,
   AgentRunBadge,
   AgentToolActivity,
 } from "./AgentPanelContent";
+import {
+  AgentAnswerEvidence,
+  AgentIndexStatusDisclosure,
+  AgentRunMetricsDisclosure,
+} from "./AgentAnswerDetails";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import type { AgentArtifact, AgentEvent } from "@/shared/types";
+import type {
+  AgentArtifact,
+  AgentEvent,
+  AgentEvidenceBundle,
+} from "@/shared/types";
 
 const BASE_ARTIFACT: AgentArtifact = {
   artifact_id: "artifact-01890f4c7a2b7cc298c4dc0c0c07398f",
@@ -221,21 +229,111 @@ export const DisconnectedRecovery: Story = {
   ),
 };
 
-export const CollapsedReasoning: Story = {
+export const RunMetrics: Story = {
   render: () => (
-    <AgentReasoning content="正在核对标记范围、转录证据与画面信息。" />
+    <AgentRunMetricsDisclosure
+      metrics={{
+        total_ms: 8_640,
+        time_to_first_token_ms: 1_120,
+        retrieval_ms: 2_410,
+        model_wait_ms: 3_820,
+        generation_ms: 1_290,
+        retry_count: 0,
+        tool_count: 2,
+        model_role: "complex",
+        selected_model_id: "model-01890f4c7a2b7cc298c4dc0c0c07398f",
+        final_status: "complete",
+      }}
+    />
   ),
   play: async ({ canvas }) => {
     await expect(
-      canvas.getByRole("button", { name: "思考过程" }),
+      canvas.getByRole("button", { name: "思考 8.6 秒" }),
     ).toHaveAttribute("aria-expanded", "false");
   },
 };
 
-export const CollapsedReasoningDark: Story = {
+const EVIDENCE_BUNDLE: AgentEvidenceBundle = {
+  items: [
+    {
+      evidence_id: "evidence-01890f4c7a2b7cc298c4dc0c0c07398f",
+      citation_key: "[1]",
+      source_type: "transcript",
+      source_version: "transcript-v3",
+      asset_id: BASE_ARTIFACT.asset_id,
+      start_seconds: 126.8,
+      end_seconds: 134.2,
+      excerpt: "这里给出了透视投影的正式定义和视锥体示意。",
+      relation: "supports",
+      retrieval_relation: "direct",
+    },
+  ],
+  conflicts: [],
+  coverage: { temporal: 0.82, source_types: ["transcript", "frame"] },
+};
+
+export const HighConfidenceEvidence: Story = {
+  render: () => (
+    <AgentAnswerEvidence
+      confidence="high"
+      answer_status="final"
+      evidence_bundle={EVIDENCE_BUNDLE}
+      on_seek={fn()}
+    />
+  ),
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByRole("button", { name: /已参考 1 项内容/ }),
+    ).toHaveAttribute("aria-expanded", "false");
+  },
+};
+
+export const LowConfidenceEvidence: Story = {
+  render: () => (
+    <AgentAnswerEvidence
+      confidence="low"
+      answer_status="provisional"
+      evidence_bundle={{
+        ...EVIDENCE_BUNDLE,
+        conflicts: [
+          {
+            evidence_ids: [EVIDENCE_BUNDLE.items[0].evidence_id],
+            reason: "字幕与相邻画面中的术语不一致。",
+          },
+        ],
+      }}
+      on_seek={fn()}
+    />
+  ),
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText("暂定结论")).toBeVisible();
+    await expect(canvas.getByText("发现 1 组证据冲突")).toBeVisible();
+  },
+};
+
+export const ProgressiveIndexing: Story = {
+  render: () => (
+    <AgentIndexStatusDisclosure
+      status={{
+        state: "partial",
+        stage_label: "正在建立关键帧与 OCR 索引",
+        processed_seconds: 2_460,
+        duration_seconds: 7_200,
+        available_capabilities: ["字幕检索", "章节定位"],
+      }}
+    />
+  ),
+};
+
+export const EvidenceDark: Story = {
   render: () => (
     <div className="dark bg-background p-4 text-foreground">
-      <AgentReasoning content="正在核对标记范围、转录证据与画面信息。" />
+      <AgentAnswerEvidence
+        confidence="low"
+        answer_status="provisional"
+        evidence_bundle={EVIDENCE_BUNDLE}
+        on_seek={fn()}
+      />
     </div>
   ),
 };

@@ -6,6 +6,7 @@ import {
   FolderOpen,
   Info,
   Settings2,
+  ShieldCheck,
   TriangleAlert,
   Wrench,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { LibraryPathForm } from "@/features/library/LibraryPathForm";
 import { error_message, is_abort_error } from "@/shared/errors";
+import { AgentPreferencesSettings } from "@/features/settings/AgentPreferencesSettings";
 import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
 import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
 import {
@@ -97,6 +99,7 @@ export function SettingsPage() {
           models_directory: preferences.models_directory,
           default_transcription: preferences.default_transcription,
           ai_models: preferences.ai_models,
+          agent: preferences.agent,
         },
         controller.signal,
       )
@@ -118,6 +121,35 @@ export function SettingsPage() {
   function update_field(field: EditableField, value: string) {
     set_preferences((current) =>
       current ? { ...current, [field]: value || null } : current,
+    );
+  }
+
+  function update_ai_models(ai_models: Preferences["ai_models"]) {
+    const available_model_ids = new Set(
+      ai_models.map((model) => model.model_id),
+    );
+    set_preferences((current) =>
+      current
+        ? {
+            ...current,
+            ai_models,
+            agent: {
+              ...current.agent,
+              fast_model_id: retained_model_id(
+                current.agent.fast_model_id,
+                available_model_ids,
+              ),
+              complex_model_id: retained_model_id(
+                current.agent.complex_model_id,
+                available_model_ids,
+              ),
+              vision_model_id: retained_model_id(
+                current.agent.vision_model_id,
+                available_model_ids,
+              ),
+            },
+          }
+        : current,
     );
   }
 
@@ -250,9 +282,20 @@ export function SettingsPage() {
               )}
               managed={preferences.managed_fields.includes("ai_models")}
               on_test_model={test_ai_model}
-              on_change={(ai_models) =>
+              on_change={update_ai_models}
+            />
+          </SettingsCard>
+          <SettingsCard
+            icon={ShieldCheck}
+            title="Agent 偏好"
+            description="为所有对话设置默认权限、思考方式和模型角色；单次任务仍可临时调整。"
+          >
+            <AgentPreferencesSettings
+              value={preferences.agent}
+              models={preferences.ai_models}
+              on_change={(agent) =>
                 set_preferences((current) =>
-                  current ? { ...current, ai_models } : current,
+                  current ? { ...current, agent } : current,
                 )
               }
             />
@@ -275,6 +318,15 @@ export function SettingsPage() {
       )}
     </section>
   );
+}
+
+function retained_model_id(
+  model_id: string | null,
+  available_model_ids: Set<string>,
+) {
+  return model_id !== null && available_model_ids.has(model_id)
+    ? model_id
+    : null;
 }
 
 function DirectoryPreferenceInput({
@@ -398,7 +450,11 @@ function SettingsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle
+          className="flex items-center gap-2"
+          role="heading"
+          aria-level={2}
+        >
           <Icon aria-hidden="true" />
           {title}
         </CardTitle>
