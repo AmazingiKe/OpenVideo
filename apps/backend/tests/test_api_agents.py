@@ -379,6 +379,36 @@ def test_run_rejects_non_uuid7_request_key(tmp_path: Path):
         assert response.status_code == 422
 
 
+def test_background_agent_reserves_capacity_for_foreground_chat(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        service.settings.agent = service.settings.agent.model_copy(
+            update={"max_concurrent_runs": 2}
+        )
+        service._tasks["active-run"] = SimpleNamespace(done=lambda: False)
+        try:
+            session = client.post(
+                "/api/agent-sessions",
+                json={"agent_id": "transcript_correction", "asset_id": ASSET_ID},
+            ).json()
+
+            response = client.post(
+                f"/api/agent-sessions/{session['session_id']}/runs",
+                json={
+                    "request_key": f"request-{uuid7().hex}",
+                    "ai_model_id": MODEL_ID,
+                    "content": "校对字幕",
+                },
+            )
+
+            assert response.status_code == 409
+            assert response.json()["message"] == (
+                "Agent 并行任务已达到用户设置的上限"
+            )
+        finally:
+            service._tasks.pop("active-run")
+
+
 def test_nonempty_chat_content_includes_task_session_and_selection_context():
     definition = AgentDefinition(
         agent_id="test",

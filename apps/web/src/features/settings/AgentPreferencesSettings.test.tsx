@@ -5,6 +5,22 @@ import type { AgentPreferences } from "@/shared/types";
 import { AgentPreferencesSettings } from "./AgentPreferencesSettings";
 
 describe("AgentPreferencesSettings", () => {
+  it("explains foreground priority without another scheduling choice", () => {
+    render(
+      <AgentPreferencesSettings
+        value={preferences()}
+        models={[]}
+        on_change={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "同时运行 1–32 个任务；前台对话优先，后台任务使用剩余容量。",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("lets the user revoke an always grant", () => {
     const on_change = vi.fn();
     render(

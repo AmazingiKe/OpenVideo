@@ -20,11 +20,111 @@ from openvideo.core.agent_runtime_models import (
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.llm.agno_executor import AgnoAgentExecutor
 from openvideo.llm.events import LlmAgentEventType
+from openvideo.llm.errors import TransientProviderRequestError
 from openvideo.llm.model_profile import ModelCapabilities, ModelProfile, Support
 
 
 class EchoInput(BaseModel):
     text: str
+
+
+def chat_definition() -> AgentDefinition:
+    return AgentDefinition(
+        agent_id="test",
+        title="测试",
+        description="验证供应商重试边界",
+        mode=AgentMode.CHAT,
+        prompt="回答测试请求",
+    )
+
+
+def online_model() -> AiModelConfiguration:
+    return AiModelConfiguration(
+        name="实验模型",
+        litellm_model="deepseek/deepseek-v4-flash-vision-exp",
+        api_key="secret",
+    )
+
+
+def text_profile() -> ModelProfile:
+    return ModelProfile(
+        provider="deepseek",
+        model="deepseek-v4-flash-vision-exp",
+        capabilities=ModelCapabilities(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_retries_before_any_event(monkeypatch):
+    attempts = 0
+    delays: list[float] = []
+
+    def arun(self, input, **_options):
+        nonlocal attempts
+        attempts += 1
+
+        async def events():
+            if attempts == 1:
+                raise RuntimeError("429 rate limit")
+            yield RunContentEvent(content="完成")
+            yield RunCompletedEvent(content="完成")
+
+        return events()
+
+    monkeypatch.setattr(Agent, "arun", arun)
+    monkeypatch.setattr(
+        "openvideo.llm.agno_executor.defer_model_requests",
+        delays.append,
+    )
+
+    result = await AgnoAgentExecutor().run(
+        online_model(),
+        text_profile(),
+        chat_definition(),
+        [{"role": "user", "content": "执行"}],
+        AgentToolRegistry(),
+        lambda _event: None,
+        max_tool_calls=4,
+        tool_timeout_seconds=5,
+    )
+
+    assert result.content == "完成"
+    assert result.retry_count == 1
+    assert attempts == 2
+    assert delays == [1.0]
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_does_not_retry_after_published_event(monkeypatch):
+    attempts = 0
+    captured_events = []
+
+    def arun(self, input, **_options):
+        nonlocal attempts
+        attempts += 1
+
+        async def events():
+            yield RunContentEvent(content="已输出" * 100)
+            raise RuntimeError("429 rate limit")
+
+        return events()
+
+    monkeypatch.setattr(Agent, "arun", arun)
+
+    with pytest.raises(TransientProviderRequestError, match="429 rate limit"):
+        await AgnoAgentExecutor().run(
+            online_model(),
+            text_profile(),
+            chat_definition(),
+            [{"role": "user", "content": "执行"}],
+            AgentToolRegistry(),
+            captured_events.append,
+            max_tool_calls=4,
+            tool_timeout_seconds=5,
+        )
+
+    assert attempts == 1
+    assert captured_events[0].event_type == LlmAgentEventType.TEXT_DELTA
 
 
 @pytest.mark.asyncio

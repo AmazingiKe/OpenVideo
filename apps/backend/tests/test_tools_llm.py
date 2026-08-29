@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -62,3 +63,57 @@ def test_completion_rejects_local_provider_before_network(monkeypatch):
             [{"role": "user", "content": "测试"}],
             timeout_seconds=30,
         )
+
+
+def test_completion_retries_transient_provider_failure(monkeypatch):
+    attempts = 0
+    delays: list[float] = []
+
+    def completion(**_kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("429 rate limit")
+        message = SimpleNamespace(content="完成")
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    monkeypatch.setattr(llm.litellm, "completion", completion)
+    monkeypatch.setattr(llm, "defer_model_requests", delays.append)
+
+    content = llm.complete_text(
+        AiModelConfiguration(
+            model_id=MODEL_ID,
+            name="在线模型",
+            litellm_model="openai/test-model",
+        ),
+        [{"role": "user", "content": "测试限流"}],
+        timeout_seconds=30,
+    )
+
+    assert content == "完成"
+    assert attempts == 3
+    assert delays == [1.0, 2.0]
+
+
+def test_completion_does_not_retry_permanent_provider_failure(monkeypatch):
+    attempts = 0
+
+    def completion(**_kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("invalid api key")
+
+    monkeypatch.setattr(llm.litellm, "completion", completion)
+
+    with pytest.raises(llm.LlmCompletionError, match="invalid api key"):
+        llm.complete_text(
+            AiModelConfiguration(
+                model_id=MODEL_ID,
+                name="在线模型",
+                litellm_model="openai/test-model",
+            ),
+            [{"role": "user", "content": "测试认证错误"}],
+            timeout_seconds=30,
+        )
+
+    assert attempts == 1

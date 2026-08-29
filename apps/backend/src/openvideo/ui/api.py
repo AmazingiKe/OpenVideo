@@ -56,6 +56,7 @@ from openvideo.download_accounts import (
     capture_cookie_from_dedicated_browser,
 )
 from openvideo.llm.capability_resolver import CapabilityResolver
+from openvideo.llm.request_scheduler import configure_model_request_limit
 from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
     TranscriptionModelManager,
@@ -121,6 +122,7 @@ def create_app(
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
+    configure_model_request_limit(resolved_settings.agent.max_concurrent_runs)
     library: MediaLibrary | None = None
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
@@ -465,6 +467,7 @@ def create_app(
             resolved_settings.default_transcription = request.default_transcription
         if AGENT_PREFERENCES_FIELD in provided_fields and request.agent is not None:
             resolved_settings.agent = request.agent
+            configure_model_request_limit(request.agent.max_concurrent_runs)
         save_current_path(str(library.library_path) if library else None)
         return _preferences_response(resolved_settings)
 

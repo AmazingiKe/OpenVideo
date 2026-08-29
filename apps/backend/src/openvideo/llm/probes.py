@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 import litellm
 
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.llm.errors import (
+    MAX_PROVIDER_REQUEST_RETRIES,
     ModelCapabilityUnknownError,
     ProviderRequestError,
+    TransientProviderRequestError,
     classify_provider_error,
+    provider_retry_delay_seconds,
+)
+from openvideo.llm.request_scheduler import (
+    ModelRequestPriority,
+    defer_model_requests,
+    model_request_slot,
 )
 
 
@@ -74,14 +83,11 @@ def probe_streaming_tools(model: AiModelConfiguration, timeout_seconds: int) -> 
     )
     stream = _completion(request)
     names: set[str] = set()
-    try:
-        for chunk in stream:
-            for tool_call in chunk.choices[0].delta.tool_calls or []:
-                name = tool_call.function.name
-                if name:
-                    names.add(name)
-    except Exception as error:
-        raise classify_provider_error(error) from error
+    for chunk in stream:
+        for tool_call in chunk.choices[0].delta.tool_calls or []:
+            name = tool_call.function.name
+            if name:
+                names.add(name)
     _require_tool_names(names, {"report_probe"})
 
 
@@ -174,10 +180,47 @@ def _base_request(model: AiModelConfiguration, timeout_seconds: int) -> dict[str
 
 
 def _completion(request: dict[str, Any]) -> Any:
-    try:
-        return litellm.completion(**request)
-    except Exception as error:
-        raise classify_provider_error(error) from error
+    if request.get("stream"):
+        return _stream_completion(request)
+    for attempt in range(MAX_PROVIDER_REQUEST_RETRIES + 1):
+        try:
+            with model_request_slot(ModelRequestPriority.FOREGROUND):
+                return litellm.completion(**request)
+        except Exception as error:
+            classified = classify_provider_error(error)
+            if (
+                isinstance(classified, TransientProviderRequestError)
+                and attempt < MAX_PROVIDER_REQUEST_RETRIES
+            ):
+                defer_model_requests(
+                    provider_retry_delay_seconds(classified, attempt)
+                )
+                continue
+            raise classified from error
+    raise AssertionError("模型重试循环必须返回或抛出异常")
+
+
+def _stream_completion(request: dict[str, Any]) -> Iterator[Any]:
+    for attempt in range(MAX_PROVIDER_REQUEST_RETRIES + 1):
+        chunk_emitted = False
+        try:
+            with model_request_slot(ModelRequestPriority.FOREGROUND):
+                for chunk in litellm.completion(**request):
+                    chunk_emitted = True
+                    yield chunk
+            return
+        except Exception as error:
+            classified = classify_provider_error(error)
+            if (
+                isinstance(classified, TransientProviderRequestError)
+                and not chunk_emitted
+                and attempt < MAX_PROVIDER_REQUEST_RETRIES
+            ):
+                defer_model_requests(
+                    provider_retry_delay_seconds(classified, attempt)
+                )
+                continue
+            raise classified from error
 
 
 def _require_tool_calls(tool_calls: Any, expected_names: set[str]) -> None:

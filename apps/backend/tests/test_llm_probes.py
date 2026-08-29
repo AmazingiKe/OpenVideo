@@ -89,3 +89,48 @@ def test_vision_with_tools(monkeypatch):
     content = captured["messages"][0]["content"]
     assert any(part["type"] == "image_url" for part in content)
     assert captured["tool_choice"] == "auto"
+
+
+def test_probe_retries_rate_limit_before_receiving_response(monkeypatch):
+    attempts = 0
+    delays: list[float] = []
+
+    def completion(**_request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("429 too many requests")
+        return tool_response()
+
+    monkeypatch.setattr("openvideo.llm.probes.litellm.completion", completion)
+    monkeypatch.setattr("openvideo.llm.probes.defer_model_requests", delays.append)
+
+    probe_basic_tools(model(), 30)
+
+    assert attempts == 2
+    assert delays == [1.0]
+
+
+def test_streaming_probe_does_not_retry_after_first_chunk(monkeypatch):
+    attempts = 0
+    function = SimpleNamespace(name="report_probe", arguments='{"status":"ok"}')
+    tool_call = SimpleNamespace(function=function)
+    delta = SimpleNamespace(tool_calls=[tool_call])
+    chunk = SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+    def completion(**_request):
+        nonlocal attempts
+        attempts += 1
+
+        def stream():
+            yield chunk
+            raise RuntimeError("429 rate limit")
+
+        return stream()
+
+    monkeypatch.setattr("openvideo.llm.probes.litellm.completion", completion)
+
+    with pytest.raises(Exception, match="429 rate limit"):
+        probe_streaming_tools(model(), 30)
+
+    assert attempts == 1

@@ -14,9 +14,10 @@ from openvideo.core.identifiers import uuid7
 def test_router_validates_structured_fast_model_decision(monkeypatch):
     captured: dict[str, object] = {}
 
-    def complete_route(model, messages, *args):
+    def complete_route(model, messages, *args, **kwargs):
         captured["messages"] = messages
         captured["args"] = args
+        captured["kwargs"] = kwargs
         return json.dumps(
             {
                 "intent": "illustrate",
@@ -40,6 +41,7 @@ def test_router_validates_structured_fast_model_decision(monkeypatch):
     assert request_payload["allowed_intents"] == ["chat", "edit", "illustrate"]
     assert request_payload["user_request"] == "给这一段插入关键画面"
     assert captured["args"][-1] is True
+    assert captured["kwargs"]["priority"].name == "FOREGROUND"
 
 
 @pytest.mark.parametrize(

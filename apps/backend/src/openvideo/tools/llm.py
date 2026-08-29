@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+
 import litellm
 
 from openvideo.core.ai_models import (
     AiModelConfiguration,
     online_api_configuration_error,
+)
+from openvideo.llm.errors import (
+    MAX_PROVIDER_REQUEST_RETRIES,
+    TransientProviderRequestError,
+    classify_provider_error,
+    provider_retry_delay_seconds,
+)
+from openvideo.llm.request_scheduler import (
+    ModelRequestPriority,
+    defer_model_requests,
+    model_request_slot,
+    model_request_slot_async,
 )
 
 
@@ -29,6 +43,7 @@ def complete_text(
     timeout_seconds: int,
     max_tokens: int | None = None,
     disable_thinking: bool = False,
+    priority: ModelRequestPriority = ModelRequestPriority.BACKGROUND,
 ) -> str:
     request = _completion_request(
         model,
@@ -37,13 +52,7 @@ def complete_text(
         max_tokens,
         disable_thinking,
     )
-    try:
-        response = litellm.completion(**request)
-        content = response.choices[0].message.content
-    except litellm.exceptions.ContextWindowExceededError as error:
-        raise LlmContextLengthError(f"模型上下文不足：{error}") from error
-    except Exception as error:
-        raise LlmCompletionError(f"模型请求失败：{error}") from error
+    content = _complete_with_retry(request, priority)
     return _validated_content(content)
 
 
@@ -53,6 +62,7 @@ async def complete_text_async(
     timeout_seconds: int,
     max_tokens: int | None = None,
     disable_thinking: bool = False,
+    priority: ModelRequestPriority = ModelRequestPriority.BACKGROUND,
 ) -> str:
     """异步请求允许任务取消直接传播到底层 HTTP 连接。"""
 
@@ -63,14 +73,60 @@ async def complete_text_async(
         max_tokens,
         disable_thinking,
     )
-    try:
-        response = await litellm.acompletion(**request)
-        content = response.choices[0].message.content
-    except litellm.exceptions.ContextWindowExceededError as error:
-        raise LlmContextLengthError(f"模型上下文不足：{error}") from error
-    except Exception as error:
-        raise LlmCompletionError(f"模型请求失败：{error}") from error
+    content = await _complete_with_retry_async(request, priority)
     return _validated_content(content)
+
+
+def _complete_with_retry(
+    request: dict[str, object],
+    priority: ModelRequestPriority,
+) -> object:
+    for attempt in range(MAX_PROVIDER_REQUEST_RETRIES + 1):
+        try:
+            with model_request_slot(priority):
+                response = litellm.completion(**request)
+            return response.choices[0].message.content
+        except litellm.exceptions.ContextWindowExceededError as error:
+            raise LlmContextLengthError(f"模型上下文不足：{error}") from error
+        except Exception as error:
+            classified = classify_provider_error(error)
+            if (
+                isinstance(classified, TransientProviderRequestError)
+                and attempt < MAX_PROVIDER_REQUEST_RETRIES
+            ):
+                defer_model_requests(
+                    provider_retry_delay_seconds(classified, attempt)
+                )
+                continue
+            raise LlmCompletionError(f"模型请求失败：{classified}") from error
+    raise AssertionError("模型重试循环必须返回或抛出异常")
+
+
+async def _complete_with_retry_async(
+    request: dict[str, object],
+    priority: ModelRequestPriority,
+) -> object:
+    for attempt in range(MAX_PROVIDER_REQUEST_RETRIES + 1):
+        try:
+            async with model_request_slot_async(priority):
+                response = await litellm.acompletion(**request)
+            return response.choices[0].message.content
+        except litellm.exceptions.ContextWindowExceededError as error:
+            raise LlmContextLengthError(f"模型上下文不足：{error}") from error
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            classified = classify_provider_error(error)
+            if (
+                isinstance(classified, TransientProviderRequestError)
+                and attempt < MAX_PROVIDER_REQUEST_RETRIES
+            ):
+                defer_model_requests(
+                    provider_retry_delay_seconds(classified, attempt)
+                )
+                continue
+            raise LlmCompletionError(f"模型请求失败：{classified}") from error
+    raise AssertionError("模型重试循环必须返回或抛出异常")
 
 
 def _completion_request(
@@ -130,4 +186,5 @@ def probe_image_input(
         timeout_seconds=timeout_seconds,
         max_tokens=8,
         disable_thinking=True,
+        priority=ModelRequestPriority.FOREGROUND,
     )

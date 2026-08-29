@@ -292,7 +292,10 @@ class AgentService:
                 raise AgentConflictError("请求键已被其他会话使用")
             return existing
         active_run_count = sum(not task.done() for task in self._tasks.values())
-        if active_run_count >= self.settings.agent.max_concurrent_runs:
+        concurrent_limit = self.settings.agent.max_concurrent_runs
+        if registered.definition.mode == AgentMode.TASK:
+            concurrent_limit = max(1, concurrent_limit - 1)
+        if active_run_count >= concurrent_limit:
             raise AgentConflictError("Agent 并行任务已达到用户设置的上限")
         if any(
             run.stage not in TERMINAL_AGENT_RUN_STAGES

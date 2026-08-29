@@ -12,6 +12,7 @@ from openvideo.core.agent_governance_models import (
     AgentRetrievalScope,
 )
 from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.llm.request_scheduler import ModelRequestPriority
 from openvideo.tools.llm import LlmCompletionError, complete_text
 
 
@@ -90,6 +91,7 @@ def route_agent_intent(
             ROUTING_TIMEOUT_SECONDS,
             ROUTING_MAX_TOKENS,
             True,
+            priority=ModelRequestPriority.FOREGROUND,
         )
         route = AgentIntentRoute.model_validate_json(raw_route)
     except (LlmCompletionError, ValidationError, ValueError) as error:

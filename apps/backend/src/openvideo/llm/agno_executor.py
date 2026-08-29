@@ -20,13 +20,16 @@ from agno.run.agent import (
 )
 from agno.tools.function import Function
 
-from openvideo.core.agent_runtime_models import AgentDefinition, AgentToolCall
+from openvideo.core.agent_runtime_models import AgentDefinition, AgentMode, AgentToolCall
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.llm.errors import (
     FeatureCombinationUnsupportedError,
+    MAX_PROVIDER_REQUEST_RETRIES,
     ProviderRequestError,
+    TransientProviderRequestError,
     classify_provider_error,
+    provider_retry_delay_seconds,
 )
 from openvideo.llm.events import (
     AgentExecutionResult,
@@ -35,6 +38,11 @@ from openvideo.llm.events import (
 )
 from openvideo.llm.model_factory import agent_tool_choice, create_agent_model
 from openvideo.llm.model_profile import ModelProfile, Support
+from openvideo.llm.request_scheduler import (
+    ModelRequestPriority,
+    defer_model_requests,
+    model_request_slot_async,
+)
 
 
 AgnoEventHandler = Callable[[LlmAgentEvent], None]
@@ -204,6 +212,56 @@ class AgnoAgentExecutor:
         return needed_tools
 
     async def _run_once(
+        self,
+        model: AiModelConfiguration,
+        profile: ModelProfile,
+        definition: AgentDefinition,
+        messages: list[dict[str, Any]],
+        registry: AgentToolProvider,
+        on_event: AgnoEventHandler,
+        *,
+        max_tool_calls: int,
+        tool_timeout_seconds: float,
+        reasoning_enabled: bool,
+        forced_tool_name: str | None = None,
+    ) -> AgentExecutionResult:
+        priority = (
+            ModelRequestPriority.FOREGROUND
+            if definition.mode == AgentMode.CHAT
+            else ModelRequestPriority.BACKGROUND
+        )
+        for attempt in range(MAX_PROVIDER_REQUEST_RETRIES + 1):
+            event_emitted = False
+
+            def publish_event(event: LlmAgentEvent) -> None:
+                nonlocal event_emitted
+                event_emitted = True
+                on_event(event)
+
+            try:
+                async with model_request_slot_async(priority):
+                    result = await self._run_once_attempt(
+                        model,
+                        profile,
+                        definition,
+                        messages,
+                        registry,
+                        publish_event,
+                        max_tool_calls=max_tool_calls,
+                        tool_timeout_seconds=tool_timeout_seconds,
+                        reasoning_enabled=reasoning_enabled,
+                        forced_tool_name=forced_tool_name,
+                    )
+                return result.model_copy(
+                    update={"retry_count": result.retry_count + attempt}
+                )
+            except TransientProviderRequestError as error:
+                if event_emitted or attempt >= MAX_PROVIDER_REQUEST_RETRIES:
+                    raise
+                defer_model_requests(provider_retry_delay_seconds(error, attempt))
+        raise AssertionError("模型重试循环必须返回或抛出异常")
+
+    async def _run_once_attempt(
         self,
         model: AiModelConfiguration,
         profile: ModelProfile,

@@ -29,6 +29,7 @@ from openvideo.llm.probes import (
     probe_streaming_tools,
     probe_vision_tools,
 )
+from openvideo.llm.request_scheduler import ModelRequestPriority
 from openvideo.settings import Settings
 from openvideo.tools.llm import LlmCompletionError, complete_text, probe_image_input
 
@@ -99,6 +100,7 @@ def register_ai_routes(
                 timeout_seconds=MODEL_TEST_TIMEOUT_SECONDS,
                 max_tokens=MODEL_TEST_MAX_TOKENS,
                 disable_thinking=True,
+                priority=ModelRequestPriority.FOREGROUND,
             )
         except LlmCompletionError as error:
             error_message = redact_model_test_error(str(error), request.api_key)

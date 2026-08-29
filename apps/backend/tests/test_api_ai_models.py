@@ -71,6 +71,7 @@ def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
         timeout_seconds,
         max_tokens,
         disable_thinking,
+        priority,
     ):
         captured_request.update(
             model=model,
@@ -78,6 +79,7 @@ def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
             timeout_seconds=timeout_seconds,
             max_tokens=max_tokens,
             disable_thinking=disable_thinking,
+            priority=priority,
         )
         return "OK"
 
@@ -110,6 +112,7 @@ def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
     assert captured_request["timeout_seconds"] == 30
     assert captured_request["max_tokens"] == 8
     assert captured_request["disable_thinking"] is True
+    assert captured_request["priority"] == ai_routes.ModelRequestPriority.FOREGROUND
 
 
 def test_ai_model_test_rejects_local_inference_without_calling_provider(
@@ -265,9 +268,14 @@ def test_preferences_patch_persists_default_transcription(tmp_path: Path):
     assert store.load().default_transcription.model == "large-v3-turbo"
 
 
-def test_preferences_patch_persists_agent_roles_and_permission_mode(tmp_path: Path):
+def test_preferences_patch_persists_agent_roles_and_permission_mode(
+    tmp_path: Path,
+    monkeypatch,
+):
     store = PreferenceStore(tmp_path / "config" / "preferences.json")
     model = AiModelConfiguration.model_validate(MODEL_REQUEST)
+    configured_limits: list[int] = []
+    monkeypatch.setattr(api, "configure_model_request_limit", configured_limits.append)
     with TestClient(api.create_app(Settings(ai_models=[model]), store)) as client:
         response = client.patch(
             "/api/preferences",
@@ -286,6 +294,7 @@ def test_preferences_patch_persists_agent_roles_and_permission_mode(tmp_path: Pa
     assert response.status_code == 200
     assert response.json()["agent"]["max_concurrent_runs"] == 6
     assert store.load().agent.fast_model_id == MODEL_ID
+    assert configured_limits == [4, 6]
 
 
 def test_preferences_patch_rejects_unregistered_agent_model_role(tmp_path: Path):

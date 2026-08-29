@@ -238,7 +238,7 @@ export function AgentPreferencesSettings({
           }}
         />
         <FieldDescription>
-          同时运行 1–32 个任务；默认 4 个可兼顾速度与资源占用。
+          同时运行 1–32 个任务；前台对话优先，后台任务使用剩余容量。
         </FieldDescription>
       </Field>
     </FieldGroup>
