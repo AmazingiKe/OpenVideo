@@ -355,6 +355,7 @@ export function MarkersPage() {
       default_thinking_mode={agent_preferences?.default_thinking_mode}
       compact={is_compact_layout}
       on_seek={seek_player}
+      current_time={current_time}
       on_candidate_markers_change={set_candidate_markers}
       on_markers_changed={reload_markers}
     />

@@ -20,6 +20,7 @@ describe("MarkerAgentPanel", () => {
       <MarkerAgentPanel
         asset_id="01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
         models={[]}
+        current_time={0}
         on_seek={vi.fn()}
         on_candidate_markers_change={vi.fn()}
         on_markers_changed={vi.fn()}

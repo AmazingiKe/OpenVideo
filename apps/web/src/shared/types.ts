@@ -78,10 +78,10 @@ export type LibraryIndexIssue = {
 export type AgentPermissionMode =
   "request_approval" | "smart_approval" | "full_access";
 export type AgentThinkingMode = "auto" | "fast" | "complex";
-export type AgentResourceScope =
+type AgentResourceScope =
   "current_item" | "selection" | "library" | "application" | "external";
-export type AgentPermissionGrantScope = "once" | "session" | "always";
-export type AgentPermissionGrant = {
+type AgentPermissionGrantScope = "once" | "session" | "always";
+type AgentPermissionGrant = {
   grant_id: string;
   capability: string;
   resource_scope: AgentResourceScope;
@@ -626,6 +626,7 @@ export type AgentRun = {
   error_code: string | null;
   error_message: string | null;
   latest_event_sequence: number;
+  metrics?: AgentRunMetrics;
   created_at: string;
   started_at: string | null;
   updated_at: string;
@@ -649,7 +650,12 @@ export type AgentContextAttachment = {
 };
 export type AgentAnswerStatus = "final" | "provisional" | "insufficient";
 export type AgentConfidence = "high" | "medium" | "low";
-export type AgentEvidenceRelation = "supports" | "conflicts";
+export type AgentCitationValidation = {
+  valid: boolean;
+  invalid_citations: string[];
+  missing_citations: boolean;
+};
+type AgentEvidenceRelation = "supports" | "conflicts";
 export type AgentEvidenceReference = {
   evidence_id: string;
   citation_key: string;
@@ -688,15 +694,16 @@ export type AgentRunMetrics = {
   model_role?: "fast" | "complex" | "vision" | null;
   selected_model_id?: string | null;
   final_status?: string | null;
+  tool_durations_ms?: Record<string, number>;
 };
 
 export type AgentCapability = "tools" | "vision" | "long_context";
-export type AgentToolDescriptor = {
+type AgentToolDescriptor = {
   name: string;
   description: string;
   prerequisites: string[];
 };
-export type AgentDefinition = {
+type AgentDefinition = {
   agent_id: string;
   title: string;
   description: string;
@@ -725,7 +732,7 @@ export type AgentArtifact = {
   asset_id: string;
   result_type: string;
   payload: Record<string, unknown>;
-  status: "pending" | "approved" | "rejected" | "stale";
+  status: "pending" | "applying" | "approved" | "rejected" | "stale" | "failed";
   error_message: string | null;
   created_at: string;
   updated_at: string;

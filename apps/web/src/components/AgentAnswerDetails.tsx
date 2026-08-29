@@ -14,6 +14,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { format_time } from "@/shared/format";
 import type {
   AgentAnswerStatus,
+  AgentCitationValidation,
   AgentConfidence,
   AgentEvidenceBundle,
   AgentEvidenceReference,
@@ -32,7 +33,7 @@ export function AgentRunMetricsDisclosure({
       <AccordionItem value="metrics">
         <AccordionTrigger className="py-2">
           <Clock3 />
-          {total ? `思考 ${total}` : "查看运行耗时"}
+          {total ? `用时 ${total}` : "查看运行耗时"}
         </AccordionTrigger>
         <AccordionContent>
           <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 text-xs">
@@ -53,16 +54,24 @@ export function AgentAnswerEvidence({
   confidence,
   answer_status,
   evidence_bundle,
+  citation_validation,
   on_seek,
+  current_asset_id,
+  return_position_seconds,
+  on_return,
 }: {
   confidence?: AgentConfidence;
   answer_status?: AgentAnswerStatus;
   evidence_bundle?: AgentEvidenceBundle;
+  citation_validation?: AgentCitationValidation;
   on_seek?: (
     seconds: number,
     end_seconds?: number,
     evidence?: AgentEvidenceReference,
   ) => void;
+  current_asset_id?: string | null;
+  return_position_seconds?: number | null;
+  on_return?: () => void;
 }) {
   if (!confidence && !answer_status && !evidence_bundle) return null;
   const evidence = evidence_bundle?.items ?? [];
@@ -107,6 +116,16 @@ export function AgentAnswerEvidence({
                 </AlertDescription>
               </Alert>
             ) : null}
+            {citation_validation && !citation_validation.valid ? (
+              <Alert variant="destructive">
+                <AlertTitle>引用校验未通过</AlertTitle>
+                <AlertDescription>
+                  {citation_validation.missing_citations
+                    ? "回答没有引用检索到的证据。"
+                    : `回答包含无效引用：${citation_validation.invalid_citations.join("、")}。`}
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {evidence_bundle ? (
               <div className="flex flex-wrap gap-2" aria-label="证据覆盖">
                 <Badge variant="secondary">
@@ -140,7 +159,11 @@ export function AgentAnswerEvidence({
               <ol className="flex flex-col gap-2" aria-label="回答证据">
                 {evidence.map((item) => (
                   <li key={item.evidence_id}>
-                    <EvidenceReference evidence={item} on_seek={on_seek} />
+                    <EvidenceReference
+                      evidence={item}
+                      on_seek={on_seek}
+                      current_asset_id={current_asset_id}
+                    />
                   </li>
                 ))}
               </ol>
@@ -149,6 +172,13 @@ export function AgentAnswerEvidence({
                 未提供结构化证据。
               </p>
             )}
+            {return_position_seconds !== null &&
+            return_position_seconds !== undefined &&
+            on_return ? (
+              <Button type="button" variant="outline" onClick={on_return}>
+                返回原播放位置 {format_time(return_position_seconds)}
+              </Button>
+            ) : null}
           </div>
         </AccordionContent>
       </AccordionItem>
@@ -223,6 +253,7 @@ export function AgentIndexStatusDisclosure({
 function EvidenceReference({
   evidence,
   on_seek,
+  current_asset_id,
 }: {
   evidence: AgentEvidenceReference;
   on_seek?: (
@@ -230,7 +261,10 @@ function EvidenceReference({
     end_seconds?: number,
     evidence?: AgentEvidenceReference,
   ) => void;
+  current_asset_id?: string | null;
 }) {
+  const belongs_to_current_asset =
+    current_asset_id === undefined || evidence.asset_id === current_asset_id;
   const content = (
     <span className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left">
       <span className="flex max-w-full flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -244,13 +278,16 @@ function EvidenceReference({
         {evidence.relation === "conflicts" ? (
           <Badge variant="destructive">冲突</Badge>
         ) : null}
+        {!belongs_to_current_asset ? (
+          <Badge variant="outline">其他视频</Badge>
+        ) : null}
       </span>
       <span className="line-clamp-3 max-w-full text-sm">
         {evidence.excerpt}
       </span>
     </span>
   );
-  if (!on_seek) {
+  if (!on_seek || !belongs_to_current_asset) {
     return <div className="flex rounded-md border p-3">{content}</div>;
   }
   return (
@@ -294,6 +331,11 @@ function metric_details(metrics: AgentRunMetrics): [string, string][] {
     ["模型", metrics.selected_model_id ?? null],
     ["最终状态", metrics.final_status ?? null],
   ];
+  for (const [tool_name, duration] of Object.entries(
+    metrics.tool_durations_ms ?? {},
+  )) {
+    entries.push([`工具 · ${tool_name}`, format_duration(duration)]);
+  }
   return entries.filter(
     (entry): entry is [string, string] => entry[1] !== null,
   );

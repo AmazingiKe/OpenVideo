@@ -248,7 +248,7 @@ export const RunMetrics: Story = {
   ),
   play: async ({ canvas }) => {
     await expect(
-      canvas.getByRole("button", { name: "思考 8.6 秒" }),
+      canvas.getByRole("button", { name: "用时 8.6 秒" }),
     ).toHaveAttribute("aria-expanded", "false");
   },
 };

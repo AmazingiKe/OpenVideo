@@ -91,6 +91,7 @@ export type AgentPanelProps = {
     end_seconds?: number | null,
     evidence?: AgentEvidenceReference,
   ) => void;
+  current_time?: number;
   on_artifact_change?: (artifact: AgentArtifact) => void | Promise<void>;
   className?: string;
 };
@@ -110,9 +111,14 @@ export function AgentPanel({
   title,
   placeholder,
   on_seek,
+  current_time,
   on_artifact_change,
   className,
 }: AgentPanelProps) {
+  const [evidence_return_seconds, set_evidence_return_seconds] = useState<
+    number | null
+  >(null);
+  useEffect(() => set_evidence_return_seconds(null), [asset_id]);
   const {
     active_run,
     artifacts,
@@ -385,7 +391,34 @@ export function AgentPanel({
                                 confidence={item.confidence}
                                 answer_status={item.answer_status}
                                 evidence_bundle={item.evidence_bundle}
-                                on_seek={on_seek}
+                                citation_validation={item.citation_validation}
+                                on_seek={
+                                  on_seek
+                                    ? (seconds, end_seconds, evidence) => {
+                                        if (
+                                          evidence_return_seconds === null &&
+                                          typeof current_time === "number"
+                                        ) {
+                                          set_evidence_return_seconds(
+                                            current_time,
+                                          );
+                                        }
+                                        on_seek(seconds, end_seconds, evidence);
+                                      }
+                                    : undefined
+                                }
+                                current_asset_id={asset_id}
+                                return_position_seconds={
+                                  evidence_return_seconds
+                                }
+                                on_return={
+                                  on_seek && evidence_return_seconds !== null
+                                    ? () => {
+                                        on_seek(evidence_return_seconds);
+                                        set_evidence_return_seconds(null);
+                                      }
+                                    : undefined
+                                }
                               />
                               {item.metrics ? (
                                 <AgentRunMetricsDisclosure

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parse_citation_validation,
   parse_evidence_bundle,
   parse_run_metrics,
 } from "./agent_event_payload";
@@ -12,7 +13,7 @@ describe("agent event payload", () => {
         items: [
           {
             evidence_id: "evidence-1",
-            citation_key: "[1]",
+            citation_key: "E1",
             source_type: "transcript",
             source_version: "v2",
             asset_id: "asset-1",
@@ -32,7 +33,7 @@ describe("agent event payload", () => {
       items: [
         {
           evidence_id: "evidence-1",
-          citation_key: "[1]",
+          citation_key: "E1",
           source_type: "transcript",
           source_version: "v2",
           asset_id: "asset-1",
@@ -55,7 +56,7 @@ describe("agent event payload", () => {
       items: [
         {
           evidence_id: "evidence-1",
-          citation_key: "[1]",
+          citation_key: "E1",
           source_type: "transcript",
           source_version: "v2",
           asset_id: "asset-1",
@@ -86,6 +87,20 @@ describe("agent event payload", () => {
       retrieval_ms: 800,
       retry_count: 1,
       selected_model_id: "model-1",
+    });
+  });
+
+  it("parses deterministic citation validation", () => {
+    expect(
+      parse_citation_validation({
+        valid: false,
+        invalid_citations: ["E99"],
+        missing_citations: false,
+      }),
+    ).toEqual({
+      valid: false,
+      invalid_citations: ["E99"],
+      missing_citations: false,
     });
   });
 });

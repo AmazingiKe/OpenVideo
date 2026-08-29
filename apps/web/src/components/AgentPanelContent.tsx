@@ -21,6 +21,7 @@ import { format_time } from "@/shared/format";
 import type {
   AgentAnswerStatus,
   AgentArtifact,
+  AgentCitationValidation,
   AgentConfidence,
   AgentContextAttachment,
   AgentEvent,
@@ -32,6 +33,7 @@ import type {
 } from "@/shared/types";
 import {
   parse_answer_status,
+  parse_citation_validation,
   parse_confidence,
   parse_context_attachments,
   parse_evidence_bundle,
@@ -79,6 +81,7 @@ type TimelineItem =
       confidence?: AgentConfidence;
       answer_status?: AgentAnswerStatus;
       evidence_bundle?: AgentEvidenceBundle;
+      citation_validation?: AgentCitationValidation;
       metrics?: AgentRunMetrics;
       thinking_mode?: AgentThinkingMode;
       retrieval_scope?: AgentRetrievalScope;
@@ -119,6 +122,7 @@ export function build_agent_timeline(
       const metrics = event.run_id
         ? (metrics_by_run.get(event.run_id) ??
           event_metrics ??
+          runs.find((run) => run.run_id === event.run_id)?.metrics ??
           run_duration_metrics(runs, event.run_id))
         : event_metrics;
       items.push({
@@ -130,6 +134,9 @@ export function build_agent_timeline(
         confidence: parse_confidence(event.payload.confidence),
         answer_status: parse_answer_status(event.payload.answer_status),
         evidence_bundle: parse_evidence_bundle(event.payload.evidence_bundle),
+        citation_validation: parse_citation_validation(
+          event.payload.citation_validation,
+        ),
         metrics,
       });
     } else if (event.event_type === "tool.status") {
@@ -246,6 +253,8 @@ export function AgentArtifactCard({
   on_regenerate?: () => void;
 }) {
   const pending = artifact.status === "pending";
+  const applying = artifact.status === "applying";
+  const failed = artifact.status === "failed";
   return (
     <Card aria-label="Agent 审批结果">
       <CardHeader>
@@ -257,7 +266,9 @@ export function AgentArtifactCard({
             </CardDescription>
           </div>
           <Badge
-            variant={artifact.status === "stale" ? "destructive" : "outline"}
+            variant={
+              artifact.status === "stale" || failed ? "destructive" : "outline"
+            }
           >
             {artifact_status_label(artifact.status)}
           </Badge>
@@ -282,6 +293,25 @@ export function AgentArtifactCard({
                 重新生成
               </Button>
             ) : null}
+          </Alert>
+        ) : null}
+        {applying ? (
+          <Alert>
+            <Wrench />
+            <AlertTitle>正在应用变更</AlertTitle>
+            <AlertDescription>
+              已取得唯一执行权，请等待本批操作完成。
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {failed ? (
+          <Alert variant="destructive">
+            <CircleX />
+            <AlertTitle>应用失败</AlertTitle>
+            <AlertDescription>
+              {artifact.error_message ??
+                "变更未能完成，业务数据不会被标记为已接受。"}
+            </AlertDescription>
           </Alert>
         ) : null}
       </CardContent>
@@ -427,8 +457,10 @@ function artifact_description(result_type: string): string {
 function artifact_status_label(status: AgentArtifact["status"]): string {
   return {
     pending: "待确认",
+    applying: "正在应用",
     approved: "已接受",
     rejected: "已拒绝",
     stale: "已过期",
+    failed: "应用失败",
   }[status];
 }

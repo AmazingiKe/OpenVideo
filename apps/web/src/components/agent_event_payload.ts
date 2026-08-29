@@ -1,5 +1,6 @@
 import type {
   AgentAnswerStatus,
+  AgentCitationValidation,
   AgentConfidence,
   AgentContextAttachment,
   AgentEvidenceBundle,
@@ -36,6 +37,17 @@ export function parse_run_metrics(value: unknown): AgentRunMetrics | undefined {
     metrics.selected_model_id = selected_model_id;
   const final_status = optional_nullable_string(value.final_status);
   if (final_status !== undefined) metrics.final_status = final_status;
+  if (is_record(value.tool_durations_ms)) {
+    const tool_durations_ms = Object.fromEntries(
+      Object.entries(value.tool_durations_ms).filter(
+        (entry): entry is [string, number] =>
+          typeof entry[1] === "number" && entry[1] >= 0,
+      ),
+    );
+    if (Object.keys(tool_durations_ms).length > 0) {
+      metrics.tool_durations_ms = tool_durations_ms;
+    }
+  }
 
   return Object.keys(metrics).length > 0 ? metrics : undefined;
 }
@@ -65,6 +77,25 @@ export function parse_answer_status(
     value === "insufficient"
     ? value
     : undefined;
+}
+
+export function parse_citation_validation(
+  value: unknown,
+): AgentCitationValidation | undefined {
+  if (
+    !is_record(value) ||
+    typeof value.valid !== "boolean" ||
+    typeof value.missing_citations !== "boolean" ||
+    !Array.isArray(value.invalid_citations) ||
+    !value.invalid_citations.every((item) => typeof item === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    valid: value.valid,
+    invalid_citations: value.invalid_citations,
+    missing_citations: value.missing_citations,
+  };
 }
 
 export function parse_thinking_mode(

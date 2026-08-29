@@ -30,10 +30,10 @@ const MINIMUM_CONCURRENT_RUNS = 1;
 const MAXIMUM_CONCURRENT_RUNS = 32;
 
 const PERMISSION_DESCRIPTIONS: Record<AgentPermissionMode, string> = {
-  request_approval: "编辑外部文件或使用互联网等工具操作都会先请求批准。",
+  request_approval: "写入、删除或已启用的外部工具操作都会先请求批准。",
   smart_approval:
     "正常读取直接执行，只在检测到写入、删除或外部操作风险时询问。",
-  full_access: "工具操作不再逐次询问。仅在你完全信任当前环境时使用。",
+  full_access: "已启用的工具操作不再逐次询问。仅在你完全信任当前环境时使用。",
 };
 
 const THINKING_DESCRIPTIONS: Record<AgentThinkingMode, string> = {
@@ -97,7 +97,7 @@ export function AgentPreferencesSettings({
             <AlertTitle>完全访问会跳过逐次批准</AlertTitle>
             <AlertDescription>
               Agent
-              可直接写入文件、访问互联网和执行已启用工具，请确认运行环境可信。
+              可直接执行程序已启用的写入与外部工具，请确认运行环境可信。当前版本不提供互联网检索。
             </AlertDescription>
           </Alert>
         ) : null}

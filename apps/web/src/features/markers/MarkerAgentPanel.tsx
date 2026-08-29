@@ -22,6 +22,7 @@ type MarkerAgentPanelProps = {
   asset_id: string | null;
   models: AiModelSummary[];
   on_seek: (seconds: number) => void;
+  current_time: number;
   on_candidate_markers_change: (markers: MediaMarker[]) => void;
   on_markers_changed: () => Promise<void>;
   focus_selection?: FocusSelection | null;
@@ -33,6 +34,7 @@ export function MarkerAgentPanel({
   asset_id,
   models,
   on_seek,
+  current_time,
   on_candidate_markers_change,
   on_markers_changed,
   focus_selection = null,
@@ -67,6 +69,7 @@ export function MarkerAgentPanel({
           asset_id={asset_id}
           models={models}
           on_seek={on_seek}
+          current_time={current_time}
           placeholder="例如：这个课程主要讲什么？"
           context_attachments={time_range_attachment(focus_selection)}
           default_thinking_mode={default_thinking_mode}

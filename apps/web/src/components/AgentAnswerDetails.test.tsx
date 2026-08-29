@@ -11,7 +11,7 @@ const EVIDENCE_BUNDLE: AgentEvidenceBundle = {
   items: [
     {
       evidence_id: "evidence-1",
-      citation_key: "[1]",
+      citation_key: "E1",
       source_type: "transcript",
       source_version: "v1",
       asset_id: "asset-1",
@@ -73,8 +73,53 @@ describe("AgentAnswerDetails", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "思考 2.5 秒" }));
+    fireEvent.click(screen.getByRole("button", { name: "用时 2.5 秒" }));
     expect(await screen.findByText("证据检索")).toBeVisible();
     expect(screen.queryByText("视觉验证")).not.toBeInTheDocument();
+  });
+
+  it("does not seek another video and provides a return action", () => {
+    const on_seek = vi.fn();
+    const on_return = vi.fn();
+    render(
+      <AgentAnswerEvidence
+        confidence="medium"
+        answer_status="final"
+        evidence_bundle={EVIDENCE_BUNDLE}
+        current_asset_id="asset-current"
+        on_seek={on_seek}
+        return_position_seconds={8}
+        on_return={on_return}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /已参考 1 项内容/ }));
+    expect(screen.getByText("其他视频")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "跳转到证据 00:15" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "返回原播放位置 00:08" }),
+    );
+    expect(on_return).toHaveBeenCalledOnce();
+    expect(on_seek).not.toHaveBeenCalled();
+  });
+
+  it("explains a failed citation validation", () => {
+    render(
+      <AgentAnswerEvidence
+        confidence="low"
+        answer_status="provisional"
+        evidence_bundle={EVIDENCE_BUNDLE}
+        citation_validation={{
+          valid: false,
+          invalid_citations: ["E99"],
+          missing_citations: false,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("引用校验未通过")).toBeVisible();
+    expect(screen.getByText("回答包含无效引用：E99。")).toBeVisible();
   });
 });
