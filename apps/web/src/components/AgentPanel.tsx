@@ -33,7 +33,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -63,7 +62,7 @@ import {
   build_agent_timeline,
 } from "./AgentPanelContent";
 import type { AgentContextAttachmentDraft } from "./agent_context";
-import { use_agent_panel, type AgentRunOption } from "./use_agent_panel";
+import { use_agent_panel } from "./use_agent_panel";
 
 const CAPABILITY_LABELS: Record<AgentCapability, string> = {
   tools: "工具调用",
@@ -77,7 +76,6 @@ export type AgentPanelProps = {
   models: AiModelSummary[];
   context?: Record<string, unknown>;
   task_input?: Record<string, unknown>;
-  run_options?: AgentRunOption[];
   context_attachments?: AgentContextAttachmentDraft[];
   default_thinking_mode?: AgentThinkingMode;
   thinking_modes_enabled?: boolean;
@@ -101,7 +99,6 @@ export function AgentPanel({
   models,
   context = {},
   task_input = {},
-  run_options = [],
   context_attachments = [],
   default_thinking_mode = "auto",
   thinking_modes_enabled = false,
@@ -135,13 +132,10 @@ export function AgentPanel({
     preparing_attachments,
     resolve_artifact,
     retrieval_scope,
-    run_option_value,
-    selected_run_option,
     select_session,
     sessions,
     set_draft,
     set_retrieval_scope,
-    set_run_option_value,
     set_scope_pinned,
     set_thinking_mode,
     scope_key,
@@ -156,7 +150,6 @@ export function AgentPanel({
     context,
     models,
     on_artifact_change,
-    run_options,
     task_input,
     default_thinking_mode,
   });
@@ -227,38 +220,6 @@ export function AgentPanel({
             <Badge variant="outline">未开始</Badge>
           )}
         </div>
-        <FieldGroup
-          className="min-w-0 flex-row flex-wrap items-start gap-3"
-          aria-label="助手设置"
-        >
-          {run_options.length > 0 ? (
-            <Field className="min-w-0 flex-1 basis-40 gap-1.5">
-              <FieldLabel htmlFor={`${agent_id}-agent-mode`}>
-                工作方式
-              </FieldLabel>
-              <Select
-                value={run_option_value}
-                onValueChange={set_run_option_value}
-              >
-                <SelectTrigger
-                  id={`${agent_id}-agent-mode`}
-                  className="w-full min-w-0"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {run_options.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : null}
-        </FieldGroup>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1 basis-40">
             <Select
@@ -289,18 +250,13 @@ export function AgentPanel({
               </SelectContent>
             </Select>
           </div>
-          {selected_run_option ? (
-            <p className="min-w-0 flex-1 basis-40 text-xs leading-relaxed text-muted-foreground">
-              {selected_run_option.description}
-            </p>
-          ) : null}
         </div>
         {definition && compatible_models.length === 0 ? (
           <Alert variant="destructive">
             <AlertTitle>没有兼容模型</AlertTitle>
             <AlertDescription>
-              {selected_run_option?.required_capabilities?.length
-                ? `当前操作要求：${selected_run_option.required_capabilities
+              {definition.definition.required_capabilities.length
+                ? `助手要求：${definition.definition.required_capabilities
                     .map((capability) => CAPABILITY_LABELS[capability])
                     .join("、")}`
                 : (definition.unavailable_reason ??

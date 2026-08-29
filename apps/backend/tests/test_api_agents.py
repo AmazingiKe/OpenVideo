@@ -60,6 +60,33 @@ ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 MODEL_ID = "model-01890f4c7a2b7cc298c4dc0c0c07398f"
 
 
+@pytest.fixture(autouse=True)
+def stub_agent_intent_router(monkeypatch):
+    def route_request(_model, messages, *_args, **_kwargs):
+        payload = json.loads(messages[-1]["content"])
+        content = payload["user_request"]
+        intent = payload["workflow_hint"]
+        if intent is None and any(term in content for term in ("修改", "生成标记")):
+            intent = "edit"
+        if intent is None and any(term in content for term in ("插图", "图片", "GIF")):
+            intent = "illustrate"
+        intent = intent or "chat"
+        model_role = (
+            "complex"
+            if intent != "chat" or payload["retrieval_scope"] == "library"
+            else "fast"
+        )
+        return json.dumps(
+            {
+                "intent": intent,
+                "model_role": model_role,
+                "reason": "测试结构化路由",
+            }
+        )
+
+    monkeypatch.setattr("openvideo.agent_intent_router.complete_text", route_request)
+
+
 def evidence_gate(
     *, confidence: str = "medium", allowed: bool = True
 ) -> dict[str, object]:
@@ -185,6 +212,54 @@ def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypat
         run = client.get(f"/api/agent-runs/{run_id}").json()
         assert run["stage"] == "failed"
         assert run["error_code"] == "required_result_missing"
+
+
+def test_natural_language_routes_to_marker_edit_without_ui_mode(
+    tmp_path: Path,
+    monkeypatch,
+):
+    captured: dict[str, object] = {}
+
+    async def capture_definition(
+        self,
+        model,
+        profile,
+        definition,
+        messages,
+        registry,
+        on_event,
+        **_options,
+    ):
+        captured["definition"] = definition
+        return AgentExecutionResult(content="等待生成标记建议")
+
+    monkeypatch.setattr(AgnoAgentExecutor, "run", capture_definition)
+    with create_client(tmp_path) as client:
+        session = client.post(
+            "/api/agent-sessions",
+            json={"agent_id": "marker", "asset_id": ASSET_ID},
+        ).json()
+        run = client.post(
+            f"/api/agent-sessions/{session['session_id']}/runs",
+            json={
+                "request_key": f"request-{uuid7().hex}",
+                "ai_model_id": MODEL_ID,
+                "content": "请生成标记建议",
+            },
+        ).json()
+        client.get(f"/api/agent-runs/{run['run_id']}/events")
+        state = client.get(f"/api/agent-sessions/{session['session_id']}").json()
+
+    definition = captured["definition"]
+    assert definition.required_tools == {"propose_marker_changes"}
+    input_event = next(
+        event
+        for event in state["events"]
+        if event["event_type"] == "run.status" and "input" in event["payload"]
+    )
+    assert input_event["payload"]["intent"] == "edit"
+    assert input_event["payload"]["routing_reason"] == "测试结构化路由"
+    assert state["runs"][0]["metrics"]["model_role"] == "complex"
 
 
 def test_run_rejects_non_uuid7_request_key(tmp_path: Path):

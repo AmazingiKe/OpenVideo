@@ -444,6 +444,9 @@ describe("App", () => {
     expect(
       within(agent_panel).queryByLabelText("模型"),
     ).not.toBeInTheDocument();
+    expect(
+      within(agent_panel).queryByLabelText("工作方式"),
+    ).not.toBeInTheDocument();
     expect(marker_workspace).toContainElement(video_workspace);
     expect(marker_workspace).toContainElement(timeline);
     expect(marker_workspace).not.toContainElement(agent_panel);

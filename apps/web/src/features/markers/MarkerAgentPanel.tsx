@@ -68,27 +68,11 @@ export function MarkerAgentPanel({
           models={models}
           on_seek={on_seek}
           current_time={current_time}
-          placeholder="例如：这个课程主要讲什么？"
+          placeholder="询问视频内容，或直接描述希望创建的标记…"
           context_attachments={time_range_attachment(focus_selection)}
           default_thinking_mode={default_thinking_mode}
           thinking_modes_enabled
           library_scope_enabled
-          run_options={[
-            {
-              value: "chat",
-              label: "内容问答",
-              description: "检索视频证据并回答问题，不创建标记建议。",
-              task_input: { intent: "chat" },
-              required_capabilities: ["tools"],
-            },
-            {
-              value: "edit",
-              label: "生成标记建议",
-              description: "生成整批标记变更预览，确认后才会修改标记。",
-              task_input: { intent: "edit" },
-              required_capabilities: ["tools"],
-            },
-          ]}
           on_artifact_change={handle_artifact}
         />
       )}

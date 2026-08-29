@@ -11,6 +11,11 @@ from time import perf_counter
 from typing import Any, Protocol
 
 from openvideo.agent_permission_policy import PermissionPolicy
+from openvideo.agent_intent_router import (
+    AgentIntentRoute,
+    AgentIntentRoutingError,
+    route_agent_intent,
+)
 from openvideo.agent_runtime import (
     AgentRuntime,
     AgentSessionStore,
@@ -133,10 +138,6 @@ SUMMARY_MEDIA_TOOL_NAMES = frozenset(
 )
 SUMMARY_IMAGE_SELECTION_TOLERANCE_SECONDS = 0.25
 SUMMARY_MEDIA_MIN_CONFIDENCE = 0.75
-AUTO_COMPLEX_CONTENT_LENGTH = 240
-AUTO_COMPLEX_TERMS = frozenset(
-    {"分析", "比较", "为什么", "全片", "跨视频", "冲突", "综合", "推理"}
-)
 
 
 class SummaryDocumentService(Protocol):
@@ -212,12 +213,33 @@ class AgentService:
             artifacts=self.library.load_agent_artifacts(session_id=session_id),
         )
 
-    def create_run(self, session_id: str, request: AgentRunCreate) -> AgentRun:
+    async def create_run(self, session_id: str, request: AgentRunCreate) -> AgentRun:
         session = self._require_session(session_id)
         registered = self.registry.require(session.agent_id)
         if registered.session_validator is not None:
             registered.session_validator(session.asset_id, session.context)
         self._validate_run_binding(session, request.task_input)
+        existing = self.library.load_agent_run_by_request_key(request.request_key)
+        if existing is not None:
+            if existing.session_id != session_id:
+                raise AgentConflictError("请求键已被其他会话使用")
+            return existing
+        if "thinking_mode" not in request.model_fields_set:
+            request = request.model_copy(
+                update={"thinking_mode": self.settings.agent.default_thinking_mode}
+            )
+        request = self._resolve_context_attachments(request)
+        routing_started_at = perf_counter()
+        route = await self._route_request(session, registered.definition, request)
+        if route is not None:
+            request = request.model_copy(
+                update={
+                    "task_input": {
+                        **request.task_input,
+                        AGENT_RUN_INTENT_KEY: route.intent.value,
+                    }
+                }
+            )
         existing = self.library.load_agent_run_by_request_key(request.request_key)
         if existing is not None:
             if existing.session_id != session_id:
@@ -231,13 +253,7 @@ class AgentService:
             for run in self.library.load_agent_runs(session_id)
         ):
             raise AgentConflictError("当前会话已有正在运行的任务")
-        if "thinking_mode" not in request.model_fields_set:
-            request = request.model_copy(
-                update={"thinking_mode": self.settings.agent.default_thinking_mode}
-            )
-        request = self._resolve_context_attachments(request)
-        routing_started_at = perf_counter()
-        model_role = self._select_model_role(request)
+        model_role = self._select_model_role(request, route)
         model_id = self._model_id_for_role(model_role) or request.ai_model_id
         model = self.settings.ai_model(model_id)
         if model is None:
@@ -297,6 +313,8 @@ class AgentService:
                 input_metadata={
                     "thinking_mode": request.thinking_mode.value,
                     "retrieval_scope": request.retrieval_scope.value,
+                    "intent": request.task_input.get(AGENT_RUN_INTENT_KEY),
+                    "routing_reason": route.reason if route is not None else None,
                     "context_attachments": [
                         attachment.model_dump(mode="json")
                         for attachment in request.context_attachments
@@ -421,8 +439,38 @@ class AgentService:
         await asyncio.gather(*(self.cancel(run_id) for run_id in targets))
         return all(run_id not in self._tasks for run_id in targets)
 
+    async def _route_request(
+        self,
+        session: AgentSession,
+        definition: AgentDefinition,
+        request: AgentRunCreate,
+    ) -> AgentIntentRoute | None:
+        if definition.input_mode == "task":
+            return None
+        router_model_id = self.settings.agent.fast_model_id or request.ai_model_id
+        router_model = self.settings.ai_model(router_model_id)
+        if router_model is None:
+            raise AgentServiceError("快速模型不存在，无法判断助手工作方式")
+        requested_intent = request.task_input.get(AGENT_RUN_INTENT_KEY)
+        try:
+            return await asyncio.to_thread(
+                route_agent_intent,
+                router_model,
+                agent_id=session.agent_id,
+                content=request.content,
+                retrieval_scope=request.retrieval_scope,
+                requested_intent=(
+                    str(requested_intent) if requested_intent is not None else None
+                ),
+            )
+        except AgentIntentRoutingError as error:
+            raise AgentServiceError(str(error), "intent_routing_failed") from error
+
     @staticmethod
-    def _select_model_role(request: AgentRunCreate) -> AgentModelRole:
+    def _select_model_role(
+        request: AgentRunCreate,
+        route: AgentIntentRoute | None,
+    ) -> AgentModelRole:
         if (
             request.task_input.get(AGENT_RUN_INTENT_KEY)
             == SUMMARY_RUN_ILLUSTRATE_INTENT
@@ -432,14 +480,9 @@ class AgentService:
             return AgentModelRole.FAST
         if request.thinking_mode == AgentThinkingMode.COMPLEX:
             return AgentModelRole.COMPLEX
-        content = request.content.strip()
-        complex_request = (
-            request.retrieval_scope == AgentRetrievalScope.LIBRARY
-            or request.task_input.get(AGENT_RUN_INTENT_KEY) == AGENT_RUN_EDIT_INTENT
-            or len(content) >= AUTO_COMPLEX_CONTENT_LENGTH
-            or any(term in content for term in AUTO_COMPLEX_TERMS)
-        )
-        return AgentModelRole.COMPLEX if complex_request else AgentModelRole.FAST
+        if route is not None:
+            return route.model_role
+        return AgentModelRole.COMPLEX
 
     def _model_id_for_role(self, role: AgentModelRole) -> str | None:
         return {

@@ -15,7 +15,6 @@ import { error_message, is_abort_error } from "@/shared/errors";
 import { uuid7 } from "@/shared/identifiers";
 import type {
   AgentArtifact,
-  AgentCapability,
   AgentEvent,
   AgentRun,
   AgentSession,
@@ -39,21 +38,12 @@ const TERMINAL_RUN_STAGES = new Set<AgentRun["stage"]>([
   "interrupted",
 ]);
 
-export type AgentRunOption = {
-  value: string;
-  label: string;
-  description: string;
-  task_input: Record<string, unknown>;
-  required_capabilities?: AgentCapability[];
-};
-
 type AgentPanelStateOptions = {
   agent_id: string;
   asset_id: string | null;
   context: Record<string, unknown>;
   models: AiModelSummary[];
   on_artifact_change?: (artifact: AgentArtifact) => void | Promise<void>;
-  run_options: AgentRunOption[];
   task_input: Record<string, unknown>;
   default_thinking_mode: AgentThinkingMode;
 };
@@ -64,7 +54,6 @@ export function use_agent_panel({
   context,
   models,
   on_artifact_change,
-  run_options,
   task_input,
   default_thinking_mode,
 }: AgentPanelStateOptions) {
@@ -74,9 +63,6 @@ export function use_agent_panel({
   const [sessions, set_sessions] = useState<AgentSession[]>([]);
   const [state, set_state] = useState<AgentSessionState | null>(null);
   const [model_id, set_model_id] = useState<string | null>(null);
-  const [run_option_value, set_run_option_value] = useState(
-    run_options[0]?.value ?? "",
-  );
   const [draft, set_draft] = useState("");
   const [thinking_mode, set_thinking_mode] = useState<AgentThinkingMode>(
     default_thinking_mode,
@@ -101,27 +87,11 @@ export function use_agent_panel({
     [agent_id, asset_id, context],
   );
 
-  const selected_run_option =
-    run_options.find((option) => option.value === run_option_value) ??
-    run_options[0];
   const compatible_models = useMemo(() => {
     if (!definition) return [];
-    let compatible_ids = new Set(definition.compatible_model_ids);
-    for (const capability of selected_run_option?.required_capabilities ?? []) {
-      const capability_ids = new Set(
-        definition.capability_model_ids[capability] ?? [],
-      );
-      compatible_ids = new Set(
-        [...compatible_ids].filter((id) => capability_ids.has(id)),
-      );
-    }
+    const compatible_ids = new Set(definition.compatible_model_ids);
     return models.filter((model) => compatible_ids.has(model.model_id));
-  }, [definition, models, selected_run_option]);
-
-  useEffect(() => {
-    if (run_options.some((option) => option.value === run_option_value)) return;
-    set_run_option_value(run_options[0]?.value ?? "");
-  }, [run_option_value, run_options]);
+  }, [definition, models]);
 
   useEffect(() => {
     set_model_id((current) =>
@@ -243,7 +213,7 @@ export function use_agent_panel({
         request_key: `request-${uuid7().replaceAll("-", "")}`,
         ai_model_id: model_id,
         content,
-        task_input: { ...task_input, ...selected_run_option?.task_input },
+        task_input,
         thinking_mode,
         retrieval_scope,
         context_attachments,
@@ -403,13 +373,10 @@ export function use_agent_panel({
     pending: active_run !== null && !TERMINAL_RUN_STAGES.has(active_run.stage),
     preparing_attachments,
     resolve_artifact,
-    run_option_value,
-    selected_run_option,
     select_session,
     sessions,
     set_draft,
     set_retrieval_scope,
-    set_run_option_value,
     set_scope_pinned,
     set_thinking_mode,
     scope_key,

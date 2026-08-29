@@ -125,7 +125,7 @@ export function AgentPreferencesSettings({
             快速
           </ToggleGroupItem>
           <ToggleGroupItem className="min-w-24 flex-1" value="complex">
-            复杂
+            复杂思考
           </ToggleGroupItem>
         </ToggleGroup>
         <FieldDescription id={`${control_id}-thinking-description`}>

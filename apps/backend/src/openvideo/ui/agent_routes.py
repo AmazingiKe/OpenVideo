@@ -73,7 +73,7 @@ def register_agent_routes(
     )
     async def create_agent_run(session_id: str, request: AgentRunCreate) -> AgentRun:
         try:
-            return agent_service().create_run(session_id, request)
+            return await agent_service().create_run(session_id, request)
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 

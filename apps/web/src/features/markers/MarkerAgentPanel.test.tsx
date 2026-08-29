@@ -15,7 +15,7 @@ vi.mock("@/components/AgentPanel", () => ({
 }));
 
 describe("MarkerAgentPanel", () => {
-  it("defaults to content questions and isolates the marker proposal mode", () => {
+  it("lets the assistant route questions and marker changes from one input", () => {
     render(
       <MarkerAgentPanel
         asset_id="01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
@@ -29,20 +29,9 @@ describe("MarkerAgentPanel", () => {
 
     expect(agent_panel_spy).toHaveBeenCalledWith(
       expect.objectContaining({
-        placeholder: "例如：这个课程主要讲什么？",
-        run_options: [
-          expect.objectContaining({
-            value: "chat",
-            label: "内容问答",
-            task_input: { intent: "chat" },
-          }),
-          expect.objectContaining({
-            value: "edit",
-            label: "生成标记建议",
-            task_input: { intent: "edit" },
-          }),
-        ],
+        placeholder: "询问视频内容，或直接描述希望创建的标记…",
       }),
     );
+    expect(agent_panel_spy.mock.calls[0][0]).not.toHaveProperty("run_options");
   });
 });

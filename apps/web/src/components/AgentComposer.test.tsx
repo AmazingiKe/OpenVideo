@@ -57,7 +57,7 @@ describe("AgentComposer", () => {
       />,
     );
 
-    expect(screen.getByRole("radio", { name: "复杂" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "复杂思考" })).toBeDisabled();
     expect(screen.getByRole("radio", { name: "资料库" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "将资料库范围固定到当前对话" }),

@@ -168,28 +168,7 @@ export function SummaryEditorLayout({
       default_thinking_mode={default_thinking_mode}
       thinking_modes_enabled
       library_scope_enabled
-      run_options={[
-        {
-          value: "chat",
-          label: "文档问答",
-          description: "只回答问题，不修改总结；可使用纯聊天模型。",
-          task_input: { intent: "chat" },
-        },
-        {
-          value: "edit",
-          label: "修改总结",
-          description: "生成整批修改预览，确认后才会写入文档。",
-          task_input: { intent: "edit" },
-          required_capabilities: ["tools"],
-        },
-        {
-          value: "illustrate",
-          label: "图文增强",
-          description: "检查视频候选画面，生成一项图片或 GIF 插入预览。",
-          task_input: { intent: "illustrate" },
-          required_capabilities: ["tools", "vision"],
-        },
-      ]}
+      placeholder="询问视频内容，或直接描述希望怎样修改总结…"
       on_artifact_change={on_artifact_change}
     />
   );

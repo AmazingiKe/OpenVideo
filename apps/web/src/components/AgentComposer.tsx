@@ -136,7 +136,7 @@ export function AgentComposer({
                     : "模型角色路由尚未接通"
                 }
               >
-                复杂
+                复杂思考
               </ToggleGroupItem>
             </ToggleGroup>
           </Field>
