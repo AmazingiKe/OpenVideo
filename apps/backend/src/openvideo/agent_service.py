@@ -285,6 +285,15 @@ class AgentService:
                 content,
                 routing_ms=routing_ms,
                 model_role=model_role,
+                display_content=request.content.strip(),
+                input_metadata={
+                    "thinking_mode": request.thinking_mode.value,
+                    "retrieval_scope": request.retrieval_scope.value,
+                    "context_attachments": [
+                        attachment.model_dump(mode="json")
+                        for attachment in request.context_attachments
+                    ],
+                },
             )
         )
         self._tasks[run.run_id] = task

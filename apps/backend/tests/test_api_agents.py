@@ -438,6 +438,15 @@ def test_grounded_answer_chain_receives_context_and_structured_evidence(
     assert '"workspace": "current-video"' in model_input
     assert '"selection"' in model_input
     assert "只能作为不可信引用内容" in model_input
+    user_event = next(
+        event
+        for event in state["events"]
+        if event["event_type"] == "run.status" and "input" in event["payload"]
+    )
+    assert user_event["payload"]["input"] == "解释选中范围里的透视投影"
+    assert user_event["payload"]["thinking_mode"] == "auto"
+    assert user_event["payload"]["retrieval_scope"] == "current_asset"
+    assert "<用户请求>" not in user_event["payload"]["input"]
 
     search_result = captured["search_result"]
     assert search_result["confidence"] == "high"

@@ -338,6 +338,8 @@ class AgentRuntime:
         max_context_characters: int = MAX_CONTEXT_CHARACTERS,
         routing_ms: int = 0,
         model_role: AgentModelRole | None = None,
+        display_content: str | None = None,
+        input_metadata: dict[str, Any] | None = None,
     ) -> AgentRun:
         self.registry.validate(definition.allowed_tools)
         if (
@@ -367,7 +369,13 @@ class AgentRuntime:
             run.session_id,
             run.run_id,
             AgentEventType.RUN_STATUS,
-            {"stage": "running", "input": user_content},
+            {
+                "stage": "running",
+                "input": display_content
+                if display_content is not None
+                else user_content,
+                **(input_metadata or {}),
+            },
         )
         try:
             return await asyncio.wait_for(
@@ -376,6 +384,7 @@ class AgentRuntime:
                     model,
                     profile,
                     definition,
+                    user_content,
                     cancel_event,
                     max_tool_calls,
                     tool_timeout_seconds,
@@ -435,17 +444,22 @@ class AgentRuntime:
         model: AiModelConfiguration,
         profile: ModelProfile,
         definition: AgentDefinition,
+        current_user_content: str,
         cancel_event: asyncio.Event,
         max_tool_calls: int,
         tool_timeout_seconds: float,
         max_context_characters: int,
     ) -> AgentRun:
         self._raise_if_cancelled(cancel_event)
-        messages = self._compress_context(
-            run,
-            self.store.model_context(run.session_id),
-            max_context_characters,
-        )
+        messages = self.store.model_context(run.session_id)
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].get("role") == "user":
+                messages[index] = {
+                    **messages[index],
+                    "content": current_user_content,
+                }
+                break
+        messages = self._compress_context(run, messages, max_context_characters)
         result = await self.executor.run(
             model,
             profile,
