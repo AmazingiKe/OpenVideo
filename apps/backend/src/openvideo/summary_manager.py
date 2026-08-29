@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from openvideo.core.event_analysis_models import EventAnalysisStatus
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
+from openvideo.core.library_index import synchronize_asset
 from openvideo.core.summary_files import (
     SUMMARY_ASSETS_DIRECTORY_NAME,
     SUMMARY_DIRECTORY_NAME,
@@ -389,6 +390,210 @@ class SummaryManager:
         if indexed is None:
             raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
         return indexed
+
+    def apply_agent_edit(
+        self,
+        document_id: str,
+        expected_revision: int,
+        markdown: str,
+        suggested_children: list[SummaryDocumentCreate],
+    ) -> tuple[SummaryDocument, list[SummaryDocument]]:
+        """把正文与新增子文档作为同一业务版本提交，失败时恢复全部文件。"""
+
+        with self.library._lock:
+            document = self._require_document(document_id)
+            if document.revision != expected_revision:
+                raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
+            documents = self.documents(document.asset_id, document.version_id)
+            now = datetime.now(UTC)
+            updated = document
+            markdown_changed = markdown != document.markdown
+            if markdown_changed:
+                updated = self._prepare_document(
+                    document.model_copy(
+                        update={
+                            "markdown": markdown,
+                            "revision": document.revision + 1,
+                            "updated_at": now,
+                        }
+                    )
+                )
+            root_id = (
+                updated.document_id
+                if updated.parent_document_id is None
+                else updated.parent_document_id
+            )
+            child_count = sum(
+                item.parent_document_id == root_id for item in documents
+            )
+            children = [
+                self._prepare_document(
+                    SummaryDocument(
+                        document_id=f"document-{uuid7().hex}",
+                        asset_id=updated.asset_id,
+                        version_id=updated.version_id,
+                        parent_document_id=root_id,
+                        title=request.title,
+                        markdown=request.markdown,
+                        position=child_count + position,
+                    )
+                )
+                for position, request in enumerate(suggested_children)
+            ]
+            committed_documents = [
+                updated if item.document_id == updated.document_id else item
+                for item in documents
+            ] + children
+            asset_directory = self.library.asset_directory(updated.asset_id)
+            manifest_path = resolve_version_path(
+                asset_directory,
+                updated.version_id,
+                SUMMARY_MANIFEST_FILE_NAME,
+            )
+            changed_paths = [manifest_path, self._document_path(updated)] + [
+                self._document_path(child) for child in children
+            ]
+            snapshots = {
+                path: path.read_bytes() if path.is_file() else None
+                for path in changed_paths
+            }
+            try:
+                if markdown_changed:
+                    self._write_document(updated)
+                for child in children:
+                    self._write_document(child)
+                manifest = load_version_manifest(
+                    asset_directory,
+                    updated.version_id,
+                )
+                write_version_manifest(
+                    asset_directory,
+                    build_version_manifest(
+                        manifest.version,
+                        committed_documents,
+                        manifest.media,
+                    ),
+                )
+                synchronize_asset(
+                    self.library._db(),
+                    self.library.assets_path,
+                    updated.asset_id,
+                )
+            except Exception:
+                for path, content in snapshots.items():
+                    if content is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic_write_bytes(path, content)
+                synchronize_asset(
+                    self.library._db(),
+                    self.library.assets_path,
+                    updated.asset_id,
+                )
+                raise
+            committed = self._require_document(updated.document_id)
+            committed_children = [
+                self._require_document(child.document_id) for child in children
+            ]
+            return committed, committed_children
+
+    def restore_agent_change(
+        self,
+        document_id: str,
+        expected_revision: int,
+        markdown: str,
+        remove_document_ids: list[str],
+        remove_media_ids: list[str],
+        restored_revision: int | None = None,
+    ) -> SummaryDocument:
+        """撤销整个 Agent 版本；目标有后续修改时由调用方拒绝而不覆盖。"""
+
+        with self.library._lock:
+            document = self._require_document(document_id)
+            if document.revision != expected_revision:
+                raise SummaryRevisionConflictError("文档版本冲突，不能覆盖后续修改")
+            documents = self.documents(document.asset_id, document.version_id)
+            removable_documents = [
+                item for item in documents if item.document_id in remove_document_ids
+            ]
+            if {item.document_id for item in removable_documents} != set(
+                remove_document_ids
+            ):
+                raise SummaryRevisionConflictError("新增子文档已变化，不能整批撤销")
+            manifest = load_version_manifest(
+                self.library.asset_directory(document.asset_id),
+                document.version_id,
+            )
+            removable_media = [
+                item for item in manifest.media if item.media_id in remove_media_ids
+            ]
+            if {item.media_id for item in removable_media} != set(remove_media_ids):
+                raise SummaryRevisionConflictError("新增媒体已变化，不能整批撤销")
+            restored = self._prepare_document(
+                document.model_copy(
+                    update={
+                        "markdown": markdown,
+                        "revision": restored_revision or document.revision + 1,
+                        "updated_at": datetime.now(UTC),
+                    }
+                )
+            )
+            remaining_documents = [
+                restored if item.document_id == restored.document_id else item
+                for item in documents
+                if item.document_id not in remove_document_ids
+            ]
+            remaining_media = [
+                item for item in manifest.media if item.media_id not in remove_media_ids
+            ]
+            asset_directory = self.library.asset_directory(document.asset_id)
+            manifest_path = resolve_version_path(
+                asset_directory,
+                document.version_id,
+                SUMMARY_MANIFEST_FILE_NAME,
+            )
+            removed_paths = [
+                self._document_path(item) for item in removable_documents
+            ] + [self._artifact_path(item) for item in removable_media]
+            changed_paths = [
+                manifest_path,
+                self._document_path(restored),
+                *removed_paths,
+            ]
+            snapshots = {
+                path: path.read_bytes() if path.is_file() else None
+                for path in changed_paths
+            }
+            try:
+                self._write_document(restored)
+                write_version_manifest(
+                    asset_directory,
+                    build_version_manifest(
+                        manifest.version,
+                        remaining_documents,
+                        remaining_media,
+                    ),
+                )
+                for path in removed_paths:
+                    path.unlink(missing_ok=True)
+                synchronize_asset(
+                    self.library._db(),
+                    self.library.assets_path,
+                    document.asset_id,
+                )
+            except Exception:
+                for path, content in snapshots.items():
+                    if content is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic_write_bytes(path, content)
+                synchronize_asset(
+                    self.library._db(),
+                    self.library.assets_path,
+                    document.asset_id,
+                )
+                raise
+            return self._require_document(document.document_id)
 
     def reorder_children(
         self,

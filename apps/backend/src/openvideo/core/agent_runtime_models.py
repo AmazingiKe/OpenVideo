@@ -82,6 +82,8 @@ class AgentArtifactStatus(StrEnum):
     REJECTED = "rejected"
     STALE = "stale"
     FAILED = "failed"
+    UNDOING = "undoing"
+    UNDONE = "undone"
 
 
 class AgentToolDescriptor(BaseModel):
@@ -198,6 +200,29 @@ class AgentArtifact(BaseModel):
 
 class AgentArtifactApprovalRequest(BaseModel):
     grant_scope: AgentPermissionGrantScope = AgentPermissionGrantScope.ONCE
+
+
+class AgentChangeVersion(BaseModel):
+    """用户可查看和整批撤销的本地业务版本，正文不进入运行审计事件。"""
+
+    change_version_id: str
+    artifact_id: str
+    run_id: str
+    session_id: str
+    agent_id: str
+    asset_id: str
+    result_type: str
+    change_payload: dict[str, Any]
+    application_result: dict[str, Any]
+    committed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    undone_at: datetime | None = None
+
+    @field_validator("change_version_id")
+    @classmethod
+    def validate_change_version_id(cls, value: str) -> str:
+        if not is_prefixed_uuid7(value, "agent-version-"):
+            raise ValueError("Agent 变更版本标识必须使用 UUIDv7")
+        return value
 
 
 class AgentToolCall(BaseModel):

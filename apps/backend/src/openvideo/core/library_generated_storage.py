@@ -16,6 +16,7 @@ from openvideo.core.agent_evidence_index import (
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentArtifactStatus,
+    AgentChangeVersion,
     AgentEvent,
     AgentEventType,
     AgentRun,
@@ -32,12 +33,16 @@ from openvideo.core.library_index import (
     open_index_connection,
     synchronize_asset,
 )
+from openvideo.core.library_files import atomic_write_model
 from openvideo.core.summary_files import load_version_manifest, write_version_manifest
 from openvideo.core.summary_models import (
     SummaryDocument,
     SummaryMediaArtifact,
     SummaryVersion,
 )
+
+AGENT_CHANGES_DIRECTORY_NAME = "agent-changes"
+AGENT_CHANGE_VERSION_PATTERN = "agent-version-*.json"
 
 
 class LibraryGeneratedStorageMixin:
@@ -452,6 +457,7 @@ class LibraryGeneratedStorageMixin:
         artifact_id: str,
         status: AgentArtifactStatus,
         error_message: str | None = None,
+        application_result: dict[str, object] | None = None,
     ) -> AgentArtifact | None:
         """只有已取得执行权的审批才能落入唯一终态。"""
 
@@ -461,12 +467,45 @@ class LibraryGeneratedStorageMixin:
             AgentArtifactStatus.FAILED,
         }:
             raise ValueError("审批执行只能结束为已批准、已过期或失败")
-        return self._transition_agent_artifact(
-            artifact_id,
-            AgentArtifactStatus.APPLYING,
-            status,
-            error_message,
-        )
+        if application_result is None:
+            return self._transition_agent_artifact(
+                artifact_id,
+                AgentArtifactStatus.APPLYING,
+                status,
+                error_message,
+            )
+        self._validate_identifier(artifact_id, "artifact")
+        updated_at = datetime.now(UTC)
+        with self._lock, self._db():
+            row = self._db().execute(
+                "SELECT payload FROM agent_artifacts "
+                "WHERE artifact_id = ? AND status = ?",
+                (artifact_id, AgentArtifactStatus.APPLYING.value),
+            ).fetchone()
+            if row is None:
+                return None
+            payload = json.loads(row["payload"])
+            payload["application_result"] = application_result
+            cursor = self._db().execute(
+                "UPDATE agent_artifacts SET status = ?, payload = ?, "
+                "error_message = ?, updated_at = ? "
+                "WHERE artifact_id = ? AND status = ?",
+                (
+                    status.value,
+                    json.dumps(payload, ensure_ascii=False),
+                    error_message,
+                    updated_at.isoformat(),
+                    artifact_id,
+                    AgentArtifactStatus.APPLYING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            updated_row = self._db().execute(
+                "SELECT * FROM agent_artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        return self._agent_artifact_from_row(updated_row) if updated_row else None
 
     def reject_agent_artifact(self, artifact_id: str) -> AgentArtifact | None:
         """拒绝只允许从待审批状态发生，不能覆盖正在应用的操作。"""
@@ -476,6 +515,103 @@ class LibraryGeneratedStorageMixin:
             AgentArtifactStatus.PENDING,
             AgentArtifactStatus.REJECTED,
         )
+
+    def claim_agent_artifact_undo(self, artifact_id: str) -> AgentArtifact | None:
+        """比较并交换取得唯一撤销权。"""
+
+        return self._transition_agent_artifact(
+            artifact_id,
+            AgentArtifactStatus.APPROVED,
+            AgentArtifactStatus.UNDOING,
+        )
+
+    def finish_agent_artifact_undo(self, artifact_id: str) -> AgentArtifact | None:
+        return self._transition_agent_artifact(
+            artifact_id,
+            AgentArtifactStatus.UNDOING,
+            AgentArtifactStatus.UNDONE,
+        )
+
+    def cancel_agent_artifact_undo(
+        self,
+        artifact_id: str,
+        error_message: str,
+    ) -> AgentArtifact | None:
+        return self._transition_agent_artifact(
+            artifact_id,
+            AgentArtifactStatus.UNDOING,
+            AgentArtifactStatus.APPROVED,
+            error_message,
+        )
+
+    def save_agent_change_version(
+        self,
+        version: AgentChangeVersion,
+    ) -> None:
+        self._validate_identifier(version.change_version_id, "agent-version")
+        self._validate_identifier(version.artifact_id, "artifact")
+        self._validate_asset_id(version.asset_id)
+        directory = (
+            self.artifacts_directory(version.asset_id)
+            / AGENT_CHANGES_DIRECTORY_NAME
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        if directory.is_symlink():
+            raise ValueError("Agent 变更历史目录不能是符号链接")
+        atomic_write_model(directory / f"{version.change_version_id}.json", version)
+
+    def load_agent_change_versions(self, asset_id: str) -> list[AgentChangeVersion]:
+        self._validate_asset_id(asset_id)
+        directory = self.artifacts_directory(asset_id) / AGENT_CHANGES_DIRECTORY_NAME
+        if not directory.is_dir() or directory.is_symlink():
+            return []
+        versions: list[AgentChangeVersion] = []
+        for path in directory.glob(AGENT_CHANGE_VERSION_PATTERN):
+            if path.is_symlink():
+                continue
+            try:
+                version = AgentChangeVersion.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            if version.asset_id == asset_id:
+                versions.append(version)
+        return sorted(versions, key=lambda item: item.committed_at)
+
+    def mark_agent_change_version_undone(
+        self,
+        asset_id: str,
+        change_version_id: str,
+    ) -> AgentChangeVersion:
+        version = next(
+            (
+                item
+                for item in self.load_agent_change_versions(asset_id)
+                if item.change_version_id == change_version_id
+            ),
+            None,
+        )
+        if version is None:
+            raise ValueError("Agent 变更版本不存在")
+        updated = version.model_copy(update={"undone_at": datetime.now(UTC)})
+        self.save_agent_change_version(updated)
+        return updated
+
+    def delete_agent_change_version(
+        self,
+        asset_id: str,
+        change_version_id: str,
+    ) -> None:
+        """仅用于审批事务回滚尚未对用户可见的版本记录。"""
+
+        self._validate_asset_id(asset_id)
+        self._validate_identifier(change_version_id, "agent-version")
+        directory = self.artifacts_directory(asset_id) / AGENT_CHANGES_DIRECTORY_NAME
+        path = directory / f"{change_version_id}.json"
+        if path.parent.resolve() != directory.resolve() or path.is_symlink():
+            raise ValueError("Agent 变更版本路径无效")
+        path.unlink(missing_ok=True)
 
     def _transition_agent_artifact(
         self,

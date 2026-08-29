@@ -34,6 +34,7 @@ import { format_time } from "@/shared/format";
 import type {
   AgentAnswerStatus,
   AgentArtifact,
+  AgentArtifactApplicationResult,
   AgentCitationValidation,
   AgentConfidence,
   AgentContextAttachment,
@@ -264,7 +265,7 @@ export function AgentArtifactCard({
   artifact: AgentArtifact;
   on_seek?: (seconds: number) => void;
   on_resolve: (
-    action: "approve" | "reject",
+    action: "approve" | "reject" | "undo",
     grant_scope?: AgentPermissionGrantScope,
   ) => void;
   on_regenerate?: () => void;
@@ -272,6 +273,7 @@ export function AgentArtifactCard({
   const pending = artifact.status === "pending";
   const applying = artifact.status === "applying";
   const failed = artifact.status === "failed";
+  const application = artifact_application_result(artifact);
   return (
     <Card aria-label="助手审批结果">
       <CardHeader>
@@ -331,6 +333,24 @@ export function AgentArtifactCard({
             </AlertDescription>
           </Alert>
         ) : null}
+        {artifact.status === "approved" &&
+        application &&
+        (application.rebased || application.skipped_conflicts.length > 0) ? (
+          <Alert>
+            <CheckCircle2 />
+            <AlertTitle>
+              {application.skipped_conflicts.length > 0
+                ? "已合并可安全应用的部分"
+                : "已基于最新版应用"}
+            </AlertTitle>
+            <AlertDescription>
+              已应用 {application.applied_change_count} 项
+              {application.skipped_conflicts.length > 0
+                ? `，跳过 ${application.skipped_conflicts.length} 项冲突。最新版中的其他修改保持不变。`
+                : "，没有覆盖更新版本中的其他修改。"}
+            </AlertDescription>
+          </Alert>
+        ) : null}
       </CardContent>
       {pending ? (
         <CardFooter className="flex-wrap justify-end gap-2">
@@ -374,8 +394,38 @@ export function AgentArtifactCard({
           </div>
         </CardFooter>
       ) : null}
+      {artifact.status === "approved" &&
+      application &&
+      application.applied_change_count > 0 ? (
+        <CardFooter className="justify-end">
+          <Button variant="outline" onClick={() => on_resolve("undo")}>
+            撤销整批变更
+          </Button>
+        </CardFooter>
+      ) : null}
     </Card>
   );
+}
+
+function artifact_application_result(
+  artifact: AgentArtifact,
+): AgentArtifactApplicationResult | null {
+  const value = artifact.payload.application_result;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const result = value as Partial<AgentArtifactApplicationResult>;
+  if (
+    typeof result.change_version_id !== "string" ||
+    typeof result.rebased !== "boolean" ||
+    typeof result.applied_change_count !== "number" ||
+    !Array.isArray(result.skipped_conflicts) ||
+    typeof result.base_version !== "string" ||
+    typeof result.committed_version !== "string"
+  ) {
+    return null;
+  }
+  return result as AgentArtifactApplicationResult;
 }
 
 function ArtifactPayload({
@@ -513,5 +563,7 @@ function artifact_status_label(status: AgentArtifact["status"]): string {
     rejected: "已拒绝",
     stale: "已过期",
     failed: "应用失败",
+    undoing: "正在撤销",
+    undone: "已撤销",
   }[status];
 }

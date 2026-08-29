@@ -732,10 +732,27 @@ export type AgentArtifact = {
   asset_id: string;
   result_type: string;
   payload: Record<string, unknown>;
-  status: "pending" | "applying" | "approved" | "rejected" | "stale" | "failed";
+  status:
+    | "pending"
+    | "applying"
+    | "approved"
+    | "rejected"
+    | "stale"
+    | "failed"
+    | "undoing"
+    | "undone";
   error_message: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type AgentArtifactApplicationResult = {
+  change_version_id: string;
+  rebased: boolean;
+  applied_change_count: number;
+  skipped_conflicts: string[];
+  base_version: string;
+  committed_version: string;
 };
 export type AgentSessionState = {
   session: AgentSession;

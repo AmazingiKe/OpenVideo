@@ -335,7 +335,7 @@ export function use_agent_panel({
 
   async function resolve_artifact(
     artifact: AgentArtifact,
-    action: "approve" | "reject",
+    action: "approve" | "reject" | "undo",
     grant_scope: AgentPermissionGrantScope = "once",
   ) {
     try {

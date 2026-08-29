@@ -31,6 +31,29 @@ describe("AgentArtifactCard", () => {
 
     expect(on_resolve).toHaveBeenCalledWith("approve", scope);
   });
+
+  it("explains a partial merge against the latest version", () => {
+    const on_resolve = vi.fn();
+    const value = artifact();
+    value.status = "approved";
+    value.payload.application_result = {
+      change_version_id: "agent-version-01890f4c7a2b7cc298c4dc0c0c07398f",
+      rebased: true,
+      applied_change_count: 2,
+      skipped_conflicts: ["字幕修改 1 的原片段已变化"],
+      base_version: "before",
+      committed_version: "after",
+    };
+
+    render(<AgentArtifactCard artifact={value} on_resolve={on_resolve} />);
+
+    expect(screen.getByText("已合并可安全应用的部分")).toBeInTheDocument();
+    expect(
+      screen.getByText(/已应用 2 项，跳过 1 项冲突/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "撤销整批变更" }));
+    expect(on_resolve).toHaveBeenCalledWith("undo");
+  });
 });
 
 function artifact(): AgentArtifact {

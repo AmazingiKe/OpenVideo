@@ -139,7 +139,7 @@ export async function stream_unified_agent_run(
 
 export function resolve_agent_artifact(
   artifact_id: string,
-  action: "approve" | "reject",
+  action: "approve" | "reject" | "undo",
   grant_scope: AgentPermissionGrantScope = "once",
   signal?: AbortSignal,
 ): Promise<AgentArtifact> {

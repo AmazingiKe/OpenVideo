@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.event_analysis_models import (
@@ -16,6 +17,7 @@ from openvideo.core.event_analysis_models import (
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaMarker, SourcePlatform
 from openvideo.core.summary_files import markdown_digest
+from openvideo.core.summary_models import SummaryDocumentCreate
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.llm.model_profile import ModelLimits, ModelProfile
 from openvideo.settings import Settings
@@ -247,6 +249,46 @@ def test_generation_appends_versions_and_history_remains_editable(
     summary_root = tmp_path / "assets" / ASSET_ID / "summary"
     assert (summary_root / "manifest.json").is_file()
     assert len(list((summary_root / "versions").iterdir())) == 2
+
+
+def test_agent_summary_batch_restores_all_files_when_manifest_commit_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+    with create_client(tmp_path) as client:
+        generated = generate(client)
+        root = next(
+            item
+            for item in generated["documents"]
+            if item["parent_document_id"] is None
+        )
+        manager = client.app.state.summary_manager
+
+        def fail_manifest_commit(*_args, **_kwargs):
+            raise OSError("清单提交失败")
+
+        monkeypatch.setattr(
+            "openvideo.summary_manager.write_version_manifest",
+            fail_manifest_commit,
+        )
+        with pytest.raises(OSError, match="清单提交失败"):
+            manager.apply_agent_edit(
+                root["document_id"],
+                root["revision"],
+                "# Agent 修改\n",
+                [SummaryDocumentCreate(title="新增章节", markdown="正文")],
+            )
+
+        restored = manager.library.load_summary_document(root["document_id"])
+        documents = manager.documents(ASSET_ID, root["version_id"])
+
+    assert restored is not None
+    assert restored.markdown == root["markdown"]
+    assert restored.revision == root["revision"]
+    assert {item.document_id for item in documents} == {
+        item["document_id"] for item in generated["documents"]
+    }
 
 
 def test_generation_rejects_paths_outside_preallocated_whitelist(

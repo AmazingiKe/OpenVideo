@@ -59,6 +59,7 @@ from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentArtifactStatus,
     AgentCapability,
+    AgentChangeVersion,
     AgentContextAttachmentKind,
     AgentDefinition,
     AgentDefinitionAvailability,
@@ -85,6 +86,7 @@ from openvideo.core.agent_governance_models import (
     AgentToolEffect,
     AgentToolPermissionPolicy,
 )
+from openvideo.core.agent_change_merge import merge_markdown
 from openvideo.core.agent_evidence_models import (
     AgentEvidenceConfidence,
     AgentEvidenceWriteDecision,
@@ -93,10 +95,9 @@ from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.agent_evidence_index import EvidenceIndexStatus
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaMarker
+from openvideo.core.media_models import MediaMarker, MediaSegment
 from openvideo.core.summary_models import (
     SummaryDocumentCreate,
-    SummaryDocumentUpdate,
     SummaryMediaCreate,
     SummaryMediaType,
 )
@@ -144,15 +145,25 @@ SUMMARY_MEDIA_MIN_CONFIDENCE = 0.75
 
 
 class SummaryDocumentService(Protocol):
-    def update_document(
-        self, document_id: str, request: SummaryDocumentUpdate
-    ) -> Any: ...
-
-    def create_child(
-        self, root_document_id: str, request: SummaryDocumentCreate
-    ) -> Any: ...
+    def apply_agent_edit(
+        self,
+        document_id: str,
+        expected_revision: int,
+        markdown: str,
+        suggested_children: list[SummaryDocumentCreate],
+    ) -> tuple[Any, list[Any]]: ...
 
     def create_media(self, request: SummaryMediaCreate) -> Any: ...
+
+    def restore_agent_change(
+        self,
+        document_id: str,
+        expected_revision: int,
+        markdown: str,
+        remove_document_ids: list[str],
+        remove_media_ids: list[str],
+        restored_revision: int | None = None,
+    ) -> Any: ...
 
 
 class AgentService:
@@ -372,36 +383,72 @@ class AgentService:
             return artifact
         if block_reason := self._artifact_write_block_reason(artifact):
             raise AgentConflictError(block_reason)
-        claimed = self.library.claim_agent_artifact(artifact_id)
-        if claimed is None:
-            return self._require_artifact(artifact_id)
-        registered = self.registry.require(artifact.agent_id)
-        try:
-            registered.approver(claimed)
-        except AgentConflictError as error:
-            stale = self.library.finish_agent_artifact(
-                artifact_id,
-                AgentArtifactStatus.STALE,
-                str(error),
-            )
-            if stale is None:
-                raise AgentConflictError("审批状态已被其他操作更新") from error
-            raise
-        except Exception as error:
-            failed = self.library.finish_agent_artifact(
-                artifact_id,
-                AgentArtifactStatus.FAILED,
-                str(error) or "应用审批结果失败",
-            )
-            if failed is None:
-                raise AgentConflictError("审批状态已被其他操作更新") from error
-            raise
-        approved = self.library.finish_agent_artifact(
-            artifact_id, AgentArtifactStatus.APPROVED
-        )
-        if approved is None:
-            raise AgentConflictError("审批状态已被其他操作更新")
-        return approved
+        with self.library._lock:
+            claimed = self.library.claim_agent_artifact(artifact_id)
+            if claimed is None:
+                return self._require_artifact(artifact_id)
+            registered = self.registry.require(artifact.agent_id)
+            applied_artifact: AgentArtifact | None = None
+            history_saved = False
+            try:
+                application_result = registered.approver(claimed)
+                if isinstance(application_result, dict):
+                    applied_artifact = claimed.model_copy(
+                        update={
+                            "payload": {
+                                **claimed.payload,
+                                "application_result": application_result,
+                            }
+                        }
+                    )
+                    self.library.save_agent_change_version(
+                        AgentChangeVersion(
+                            change_version_id=str(
+                                application_result["change_version_id"]
+                            ),
+                            artifact_id=claimed.artifact_id,
+                            run_id=claimed.run_id,
+                            session_id=claimed.session_id,
+                            agent_id=claimed.agent_id,
+                            asset_id=claimed.asset_id,
+                            result_type=claimed.result_type,
+                            change_payload=claimed.payload,
+                            application_result=application_result,
+                        )
+                    )
+                    history_saved = True
+                approved = self.library.finish_agent_artifact(
+                    artifact_id,
+                    AgentArtifactStatus.APPROVED,
+                    application_result=(
+                        application_result
+                        if isinstance(application_result, dict)
+                        else None
+                    ),
+                )
+                if approved is None:
+                    raise AgentConflictError("审批状态已被其他操作更新")
+                return approved
+            except AgentConflictError as error:
+                self._rollback_failed_approval(applied_artifact, history_saved)
+                stale = self.library.finish_agent_artifact(
+                    artifact_id,
+                    AgentArtifactStatus.STALE,
+                    str(error),
+                )
+                if stale is None:
+                    raise AgentConflictError("审批状态已被其他操作更新") from error
+                raise
+            except Exception as error:
+                self._rollback_failed_approval(applied_artifact, history_saved)
+                failed = self.library.finish_agent_artifact(
+                    artifact_id,
+                    AgentArtifactStatus.FAILED,
+                    str(error) or "应用审批结果失败",
+                )
+                if failed is None:
+                    raise AgentConflictError("审批状态已被其他操作更新") from error
+                raise
 
     def approve_with_grant(
         self,
@@ -435,6 +482,36 @@ class AgentService:
         return self.library.reject_agent_artifact(
             artifact_id
         ) or self._require_artifact(artifact_id)
+
+    def undo(self, artifact_id: str) -> AgentArtifact:
+        artifact = self._require_artifact(artifact_id)
+        if artifact.status == AgentArtifactStatus.UNDONE:
+            return artifact
+        if artifact.status != AgentArtifactStatus.APPROVED:
+            raise AgentConflictError("只有已应用的 Agent 变更可以撤销")
+        with self.library._lock:
+            claimed = self.library.claim_agent_artifact_undo(artifact_id)
+            if claimed is None:
+                return self._require_artifact(artifact_id)
+            try:
+                self._undo_claimed_artifact(claimed)
+                application = claimed.payload.get("application_result")
+                if not isinstance(application, dict):
+                    raise AgentConflictError("变更版本缺少撤销信息")
+                self.library.mark_agent_change_version_undone(
+                    claimed.asset_id,
+                    str(application["change_version_id"]),
+                )
+            except Exception as error:
+                self.library.cancel_agent_artifact_undo(
+                    artifact_id,
+                    str(error) or "撤销 Agent 变更失败",
+                )
+                raise
+            undone = self.library.finish_agent_artifact_undo(artifact_id)
+            if undone is None:
+                raise AgentConflictError("撤销状态已被其他操作更新")
+            return undone
 
     async def close(self) -> None:
         for runtime_id, runtime in list(self._runtimes.items()):
@@ -1530,19 +1607,30 @@ class AgentService:
         )
         return {"ok": True, "artifact": artifact.model_dump(mode="json")}
 
-    def _approve_marker_changes(self, artifact: AgentArtifact) -> None:
+    def _approve_marker_changes(self, artifact: AgentArtifact) -> dict[str, Any]:
         current = self.library.load_markers(artifact.asset_id)
-        if marker_digest(current) != artifact.payload["snapshot_digest"]:
-            raise AgentConflictError("标记已发生变化，整批建议已过期")
+        base_digest = artifact.payload["snapshot_digest"]
+        current_digest = marker_digest(current)
         markers_by_id = {marker.marker_id: marker for marker in current}
         segments = self.library.load_segments(artifact.asset_id)
-        for change in artifact.payload["changes"]:
+        original_segments = list(segments)
+        conflicts: list[str] = []
+        applied_change_count = 0
+        applied_change_indices: list[int] = []
+        for position, change in enumerate(artifact.payload["changes"], start=1):
             before = [MediaMarker.model_validate(item) for item in change["before"]]
             source_ids = {item.marker_id for item in before}
             operation = MarkerChangeOperation(change["operation"])
             after = (
                 MediaMarker.model_validate(change["after"]) if change["after"] else None
             )
+            if operation == MarkerChangeOperation.CREATE:
+                if after is not None and after.marker_id in markers_by_id:
+                    conflicts.append(f"标记修改 {position} 的新增标记已存在")
+                    continue
+            elif any(markers_by_id.get(item.marker_id) != item for item in before):
+                conflicts.append(f"标记修改 {position} 的来源标记已变化")
+                continue
             if operation in {MarkerChangeOperation.DELETE, MarkerChangeOperation.MERGE}:
                 for marker_id in source_ids:
                     markers_by_id.pop(marker_id, None)
@@ -1556,65 +1644,321 @@ class AgentService:
                 else None
             )
             segments = rewrite_segment_references(segments, source_ids, replacement)
+            applied_change_count += 1
+            applied_change_indices.append(position - 1)
         resolved = sorted(markers_by_id.values(), key=lambda item: item.start_seconds)
-        self.library.replace_markers_and_segments(artifact.asset_id, resolved, segments)
+        if applied_change_count:
+            self.library.replace_markers_and_segments(
+                artifact.asset_id,
+                resolved,
+                segments,
+            )
+        return agent_application_result(
+            rebased=current_digest != base_digest,
+            applied_change_count=applied_change_count,
+            skipped_conflicts=conflicts,
+            base_version=base_digest,
+            committed_version=marker_digest(resolved),
+            applied_change_indices=applied_change_indices,
+            undo={
+                "before_segments": [
+                    segment.model_dump(mode="json") for segment in original_segments
+                ],
+                "after_segments": [
+                    segment.model_dump(mode="json") for segment in segments
+                ],
+            },
+        )
 
-    def _approve_summary_artifact(self, artifact: AgentArtifact) -> None:
+    def _approve_summary_artifact(self, artifact: AgentArtifact) -> dict[str, Any]:
         payload = artifact.payload
         document = self.library.load_summary_document(payload["document_id"])
         if (
             document is None
             or document.version_id != payload["version_id"]
-            or document.revision != payload["base_revision"]
         ):
-            raise AgentConflictError("总结文档已发生变化，建议已过期")
+            raise AgentConflictError("总结文档不存在或不属于原版本")
+        base_revision = payload["base_revision"]
         if artifact.result_type == SUMMARY_MEDIA_ARTIFACT_TYPE:
+            media = SummaryMediaCreate.model_validate(payload["media"])
+            if document.markdown.count(media.insert_after) != 1:
+                return agent_application_result(
+                    rebased=document.revision != base_revision,
+                    applied_change_count=0,
+                    skipped_conflicts=["总结媒体的插入位置已变化"],
+                    base_version=str(base_revision),
+                    committed_version=str(document.revision),
+                )
             try:
-                self.summary_documents.create_media(
-                    SummaryMediaCreate.model_validate(payload["media"])
+                media_result = self.summary_documents.create_media(
+                    media.model_copy(update={"expected_revision": document.revision})
                 )
             except SummaryRevisionConflictError as error:
-                raise AgentConflictError("总结文档已发生变化，建议已过期") from error
+                raise AgentConflictError("总结文档在提交时再次发生变化") from error
             except SummaryError as error:
                 raise AgentServiceError(str(error)) from error
-            return
+            committed_revision = (
+                media_result[1].revision
+                if isinstance(media_result, tuple)
+                else document.revision + 1
+            )
+            return agent_application_result(
+                rebased=document.revision != base_revision,
+                applied_change_count=1,
+                skipped_conflicts=[],
+                base_version=str(base_revision),
+                committed_version=str(committed_revision),
+                undo={
+                    "document_id": document.document_id,
+                    "before_revision": document.revision,
+                    "before_markdown": document.markdown,
+                    "after_markdown": media_result[1].markdown,
+                    "created_document_ids": [],
+                    "created_media_ids": [media_result[0].media_id],
+                }
+                if isinstance(media_result, tuple)
+                else None,
+            )
         if artifact.result_type != SUMMARY_ARTIFACT_TYPE:
             raise AgentConflictError("总结审批结果类型无效")
-        updated = self.summary_documents.update_document(
+        merge_result = merge_markdown(
+            payload["original_markdown"],
+            payload["proposed_markdown"],
+            document.markdown,
+        )
+        children = [
+            SummaryDocumentCreate.model_validate(child)
+            for child in payload["suggested_subdocuments"]
+        ]
+        updated, committed_children = self.summary_documents.apply_agent_edit(
             document.document_id,
-            SummaryDocumentUpdate(
-                expected_revision=document.revision,
-                markdown=payload["proposed_markdown"],
+            document.revision,
+            merge_result.markdown,
+            children,
+        )
+        return agent_application_result(
+            rebased=merge_result.rebased,
+            applied_change_count=(
+                merge_result.applied_change_count + len(committed_children)
             ),
+            skipped_conflicts=list(merge_result.skipped_conflicts),
+            base_version=str(base_revision),
+            committed_version=str(updated.revision),
+            undo={
+                "document_id": document.document_id,
+                "before_revision": document.revision,
+                "before_markdown": document.markdown,
+                "after_markdown": merge_result.markdown,
+                "created_document_ids": [
+                    child.document_id for child in committed_children
+                ],
+                "created_media_ids": [],
+            },
         )
-        root_id = (
-            updated.document_id
-            if updated.parent_document_id is None
-            else updated.parent_document_id
-        )
-        for child in payload["suggested_subdocuments"]:
-            self.summary_documents.create_child(
-                root_id, SummaryDocumentCreate.model_validate(child)
-            )
 
-    def _approve_transcript_correction(self, artifact: AgentArtifact) -> None:
+    def _approve_transcript_correction(
+        self, artifact: AgentArtifact
+    ) -> dict[str, Any]:
         transcript = self.library.load_transcript(artifact.asset_id)
-        if (
-            transcript is None
-            or transcript_digest(transcript) != artifact.payload["transcript_digest"]
-        ):
-            raise AgentConflictError("字幕已发生变化，纠错预览已过期")
+        if transcript is None:
+            raise AgentConflictError("字幕不存在")
+        base_digest = artifact.payload["transcript_digest"]
+        current_digest = transcript_digest(transcript)
         segments = list(transcript.segments)
-        for change in artifact.payload["changes"]:
+        conflicts: list[str] = []
+        applied_change_count = 0
+        applied_change_indices: list[int] = []
+        for position, change in enumerate(artifact.payload["changes"], start=1):
             index = int(change["segment_index"])
-            if segments[index].text != change["before"]:
-                raise AgentConflictError("字幕片段已发生变化，纠错预览已过期")
+            if index >= len(segments) or segments[index].text != change["before"]:
+                conflicts.append(f"字幕修改 {position} 的原片段已变化")
+                continue
             segments[index] = segments[index].model_copy(
                 update={"text": change["after"]}
+            )
+            applied_change_count += 1
+            applied_change_indices.append(position - 1)
+        updated = transcript.model_copy(update={"segments": segments})
+        if applied_change_count:
+            self.library.save_transcript(updated)
+        return agent_application_result(
+            rebased=current_digest != base_digest,
+            applied_change_count=applied_change_count,
+            skipped_conflicts=conflicts,
+            base_version=base_digest,
+            committed_version=transcript_digest(updated),
+            applied_change_indices=applied_change_indices,
+        )
+
+    def _undo_claimed_artifact(
+        self,
+        artifact: AgentArtifact,
+        *,
+        rollback: bool = False,
+    ) -> None:
+        application = artifact.payload.get("application_result")
+        if not isinstance(application, dict):
+            raise AgentConflictError("变更版本缺少撤销信息")
+        if artifact.result_type == MARKER_ARTIFACT_TYPE:
+            self._undo_marker_changes(artifact, application)
+        elif artifact.result_type == TRANSCRIPT_ARTIFACT_TYPE:
+            self._undo_transcript_correction(artifact, application)
+        elif artifact.result_type in {
+            SUMMARY_ARTIFACT_TYPE,
+            SUMMARY_MEDIA_ARTIFACT_TYPE,
+        }:
+            self._undo_summary_change(application, rollback=rollback)
+        else:
+            raise AgentConflictError("此类 Agent 变更不支持撤销")
+
+    def _rollback_failed_approval(
+        self,
+        applied_artifact: AgentArtifact | None,
+        history_saved: bool,
+    ) -> None:
+        if applied_artifact is None:
+            return
+        application = applied_artifact.payload["application_result"]
+        if int(application["applied_change_count"]) > 0:
+            self._undo_claimed_artifact(applied_artifact, rollback=True)
+        if history_saved:
+            self.library.delete_agent_change_version(
+                applied_artifact.asset_id,
+                str(application["change_version_id"]),
+            )
+
+    def _undo_marker_changes(
+        self,
+        artifact: AgentArtifact,
+        application: dict[str, Any],
+    ) -> None:
+        indices = [
+            int(value)
+            for value in application.get("applied_change_indices", [])
+        ]
+        undo = application.get("undo")
+        if not isinstance(undo, dict):
+            raise AgentConflictError("标记变更缺少撤销快照")
+        before_segments = [
+            MediaSegment.model_validate(value)
+            for value in undo.get("before_segments", [])
+        ]
+        after_segments = [
+            MediaSegment.model_validate(value)
+            for value in undo.get("after_segments", [])
+        ]
+        current_segments = self.library.load_segments(artifact.asset_id)
+        if current_segments != after_segments:
+            raise AgentConflictError("时间线已有后续修改，不能整批撤销")
+        markers_by_id = {
+            marker.marker_id: marker
+            for marker in self.library.load_markers(artifact.asset_id)
+        }
+        changes = artifact.payload["changes"]
+        for index in indices:
+            change = changes[index]
+            before = [MediaMarker.model_validate(value) for value in change["before"]]
+            after = (
+                MediaMarker.model_validate(change["after"])
+                if change["after"]
+                else None
+            )
+            operation = MarkerChangeOperation(change["operation"])
+            if operation == MarkerChangeOperation.CREATE:
+                if after is None or markers_by_id.get(after.marker_id) != after:
+                    raise AgentConflictError("新增标记已有后续修改，不能整批撤销")
+            elif operation == MarkerChangeOperation.UPDATE:
+                if after is None or markers_by_id.get(after.marker_id) != after:
+                    raise AgentConflictError("修改标记已有后续修改，不能整批撤销")
+            elif operation == MarkerChangeOperation.DELETE:
+                if any(item.marker_id in markers_by_id for item in before):
+                    raise AgentConflictError("已删除标记被重新创建，不能整批撤销")
+            elif (
+                after is None
+                or markers_by_id.get(after.marker_id) != after
+                or any(item.marker_id in markers_by_id for item in before)
+            ):
+                raise AgentConflictError("合并标记已有后续修改，不能整批撤销")
+        for index in reversed(indices):
+            change = changes[index]
+            before = [MediaMarker.model_validate(value) for value in change["before"]]
+            after = (
+                MediaMarker.model_validate(change["after"])
+                if change["after"]
+                else None
+            )
+            if after is not None:
+                markers_by_id.pop(after.marker_id, None)
+            for marker in before:
+                markers_by_id[marker.marker_id] = marker
+        restored = sorted(
+            markers_by_id.values(),
+            key=lambda item: item.start_seconds,
+        )
+        self.library.replace_markers_and_segments(
+            artifact.asset_id,
+            restored,
+            before_segments,
+        )
+
+    def _undo_transcript_correction(
+        self,
+        artifact: AgentArtifact,
+        application: dict[str, Any],
+    ) -> None:
+        transcript = self.library.load_transcript(artifact.asset_id)
+        if transcript is None:
+            raise AgentConflictError("字幕不存在")
+        segments = list(transcript.segments)
+        indices = [
+            int(value)
+            for value in application.get("applied_change_indices", [])
+        ]
+        changes = artifact.payload["changes"]
+        for index in indices:
+            change = changes[index]
+            segment_index = int(change["segment_index"])
+            if (
+                segment_index >= len(segments)
+                or segments[segment_index].text != change["after"]
+            ):
+                raise AgentConflictError("字幕已有后续修改，不能整批撤销")
+        for index in indices:
+            change = changes[index]
+            segment_index = int(change["segment_index"])
+            segments[segment_index] = segments[segment_index].model_copy(
+                update={"text": change["before"]}
             )
         self.library.save_transcript(
             transcript.model_copy(update={"segments": segments})
         )
+
+    def _undo_summary_change(
+        self,
+        application: dict[str, Any],
+        *,
+        rollback: bool,
+    ) -> None:
+        undo = application.get("undo")
+        if not isinstance(undo, dict):
+            raise AgentConflictError("总结变更缺少撤销快照")
+        document_id = str(undo["document_id"])
+        document = self.library.load_summary_document(document_id)
+        if document is None or document.markdown != undo["after_markdown"]:
+            raise AgentConflictError("总结已有后续修改，不能整批撤销")
+        try:
+            self.summary_documents.restore_agent_change(
+                document_id,
+                document.revision,
+                str(undo["before_markdown"]),
+                [str(value) for value in undo["created_document_ids"]],
+                [str(value) for value in undo["created_media_ids"]],
+                restored_revision=(
+                    int(undo["before_revision"]) if rollback else None
+                ),
+            )
+        except SummaryRevisionConflictError as error:
+            raise AgentConflictError(str(error)) from error
 
     def _require_session(self, session_id: str) -> AgentSession:
         try:
@@ -1633,3 +1977,30 @@ class AgentService:
         if artifact is None:
             raise AgentNotFoundError("Agent 审批结果不存在")
         return artifact
+
+
+def agent_application_result(
+    *,
+    rebased: bool,
+    applied_change_count: int,
+    skipped_conflicts: list[str],
+    base_version: str,
+    committed_version: str,
+    applied_change_indices: list[int] | None = None,
+    undo: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """审批卡只暴露版本与冲突摘要，不把敏感正文写入运行日志。"""
+
+    result: dict[str, object] = {
+        "change_version_id": f"agent-version-{uuid7().hex}",
+        "rebased": rebased,
+        "applied_change_count": applied_change_count,
+        "skipped_conflicts": skipped_conflicts,
+        "base_version": base_version,
+        "committed_version": committed_version,
+    }
+    if applied_change_indices is not None:
+        result["applied_change_indices"] = applied_change_indices
+    if undo is not None:
+        result["undo"] = undo
+    return result

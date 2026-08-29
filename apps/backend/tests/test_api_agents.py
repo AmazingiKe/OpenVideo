@@ -17,6 +17,7 @@ from openvideo.agent_tooling import (
     ProposeMarkerChangesInput,
     ProposeSummaryMediaInput,
     RunEvidenceState,
+    marker_digest,
 )
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
@@ -38,6 +39,7 @@ from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import (
     MediaAsset,
     MediaAssetStatus,
+    MediaMarker,
     MediaSegment,
     SourcePlatform,
 )
@@ -635,6 +637,159 @@ def test_service_approval_uses_single_claim_before_side_effect(
     assert approved.status == AgentArtifactStatus.APPROVED
     assert repeated.status == AgentArtifactStatus.APPROVED
     assert calls == [artifact.artifact_id]
+
+
+def test_marker_approval_rebases_safe_changes_and_skips_conflicts(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        first = MediaMarker(
+            marker_id=f"marker-{uuid7().hex}",
+            asset_id=ASSET_ID,
+            start_seconds=1,
+            end_seconds=2,
+        )
+        second = MediaMarker(
+            marker_id=f"marker-{uuid7().hex}",
+            asset_id=ASSET_ID,
+            start_seconds=3,
+            end_seconds=4,
+        )
+        service.library.create_marker(first)
+        service.library.create_marker(second)
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        artifact = AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=run.run_id,
+            session_id=session.session_id,
+            agent_id="marker",
+            asset_id=ASSET_ID,
+            result_type="marker_changes",
+            payload={
+                "snapshot_digest": marker_digest([first, second]),
+                "changes": [
+                    marker_update(first, start_seconds=1.25),
+                    marker_update(second, start_seconds=3.25),
+                ],
+                ARTIFACT_EVIDENCE_GATE_KEY: evidence_gate(),
+            },
+        )
+        service.library.save_agent_artifact(artifact)
+        service.library.update_marker(
+            ASSET_ID,
+            first.marker_id,
+            changes={"start_seconds": 1.5},
+        )
+
+        approved = service.approve(artifact.artifact_id)
+        markers = {
+            marker.marker_id: marker
+            for marker in service.library.load_markers(ASSET_ID)
+        }
+        history = client.get(
+            f"/api/media/assets/{ASSET_ID}/agent-change-versions"
+        ).json()
+        undone_response = client.post(
+            f"/api/agent-artifacts/{artifact.artifact_id}/undo"
+        )
+        restored = {
+            marker.marker_id: marker
+            for marker in service.library.load_markers(ASSET_ID)
+        }
+        undone_history = service.library.load_agent_change_versions(ASSET_ID)
+
+    assert markers[first.marker_id].start_seconds == 1.5
+    assert markers[second.marker_id].start_seconds == 3.25
+    application = approved.payload["application_result"]
+    assert application["rebased"] is True
+    assert application["applied_change_count"] == 1
+    assert application["skipped_conflicts"] == [
+        "标记修改 1 的来源标记已变化"
+    ]
+    assert len(history) == 1
+    assert history[0]["application_result"]["change_version_id"] == application[
+        "change_version_id"
+    ]
+    assert undone_response.status_code == 200
+    assert undone_response.json()["status"] == "undone"
+    assert restored[first.marker_id].start_seconds == 1.5
+    assert restored[second.marker_id].start_seconds == 3
+    assert undone_history[0].undone_at is not None
+
+
+def marker_update(marker: MediaMarker, *, start_seconds: float) -> dict[str, object]:
+    return {
+        "operation": "update",
+        "before": [marker.model_dump(mode="json")],
+        "after": marker.model_copy(
+            update={"start_seconds": start_seconds}
+        ).model_dump(mode="json"),
+        "reason": "调整范围",
+        "evidence": [],
+    }
+
+
+def test_approval_rolls_back_business_change_when_version_record_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    def fail_version_record(_version):
+        raise OSError("版本记录失败")
+
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        marker = MediaMarker(
+            marker_id=f"marker-{uuid7().hex}",
+            asset_id=ASSET_ID,
+            start_seconds=1,
+            end_seconds=2,
+        )
+        service.library.create_marker(marker)
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        artifact = AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=run.run_id,
+            session_id=session.session_id,
+            agent_id="marker",
+            asset_id=ASSET_ID,
+            result_type="marker_changes",
+            payload={
+                "snapshot_digest": marker_digest([marker]),
+                "changes": [marker_update(marker, start_seconds=1.25)],
+                ARTIFACT_EVIDENCE_GATE_KEY: evidence_gate(),
+            },
+        )
+        service.library.save_agent_artifact(artifact)
+        monkeypatch.setattr(
+            service.library,
+            "save_agent_change_version",
+            fail_version_record,
+        )
+
+        with pytest.raises(OSError, match="版本记录失败"):
+            service.approve(artifact.artifact_id)
+
+        restored = service.library.load_markers(ASSET_ID)
+        failed = service.library.load_agent_artifact(artifact.artifact_id)
+
+    assert restored == [marker]
+    assert failed is not None
+    assert failed.status == AgentArtifactStatus.FAILED
 
 
 def test_approval_scope_controls_future_operations(tmp_path: Path, monkeypatch):

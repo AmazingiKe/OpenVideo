@@ -13,6 +13,7 @@ from openvideo.agent_service import AgentService
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentArtifactApprovalRequest,
+    AgentChangeVersion,
     AgentDefinitionAvailability,
     AgentRun,
     AgentRunCreate,
@@ -172,6 +173,26 @@ def register_agent_routes(
             return artifact
         except AgentServiceError as error:
             raise agent_http_error(error) from error
+
+    @app.post(
+        "/api/agent-artifacts/{artifact_id}/undo",
+        response_model=AgentArtifact,
+    )
+    def undo_agent_artifact(artifact_id: str) -> AgentArtifact:
+        try:
+            return agent_service().undo(artifact_id)
+        except AgentServiceError as error:
+            raise agent_http_error(error) from error
+
+    @app.get(
+        "/api/media/assets/{asset_id}/agent-change-versions",
+        response_model=list[AgentChangeVersion],
+    )
+    def list_agent_change_versions(asset_id: str) -> list[AgentChangeVersion]:
+        try:
+            return agent_service().library.load_agent_change_versions(asset_id)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post(
         "/api/agent-artifacts/{artifact_id}/reject",
