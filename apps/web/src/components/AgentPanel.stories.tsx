@@ -315,11 +315,19 @@ export const ProgressiveIndexing: Story = {
   render: () => (
     <AgentIndexStatusDisclosure
       status={{
+        index_task_id: "index-task-019c012345677abc8123456789abcdef",
+        asset_id: "019c0123-4567-7abc-8123-456789abcdef",
         state: "partial",
-        stage_label: "正在建立关键帧与 OCR 索引",
-        processed_seconds: 2_460,
+        stage: "tokenizing",
+        stage_label: "正在解析检索文本",
+        processed_documents: 246,
+        total_documents: 720,
+        indexed_documents: 720,
+        covered_seconds: 2_460,
         duration_seconds: 7_200,
-        available_capabilities: ["字幕检索", "章节定位"],
+        available_capabilities: ["字幕检索", "关键词检索"],
+        error_message: null,
+        updated_at: "2026-08-29T10:00:00Z",
       }}
     />
   ),

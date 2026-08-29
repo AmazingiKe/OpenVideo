@@ -6,13 +6,14 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetCatalogProvider } from "@/app/asset_catalog";
 import { ApplicationQueryProvider } from "@/app/query_cache";
 import { TaskManagerProvider, use_task_manager } from "@/app/task_manager";
 import {
   create_download,
+  get_agent_index_status,
   get_download,
   list_agent_tasks,
   list_assets,
@@ -20,11 +21,17 @@ import {
   request_download_retry,
   resume_agent_run,
 } from "@/shared/api";
-import type { AgentRun, AgentTaskSnapshot, DownloadJob } from "@/shared/types";
+import type {
+  AgentIndexStatus,
+  AgentRun,
+  AgentTaskSnapshot,
+  DownloadJob,
+} from "@/shared/types";
 
 vi.mock("@/shared/api", () => ({
   create_download: vi.fn(),
   get_download: vi.fn(),
+  get_agent_index_status: vi.fn(),
   list_agent_tasks: vi.fn(),
   list_downloads: vi.fn(),
   request_download_retry: vi.fn(),
@@ -39,6 +46,10 @@ vi.mock("@/shared/api", () => ({
 }));
 
 describe("TaskManagerProvider", () => {
+  beforeEach(() => {
+    vi.mocked(get_agent_index_status).mockResolvedValue(agent_index_status());
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
@@ -264,5 +275,23 @@ function agent_task_snapshot(
     session_title: "分析角色动作",
     asset_id: "asset-019c012345677abc8123456789abcdef",
     resume_available: stage === "interrupted",
+  };
+}
+
+function agent_index_status(): AgentIndexStatus {
+  return {
+    index_task_id: "index-task-019c012345677abc8123456789abcdef",
+    asset_id: null,
+    state: "ready",
+    stage: "ready",
+    stage_label: "检索索引已就绪",
+    processed_documents: 20,
+    total_documents: 20,
+    indexed_documents: 20,
+    covered_seconds: 50,
+    duration_seconds: 60,
+    available_capabilities: ["字幕检索", "关键词检索", "语义检索"],
+    error_message: null,
+    updated_at: "2025-01-01T00:00:00Z",
   };
 }

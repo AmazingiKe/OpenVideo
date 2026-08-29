@@ -18,6 +18,7 @@ import type {
   AgentConfidence,
   AgentEvidenceBundle,
   AgentEvidenceReference,
+  AgentIndexStatus,
   AgentRunMetrics,
 } from "@/shared/types";
 
@@ -186,15 +187,6 @@ export function AgentAnswerEvidence({
   );
 }
 
-export type AgentIndexStatus = {
-  state: "initializing" | "partial" | "ready" | "failed";
-  stage_label: string;
-  processed_seconds?: number;
-  duration_seconds?: number;
-  available_capabilities?: string[];
-  error_message?: string;
-};
-
 export function AgentIndexStatusDisclosure({
   status,
 }: {
@@ -205,7 +197,11 @@ export function AgentIndexStatusDisclosure({
     <Accordion type="single" collapsible>
       <AccordionItem value="index-status">
         <AccordionTrigger className="py-2">
-          {status.state === "initializing" ? <Spinner /> : <Database />}
+          {status.state === "initializing" || status.state === "partial" ? (
+            <Spinner />
+          ) : (
+            <Database />
+          )}
           <span className="min-w-0 flex-1 truncate text-left">
             {status.stage_label}
           </span>
@@ -223,14 +219,18 @@ export function AgentIndexStatusDisclosure({
                 aria-label={`索引覆盖 ${Math.round(progress)}%`}
               />
             ) : null}
-            {typeof status.processed_seconds === "number" ? (
+            {status.total_documents > 0 ? (
               <p className="text-muted-foreground">
-                已处理 {format_time(status.processed_seconds)}
-                {typeof status.duration_seconds === "number"
-                  ? ` / ${format_time(status.duration_seconds)}`
-                  : ""}
+                当前阶段 {status.processed_documents} / {status.total_documents}{" "}
+                条
               </p>
             ) : null}
+            <p className="text-muted-foreground">
+              已收录 {status.indexed_documents} 条证据
+              {status.duration_seconds !== null
+                ? `，时间覆盖 ${format_time(status.covered_seconds)} / ${format_time(status.duration_seconds)}`
+                : ""}
+            </p>
             {status.available_capabilities?.length ? (
               <div className="flex flex-wrap gap-2">
                 {status.available_capabilities.map((capability) => (
@@ -366,16 +366,12 @@ function format_temporal_coverage(value: number): string {
 }
 
 function index_progress(status: AgentIndexStatus): number | null {
-  if (
-    typeof status.processed_seconds !== "number" ||
-    typeof status.duration_seconds !== "number" ||
-    status.duration_seconds <= 0
-  ) {
+  if (status.total_documents <= 0) {
     return null;
   }
   return Math.min(
     100,
-    Math.max(0, (status.processed_seconds / status.duration_seconds) * 100),
+    Math.max(0, (status.processed_documents / status.total_documents) * 100),
   );
 }
 

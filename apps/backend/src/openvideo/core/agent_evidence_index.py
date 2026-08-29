@@ -23,9 +23,6 @@ SEMANTIC_MODEL_NAME = "openvideo-library-lsa-v1"
 SEMANTIC_MAX_FEATURES = 2_048
 SEMANTIC_MAX_DIMENSIONS = 64
 SEMANTIC_BATCH_SIZE = 128
-SEMANTIC_TOKENIZATION_PROGRESS = 0.35
-SEMANTIC_MATRIX_PROGRESS = 0.75
-SEMANTIC_PROJECTION_PROGRESS = 0.9
 QUERY_CANDIDATE_MULTIPLIER = 6
 MEMORY_ASSET_BONUS = 0.08
 STALE_CONTENT_DIGEST = ""
@@ -51,11 +48,30 @@ class IndexedEvidenceDocument:
 @dataclass(frozen=True)
 class EvidenceIndexStatus:
     state: Literal["lexical_ready", "semantic_building", "ready", "error"]
+    stage: Literal[
+        "queued",
+        "tokenizing",
+        "building_matrix",
+        "projecting",
+        "committing",
+        "ready",
+        "failed",
+    ]
     processed_documents: int
     total_documents: int
     active_model: str | None
     content_digest: str
+    index_task_id: str
+    updated_at: datetime
     error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class EvidenceIndexCoverage:
+    covered_seconds: float
+    duration_seconds: float | None
+    document_count: int
+    source_types: tuple[AgentEvidenceSource, ...]
 
 
 class EvidenceIndexChanged(RuntimeError):
@@ -136,15 +152,18 @@ def ensure_agent_evidence_schema(connection: sqlite3.Connection) -> None:
             CREATE TABLE IF NOT EXISTS agent_evidence_index_status (
                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
                 state TEXT NOT NULL,
+                stage TEXT NOT NULL,
                 processed_documents INTEGER NOT NULL,
                 total_documents INTEGER NOT NULL,
                 active_model TEXT,
                 content_digest TEXT NOT NULL,
+                index_task_id TEXT NOT NULL,
                 error_message TEXT,
                 updated_at TEXT NOT NULL
             );
             """
         )
+        _ensure_status_columns(connection)
         _ensure_status_row(connection)
 
 
@@ -267,7 +286,14 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
     digest = _content_digest(connection)
     total = len(rows)
     with connection:
-        _write_status(connection, "semantic_building", 0, total, digest)
+        _write_status(
+            connection,
+            "semantic_building",
+            0,
+            total,
+            digest,
+            stage="tokenizing",
+        )
     if not rows:
         with connection:
             if _content_digest(connection) != digest:
@@ -280,13 +306,18 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
                 0,
                 0,
                 digest,
+                stage="ready",
                 active_model=None,
                 preserve_active_model=False,
             )
         return load_evidence_index_status(connection)
     try:
 
-        def report_progress(processed: int) -> None:
+        def report_progress(
+            stage: Literal["tokenizing", "building_matrix", "projecting", "committing"],
+            processed: int,
+            stage_total: int,
+        ) -> None:
             with connection:
                 status_digest = connection.execute(
                     "SELECT content_digest FROM agent_evidence_index_status "
@@ -297,9 +328,10 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
                 _write_status(
                     connection,
                     "semantic_building",
-                    min(processed, max(0, total - 1)),
-                    total,
+                    processed,
+                    stage_total,
                     digest,
+                    stage=stage,
                 )
 
         tokenized = _tokenize_documents(rows, report_progress)
@@ -310,9 +342,9 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
             inverse_document_frequency,
             report_progress,
         )
-        report_progress(round(total * SEMANTIC_MATRIX_PROGRESS))
+        report_progress("projecting", 0, 0)
         projection, vectors = _latent_vectors(matrix)
-        report_progress(round(total * SEMANTIC_PROJECTION_PROGRESS))
+        report_progress("committing", 0, 0)
         model_id = f"semantic-index-{uuid7().hex}"
         created_at = datetime.now(UTC).isoformat()
         with connection:
@@ -355,6 +387,7 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
                 total,
                 total,
                 digest,
+                stage="ready",
                 active_model=model_id,
             )
             connection.execute("DELETE FROM agent_semantic_models WHERE active = 0")
@@ -370,6 +403,7 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
                 0,
                 total,
                 digest,
+                stage="failed",
                 error_message=str(error) or "语义索引构建失败",
             )
         raise
@@ -509,18 +543,64 @@ def _select_diverse_rows(ranked: list[sqlite3.Row], limit: int) -> list[sqlite3.
 
 def load_evidence_index_status(connection: sqlite3.Connection) -> EvidenceIndexStatus:
     row = connection.execute(
-        "SELECT state, processed_documents, total_documents, active_model, "
-        "content_digest, error_message FROM agent_evidence_index_status "
+        "SELECT state, stage, processed_documents, total_documents, active_model, "
+        "content_digest, index_task_id, error_message, updated_at "
+        "FROM agent_evidence_index_status "
         "WHERE singleton = 1"
     ).fetchone()
     assert row is not None
     return EvidenceIndexStatus(
         state=row["state"],
+        stage=row["stage"],
         processed_documents=row["processed_documents"],
         total_documents=row["total_documents"],
         active_model=row["active_model"],
         content_digest=row["content_digest"],
+        index_task_id=row["index_task_id"],
+        updated_at=datetime.fromisoformat(row["updated_at"]),
         error_message=row["error_message"],
+    )
+
+
+def load_evidence_index_coverage(
+    connection: sqlite3.Connection,
+    asset_id: str | None = None,
+) -> EvidenceIndexCoverage:
+    parameters: tuple[str, ...] = (asset_id,) if asset_id is not None else ()
+    asset_filter = "WHERE asset_id = ?" if asset_id is not None else ""
+    rows = connection.execute(
+        "SELECT asset_id, source_type, start_seconds, end_seconds "
+        f"FROM agent_evidence_documents {asset_filter} "
+        "ORDER BY asset_id, start_seconds, end_seconds",
+        parameters,
+    ).fetchall()
+    durations = connection.execute(
+        "SELECT duration_seconds FROM assets "
+        + ("WHERE asset_id = ?" if asset_id is not None else "ORDER BY asset_id"),
+        parameters,
+    ).fetchall()
+    duration_values = [row["duration_seconds"] for row in durations]
+    duration_seconds = (
+        sum(float(value) for value in duration_values)
+        if duration_values and all(value is not None for value in duration_values)
+        else None
+    )
+    intervals_by_asset: dict[str, list[tuple[float, float]]] = {}
+    source_types: set[AgentEvidenceSource] = set()
+    for row in rows:
+        source_types.add(AgentEvidenceSource(row["source_type"]))
+        intervals_by_asset.setdefault(row["asset_id"], []).append(
+            (float(row["start_seconds"]), float(row["end_seconds"]))
+        )
+    covered_seconds = sum(
+        _merged_interval_duration(intervals)
+        for intervals in intervals_by_asset.values()
+    )
+    return EvidenceIndexCoverage(
+        covered_seconds=covered_seconds,
+        duration_seconds=duration_seconds,
+        document_count=len(rows),
+        source_types=tuple(sorted(source_types, key=lambda source: source.value)),
     )
 
 
@@ -693,6 +773,7 @@ def _mark_semantic_index_stale(connection: sqlite3.Connection) -> None:
         0,
         total,
         STALE_CONTENT_DIGEST,
+        stage="queued",
         active_model=active_model,
     )
 
@@ -916,14 +997,14 @@ def _semantic_vocabulary(
 
 def _tokenize_documents(
     rows: list[sqlite3.Row],
-    report_progress: Callable[[int], None],
+    report_progress: Callable[[str, int, int], None],
 ) -> list[list[str]]:
     total = len(rows)
     tokenized = []
     for position, row in enumerate(rows, start=1):
         tokenized.append(_semantic_tokens(f"{row['title'] or ''} {row['text']}"))
         if position % SEMANTIC_BATCH_SIZE == 0 or position == total:
-            report_progress(round(position * SEMANTIC_TOKENIZATION_PROGRESS))
+            report_progress("tokenizing", position, total)
     return tokenized
 
 
@@ -931,7 +1012,7 @@ def _semantic_matrix(
     tokenized: list[list[str]],
     vocabulary: dict[str, int],
     inverse_document_frequency: list[float],
-    report_progress: Callable[[int], None],
+    report_progress: Callable[[str, int, int], None],
 ):
     import torch
 
@@ -945,13 +1026,7 @@ def _semantic_matrix(
             )
         processed = row_index + 1
         if processed % SEMANTIC_BATCH_SIZE == 0 or processed == len(tokenized):
-            progress_range = SEMANTIC_MATRIX_PROGRESS - SEMANTIC_TOKENIZATION_PROGRESS
-            report_progress(
-                round(
-                    len(tokenized) * SEMANTIC_TOKENIZATION_PROGRESS
-                    + processed * progress_range
-                )
-            )
+            report_progress("building_matrix", processed, len(tokenized))
     return matrix
 
 
@@ -1056,6 +1131,26 @@ def _ranges_intersect(
     )
 
 
+def _merged_interval_duration(intervals: list[tuple[float, float]]) -> float:
+    covered_seconds = 0.0
+    current_start: float | None = None
+    current_end: float | None = None
+    for start_seconds, end_seconds in intervals:
+        if end_seconds <= start_seconds:
+            continue
+        if current_start is None or current_end is None:
+            current_start, current_end = start_seconds, end_seconds
+            continue
+        if start_seconds <= current_end:
+            current_end = max(current_end, end_seconds)
+            continue
+        covered_seconds += current_end - current_start
+        current_start, current_end = start_seconds, end_seconds
+    if current_start is not None and current_end is not None:
+        covered_seconds += current_end - current_start
+    return round(covered_seconds, 3)
+
+
 def _source_version(
     source_type: AgentEvidenceSource,
     start_seconds: float,
@@ -1089,10 +1184,43 @@ def _content_digest(connection: sqlite3.Connection) -> str:
 def _ensure_status_row(connection: sqlite3.Connection) -> None:
     connection.execute(
         "INSERT OR IGNORE INTO agent_evidence_index_status "
-        "(singleton, state, processed_documents, total_documents, active_model, "
-        "content_digest, error_message, updated_at) "
-        "VALUES (1, 'lexical_ready', 0, 0, NULL, ?, NULL, ?)",
-        (hashlib.sha256(b"").hexdigest(), datetime.now(UTC).isoformat()),
+        "(singleton, state, stage, processed_documents, total_documents, "
+        "active_model, content_digest, index_task_id, error_message, updated_at) "
+        "VALUES (1, 'lexical_ready', 'queued', 0, 0, NULL, ?, ?, NULL, ?)",
+        (
+            hashlib.sha256(b"").hexdigest(),
+            f"index-task-{uuid7().hex}",
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+
+
+def _ensure_status_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(agent_evidence_index_status)"
+        ).fetchall()
+    }
+    if "stage" not in columns:
+        connection.execute(
+            "ALTER TABLE agent_evidence_index_status "
+            "ADD COLUMN stage TEXT NOT NULL DEFAULT 'queued'"
+        )
+        connection.execute(
+            "UPDATE agent_evidence_index_status SET stage = CASE state "
+            "WHEN 'semantic_building' THEN 'tokenizing' "
+            "WHEN 'ready' THEN 'ready' WHEN 'error' THEN 'failed' "
+            "ELSE 'queued' END"
+        )
+    if "index_task_id" not in columns:
+        connection.execute(
+            "ALTER TABLE agent_evidence_index_status ADD COLUMN index_task_id TEXT"
+        )
+    connection.execute(
+        "UPDATE agent_evidence_index_status SET index_task_id = ? "
+        "WHERE index_task_id IS NULL OR index_task_id = ''",
+        (f"index-task-{uuid7().hex}",),
     )
 
 
@@ -1103,6 +1231,7 @@ def _write_status(
     total: int,
     digest: str,
     *,
+    stage: str,
     active_model: str | None = None,
     preserve_active_model: bool = True,
     error_message: str | None = None,
@@ -1112,21 +1241,34 @@ def _write_status(
             "SELECT active_model FROM agent_evidence_index_status WHERE singleton = 1"
         ).fetchone()
         active_model = row["active_model"] if row else None
+    task_row = connection.execute(
+        "SELECT index_task_id FROM agent_evidence_index_status WHERE singleton = 1"
+    ).fetchone()
+    index_task_id = (
+        task_row["index_task_id"]
+        if task_row and task_row["index_task_id"]
+        else f"index-task-{uuid7().hex}"
+    )
     connection.execute(
         "INSERT INTO agent_evidence_index_status "
-        "(singleton, state, processed_documents, total_documents, active_model, "
-        "content_digest, error_message, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?) "
+        "(singleton, state, stage, processed_documents, total_documents, "
+        "active_model, content_digest, index_task_id, error_message, updated_at) "
+        "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(singleton) DO UPDATE SET state = excluded.state, "
+        "stage = excluded.stage, "
         "processed_documents = excluded.processed_documents, "
         "total_documents = excluded.total_documents, active_model = excluded.active_model, "
-        "content_digest = excluded.content_digest, error_message = excluded.error_message, "
-        "updated_at = excluded.updated_at",
+        "content_digest = excluded.content_digest, "
+        "index_task_id = excluded.index_task_id, "
+        "error_message = excluded.error_message, updated_at = excluded.updated_at",
         (
             state,
+            stage,
             processed,
             total,
             active_model,
             digest,
+            index_task_id,
             error_message,
             datetime.now(UTC).isoformat(),
         ),

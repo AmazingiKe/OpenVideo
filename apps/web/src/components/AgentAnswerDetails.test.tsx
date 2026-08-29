@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   AgentAnswerEvidence,
+  AgentIndexStatusDisclosure,
   AgentRunMetricsDisclosure,
 } from "./AgentAnswerDetails";
 import type { AgentEvidenceBundle } from "@/shared/types";
@@ -76,6 +77,38 @@ describe("AgentAnswerDetails", () => {
     fireEvent.click(screen.getByRole("button", { name: "用时 2.5 秒" }));
     expect(await screen.findByText("证据检索")).toBeVisible();
     expect(screen.queryByText("视觉验证")).not.toBeInTheDocument();
+  });
+
+  it("shows real index units and leaves unknown-duration stages indeterminate", () => {
+    render(
+      <AgentIndexStatusDisclosure
+        status={{
+          index_task_id: "index-task-019c012345677abc8123456789abcdef",
+          asset_id: "019c0123-4567-7abc-8123-456789abcdef",
+          state: "partial",
+          stage: "projecting",
+          stage_label: "正在计算语义投影，耗时暂不可估计",
+          processed_documents: 0,
+          total_documents: 0,
+          indexed_documents: 80,
+          covered_seconds: 300,
+          duration_seconds: 600,
+          available_capabilities: ["字幕检索", "关键词检索"],
+          error_message: null,
+          updated_at: "2026-08-29T10:00:00Z",
+        }}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /正在计算语义投影，耗时暂不可估计/,
+      }),
+    );
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("已收录 80 条证据，时间覆盖 05:00 / 10:00"),
+    ).toBeVisible();
   });
 
   it("does not seek another video and provides a return action", () => {

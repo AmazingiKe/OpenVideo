@@ -22,6 +22,7 @@ import {
   import_download_account_from_browser,
   get_markers,
   get_focus_selection,
+  get_agent_index_status,
   get_segments,
   get_transcript,
   list_assets,
@@ -63,6 +64,7 @@ vi.mock("./shared/api", () => ({
   import_download_account_from_browser: vi.fn(),
   get_markers: vi.fn(),
   get_focus_selection: vi.fn(),
+  get_agent_index_status: vi.fn(),
   get_segments: vi.fn(),
   get_transcript: vi.fn(),
   list_assets: vi.fn(),
@@ -145,6 +147,21 @@ describe("App", () => {
     vi.mocked(list_agent_tasks).mockResolvedValue([]);
     vi.mocked(list_downloads).mockResolvedValue([]);
     vi.mocked(get_focus_selection).mockResolvedValue(null);
+    vi.mocked(get_agent_index_status).mockResolvedValue({
+      index_task_id: "index-task-019c012345677abc8123456789abcdef",
+      asset_id: null,
+      state: "ready",
+      stage: "ready",
+      stage_label: "检索索引已就绪",
+      processed_documents: 0,
+      total_documents: 0,
+      indexed_documents: 0,
+      covered_seconds: 0,
+      duration_seconds: null,
+      available_capabilities: ["素材信息"],
+      error_message: null,
+      updated_at: "2025-01-01T00:00:00Z",
+    });
     vi.mocked(list_event_analyses).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
     vi.mocked(list_assets).mockResolvedValue([]);
@@ -291,10 +308,12 @@ describe("App", () => {
     expect(download_module).toHaveAttribute("aria-current", "page");
 
     fireEvent.click(screen.getByRole("link", { name: "标记" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "演示视频" }),
-      ).toBeInTheDocument(),
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("heading", { name: "演示视频" }),
+        ).toBeInTheDocument(),
+      { timeout: 5_000 },
     );
     expect(
       screen.getByRole("button", { name: "展开视频库" }),

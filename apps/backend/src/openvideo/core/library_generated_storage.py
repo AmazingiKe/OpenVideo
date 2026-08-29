@@ -11,8 +11,10 @@ from openvideo.core.agent_checkpoint_store import (
     save_agent_checkpoint,
 )
 from openvideo.core.agent_evidence_index import (
+    EvidenceIndexCoverage,
     EvidenceIndexStatus,
     IndexedEvidenceDocument,
+    load_evidence_index_coverage,
     load_evidence_index_status,
     rebuild_semantic_index,
     save_verified_memory,
@@ -85,6 +87,15 @@ class LibraryGeneratedStorageMixin:
     def agent_evidence_index_status(self) -> EvidenceIndexStatus:
         with self._lock:
             return load_evidence_index_status(self._db())
+
+    def agent_evidence_index_coverage(
+        self,
+        asset_id: str | None = None,
+    ) -> EvidenceIndexCoverage:
+        if asset_id is not None:
+            self._validate_asset_id(asset_id)
+        with self._lock:
+            return load_evidence_index_coverage(self._db(), asset_id)
 
     def save_agent_verified_memory(
         self,

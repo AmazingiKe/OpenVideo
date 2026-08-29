@@ -29,6 +29,34 @@ describe("TaskCenter", () => {
       ),
     );
   });
+
+  it("does not invent a percentage for an unknown-duration index stage", () => {
+    render(
+      <TaskCenter
+        tasks={[
+          {
+            task_id: "index-task-019c012345677abc8123456789abcdef",
+            task_type: "index",
+            stage: "projecting",
+            message: "正在计算语义投影，耗时暂不可估计",
+            progress_percent: 0,
+            progress_known: false,
+            error_message: null,
+            created_at: "2026-08-29T10:00:00Z",
+            name: "资料库证据索引",
+            events: [],
+          },
+        ]}
+        on_resume={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "任务中心，1 个进行中" }),
+    );
+    expect(screen.getByText("计算投影")).toBeVisible();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
 });
 
 function task_record(stage: string, resume_available: boolean): TaskRecord {

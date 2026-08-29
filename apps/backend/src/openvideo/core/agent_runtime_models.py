@@ -353,6 +353,39 @@ class AgentTaskSnapshot(BaseModel):
     resume_available: bool = False
 
 
+class AgentIndexStatus(BaseModel):
+    """向界面公开真实阶段、工作单位和当前可检索的时间覆盖。"""
+
+    index_task_id: str
+    asset_id: str | None = None
+    state: Literal["initializing", "partial", "ready", "failed"]
+    stage: Literal[
+        "queued",
+        "tokenizing",
+        "building_matrix",
+        "projecting",
+        "committing",
+        "ready",
+        "failed",
+    ]
+    stage_label: str
+    processed_documents: int = Field(ge=0)
+    total_documents: int = Field(ge=0)
+    indexed_documents: int = Field(ge=0)
+    covered_seconds: float = Field(ge=0)
+    duration_seconds: float | None = Field(default=None, ge=0)
+    available_capabilities: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    updated_at: datetime
+
+    @field_validator("index_task_id")
+    @classmethod
+    def validate_index_task_id(cls, value: str) -> str:
+        if not is_prefixed_uuid7(value, "index-task-"):
+            raise ValueError("索引任务标识必须使用 index-task- 前缀和 UUIDv7")
+        return value
+
+
 class AgentSessionState(BaseModel):
     session: AgentSession
     runs: list[AgentRun] = Field(default_factory=list)

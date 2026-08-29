@@ -1,5 +1,9 @@
+import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
+from openvideo.core import agent_evidence_index
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import (
     MediaAsset,
@@ -267,6 +271,80 @@ def test_semantic_generation_swaps_atomically_and_keeps_stable_documents(
         == 1
     )
     library.close()
+
+
+def test_unknown_projection_duration_reports_stage_without_fake_progress(
+    tmp_path: Path,
+    monkeypatch,
+):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, FIRST_ASSET_ID, "索引进度课程")
+    _save_transcript(
+        library,
+        FIRST_ASSET_ID,
+        [(0, 20, "真实进度不能用估算百分比替代")],
+    )
+    projection_started = Event()
+    release_projection = Event()
+    original_latent_vectors = agent_evidence_index._latent_vectors
+
+    def blocked_latent_vectors(matrix):
+        projection_started.set()
+        release_projection.wait(timeout=5)
+        return original_latent_vectors(matrix)
+
+    monkeypatch.setattr(
+        agent_evidence_index,
+        "_latent_vectors",
+        blocked_latent_vectors,
+    )
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(library.rebuild_agent_semantic_index)
+            assert projection_started.wait(timeout=5)
+            status = library.agent_evidence_index_status()
+            coverage = library.agent_evidence_index_coverage(FIRST_ASSET_ID)
+
+            assert status.state == "semantic_building"
+            assert status.stage == "projecting"
+            assert status.processed_documents == 0
+            assert status.total_documents == 0
+            assert coverage.covered_seconds == 20
+            assert coverage.document_count == 1
+            release_projection.set()
+            assert future.result(timeout=5).state == "ready"
+    finally:
+        release_projection.set()
+        library.close()
+
+
+def test_existing_index_status_schema_migrates_without_rebuilding_library(
+    tmp_path: Path,
+):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    with library._db():
+        library._db().execute("DROP TABLE agent_evidence_index_status")
+        library._db().execute(
+            "CREATE TABLE agent_evidence_index_status ("
+            "singleton INTEGER PRIMARY KEY CHECK(singleton = 1), "
+            "state TEXT NOT NULL, processed_documents INTEGER NOT NULL, "
+            "total_documents INTEGER NOT NULL, active_model TEXT, "
+            "content_digest TEXT NOT NULL, error_message TEXT, "
+            "updated_at TEXT NOT NULL)"
+        )
+        library._db().execute(
+            "INSERT INTO agent_evidence_index_status VALUES "
+            "(1, 'ready', 3, 3, NULL, 'digest', NULL, "
+            "'2026-08-29T10:00:00+00:00')"
+        )
+    library.close()
+
+    reopened = MediaLibrary.open(tmp_path)
+    status = reopened.agent_evidence_index_status()
+
+    assert status.stage == "ready"
+    assert re.fullmatch(r"index-task-[0-9a-f]{32}", status.index_task_id)
+    reopened.close()
 
 
 def test_verified_memory_locates_evidence_and_invalidates_with_its_source(

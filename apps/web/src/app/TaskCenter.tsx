@@ -163,7 +163,7 @@ function TaskCenterItem({
               {stage_label}
             </Badge>
           </div>
-          {!is_terminal ? (
+          {!is_terminal && task.progress_known !== false ? (
             <Progress
               value={task.progress_percent}
               aria-label={`${task.name}进度`}

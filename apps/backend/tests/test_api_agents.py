@@ -165,6 +165,39 @@ def test_definitions_and_sessions_use_only_unified_routes(tmp_path: Path):
         assert client.get("/api/agent-jobs/obsolete").status_code == 404
 
 
+def test_index_status_exposes_real_coverage_and_available_capabilities(
+    tmp_path: Path,
+):
+    with create_client(tmp_path) as client:
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(
+                        start_seconds=5,
+                        end_seconds=25,
+                        text="这段字幕已经进入本地检索索引",
+                    )
+                ],
+            )
+        )
+
+        response = client.get(
+            "/api/agent-index-status",
+            params={"asset_id": ASSET_ID},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert re.fullmatch(r"index-task-[0-9a-f]{32}", payload["index_task_id"])
+        assert payload["asset_id"] == ASSET_ID
+        assert payload["indexed_documents"] == 1
+        assert payload["covered_seconds"] == 20
+        assert payload["duration_seconds"] == 60
+        assert "字幕检索" in payload["available_capabilities"]
+        assert "关键词检索" in payload["available_capabilities"]
+
+
 def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypatch):
     async def reply_without_required_tool(
         self,

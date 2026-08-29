@@ -1,6 +1,7 @@
 import { Bot, History, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { use_optional_task_manager } from "@/app/task_manager";
 import { AgentComposer } from "@/components/AgentComposer";
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
 import { AgentMarkdown } from "@/components/AgentMarkdown";
@@ -46,6 +47,7 @@ import type {
   AgentArtifact,
   AgentCapability,
   AgentEvidenceReference,
+  AgentIndexStatus,
   AgentThinkingMode,
   AiModelSummary,
 } from "@/shared/types";
@@ -53,7 +55,6 @@ import {
   AgentAnswerEvidence,
   AgentIndexStatusDisclosure,
   AgentRunMetricsDisclosure,
-  type AgentIndexStatus,
 } from "./AgentAnswerDetails";
 import {
   AgentArtifactCard,
@@ -111,6 +112,12 @@ export function AgentPanel({
   on_artifact_change,
   className,
 }: AgentPanelProps) {
+  const task_manager = use_optional_task_manager();
+  const visible_index_status =
+    index_status ??
+    (task_manager?.index_status?.asset_id === asset_id
+      ? task_manager.index_status
+      : undefined);
   const [evidence_return_seconds, set_evidence_return_seconds] = useState<
     number | null
   >(null);
@@ -275,9 +282,9 @@ export function AgentPanel({
               tabIndex={0}
             >
               <MessageScrollerContent className="gap-4 p-4">
-                {index_status ? (
+                {visible_index_status ? (
                   <MessageScrollerItem messageId="index-status">
-                    <AgentIndexStatusDisclosure status={index_status} />
+                    <AgentIndexStatusDisclosure status={visible_index_status} />
                   </MessageScrollerItem>
                 ) : null}
                 {events.length === 0 && artifacts.length === 0 ? (

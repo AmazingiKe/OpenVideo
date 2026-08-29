@@ -6,6 +6,7 @@ export type TaskRecord = {
   stage: string;
   message: string;
   progress_percent: number;
+  progress_known?: boolean;
   error_message: string | null;
   created_at: string;
   name: string;
@@ -61,4 +62,9 @@ export const TASK_STAGE_LABELS: Record<string, string> = {
   running: "运行中",
   waiting_for_approval: "等待批准",
   interrupted: "已中断",
+  queued: "等待中",
+  tokenizing: "解析文本",
+  building_matrix: "建立特征",
+  projecting: "计算投影",
+  committing: "切换索引",
 };

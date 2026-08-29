@@ -3,6 +3,7 @@ import type {
   AgentContextAttachment,
   AgentDefinitionAvailability,
   AgentEventType,
+  AgentIndexStatus,
   AgentPermissionGrantScope,
   AgentRetrievalScope,
   AgentRun,
@@ -92,6 +93,14 @@ export function list_agent_tasks(
   signal?: AbortSignal,
 ): Promise<AgentTaskSnapshot[]> {
   return request_json("/api/agent-tasks", { signal });
+}
+
+export function get_agent_index_status(
+  asset_id?: string | null,
+  signal?: AbortSignal,
+): Promise<AgentIndexStatus> {
+  const query = asset_id ? `?asset_id=${encodeURIComponent(asset_id)}` : "";
+  return request_json(`/api/agent-index-status${query}`, { signal });
 }
 
 export function resume_agent_run(

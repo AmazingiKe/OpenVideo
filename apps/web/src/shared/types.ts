@@ -767,3 +767,26 @@ export type AgentTaskSnapshot = {
   asset_id: string;
   resume_available: boolean;
 };
+
+export type AgentIndexStatus = {
+  index_task_id: string;
+  asset_id: string | null;
+  state: "initializing" | "partial" | "ready" | "failed";
+  stage:
+    | "queued"
+    | "tokenizing"
+    | "building_matrix"
+    | "projecting"
+    | "committing"
+    | "ready"
+    | "failed";
+  stage_label: string;
+  processed_documents: number;
+  total_documents: number;
+  indexed_documents: number;
+  covered_seconds: number;
+  duration_seconds: number | null;
+  available_capabilities: string[];
+  error_message: string | null;
+  updated_at: string;
+};

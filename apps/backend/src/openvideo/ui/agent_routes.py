@@ -15,6 +15,7 @@ from openvideo.core.agent_runtime_models import (
     AgentArtifactApprovalRequest,
     AgentChangeVersion,
     AgentDefinitionAvailability,
+    AgentIndexStatus,
     AgentRun,
     AgentRunCreate,
     AgentSession,
@@ -178,6 +179,15 @@ def register_agent_routes(
     @app.get("/api/agent-tasks", response_model=list[AgentTaskSnapshot])
     def list_agent_tasks() -> list[AgentTaskSnapshot]:
         return agent_service().tasks()
+
+    @app.get("/api/agent-index-status", response_model=AgentIndexStatus)
+    async def get_agent_index_status(
+        asset_id: str | None = None,
+    ) -> AgentIndexStatus:
+        try:
+            return agent_service().index_status(asset_id)
+        except AgentServiceError as error:
+            raise agent_http_error(error) from error
 
     @app.post("/api/agent-runs/{run_id}/resume", response_model=AgentRun)
     async def resume_agent_run(run_id: str) -> AgentRun:

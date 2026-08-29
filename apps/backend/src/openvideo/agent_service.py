@@ -66,6 +66,7 @@ from openvideo.core.agent_runtime_models import (
     AgentDefinitionAvailability,
     AgentEvent,
     AgentEventType,
+    AgentIndexStatus,
     AgentMode,
     AgentRun,
     AgentRunCheckpoint,
@@ -93,6 +94,7 @@ from openvideo.core.agent_governance_models import (
 from openvideo.core.agent_change_merge import merge_markdown
 from openvideo.core.agent_evidence_models import (
     AgentEvidenceConfidence,
+    AgentEvidenceSource,
     AgentEvidenceWriteDecision,
 )
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, AiModelConfiguration
@@ -185,6 +187,7 @@ class AgentService:
         self.store = AgentSessionStore(library)
         self._tasks: dict[str, asyncio.Task[AgentRun]] = {}
         self._semantic_index_task: asyncio.Task[EvidenceIndexStatus] | None = None
+        self._closing = False
         self._runtimes: dict[str, AgentRuntime] = {}
         self.registry = AgentDefinitionRegistry(self._registered_agents())
         self.library.interrupt_agent_runs()
@@ -402,6 +405,44 @@ class AgentService:
             )
         return snapshots
 
+    def index_status(self, asset_id: str | None = None) -> AgentIndexStatus:
+        if asset_id is not None:
+            try:
+                asset = self.library.get(asset_id)
+            except ValueError as error:
+                raise AgentNotFoundError("媒体资源不存在") from error
+            if asset is None:
+                raise AgentNotFoundError("媒体资源不存在")
+        self._schedule_semantic_index()
+        status = self.library.agent_evidence_index_status()
+        coverage = self.library.agent_evidence_index_coverage(asset_id)
+        state = {
+            "lexical_ready": (
+                "partial" if coverage.document_count > 0 else "initializing"
+            ),
+            "semantic_building": (
+                "partial" if coverage.document_count > 0 else "initializing"
+            ),
+            "ready": "ready",
+            "error": "failed",
+        }[status.state]
+        capabilities = self._index_capabilities(status, coverage.source_types)
+        return AgentIndexStatus(
+            index_task_id=status.index_task_id,
+            asset_id=asset_id,
+            state=state,
+            stage=status.stage,
+            stage_label=self._index_stage_label(status),
+            processed_documents=status.processed_documents,
+            total_documents=status.total_documents,
+            indexed_documents=coverage.document_count,
+            covered_seconds=coverage.covered_seconds,
+            duration_seconds=coverage.duration_seconds,
+            available_capabilities=capabilities,
+            error_message=status.error_message,
+            updated_at=status.updated_at,
+        )
+
     async def resume_run(self, run_id: str) -> AgentRun:
         run = self.run(run_id)
         checkpoint = self.library.load_agent_run_checkpoint(run_id)
@@ -583,6 +624,7 @@ class AgentService:
             return undone
 
     async def close(self) -> None:
+        self._closing = True
         for runtime_id, runtime in list(self._runtimes.items()):
             runtime.cancel(runtime_id)
         if self._tasks:
@@ -604,6 +646,54 @@ class AgentService:
         self._semantic_index_task = asyncio.create_task(
             asyncio.to_thread(self.library.rebuild_agent_semantic_index)
         )
+        self._semantic_index_task.add_done_callback(self._semantic_index_completed)
+
+    def _semantic_index_completed(
+        self,
+        task: asyncio.Task[EvidenceIndexStatus],
+    ) -> None:
+        try:
+            task.result()
+        except (asyncio.CancelledError, Exception):
+            return
+        if not self._closing:
+            self._schedule_semantic_index()
+
+    @staticmethod
+    def _index_stage_label(status: EvidenceIndexStatus) -> str:
+        if status.state == "error":
+            return "语义索引失败，关键词检索仍可用"
+        return {
+            "queued": "关键词检索已可用，等待语义索引",
+            "tokenizing": "正在解析检索文本",
+            "building_matrix": "正在建立语义特征",
+            "projecting": "正在计算语义投影，耗时暂不可估计",
+            "committing": "正在切换新索引",
+            "ready": "检索索引已就绪",
+            "failed": "语义索引失败",
+        }[status.stage]
+
+    def _index_capabilities(
+        self,
+        status: EvidenceIndexStatus,
+        source_types: tuple[AgentEvidenceSource, ...],
+    ) -> list[str]:
+        capabilities = ["素材信息"] if self.library.list() else []
+        source_labels = {
+            "transcript": "字幕检索",
+            "analysis": "时间线分析",
+            "visual": "画面描述",
+            "ocr": "画面文字",
+        }
+        for source_type in source_types:
+            label = source_labels[source_type.value]
+            if label not in capabilities:
+                capabilities.append(label)
+        if source_types:
+            capabilities.append("关键词检索")
+        if status.active_model is not None:
+            capabilities.append("语义检索")
+        return capabilities
 
     def has_active_jobs(self) -> bool:
         return any(not task.done() for task in self._tasks.values())
@@ -1321,6 +1411,9 @@ class AgentService:
         return {
             "ok": True,
             **result.model_dump(mode="json"),
+            "index_status": self.index_status(context.session.asset_id).model_dump(
+                mode="json"
+            ),
             "focus_selection": (
                 focus_selection.model_dump(mode="json") if focus_selection else None
             ),
@@ -1353,7 +1446,11 @@ class AgentService:
             duration_seconds=None,
         )
         result = context.evidence.record_search(result)
-        return {"ok": True, **result.model_dump(mode="json")}
+        return {
+            "ok": True,
+            **result.model_dump(mode="json"),
+            "index_status": self.index_status().model_dump(mode="json"),
+        }
 
     async def _inspect_frames(
         self, context: AgentRunContext, parameters: InspectFramesInput

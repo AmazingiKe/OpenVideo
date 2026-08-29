@@ -12,6 +12,7 @@ import {
 import { use_asset_catalog } from "@/app/asset_catalog";
 import {
   create_download,
+  get_agent_index_status,
   list_downloads,
   list_agent_tasks,
   request_download_retry,
@@ -22,6 +23,7 @@ import { poll_transcription_job } from "@/shared/poll_transcription_job";
 import { poll_download } from "@/shared/poll_download";
 import type {
   AnalysisJob,
+  AgentIndexStatus,
   AgentTaskSnapshot,
   DownloadDestination,
   DownloadJob,
@@ -35,6 +37,7 @@ const AGENT_TASK_REFRESH_INTERVAL_MS = 2_000;
 
 type TaskManager = {
   task_records: TaskRecord[];
+  index_status: AgentIndexStatus | null;
   start_downloads: (
     urls: string[],
     destination?: DownloadDestination,
@@ -51,8 +54,12 @@ type TaskManager = {
 const TaskManagerContext = createContext<TaskManager | null>(null);
 
 export function TaskManagerProvider({ children }: { children: ReactNode }) {
-  const { refresh_assets, select_asset } = use_asset_catalog();
+  const { refresh_assets, select_asset, selected_asset_id } =
+    use_asset_catalog();
   const [task_records, set_task_records] = useState<TaskRecord[]>([]);
+  const [index_status, set_index_status] = useState<AgentIndexStatus | null>(
+    null,
+  );
   const [active_transcriptions, set_active_transcriptions] = useState<
     Set<string>
   >(new Set());
@@ -148,6 +155,32 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       window.clearInterval(interval_id);
     };
   }, [record_agent_tasks]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    set_index_status(null);
+    const refresh_index_status = () => {
+      try {
+        void get_agent_index_status(selected_asset_id, controller.signal)
+          .then((status) => {
+            set_index_status(status);
+            record_task(index_task_record(status));
+          })
+          .catch(() => undefined);
+      } catch {
+        // 离线壳层未提供索引端点时，其余任务仍可继续。
+      }
+    };
+    refresh_index_status();
+    const interval_id = window.setInterval(
+      refresh_index_status,
+      AGENT_TASK_REFRESH_INTERVAL_MS,
+    );
+    return () => {
+      controller.abort();
+      window.clearInterval(interval_id);
+    };
+  }, [record_task, selected_asset_id]);
 
   const track_download_jobs = useCallback(
     async (jobs: DownloadJob[], controller: AbortController) => {
@@ -268,6 +301,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const value = useMemo<TaskManager>(
     () => ({
       task_records,
+      index_status,
       start_downloads,
       retry_download,
       resume_agent_task,
@@ -277,6 +311,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     }),
     [
       active_transcriptions,
+      index_status,
       start_downloads,
       retry_download,
       resume_agent_task,
@@ -329,6 +364,33 @@ function agent_task_record(snapshot: AgentTaskSnapshot): TaskRecord {
     name: snapshot.session_title,
     events: [],
     resume_available: snapshot.resume_available,
+  };
+}
+
+function index_task_record(status: AgentIndexStatus): TaskRecord {
+  const progress_known = status.state === "ready" || status.total_documents > 0;
+  const progress_percent =
+    status.state === "ready"
+      ? 100
+      : status.total_documents > 0
+        ? (status.processed_documents / status.total_documents) * 100
+        : 0;
+  return {
+    task_id: status.index_task_id,
+    task_type: "index",
+    stage:
+      status.state === "ready"
+        ? "complete"
+        : status.state === "failed"
+          ? "failed"
+          : status.stage,
+    message: status.stage_label,
+    progress_percent,
+    progress_known,
+    error_message: status.error_message,
+    created_at: status.updated_at,
+    name: status.asset_id ? "当前视频证据索引" : "资料库证据索引",
+    events: [],
   };
 }
 
