@@ -21,6 +21,7 @@ from openvideo.core.library_files import (
     load_asset_bundle,
 )
 from openvideo.core.folder_models import Folder, FolderManifest
+from openvideo.core.summary_files import summary_document_depths
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
@@ -237,7 +238,9 @@ def replace_asset_projection(
             ],
         )
 
-    connection.execute("DELETE FROM focus_selections WHERE asset_id = ?", (asset.asset_id,))
+    connection.execute(
+        "DELETE FROM focus_selections WHERE asset_id = ?", (asset.asset_id,)
+    )
     if bundle.focus_selection is not None:
         _insert_model(
             connection,
@@ -245,7 +248,9 @@ def replace_asset_projection(
             bundle.focus_selection.model_dump(mode="json"),
         )
 
-    connection.execute("DELETE FROM event_analyses WHERE asset_id = ?", (asset.asset_id,))
+    connection.execute(
+        "DELETE FROM event_analyses WHERE asset_id = ?", (asset.asset_id,)
+    )
     for analysis in bundle.event_analyses:
         target = analysis.target
         values = analysis.model_dump(
@@ -282,14 +287,24 @@ def replace_asset_projection(
         )
 
     document_ids = {document.document_id for document in bundle.summary_documents}
-    connection.execute("DELETE FROM summary_versions WHERE asset_id = ?", (asset.asset_id,))
+    connection.execute(
+        "DELETE FROM summary_versions WHERE asset_id = ?", (asset.asset_id,)
+    )
     for version in bundle.summary_versions:
         values = version.model_dump(mode="json", exclude={"context_summary"})
         values["context_summary"] = version.context_summary.model_dump_json()
         _insert_model(connection, "summary_versions", values)
+    document_depths: dict[str, int] = {}
+    for version in bundle.summary_versions:
+        version_documents = [
+            document
+            for document in bundle.summary_documents
+            if document.version_id == version.version_id
+        ]
+        document_depths.update(summary_document_depths(version_documents))
     for document in sorted(
         bundle.summary_documents,
-        key=lambda item: (item.parent_document_id is not None, item.position),
+        key=lambda item: (document_depths[item.document_id], item.position),
     ):
         document_values = document.model_dump(mode="json", exclude={"markdown"})
         document_columns = tuple(document_values)

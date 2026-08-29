@@ -30,6 +30,7 @@ SUMMARY_INDEX_FILE_NAME = "index.md"
 SUMMARY_MANIFEST_FILE_NAME = "manifest.json"
 SUMMARY_ROOT_MANIFEST_FORMAT_VERSION = 2
 SUMMARY_VERSION_MANIFEST_FORMAT_VERSION = 1
+SUMMARY_DOCUMENT_MAX_DEPTH = 2
 SUMMARY_VERSION_ID_PREFIX = "summary-version-"
 LEGACY_SUMMARY_PRESET_ID = "legacy_import"
 LEGACY_SUMMARY_MODEL_ID = "legacy"
@@ -209,9 +210,8 @@ def load_root_manifest(asset_directory: Path) -> SummaryRootManifest:
     if root.format_version != SUMMARY_ROOT_MANIFEST_FORMAT_VERSION:
         raise ValueError("总结根 manifest 版本不受支持")
     version_ids = [version.version_id for version in root.versions]
-    if (
-        root.current_version_id not in version_ids
-        or len(version_ids) != len(set(version_ids))
+    if root.current_version_id not in version_ids or len(version_ids) != len(
+        set(version_ids)
     ):
         raise ValueError("总结版本目录缺少当前版本或包含重复标识")
     _cleanup_legacy_layout(asset_directory)
@@ -228,7 +228,9 @@ def load_version_manifest(
         SUMMARY_MANIFEST_FILE_NAME,
         require_file=True,
     )
-    manifest = SummaryVersionManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    manifest = SummaryVersionManifest.model_validate_json(
+        path.read_text(encoding="utf-8")
+    )
     if (
         manifest.format_version != SUMMARY_VERSION_MANIFEST_FORMAT_VERSION
         or manifest.version.version_id != version_id
@@ -248,6 +250,7 @@ def build_version_manifest(
         raise ValueError("总结文档不属于同一个版本")
     if any(artifact.version_id != version.version_id for artifact in media):
         raise ValueError("总结媒体不属于同一个版本")
+    summary_document_depths(documents)
     root = next(
         (document for document in documents if document.parent_document_id is None),
         None,
@@ -267,6 +270,50 @@ def build_version_manifest(
         media=media,
         updated_at=updated_at or datetime.now(UTC),
     )
+
+
+def summary_document_depths(
+    documents: list[SummaryDocument],
+) -> dict[str, int]:
+    """验证版本内的三级文档树，并返回以主文档为零的层级。"""
+
+    by_id = {document.document_id: document for document in documents}
+    if len(by_id) != len(documents):
+        raise ValueError("总结文档标识不能重复")
+    roots = [document for document in documents if document.parent_document_id is None]
+    if len(roots) != 1:
+        raise ValueError("总结版本必须只有一篇主文档")
+    if any(
+        document.parent_document_id is not None
+        and document.parent_document_id not in by_id
+        for document in documents
+    ):
+        raise ValueError("总结文档引用了不存在的父文档")
+
+    depths: dict[str, int] = {}
+    visiting: set[str] = set()
+
+    def resolve_depth(document_id: str) -> int:
+        if document_id in depths:
+            return depths[document_id]
+        if document_id in visiting:
+            raise ValueError("总结文档树不能形成循环")
+        visiting.add(document_id)
+        document = by_id[document_id]
+        depth = (
+            0
+            if document.parent_document_id is None
+            else resolve_depth(document.parent_document_id) + 1
+        )
+        visiting.remove(document_id)
+        if depth > SUMMARY_DOCUMENT_MAX_DEPTH:
+            raise ValueError("总结文档最多支持三级")
+        depths[document_id] = depth
+        return depth
+
+    for document in documents:
+        resolve_depth(document.document_id)
+    return depths
 
 
 def write_root_manifest(asset_directory: Path, manifest: SummaryRootManifest) -> None:
@@ -366,8 +413,14 @@ def migrate_legacy_summary(
             atomic_write_text(destination, document.markdown)
         for artifact in media:
             file_name = PurePosixPath(artifact.relative_path).name
-            source = summary_directory(asset_directory) / SUMMARY_ASSETS_DIRECTORY_NAME / file_name
-            destination = temporary_directory / SUMMARY_ASSETS_DIRECTORY_NAME / file_name
+            source = (
+                summary_directory(asset_directory)
+                / SUMMARY_ASSETS_DIRECTORY_NAME
+                / file_name
+            )
+            destination = (
+                temporary_directory / SUMMARY_ASSETS_DIRECTORY_NAME / file_name
+            )
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
         manifest = build_version_manifest(version, documents, media)

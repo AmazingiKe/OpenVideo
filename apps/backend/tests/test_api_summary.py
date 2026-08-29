@@ -15,7 +15,12 @@ from openvideo.core.event_analysis_models import (
     MarkerEventAnalysisTarget,
 )
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaMarker, SourcePlatform
+from openvideo.core.media_models import (
+    MediaAsset,
+    MediaAssetStatus,
+    MediaMarker,
+    SourcePlatform,
+)
 from openvideo.core.summary_files import markdown_digest
 from openvideo.core.summary_models import SummaryDocumentCreate
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
@@ -131,7 +136,9 @@ def create_client(tmp_path: Path) -> TestClient:
     )
 
 
-def install_generation_mocks(monkeypatch, captured: list[list[dict[str, str]]] | None = None):
+def install_generation_mocks(
+    monkeypatch, captured: list[list[dict[str, str]]] | None = None
+):
     monkeypatch.setattr(
         "openvideo.summary_manager.CapabilityResolver.resolve",
         lambda *_args, **_kwargs: ModelProfile(
@@ -249,6 +256,70 @@ def test_generation_appends_versions_and_history_remains_editable(
     summary_root = tmp_path / "assets" / ASSET_ID / "summary"
     assert (summary_root / "manifest.json").is_file()
     assert len(list((summary_root / "versions").iterdir())) == 2
+
+
+def test_three_level_document_tree_supports_duplicate_move_and_subtree_delete(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+    with create_client(tmp_path) as client:
+        generated = generate(client)
+        root = next(
+            item
+            for item in generated["documents"]
+            if item["parent_document_id"] is None
+        )
+        chapter = next(
+            item
+            for item in generated["documents"]
+            if item["parent_document_id"] == root["document_id"]
+        )
+        section_response = client.post(
+            f"/api/summary-documents/{chapter['document_id']}/children",
+            json={"title": "重点公式", "markdown": "$$E=mc^2$$"},
+        )
+        assert section_response.status_code == 201, section_response.text
+        section = section_response.json()
+
+        over_depth = client.post(
+            f"/api/summary-documents/{section['document_id']}/children",
+            json={"title": "第四级", "markdown": ""},
+        )
+        duplicate_response = client.post(
+            f"/api/summary-documents/{section['document_id']}/duplicate"
+        )
+        assert duplicate_response.status_code == 201, duplicate_response.text
+        duplicate = duplicate_response.json()
+        moved_response = client.put(
+            f"/api/summary-documents/{duplicate['document_id']}/move",
+            json={"parent_document_id": root["document_id"], "position": 0},
+        )
+        invalid_cycle = client.put(
+            f"/api/summary-documents/{chapter['document_id']}/move",
+            json={"parent_document_id": section["document_id"], "position": 0},
+        )
+        deleted = client.delete(f"/api/summary-documents/{chapter['document_id']}")
+        remaining = client.get(f"/api/media/assets/{ASSET_ID}/summary-documents").json()
+
+    assert over_depth.status_code == 409
+    assert "三级" in over_depth.json()["detail"]
+    assert duplicate["markdown"] == section["markdown"]
+    assert duplicate["title"] == "重点公式 副本"
+    assert moved_response.status_code == 200, moved_response.text
+    moved = next(
+        item
+        for item in moved_response.json()
+        if item["document_id"] == duplicate["document_id"]
+    )
+    assert moved["parent_document_id"] == root["document_id"]
+    assert moved["position"] == 0
+    assert invalid_cycle.status_code == 422
+    assert deleted.status_code == 204
+    assert {item["document_id"] for item in remaining} == {
+        root["document_id"],
+        duplicate["document_id"],
+    }
 
 
 def test_agent_summary_batch_restores_all_files_when_manifest_commit_fails(
@@ -413,7 +484,9 @@ def test_legacy_single_summary_migrates_once(tmp_path: Path):
     root_manifest_path.write_text(legacy_manifest, encoding="utf-8")
     reopened = MediaLibrary.open(tmp_path)
     try:
-        assert reopened.load_summary_versions(ASSET_ID)[0].version_id == first_version_id
+        assert (
+            reopened.load_summary_versions(ASSET_ID)[0].version_id == first_version_id
+        )
         assert json.loads(root_manifest_path.read_text("utf-8"))["format_version"] == 2
         assert len(list((summary_directory / "versions").iterdir())) == 1
         assert not (summary_directory / "index.md").exists()

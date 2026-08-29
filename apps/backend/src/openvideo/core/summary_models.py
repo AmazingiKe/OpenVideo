@@ -84,8 +84,9 @@ class SummaryDocumentUpdate(BaseModel):
     position: int | None = Field(default=None, ge=0)
 
 
-class SummaryDocumentReorder(BaseModel):
-    document_ids: list[str]
+class SummaryDocumentMove(BaseModel):
+    parent_document_id: str
+    position: int = Field(ge=0)
 
 
 class SummaryMediaType(StrEnum):

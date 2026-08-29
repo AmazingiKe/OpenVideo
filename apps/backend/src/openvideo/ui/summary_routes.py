@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from openvideo.core.summary_models import (
     SummaryDocument,
     SummaryDocumentCreate,
-    SummaryDocumentReorder,
+    SummaryDocumentMove,
     SummaryDocumentUpdate,
     SummaryExportResult,
     SummaryGenerationRequest,
@@ -146,16 +146,16 @@ def register_summary_routes(
             raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post(
-        "/api/summary-documents/{root_document_id}/children",
+        "/api/summary-documents/{parent_document_id}/children",
         response_model=SummaryDocument,
         status_code=status.HTTP_201_CREATED,
     )
     def create_summary_child(
-        root_document_id: str,
+        parent_document_id: str,
         request: SummaryDocumentCreate,
     ) -> SummaryDocument:
         try:
-            return summary_manager().create_child(root_document_id, request)
+            return summary_manager().create_child(parent_document_id, request)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (SummaryError, ValueError) as error:
@@ -176,21 +176,32 @@ def register_summary_routes(
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
-    @app.put(
-        "/api/summary-documents/{root_document_id}/children/order",
-        response_model=list[SummaryDocument],
+    @app.post(
+        "/api/summary-documents/{document_id}/duplicate",
+        response_model=SummaryDocument,
+        status_code=status.HTTP_201_CREATED,
     )
-    def reorder_summary_children(
-        root_document_id: str,
-        request: SummaryDocumentReorder,
-    ) -> list[SummaryDocument]:
+    def duplicate_summary_document(document_id: str) -> SummaryDocument:
         try:
-            return summary_manager().reorder_children(
-                root_document_id, request.document_ids
-            )
+            return summary_manager().duplicate_document(document_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
+        except SummaryError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.put(
+        "/api/summary-documents/{document_id}/move",
+        response_model=list[SummaryDocument],
+    )
+    def move_summary_document(
+        document_id: str,
+        request: SummaryDocumentMove,
+    ) -> list[SummaryDocument]:
+        try:
+            return summary_manager().move_document(document_id, request)
+        except SummaryNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (SummaryError, ValueError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.delete(
@@ -199,7 +210,7 @@ def register_summary_routes(
     )
     def delete_summary_document(document_id: str) -> Response:
         try:
-            summary_manager().delete_child(document_id)
+            summary_manager().delete_document(document_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except ValueError as error:

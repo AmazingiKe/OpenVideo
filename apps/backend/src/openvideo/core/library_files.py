@@ -35,6 +35,7 @@ from openvideo.core.summary_files import (
     load_version_manifest,
     markdown_digest,
     read_markdown,
+    summary_document_depths,
 )
 from openvideo.core.summary_models import (
     SummaryDocument,
@@ -485,7 +486,9 @@ def _load_summary(
         )
         tracked_paths.append(version_manifest_path)
         try:
-            version_manifest = load_version_manifest(asset_directory, version.version_id)
+            version_manifest = load_version_manifest(
+                asset_directory, version.version_id
+            )
         except (OSError, ValueError):
             _raise_issue(
                 asset_id,
@@ -516,20 +519,37 @@ def _load_summary(
                 "总结文档标识重复或缺少主文档",
             )
         all_document_ids.update(document_ids)
+        tree_documents = [
+            SummaryDocument(
+                **item.model_dump(),
+                asset_id=asset_id,
+                markdown="",
+            )
+            for item in version_manifest.documents
+        ]
+        try:
+            summary_document_depths(tree_documents)
+            root_document = next(
+                item for item in tree_documents if item.parent_document_id is None
+            )
+            if root_document.document_id != version_manifest.root_document_id:
+                raise ValueError("主文档标识与文档树不一致")
+        except ValueError:
+            _raise_issue(
+                asset_id,
+                version_manifest_path,
+                library_root,
+                "invalid_summary_manifest",
+                "总结文档树无效或超过三级",
+            )
         for item in version_manifest.documents:
-            if (
-                item.version_id != version.version_id
-                or (
-                    item.parent_document_id is not None
-                    and item.parent_document_id != version_manifest.root_document_id
-                )
-            ):
+            if item.version_id != version.version_id:
                 _raise_issue(
                     asset_id,
                     version_manifest_path,
                     library_root,
                     "cross_asset_reference",
-                    "总结文档引用了其他版本或无效主文档",
+                    "总结文档引用了其他版本",
                 )
             expected_path = document_relative_path(
                 SummaryDocument(**item.model_dump(), asset_id=asset_id, markdown="")
@@ -562,7 +582,9 @@ def _load_summary(
                     "总结 Markdown 缺失、无效或无法读取",
                 )
             digest = markdown_digest(markdown)
-            revision = item.revision + 1 if digest != item.content_digest else item.revision
+            revision = (
+                item.revision + 1 if digest != item.content_digest else item.revision
+            )
             documents.append(
                 SummaryDocument(
                     **item.model_dump(exclude={"content_digest", "revision"}),
