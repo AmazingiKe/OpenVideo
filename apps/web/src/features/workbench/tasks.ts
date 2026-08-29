@@ -66,5 +66,10 @@ export const TASK_STAGE_LABELS: Record<string, string> = {
   tokenizing: "解析文本",
   building_matrix: "建立特征",
   projecting: "计算投影",
+  downloading_embedding_model: "下载嵌入模型",
+  loading_embedding_model: "加载嵌入模型",
+  embedding_documents: "生成语义向量",
+  downloading_reranker_model: "下载重排模型",
+  loading_reranker_model: "加载重排模型",
   committing: "切换索引",
 };

@@ -781,6 +781,11 @@ export type AgentIndexStatus = {
     | "tokenizing"
     | "building_matrix"
     | "projecting"
+    | "downloading_embedding_model"
+    | "loading_embedding_model"
+    | "embedding_documents"
+    | "downloading_reranker_model"
+    | "loading_reranker_model"
     | "committing"
     | "ready"
     | "failed";

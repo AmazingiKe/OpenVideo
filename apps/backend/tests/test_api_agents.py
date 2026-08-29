@@ -198,6 +198,22 @@ def test_index_status_exposes_real_coverage_and_available_capabilities(
         assert "关键词检索" in payload["available_capabilities"]
 
 
+def test_index_status_accepts_neural_model_initialization_stages(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        with client.app.state.library._db():
+            client.app.state.library._db().execute(
+                "UPDATE agent_evidence_index_status "
+                "SET state = 'semantic_building', "
+                "stage = 'downloading_embedding_model' "
+                "WHERE singleton = 1"
+            )
+
+        response = client.get("/api/agent-index-status")
+
+        assert response.status_code == 200
+        assert response.json()["stage"] == "downloading_embedding_model"
+
+
 def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypatch):
     async def reply_without_required_tool(
         self,
