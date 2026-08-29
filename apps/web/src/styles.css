@@ -521,12 +521,178 @@
 
 .summary-milkdown .milkdown .ProseMirror {
   min-height: 100%;
-  padding: 32px clamp(24px, 7vw, 80px) 80px;
+  width: min(100%, 960px);
+  margin-inline: auto;
+  padding: 48px clamp(24px, 6vw, 64px) 96px;
   outline: none;
+  font-size: 1rem;
+  line-height: 1.75;
+  text-wrap: pretty;
 }
 
 .summary-milkdown .milkdown .ProseMirror:focus-visible {
   box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+.summary-milkdown .milkdown .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-top: 96px;
+  color: var(--foreground);
+  text-wrap: balance;
+}
+
+.summary-milkdown .milkdown .ProseMirror h1 {
+  margin-block: 16px 32px;
+  font-size: clamp(2rem, 4vw, 2.5rem);
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.summary-milkdown .milkdown .ProseMirror h2 {
+  margin-block: 40px 16px;
+  font-size: 1.75rem;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.summary-milkdown .milkdown .ProseMirror h3 {
+  margin-block: 32px 12px;
+  font-size: 1.375rem;
+  line-height: 1.4;
+}
+
+.summary-milkdown .milkdown .ProseMirror :is(p, ul, ol, blockquote) {
+  margin-block: 12px;
+}
+
+.summary-milkdown .milkdown li[data-item-type="task"] {
+  position: relative;
+  list-style: none;
+}
+
+.summary-milkdown .milkdown .summary-task-checkbox {
+  position: absolute;
+  inset-block-start: 0.5em;
+  inset-inline-start: -24px;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--primary-foreground);
+  cursor: pointer;
+  place-items: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.summary-milkdown
+  .milkdown
+  .summary-task-checkbox[data-state="checked"] {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.summary-milkdown
+  .milkdown
+  li[data-item-type="task"][data-checked="true"]
+  > p {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+.summary-milkdown .milkdown .ProseMirror blockquote {
+  border-inline-start: 3px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+.summary-milkdown .milkdown span[data-type="math_inline"] {
+  color: var(--foreground);
+}
+
+.summary-milkdown .milkdown .milkdown-latex-block {
+  margin-block: 24px;
+  overflow-x: auto;
+}
+
+.summary-source-editor,
+.summary-source-editor .cm-editor,
+.summary-source-editor .cm-scroller {
+  height: 100%;
+  min-height: 0;
+}
+
+.summary-source-editor .cm-editor {
+  color: var(--foreground);
+  background: var(--background);
+  outline: none;
+}
+
+.summary-source-editor .cm-editor.cm-focused {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+.summary-source-editor .cm-scroller {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.65;
+}
+
+.summary-source-editor .cm-content {
+  padding: 32px 0 80px;
+}
+
+.summary-source-editor .cm-line {
+  padding-inline: 16px;
+}
+
+.summary-source-editor .cm-gutters {
+  color: var(--muted-foreground);
+  background: var(--surface-muted);
+  border-color: var(--border);
+}
+
+.summary-source-editor .cm-activeLine,
+.summary-source-editor .cm-activeLineGutter {
+  background: var(--surface-hover);
+}
+
+.summary-source-editor .cm-selectionBackground,
+.summary-source-editor .cm-content ::selection {
+  background: var(--accent) !important;
+}
+
+.summary-diagram-status,
+.summary-diagram-error {
+  padding: 16px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.summary-diagram-error {
+  color: var(--destructive);
+}
+
+.summary-mermaid {
+  display: flex;
+  max-width: 100%;
+  justify-content: center;
+  overflow-x: auto;
+  padding: 24px;
+}
+
+.summary-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 640px) {
+  .summary-milkdown .milkdown .ProseMirror {
+    padding: 32px 20px 80px;
+  }
+
+  .summary-milkdown .milkdown .ProseMirror h1 {
+    font-size: 2rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

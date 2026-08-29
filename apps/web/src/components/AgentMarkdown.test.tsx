@@ -16,4 +16,13 @@ describe("AgentMarkdown", () => {
     expect(container.querySelector("script")).toBeNull();
     expect(screen.queryByText("danger()")).not.toBeInTheDocument();
   });
+
+  it("renders formulas from inline and block delimiters", () => {
+    const { container } = render(
+      <AgentMarkdown content={"行内 \\(x^2\\)\n\n\\[\ny = x + 1\n\\]"} />,
+    );
+
+    expect(container.querySelector(".katex")).toBeInTheDocument();
+    expect(container.querySelector(".katex-display")).toBeInTheDocument();
+  });
 });
