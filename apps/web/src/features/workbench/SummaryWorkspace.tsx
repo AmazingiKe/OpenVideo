@@ -16,11 +16,12 @@ import {
   create_summary_export,
   create_summary_child,
   delete_summary_document,
+  duplicate_summary_document,
   generate_summary_documents,
   list_summary_documents,
   list_summary_presets,
+  move_summary_document,
   select_summary_version,
-  reorder_summary_children,
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
@@ -43,8 +44,10 @@ import type {
   Transcript,
 } from "@/shared/types";
 import {
+  DocumentConflictDialog,
   SummaryEmpty,
   SummaryGeneration,
+  type DocumentConflict,
   type SaveStatus,
 } from "./SummaryWorkspacePanels";
 import { SummaryEditorLayout } from "./SummaryEditorLayout";
@@ -121,10 +124,15 @@ export function SummaryWorkspace({
   const [selection, set_selection] = useState<MarkdownSelection | null>(null);
   const [tree_sheet_open, set_tree_sheet_open] = useState(false);
   const [new_document_open, set_new_document_open] = useState(false);
+  const [new_document_parent_id, set_new_document_parent_id] = useState<
+    string | null
+  >(null);
   const [new_document_title, set_new_document_title] = useState("");
   const [delete_target, set_delete_target] = useState<SummaryDocument | null>(
     null,
   );
+  const [document_conflict, set_document_conflict] =
+    useState<DocumentConflict | null>(null);
   const [reordering, set_reordering] = useState(false);
   const [export_pending, set_export_pending] = useState(false);
   const [export_relative_path, set_export_relative_path] = useState<
@@ -136,6 +144,7 @@ export function SummaryWorkspace({
   );
   const active_document_id_ref = useRef<string | null>(null);
   const active_document_revision_ref = useRef<number | null>(null);
+  const active_document_version_id_ref = useRef<string | null>(null);
   const active_document_title_ref = useRef("");
   const draft_markdown_ref = useRef("");
   const draft_title_ref = useRef("");
@@ -153,9 +162,6 @@ export function SummaryWorkspace({
   );
   const root_document =
     documents.find((document) => document.parent_document_id === null) ?? null;
-  const child_documents = documents
-    .filter((document) => document.parent_document_id !== null)
-    .sort((left, right) => left.position - right.position);
 
   const update_dirty = useCallback((next_dirty: boolean) => {
     dirty_ref.current = next_dirty;
@@ -166,6 +172,7 @@ export function SummaryWorkspace({
     (document: SummaryDocument) => {
       active_document_id_ref.current = document.document_id;
       active_document_revision_ref.current = document.revision;
+      active_document_version_id_ref.current = document.version_id;
       active_document_title_ref.current = document.title;
       draft_markdown_ref.current = document.markdown;
       draft_title_ref.current = document.title;
@@ -173,6 +180,7 @@ export function SummaryWorkspace({
       set_draft_title(document.title);
       update_dirty(false);
       set_save_status("saved");
+      set_document_conflict(null);
       set_selection(null);
     },
     [update_dirty],
@@ -221,13 +229,44 @@ export function SummaryWorkspace({
         set_save_status(unchanged ? "saved" : "pending");
         return true;
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         if (active_document_id_ref.current === document_id) {
-          set_save_status(
-            error instanceof ApiError && error.status === 409
-              ? "conflict"
-              : "failed",
-          );
+          if (error instanceof ApiError && error.status === 409) {
+            set_save_status("conflict");
+            const asset_id = active_asset_id_ref.current;
+            const version_id = active_document_version_id_ref.current;
+            if (asset_id && version_id) {
+              try {
+                const loaded = await list_summary_documents(
+                  asset_id,
+                  version_id,
+                );
+                set_documents(loaded);
+                const remote_document = loaded.find(
+                  (document) => document.document_id === document_id,
+                );
+                if (remote_document) {
+                  set_document_conflict({
+                    local_markdown: markdown,
+                    local_title: title,
+                    remote_document,
+                  });
+                } else {
+                  set_save_status("failed");
+                  on_error?.(
+                    "文档已在其他位置删除，本地草稿仍保留在当前窗口。",
+                  );
+                }
+              } catch (load_error) {
+                set_save_status("failed");
+                on_error?.(error_message(load_error));
+              }
+            } else {
+              set_save_status("failed");
+            }
+          } else {
+            set_save_status("failed");
+          }
         }
         return false;
       })
@@ -238,7 +277,7 @@ export function SummaryWorkspace({
       });
     save_promise_ref.current = save_promise;
     return save_promise;
-  }, [update_dirty]);
+  }, [on_error, update_dirty]);
 
   const load_documents = useCallback(
     async (
@@ -285,6 +324,7 @@ export function SummaryWorkspace({
     set_export_relative_path(null);
     set_export_pending(false);
     set_generation_open(false);
+    set_document_conflict(null);
     if (!selected_asset_id) {
       set_documents([]);
       set_selected_document_id(null);
@@ -464,15 +504,16 @@ export function SummaryWorkspace({
   }
 
   async function add_child() {
-    if (!root_document || !new_document_title.trim()) return;
+    if (!new_document_parent_id || !new_document_title.trim()) return;
     try {
       const created = await create_summary_child(
-        root_document.document_id,
+        new_document_parent_id,
         new_document_title.trim(),
       );
       set_documents((current) => [...current, created]);
       set_selected_document_id(created.document_id);
       set_new_document_title("");
+      set_new_document_parent_id(null);
       set_new_document_open(false);
       set_tree_sheet_open(false);
     } catch (error) {
@@ -481,51 +522,77 @@ export function SummaryWorkspace({
   }
 
   async function remove_child() {
-    if (!delete_target) return;
+    if (!delete_target || !selected_asset) return;
     try {
       await delete_summary_document(delete_target.document_id);
-      const next = documents.filter(
-        (document) => document.document_id !== delete_target.document_id,
-      );
-      set_documents(next);
-      if (selected_document_id === delete_target.document_id) {
-        set_selected_document_id(root_document?.document_id ?? null);
-      }
+      await load_documents(selected_asset.asset_id, current_version_id);
       set_delete_target(null);
     } catch (error) {
       on_error?.(error_message(error));
     }
   }
 
-  async function reorder_children(document_ids: string[]) {
-    if (!root_document || reordering) return;
-    const previous_documents = documents;
+  async function move_document(
+    document_id: string,
+    parent_document_id: string,
+    position: number,
+  ) {
+    if (reordering) return;
     set_reordering(true);
-    set_documents((current) =>
-      current.map((document) => {
-        const position = document_ids.indexOf(document.document_id);
-        return position >= 0 ? { ...document, position } : document;
-      }),
-    );
     try {
       set_documents(
-        await reorder_summary_children(root_document.document_id, document_ids),
+        await move_summary_document(document_id, parent_document_id, position),
       );
     } catch (error) {
-      set_documents(previous_documents);
       on_error?.(error_message(error));
     } finally {
       set_reordering(false);
     }
   }
 
-  function move_child(document_id: string, direction: -1 | 1) {
-    const document_ids = moved_child_document_ids(
-      child_documents,
-      document_id,
-      direction,
-    );
-    if (document_ids) void reorder_children(document_ids);
+  function open_new_document(parent_document_id: string) {
+    set_new_document_parent_id(parent_document_id);
+    set_new_document_title("");
+    set_new_document_open(true);
+  }
+
+  async function duplicate_document(document: SummaryDocument) {
+    if (
+      document.document_id === active_document_id_ref.current &&
+      !(await save_active_draft())
+    )
+      return;
+    try {
+      const created = await duplicate_summary_document(document.document_id);
+      set_documents((current) => [...current, created]);
+      set_selected_document_id(created.document_id);
+      set_tree_sheet_open(false);
+    } catch (error) {
+      on_error?.(error_message(error));
+    }
+  }
+
+  async function rename_document(document: SummaryDocument, title: string) {
+    const next_title = title.trim();
+    if (!next_title || next_title === document.title) return;
+    if (document.document_id === active_document_id_ref.current) {
+      change_title(next_title);
+      return;
+    }
+    try {
+      const updated = await update_summary_document(
+        document.document_id,
+        document.revision,
+        { title: next_title },
+      );
+      set_documents((current) =>
+        current.map((item) =>
+          item.document_id === updated.document_id ? updated : item,
+        ),
+      );
+    } catch (error) {
+      on_error?.(error_message(error));
+    }
   }
 
   if (
@@ -590,32 +657,59 @@ export function SummaryWorkspace({
     update_dirty(true);
   }
 
+  function keep_local_conflict() {
+    if (!document_conflict) return;
+    const remote = document_conflict.remote_document;
+    active_document_revision_ref.current = remote.revision;
+    active_document_title_ref.current = remote.title;
+    set_document_conflict(null);
+    set_save_status("pending");
+    update_dirty(true);
+  }
+
+  function use_remote_conflict() {
+    if (!document_conflict) return;
+    const remote = document_conflict.remote_document;
+    set_documents((current) =>
+      current.map((document) =>
+        document.document_id === remote.document_id ? remote : document,
+      ),
+    );
+    activate_document(remote);
+    set_document_conflict(null);
+  }
+
   return (
     <>
       <SummaryEditorLayout
-        child_documents={child_documents}
         compact_layout={compact_layout}
         create_child={() => void add_child()}
         delete_target={delete_target}
+        documents={documents}
         draft_markdown={draft_markdown}
         draft_title={draft_title}
         editor_mode={editor_mode}
         export_pending={export_pending}
         export_relative_path={export_relative_path}
         generation_notice={generation_notice}
-        move_child={move_child}
+        move_document={(document_id, parent_document_id, position) =>
+          void move_document(document_id, parent_document_id, position)
+        }
         new_document_open={new_document_open}
         new_document_title={new_document_title}
         on_artifact_change={refresh_approved_artifact}
         on_delete_confirm={() => void remove_child()}
         on_export={() => void export_summary()}
         on_markdown_change={change_markdown}
+        on_duplicate_document={(document) => void duplicate_document(document)}
+        on_open_new_document={open_new_document}
+        on_rename_document={(document, title) =>
+          void rename_document(document, title)
+        }
         on_retry={retry_save}
         on_title_change={change_title}
         remove_delete_target={() => set_delete_target(null)}
-        reorder_children={(document_ids) => void reorder_children(document_ids)}
         reordering={reordering}
-        root_document={root_document}
         save_status={save_status}
         selected_asset_id={editor_asset_id}
         selected_document={selected_document}
@@ -627,7 +721,10 @@ export function SummaryWorkspace({
         select_document={(document_id) => void select_document(document_id)}
         set_delete_target={set_delete_target}
         set_editor_mode={set_editor_mode}
-        set_new_document_open={set_new_document_open}
+        set_new_document_open={(open) => {
+          set_new_document_open(open);
+          if (!open) set_new_document_parent_id(null);
+        }}
         set_new_document_title={set_new_document_title}
         set_selection={set_selection}
         set_tree_sheet_open={set_tree_sheet_open}
@@ -653,32 +750,13 @@ export function SummaryWorkspace({
         is_generating={is_generating}
         on_generate={() => void generate_documents()}
       />
+      <DocumentConflictDialog
+        conflict={document_conflict}
+        on_keep_local={keep_local_conflict}
+        on_use_remote={use_remote_conflict}
+      />
     </>
   );
-}
-
-function moved_child_document_ids(
-  documents: SummaryDocument[],
-  document_id: string,
-  direction: -1 | 1,
-): string[] | null {
-  const current_index = documents.findIndex(
-    (document) => document.document_id === document_id,
-  );
-  const target_index = current_index + direction;
-  if (
-    current_index < 0 ||
-    target_index < 0 ||
-    target_index >= documents.length
-  ) {
-    return null;
-  }
-  const reordered = [...documents];
-  [reordered[current_index], reordered[target_index]] = [
-    reordered[target_index]!,
-    reordered[current_index]!,
-  ];
-  return reordered.map((document) => document.document_id);
 }
 
 function SummaryWorkspaceInitialState({

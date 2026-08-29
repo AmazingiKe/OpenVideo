@@ -22,6 +22,7 @@ import {
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
+import { ApiError } from "@/shared/api/client";
 import { ApplicationQueryProvider } from "@/app/query_cache";
 import { GlobalAssistantProvider } from "@/app/global_assistant";
 import type {
@@ -36,7 +37,6 @@ import {
   unknown_model_profile,
 } from "@/shared/types";
 import { SummaryWorkspace } from "./SummaryWorkspace";
-import { reorder_document_ids } from "./SummaryWorkspacePanels";
 
 const global_assistant_state = vi.hoisted(() => ({
   binding: null as Record<string, unknown> | null,
@@ -122,6 +122,22 @@ vi.mock("@/components/MarkdownEditor", () => ({
   },
 }));
 
+vi.mock("@/components/MarkdownSourceEditor", () => ({
+  MarkdownSourceEditor: ({
+    markdown,
+    on_change,
+  }: {
+    markdown: string;
+    on_change: (markdown: string) => void;
+  }) => (
+    <textarea
+      aria-label="Markdown 源码"
+      value={markdown}
+      onChange={(event) => on_change(event.target.value)}
+    />
+  ),
+}));
+
 vi.mock("@/shared/api", async (import_original) => {
   const actual = await import_original<typeof import("@/shared/api")>();
   return {
@@ -129,6 +145,7 @@ vi.mock("@/shared/api", async (import_original) => {
     list_agent_definitions: vi.fn(),
     list_agent_sessions: vi.fn(),
     create_summary_child: vi.fn(),
+    duplicate_summary_document: vi.fn(),
     create_summary_export: vi.fn(),
     create_summary_media: vi.fn(),
     delete_summary_document: vi.fn(),
@@ -137,7 +154,7 @@ vi.mock("@/shared/api", async (import_original) => {
     list_summary_documents: vi.fn(),
     list_summary_presets: vi.fn(),
     list_summary_versions: vi.fn(),
-    reorder_summary_children: vi.fn(),
+    move_summary_document: vi.fn(),
     subscribe_summary_documents: vi.fn(),
     update_summary_document: vi.fn(),
   };
@@ -352,6 +369,57 @@ describe("SummaryWorkspace", () => {
     expect(await screen.findByText("已保存")).toBeInTheDocument();
   });
 
+  it("keeps the local draft visible and retries from the remote revision", async () => {
+    const remote_document = {
+      ...DOCUMENT,
+      markdown: "# 远端内容\n",
+      revision: 2,
+    };
+    vi.mocked(list_summary_documents)
+      .mockResolvedValueOnce([DOCUMENT])
+      .mockResolvedValueOnce([remote_document]);
+    vi.mocked(update_summary_document)
+      .mockRejectedValueOnce(new ApiError("版本冲突", 409))
+      .mockResolvedValueOnce({
+        ...remote_document,
+        markdown: "# 本地草稿\n",
+        revision: 3,
+      });
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "可视化 Markdown" }),
+      { target: { value: "# 本地草稿\n" } },
+    );
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: "选择要保留的文档版本" },
+        { timeout: 2_500 },
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("# 本地草稿")).toHaveLength(2);
+    expect(screen.getByText("# 远端内容")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保留本地草稿并覆盖" }));
+    await waitFor(
+      () =>
+        expect(update_summary_document).toHaveBeenLastCalledWith(
+          DOCUMENT.document_id,
+          2,
+          { markdown: "# 本地草稿\n", title: DOCUMENT.title },
+        ),
+      { timeout: 2_000 },
+    );
+  });
+
   it("adds a selected summary passage as visible AI context", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
 
@@ -403,7 +471,7 @@ describe("SummaryWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "文档" }));
     fireEvent.click(
-      await screen.findByRole("button", {
+      await screen.findByRole("treeitem", {
         name: new RegExp(`^${CHILD_DOCUMENT.title}$`),
       }),
     );
@@ -439,7 +507,7 @@ describe("SummaryWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "文档" }));
     fireEvent.click(
-      await screen.findByRole("button", {
+      await screen.findByRole("treeitem", {
         name: new RegExp(`^${CHILD_DOCUMENT.title}$`),
       }),
     );
@@ -477,7 +545,7 @@ describe("SummaryWorkspace", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "文档" }));
     fireEvent.click(
-      await screen.findByRole("button", {
+      await screen.findByRole("treeitem", {
         name: new RegExp(`^${CHILD_DOCUMENT.title}$`),
       }),
     );
@@ -487,9 +555,9 @@ describe("SummaryWorkspace", () => {
       screen.getByRole("region", { name: "Markdown 总结工作台" }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "使用源码模式" }));
-    expect(screen.getByRole("textbox", { name: "Markdown 源码" })).toHaveValue(
-      CHILD_DOCUMENT.markdown,
-    );
+    expect(
+      await screen.findByRole("textbox", { name: "Markdown 源码" }),
+    ).toHaveValue(CHILD_DOCUMENT.markdown);
     console_error.mockRestore();
   });
 
@@ -607,18 +675,5 @@ describe("SummaryWorkspace", () => {
     expect(
       screen.queryByRole("link", { name: "导出 ZIP" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("calculates document drop positions without losing identifiers", () => {
-    expect(reorder_document_ids(["a", "b", "c"], "a", "c", "after")).toEqual([
-      "b",
-      "c",
-      "a",
-    ]);
-    expect(reorder_document_ids(["a", "b", "c"], "c", "a", "before")).toEqual([
-      "c",
-      "a",
-      "b",
-    ]);
   });
 });

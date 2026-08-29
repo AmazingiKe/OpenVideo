@@ -37,35 +37,40 @@ import type {
 import {
   DeleteDocumentDialog,
   DocumentEditor,
-  DocumentTree,
   NewDocumentDialog,
   type SaveStatus,
 } from "./SummaryWorkspacePanels";
+import { SummaryDocumentNavigation } from "./SummaryDocumentNavigation";
 
 type SummaryEditorLayoutProps = {
-  child_documents: SummaryDocument[];
   compact_layout: boolean;
   create_child: () => void;
   delete_target: SummaryDocument | null;
+  documents: SummaryDocument[];
   draft_markdown: string;
   draft_title: string;
   editor_mode: "visual" | "source";
   export_pending: boolean;
   export_relative_path: string | null;
   generation_notice: string | null;
-  move_child: (document_id: string, direction: -1 | 1) => void;
+  move_document: (
+    document_id: string,
+    parent_document_id: string,
+    position: number,
+  ) => void;
   new_document_open: boolean;
   new_document_title: string;
   on_artifact_change: (artifact: AgentArtifact) => void | Promise<void>;
   on_delete_confirm: () => void;
   on_export: () => void;
   on_markdown_change: (markdown: string) => void;
+  on_duplicate_document: (document: SummaryDocument) => void;
+  on_open_new_document: (parent_document_id: string) => void;
+  on_rename_document: (document: SummaryDocument, title: string) => void;
   on_retry: () => void;
   on_title_change: (title: string) => void;
   remove_delete_target: () => void;
-  reorder_children: (document_ids: string[]) => void;
   reordering: boolean;
-  root_document: SummaryDocument;
   save_status: SaveStatus;
   selected_asset_id: string;
   selected_document: SummaryDocument;
@@ -85,29 +90,30 @@ type SummaryEditorLayoutProps = {
 };
 
 export function SummaryEditorLayout({
-  child_documents,
   compact_layout,
   create_child,
   delete_target,
+  documents,
   draft_markdown,
   draft_title,
   editor_mode,
   export_pending,
   export_relative_path,
   generation_notice,
-  move_child,
+  move_document,
   new_document_open,
   new_document_title,
   on_artifact_change,
   on_delete_confirm,
   on_export,
   on_markdown_change,
+  on_duplicate_document,
+  on_open_new_document,
+  on_rename_document,
   on_retry,
   on_title_change,
   remove_delete_target,
-  reorder_children,
   reordering,
-  root_document,
   save_status,
   selected_asset_id,
   selected_document,
@@ -137,8 +143,16 @@ export function SummaryEditorLayout({
   const [agent_context_attachments, set_agent_context_attachments] = useState<
     AgentContextAttachmentDraft[]
   >([]);
+  const [active_heading_id, set_active_heading_id] = useState<string | null>(
+    null,
+  );
+  const [target_heading_id, set_target_heading_id] = useState<string | null>(
+    null,
+  );
   useEffect(() => {
     set_agent_context_attachments([]);
+    set_active_heading_id(null);
+    set_target_heading_id(null);
   }, [selected_asset_id, selected_document.document_id]);
   const assistant_binding = useMemo(
     () => ({
@@ -177,17 +191,24 @@ export function SummaryEditorLayout({
       }
     />
   ) : null;
-  const document_tree = (
-    <DocumentTree
-      root={root_document}
-      children={child_documents}
+  const document_navigation = (
+    <SummaryDocumentNavigation
+      documents={documents}
+      markdown={draft_markdown}
+      active_heading_id={active_heading_id}
       selected_document_id={selected_document.document_id}
       on_select={select_document}
-      on_create={() => set_new_document_open(true)}
-      on_move={move_child}
-      on_reorder={reorder_children}
+      on_create={on_open_new_document}
+      on_move={move_document}
+      on_rename={on_rename_document}
+      on_duplicate={on_duplicate_document}
       reordering={reordering}
       on_delete={set_delete_target}
+      on_heading_select={(heading_id) => {
+        set_editor_mode("visual");
+        set_target_heading_id(heading_id);
+        set_tree_sheet_open(false);
+      }}
     />
   );
   const compact_actions: ReactNode = compact_layout ? (
@@ -227,6 +248,9 @@ export function SummaryEditorLayout({
       export_pending={export_pending}
       export_relative_path={export_relative_path}
       on_export={on_export}
+      target_heading_id={target_heading_id}
+      on_active_heading_change={set_active_heading_id}
+      on_target_heading_reached={() => set_target_heading_id(null)}
     />
   );
 
@@ -273,10 +297,12 @@ export function SummaryEditorLayout({
             <Sheet open={tree_sheet_open} onOpenChange={set_tree_sheet_open}>
               <SheetContent side="left" className="w-[min(88vw,22rem)] p-0">
                 <SheetHeader className="border-b">
-                  <SheetTitle>文档树</SheetTitle>
-                  <SheetDescription>管理主文档与一级子文档</SheetDescription>
+                  <SheetTitle>文档导航</SheetTitle>
+                  <SheetDescription>
+                    在文档树与当前文档大纲间切换
+                  </SheetDescription>
                 </SheetHeader>
-                {document_tree}
+                {document_navigation}
               </SheetContent>
             </Sheet>
           </>
@@ -288,7 +314,7 @@ export function SummaryEditorLayout({
               minSize="15%"
               maxSize="28%"
             >
-              {document_tree}
+              {document_navigation}
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel id="summary-editor" defaultSize="80%" minSize="60%">

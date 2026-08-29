@@ -97,16 +97,43 @@ export function generate_summary_documents(
 }
 
 export function create_summary_child(
-  root_document_id: string,
+  parent_document_id: string,
   title: string,
   signal?: AbortSignal,
 ): Promise<SummaryDocument> {
   return request_json(
-    `/api/summary-documents/${encodeURIComponent(root_document_id)}/children`,
+    `/api/summary-documents/${encodeURIComponent(parent_document_id)}/children`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, markdown: "" }),
+      signal,
+    },
+  );
+}
+
+export function duplicate_summary_document(
+  document_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryDocument> {
+  return request_json(
+    `/api/summary-documents/${encodeURIComponent(document_id)}/duplicate`,
+    { method: "POST", signal },
+  );
+}
+
+export function move_summary_document(
+  document_id: string,
+  parent_document_id: string,
+  position: number,
+  signal?: AbortSignal,
+): Promise<SummaryDocument[]> {
+  return request_json(
+    `/api/summary-documents/${encodeURIComponent(document_id)}/move`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parent_document_id, position }),
       signal,
     },
   );
@@ -124,22 +151,6 @@ export function update_summary_document(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ expected_revision, ...patch }),
-      signal,
-    },
-  );
-}
-
-export function reorder_summary_children(
-  root_document_id: string,
-  document_ids: string[],
-  signal?: AbortSignal,
-): Promise<SummaryDocument[]> {
-  return request_json(
-    `/api/summary-documents/${encodeURIComponent(root_document_id)}/children/order`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ document_ids }),
       signal,
     },
   );
