@@ -58,16 +58,56 @@ describe("AgentComposer", () => {
       />,
     );
 
+    const thinking_mode_trigger = screen.getByRole("button", {
+      name: "思考模式：自动模式",
+    });
+    fireEvent.click(thinking_mode_trigger);
     expect(screen.getByRole("radio", { name: "复杂思考" })).toBeDisabled();
+    expect(
+      screen.getByText("模型角色路由尚未接通，仅支持自动模式。"),
+    ).toBeVisible();
+    fireEvent.click(thinking_mode_trigger);
+
+    fireEvent.click(screen.getByRole("button", { name: "检索范围：当前视频" }));
     expect(screen.getByRole("radio", { name: "资料库" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "将资料库范围固定到当前对话" }),
     ).toBeDisabled();
     expect(
-      screen.getByText(
-        "当前服务仅支持自动模式和当前视频；更多能力接通后解锁。",
-      ),
+      screen.getByText("跨资料库检索尚未接通，仅支持当前视频。"),
     ).toBeVisible();
+  });
+
+  it("keeps context, routing, and submit actions in one composer surface", () => {
+    render(
+      <AgentComposer
+        value="问题"
+        on_change={vi.fn()}
+        on_submit={vi.fn()}
+        thinking_mode="complex"
+        on_thinking_mode_change={vi.fn()}
+        thinking_modes_enabled
+        retrieval_scope="library"
+        on_retrieval_scope_change={vi.fn()}
+        library_scope_enabled
+        scope_pinned
+        on_scope_pinned_change={vi.fn()}
+        attachments={[]}
+        on_remove_attachment={vi.fn()}
+      />,
+    );
+
+    expect(
+      document.querySelector('[data-slot="agent-composer-surface"]'),
+    ).toContainElement(screen.getByRole("textbox", { name: "助手指令" }));
+    expect(screen.getByRole("button", { name: "添加上下文" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "检索范围：资料库" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "思考模式：复杂思考" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "发送指令" })).toBeEnabled();
   });
 
   it("shows a copy target and accepts a dragged context attachment", () => {
