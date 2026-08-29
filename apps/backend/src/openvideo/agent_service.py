@@ -30,6 +30,7 @@ from openvideo.agent_registry import (
 )
 from openvideo.agent_retrieval import retrieve_indexed_evidence
 from openvideo.agent_tooling import (
+    ARTIFACT_EVIDENCE_GATE_KEY,
     AgentRunContext,
     CorrectTranscriptInput,
     EvidenceSearchInput,
@@ -75,6 +76,10 @@ from openvideo.core.agent_governance_models import (
     AgentThinkingMode,
     AgentToolEffect,
     AgentToolPermissionPolicy,
+)
+from openvideo.core.agent_evidence_models import (
+    AgentEvidenceConfidence,
+    AgentEvidenceWriteDecision,
 )
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, AiModelConfiguration
 from openvideo.core.identifiers import uuid7
@@ -338,6 +343,8 @@ class AgentService:
         artifact = self._require_artifact(artifact_id)
         if artifact.status != AgentArtifactStatus.PENDING:
             return artifact
+        if block_reason := self._artifact_write_block_reason(artifact):
+            raise AgentConflictError(block_reason)
         claimed = self.library.claim_agent_artifact(artifact_id)
         if claimed is None:
             return self._require_artifact(artifact_id)
@@ -508,6 +515,8 @@ class AgentService:
         for artifact in artifacts:
             if artifact.status != AgentArtifactStatus.PENDING:
                 continue
+            if self._artifact_write_block_reason(artifact) is not None:
+                continue
             policy = AgentToolPermissionPolicy(
                 capability=f"artifact.apply.{artifact.result_type}",
                 effect=AgentToolEffect.WRITE,
@@ -532,6 +541,23 @@ class AgentService:
     def _discard_run(self, run_id: str) -> None:
         self._tasks.pop(run_id, None)
         self._runtimes.pop(run_id, None)
+
+    @staticmethod
+    def _artifact_write_block_reason(artifact: AgentArtifact) -> str | None:
+        if (
+            artifact.agent_id == TRANSCRIPT_CORRECTION_AGENT_ID
+            and artifact.result_type == TRANSCRIPT_ARTIFACT_TYPE
+        ):
+            return None
+        try:
+            decision = AgentEvidenceWriteDecision.model_validate(
+                artifact.payload[ARTIFACT_EVIDENCE_GATE_KEY]
+            )
+        except (KeyError, ValueError):
+            return "写入产物缺少程序验证过的证据决策"
+        if not decision.allowed or decision.confidence == AgentEvidenceConfidence.LOW:
+            return decision.reason
+        return None
 
     def _complete_run(
         self,
@@ -1111,6 +1137,14 @@ class AgentService:
     def _propose_marker_changes(
         self, context: AgentRunContext, parameters: ProposeMarkerChangesInput
     ) -> dict[str, Any]:
+        write_decision = context.evidence.write_decision()
+        if not write_decision.allowed:
+            return {
+                "ok": False,
+                "error_code": "low_evidence_confidence",
+                "error": write_decision.reason,
+                ARTIFACT_EVIDENCE_GATE_KEY: write_decision.model_dump(mode="json"),
+            }
         current = {
             marker.marker_id: marker
             for marker in self.library.load_markers(context.session.asset_id)
@@ -1156,6 +1190,7 @@ class AgentService:
             {
                 "changes": changes,
                 "snapshot_digest": marker_digest(list(current.values())),
+                ARTIFACT_EVIDENCE_GATE_KEY: write_decision.model_dump(mode="json"),
             },
         )
         return {"ok": True, "artifact": artifact.model_dump(mode="json")}
@@ -1195,6 +1230,14 @@ class AgentService:
             and not parameters.suggested_subdocuments
         ):
             return {"ok": False, "error": "建议没有包含任何实际变化"}
+        write_decision = context.evidence.write_decision()
+        if not write_decision.allowed:
+            return {
+                "ok": False,
+                "error_code": "low_evidence_confidence",
+                "error": write_decision.reason,
+                ARTIFACT_EVIDENCE_GATE_KEY: write_decision.model_dump(mode="json"),
+            }
         artifact = context.create_artifact(
             SUMMARY_ARTIFACT_TYPE,
             {
@@ -1209,6 +1252,7 @@ class AgentService:
                     item.model_dump(mode="json")
                     for item in parameters.suggested_subdocuments
                 ],
+                ARTIFACT_EVIDENCE_GATE_KEY: write_decision.model_dump(mode="json"),
             },
         )
         return {"ok": True, "artifact": artifact.model_dump(mode="json")}
@@ -1273,6 +1317,15 @@ class AgentService:
         if duplicate:
             return {"ok": False, "error": "该时间点附近已经存在总结媒体"}
 
+        write_decision = context.evidence.write_decision()
+        if not write_decision.allowed:
+            return {
+                "ok": False,
+                "error_code": "low_evidence_confidence",
+                "error": write_decision.reason,
+                ARTIFACT_EVIDENCE_GATE_KEY: write_decision.model_dump(mode="json"),
+            }
+
         media = SummaryMediaCreate(
             document_id=document.document_id,
             expected_revision=document.revision,
@@ -1291,6 +1344,7 @@ class AgentService:
                 "media": media.model_dump(mode="json"),
                 "reason": parameters.reason,
                 "confidence": parameters.confidence,
+                ARTIFACT_EVIDENCE_GATE_KEY: write_decision.model_dump(mode="json"),
             },
         )
         return {"ok": True, "artifact": artifact.model_dump(mode="json")}

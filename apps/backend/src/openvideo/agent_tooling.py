@@ -23,6 +23,7 @@ from openvideo.core.agent_evidence_models import (
     AgentEvidenceConfidence,
     AgentEvidenceCoverage,
     AgentEvidenceSearchResult,
+    AgentEvidenceWriteDecision,
 )
 from openvideo.core.agent_governance_models import AgentRetrievalScope
 from openvideo.core.ai_models import AiModelConfiguration
@@ -32,6 +33,9 @@ from openvideo.core.summary_models import SummaryDocumentCreate, SummaryMediaTyp
 
 if TYPE_CHECKING:
     from openvideo.agent_service import AgentService
+
+
+ARTIFACT_EVIDENCE_GATE_KEY = "evidence_gate"
 
 
 class MarkerChangeOperation(StrEnum):
@@ -162,6 +166,48 @@ class RunEvidenceState:
         self.searches.append(recorded)
         self.evidence_read = True
         return recorded
+
+    def write_decision(self) -> AgentEvidenceWriteDecision:
+        items = [
+            item for search in self.searches for item in search.evidence_bundle.items
+        ]
+        if not self.searches or not items:
+            return AgentEvidenceWriteDecision(
+                allowed=False,
+                confidence=AgentEvidenceConfidence.LOW,
+                reason="写入前没有检索到可核验证据",
+            )
+        confidence = min(
+            (search.confidence for search in self.searches),
+            key=lambda value: {
+                AgentEvidenceConfidence.LOW: 0,
+                AgentEvidenceConfidence.MEDIUM: 1,
+                AgentEvidenceConfidence.HIGH: 2,
+            }[value],
+        )
+        conflicts = [
+            conflict
+            for search in self.searches
+            for conflict in search.evidence_bundle.conflicts
+        ]
+        allowed = confidence != AgentEvidenceConfidence.LOW and not conflicts
+        if conflicts:
+            reason = "证据存在未消除冲突，程序已阻止写入"
+        elif confidence == AgentEvidenceConfidence.LOW:
+            reason = "证据确定性低，程序已阻止写入"
+        else:
+            confidence_label = {
+                AgentEvidenceConfidence.MEDIUM: "中",
+                AgentEvidenceConfidence.HIGH: "高",
+            }[confidence]
+            reason = f"证据确定性{confidence_label}，允许进入写入审批"
+        return AgentEvidenceWriteDecision(
+            allowed=allowed,
+            confidence=confidence,
+            reason=reason,
+            evidence_ids=sorted({item.evidence_id for item in items}),
+            source_versions=sorted({item.source_version for item in items}),
+        )
 
 
 @dataclass

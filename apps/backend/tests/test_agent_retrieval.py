@@ -2,6 +2,7 @@ from pydantic import ValidationError
 import pytest
 
 from openvideo.agent_retrieval import retrieve_indexed_evidence
+from openvideo.agent_tooling import RunEvidenceState
 from openvideo.core.agent_evidence_index import IndexedEvidenceDocument
 from openvideo.core.agent_evidence_models import AgentEvidenceItem, AgentEvidenceSource
 from openvideo.core.identifiers import uuid7
@@ -89,6 +90,36 @@ def test_missing_evidence_is_explicitly_low_confidence():
     assert result.evidence_bundle.items == []
     assert result.confidence == "low"
     assert result.confidence_reasons == ["没有找到支持当前问题的证据"]
+
+
+def test_programmatic_write_decision_blocks_low_and_allows_medium_evidence():
+    low_state = RunEvidenceState()
+    low_state.record_search(
+        retrieve(
+            evidence(
+                AgentEvidenceSource.TRANSCRIPT,
+                10,
+                "只有模糊的邻近上下文",
+                score=0.08,
+            ),
+            query="明确结论",
+        )
+    )
+    medium_state = RunEvidenceState()
+    medium_state.record_search(
+        retrieve(
+            evidence(AgentEvidenceSource.TRANSCRIPT, 10, "明确结论", score=0.8),
+            query="明确结论",
+        )
+    )
+
+    low_decision = low_state.write_decision()
+    medium_decision = medium_state.write_decision()
+
+    assert low_decision.allowed is False
+    assert low_decision.confidence == "low"
+    assert medium_decision.allowed is True
+    assert medium_decision.confidence == "medium"
 
 
 def test_evidence_item_rejects_an_empty_time_range():

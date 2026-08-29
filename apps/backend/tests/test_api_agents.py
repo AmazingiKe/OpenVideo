@@ -7,12 +7,14 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
-from openvideo.agent_registry import build_run_content
+from openvideo.agent_registry import AgentConflictError, build_run_content
 from openvideo.agent_retrieval import retrieve_indexed_evidence
 from openvideo.agent_runtime import new_agent_run
 from openvideo.agent_service import AgentService
 from openvideo.agent_tooling import (
+    ARTIFACT_EVIDENCE_GATE_KEY,
     AgentRunContext,
+    ProposeMarkerChangesInput,
     ProposeSummaryMediaInput,
     RunEvidenceState,
 )
@@ -56,6 +58,18 @@ from openvideo.ui.api import create_app
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 MODEL_ID = "model-01890f4c7a2b7cc298c4dc0c0c07398f"
+
+
+def evidence_gate(
+    *, confidence: str = "medium", allowed: bool = True
+) -> dict[str, object]:
+    return {
+        "allowed": allowed,
+        "confidence": confidence,
+        "reason": "测试证据决策",
+        "evidence_ids": [],
+        "source_versions": [],
+    }
 
 
 def create_client(tmp_path: Path) -> TestClient:
@@ -524,7 +538,7 @@ def test_service_approval_uses_single_claim_before_side_effect(
             agent_id="marker",
             asset_id=ASSET_ID,
             result_type="test_changes",
-            payload={},
+            payload={ARTIFACT_EVIDENCE_GATE_KEY: evidence_gate()},
         )
         service.library.save_agent_artifact(artifact)
         monkeypatch.setattr(
@@ -565,7 +579,7 @@ def test_full_access_permission_auto_applies_completed_artifact(
             agent_id="marker",
             asset_id=ASSET_ID,
             result_type="test_changes",
-            payload={},
+            payload={ARTIFACT_EVIDENCE_GATE_KEY: evidence_gate()},
         )
         service.library.save_agent_artifact(artifact)
         monkeypatch.setattr(
@@ -590,6 +604,83 @@ def test_full_access_permission_auto_applies_completed_artifact(
             service.library.load_agent_artifact(artifact.artifact_id).status
             == AgentArtifactStatus.APPROVED
         )
+
+
+def test_low_confidence_artifact_cannot_apply_even_with_full_access(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        artifact = AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=run.run_id,
+            session_id=session.session_id,
+            agent_id="marker",
+            asset_id=ASSET_ID,
+            result_type="marker_changes",
+            payload={
+                ARTIFACT_EVIDENCE_GATE_KEY: evidence_gate(
+                    confidence="low", allowed=False
+                )
+            },
+        )
+        service.library.save_agent_artifact(artifact)
+        service.settings.agent = service.settings.agent.model_copy(
+            update={"permission_mode": AgentPermissionMode.FULL_ACCESS}
+        )
+        context = AgentRunContext(
+            service=service,
+            session=session,
+            run=run,
+            model=service.settings.ai_model(MODEL_ID),
+            task_input={},
+        )
+
+        service._process_run_artifacts(context, [artifact])
+
+        assert (
+            service.library.load_agent_artifact(artifact.artifact_id).status
+            == AgentArtifactStatus.PENDING
+        )
+        with pytest.raises(AgentConflictError, match="测试证据决策"):
+            service.approve(artifact.artifact_id)
+
+
+def test_low_confidence_marker_proposal_does_not_create_artifact(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        context = SimpleNamespace(
+            session=SimpleNamespace(asset_id=ASSET_ID),
+            evidence=RunEvidenceState(),
+            create_artifact=lambda *_args, **_kwargs: pytest.fail(
+                "低确定性建议不应创建写入产物"
+            ),
+        )
+
+        result = service._propose_marker_changes(
+            context,
+            ProposeMarkerChangesInput(
+                changes=[
+                    {
+                        "operation": "create",
+                        "start_seconds": 1,
+                        "end_seconds": 2,
+                        "reason": "测试建议",
+                    }
+                ]
+            ),
+        )
+
+        assert result["ok"] is False
+        assert result["error_code"] == "low_evidence_confidence"
+        assert result[ARTIFACT_EVIDENCE_GATE_KEY]["confidence"] == "low"
 
 
 def test_explicit_library_scope_retrieves_evidence_from_multiple_assets(
@@ -837,18 +928,43 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
             )
             return created_artifact
 
+        evidence_state = RunEvidenceState(
+            evidence_read=True,
+            frames_inspected=True,
+            summary_read=True,
+            inspected_frame_times=[12.5],
+            inspected_frame_ranges=[(10, 15)],
+        )
+        evidence_state.record_search(
+            retrieve_indexed_evidence(
+                documents=[
+                    IndexedEvidenceDocument(
+                        document_id=f"evidence-{uuid7().hex}",
+                        asset_id=ASSET_ID,
+                        source_type=AgentEvidenceSource.VISUAL,
+                        source_version=hashlib.sha256(b"frame").hexdigest(),
+                        source_position=0,
+                        start_seconds=10,
+                        end_seconds=15,
+                        title=None,
+                        text="画面展示透视投影示意图",
+                        relevance_score=0.8,
+                        match_reasons=("画面证据",),
+                    )
+                ],
+                query="透视投影示意图",
+                start_seconds=10,
+                end_seconds=15,
+                limit=4,
+                duration_seconds=20,
+            )
+        )
         context = SimpleNamespace(
             session=SimpleNamespace(
                 asset_id=ASSET_ID,
                 context={"version_id": document["version_id"]},
             ),
-            evidence=RunEvidenceState(
-                evidence_read=True,
-                frames_inspected=True,
-                summary_read=True,
-                inspected_frame_times=[12.5],
-                inspected_frame_ranges=[(10, 15)],
-            ),
+            evidence=evidence_state,
             create_artifact=create_artifact,
         )
         rejected = service._propose_summary_media(

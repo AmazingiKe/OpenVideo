@@ -77,3 +77,11 @@ class AgentEvidenceSearchResult(BaseModel):
     answer_status: AgentAnswerStatus
     evidence_bundle: AgentEvidenceBundle
     answer_instruction: str = Field(min_length=1)
+
+
+class AgentEvidenceWriteDecision(BaseModel):
+    allowed: bool
+    confidence: AgentEvidenceConfidence
+    reason: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(default_factory=list)
+    source_versions: list[str] = Field(default_factory=list)
