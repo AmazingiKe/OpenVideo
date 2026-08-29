@@ -43,6 +43,7 @@ function compare_task_records(left: TaskRecord, right: TaskRecord): number {
 
 export const TASK_STAGE_LABELS: Record<string, string> = {
   pending: "等待中",
+  preparing_transcription_model: "准备转录模型",
   reading_metadata: "读取信息",
   downloading: "下载中",
   processing: "处理中",
@@ -50,6 +51,8 @@ export const TASK_STAGE_LABELS: Record<string, string> = {
   transcribing: "转写中",
   building_timeline: "构建时间轴",
   extracting_frames: "提取关键帧",
+  reading_frame_text: "识别画面文字",
+  queuing_index: "更新检索索引",
   describing_visuals: "生成画面描述",
   preparing: "准备中",
   invoking_model: "调用模型",

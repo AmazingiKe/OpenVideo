@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from math import isfinite
 from pathlib import Path
 
 from openvideo.core.analysis import (
@@ -28,7 +29,9 @@ MAX_CHAPTER_FRAME_COUNT = 12
 SECONDS_PER_ADAPTIVE_FRAME = 30
 MAX_PROMPT_TRANSCRIPT_CHARACTERS = 6000
 TITLE_MAX_CHARACTERS = 32
+VISUAL_ONLY_CHAPTER_SECONDS = 120
 AnalysisProgress = Callable[[AnalysisStage, float, str], None]
+OcrReader = Callable[[Sequence[Path]], str | None]
 
 
 def build_segments(
@@ -43,6 +46,7 @@ def build_segments(
     strategy: AnalysisStrategy,
     progress_callback: AnalysisProgress,
     chapter_model: AiModelConfiguration | None = None,
+    ocr_reader: OcrReader | None = None,
 ) -> list[MediaSegment]:
     """基础音频分析始终产出事件，视觉能力缺失或局部失败不会丢失文本结果。"""
     scene_boundaries = detect_scene_boundaries(
@@ -51,13 +55,17 @@ def build_segments(
         settings.ffmpeg_bin_dir,
     )
     semantic_chapters = build_global_semantic_chapters(transcript.segments, chapter_model)
-    moments = select_timeline_moments(
-        transcript,
-        markers,
-        duration_seconds,
-        scene_boundaries,
-        strategy,
-        semantic_chapters,
+    moments = (
+        select_timeline_moments(
+            transcript,
+            markers,
+            duration_seconds,
+            scene_boundaries,
+            strategy,
+            semantic_chapters,
+        )
+        if transcript.segments
+        else _visual_only_moments(duration_seconds)
     )
     segments: list[MediaSegment] = []
     progress_span = 20 / max(len(moments), 1)
@@ -78,9 +86,15 @@ def build_segments(
                 describer,
                 strategy,
                 scene_boundaries,
+                ocr_reader,
+                lambda: progress_callback(
+                    AnalysisStage.READING_FRAME_TEXT,
+                    75 + progress_span * (index + 0.4),
+                    f"正在识别第 {event_number}/{len(moments)} 个事件的画面文字",
+                ),
                 lambda: progress_callback(
                     AnalysisStage.DESCRIBING_VISUALS,
-                    75 + progress_span * (index + 0.5),
+                    75 + progress_span * (index + 0.7),
                     f"正在分析第 {event_number}/{len(moments)} 个事件",
                 ),
             )
@@ -97,6 +111,8 @@ def _build_segment(
     describer: VisionDescriber | None,
     strategy: AnalysisStrategy,
     scene_boundaries: Sequence[float],
+    ocr_reader: OcrReader | None,
+    on_reading_frame_text: Callable[[], None],
     on_describing_visuals: Callable[[], None],
 ) -> MediaSegment:
     segment_id = f"segment-{uuid7().hex}"
@@ -111,6 +127,9 @@ def _build_segment(
         if moment.detailed
         else []
     )
+    if ocr_reader is not None and frames:
+        on_reading_frame_text()
+    ocr_text = ocr_reader(frames) if ocr_reader is not None and frames else None
     if describer is not None and frames:
         on_describing_visuals()
     visual_description = _describe_event(moment, frames, describer, strategy)
@@ -127,6 +146,7 @@ def _build_segment(
             _relative_to_asset(asset_directory, frame) for frame in frames
         ],
         visual_description=visual_description,
+        ocr_text=ocr_text,
         marker_ids=list(moment.marker_ids),
     )
 
@@ -242,9 +262,36 @@ def _marker_influence_prompt(influence: MarkerInfluence) -> str:
 def _event_title(moment: TimelineMoment) -> str:
     text = moment.transcript_text.strip()
     if not text:
-        return "无转写事件"
+        return "画面片段"
     first_sentence = text.split("。", 1)[0].split("！", 1)[0].split("？", 1)[0]
     return first_sentence[:TITLE_MAX_CHARACTERS]
+
+
+def _visual_only_moments(duration_seconds: float | None) -> list[TimelineMoment]:
+    """无语音视频仍按有限窗口生成关键帧与 OCR，不把空字幕当成空内容。"""
+
+    if (
+        duration_seconds is None
+        or not isfinite(duration_seconds)
+        or duration_seconds <= 0
+    ):
+        return []
+    moments: list[TimelineMoment] = []
+    start_seconds = 0.0
+    while start_seconds < duration_seconds:
+        end_seconds = min(
+            duration_seconds,
+            start_seconds + VISUAL_ONLY_CHAPTER_SECONDS,
+        )
+        moments.append(
+            TimelineMoment(
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
+                transcript_text="",
+            )
+        )
+        start_seconds = end_seconds
+    return moments
 
 
 def _relative_to_asset(asset_directory: Path, frame_path: Path) -> str:

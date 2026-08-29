@@ -264,11 +264,14 @@ export type DownloadJob = {
 
 type AnalysisStage =
   | "pending"
+  | "preparing_transcription_model"
   | "extracting_audio"
   | "transcribing"
   | "building_timeline"
   | "extracting_frames"
+  | "reading_frame_text"
   | "describing_visuals"
+  | "queuing_index"
   | "waiting_for_approval"
   | "complete"
   | "rejected"
@@ -297,7 +300,7 @@ export type AnalysisStrategy = {
   marker_range_before_seconds: number;
   marker_range_after_seconds: number;
 };
-type AnalysisOperation = "transcription" | "analysis";
+type AnalysisOperation = "transcription" | "analysis" | "initialization";
 export type TranscriptionEngine = "faster-whisper" | "qwen3-asr" | "sensevoice";
 export type TranscriptionDevice = "auto" | "cpu" | "cuda";
 export type TranscriptionComputeType = "auto" | "int8" | "float16";
@@ -340,7 +343,13 @@ export type TranscriptionModelDescriptor = {
   installation_status: TranscriptionModelInstallationStatus;
   download_job: TranscriptionModelDownloadJob | null;
 };
-type AnalysisCapability = "transcript" | "timeline" | "visual";
+type AnalysisCapability =
+  | "transcript"
+  | "timeline"
+  | "chapters"
+  | "key_frames"
+  | "ocr"
+  | "visual";
 
 export type AnalysisJob = {
   job_id: string;
@@ -778,6 +787,14 @@ export type AgentIndexStatus = {
   state: "initializing" | "partial" | "ready" | "failed";
   stage:
     | "queued"
+    | "pending"
+    | "preparing_transcription_model"
+    | "extracting_audio"
+    | "transcribing"
+    | "building_timeline"
+    | "extracting_frames"
+    | "reading_frame_text"
+    | "queuing_index"
     | "tokenizing"
     | "building_matrix"
     | "projecting"

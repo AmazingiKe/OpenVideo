@@ -24,6 +24,10 @@ from openvideo.transcription_model_manager import (
 from openvideo.ui import api
 
 
+def reject_modelscope(*_args, **_kwargs):
+    raise RuntimeError("ModelScope unavailable")
+
+
 def create_client(tmp_path: Path) -> TestClient:
     return TestClient(
         api.create_app(
@@ -141,6 +145,10 @@ def test_sensevoice_download_only_fetches_missing_vad(
         downloaded_repositories.append(repository)
 
     monkeypatch.setattr(
+        "openvideo.transcription_model_manager._download_modelscope_resources",
+        reject_modelscope,
+    )
+    monkeypatch.setattr(
         "openvideo.transcription_model_manager._resolve_resource_files",
         resolve,
     )
@@ -231,6 +239,10 @@ def test_download_progress_combines_main_and_companion_resources(
         ]
 
     monkeypatch.setattr(
+        "openvideo.transcription_model_manager._download_modelscope_resources",
+        reject_modelscope,
+    )
+    monkeypatch.setattr(
         "openvideo.transcription_model_manager._resolve_resource_files",
         resolve,
     )
@@ -279,6 +291,10 @@ def test_failed_companion_download_resumes_without_refetching_main_manifest(
             raise RuntimeError("连接中断")
 
     monkeypatch.setattr(
+        "openvideo.transcription_model_manager._download_modelscope_resources",
+        reject_modelscope,
+    )
+    monkeypatch.setattr(
         "openvideo.transcription_model_manager._resolve_resource_files",
         resolve,
     )
@@ -298,4 +314,56 @@ def test_failed_companion_download_resumes_without_refetching_main_manifest(
     download_transcription_model(descriptor, tmp_path, lambda *_: None)
 
     assert resolved_repositories == [QWEN_FORCED_ALIGNER_REPOSITORY]
+    assert is_transcription_model_installed(descriptor, tmp_path) is True
+
+
+def test_modelscope_is_the_primary_official_model_source(
+    tmp_path: Path,
+    monkeypatch,
+):
+    descriptor = find_transcription_model(
+        TranscriptionEngine.FASTER_WHISPER,
+        "small",
+    )
+    assert descriptor is not None
+    downloads = []
+
+    monkeypatch.setattr(
+        "openvideo.transcription_model_manager._resolve_modelscope_resource_files",
+        lambda resource: [
+            SimpleNamespace(
+                file_size=5,
+                filename="model.bin",
+                revision="master",
+            )
+        ],
+    )
+
+    def download(*, model_id, revision, local_dir):
+        downloads.append((model_id, revision, local_dir))
+        (Path(local_dir) / "model.bin").write_bytes(b"model")
+
+    monkeypatch.setattr(
+        "openvideo.transcription_model_manager._modelscope_snapshot_download",
+        download,
+    )
+    monkeypatch.setattr(
+        "openvideo.transcription_model_manager._download_huggingface_resources",
+        lambda *args: pytest.fail("ModelScope 成功时不应访问备用源"),
+    )
+    progress = []
+
+    download_transcription_model(
+        descriptor,
+        tmp_path,
+        lambda downloaded, total: progress.append((downloaded, total)),
+    )
+
+    model_directory = transcription_model_directory(
+        tmp_path,
+        descriptor.engine,
+        descriptor.model,
+    )
+    assert downloads == [(descriptor.repository, "master", str(model_directory))]
+    assert progress == [(0, 5), (5, 5)]
     assert is_transcription_model_installed(descriptor, tmp_path) is True

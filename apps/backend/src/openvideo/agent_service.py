@@ -105,6 +105,12 @@ from openvideo.core.agent_evidence_index import (
     NeuralReranker,
     QueryEncoder,
 )
+from openvideo.core.analysis_models import (
+    AnalysisCapability,
+    AnalysisJob,
+    AnalysisOperation,
+    AnalysisStage,
+)
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaMarker, MediaSegment
 from openvideo.core.summary_models import (
@@ -428,6 +434,34 @@ class AgentService:
         self._schedule_semantic_index()
         status = self.library.agent_evidence_index_status()
         coverage = self.library.agent_evidence_index_coverage(asset_id)
+        initialization = self._latest_initialization(asset_id)
+        if initialization is not None and initialization.stage != AnalysisStage.COMPLETE:
+            capabilities = self._index_capabilities(status, coverage.source_types)
+            self._append_initialization_capabilities(
+                capabilities,
+                initialization.capabilities,
+            )
+            return AgentIndexStatus(
+                index_task_id=status.index_task_id,
+                asset_id=asset_id,
+                state=(
+                    "failed"
+                    if initialization.stage == AnalysisStage.FAILED
+                    else "partial"
+                    if coverage.document_count > 0
+                    else "initializing"
+                ),
+                stage=initialization.stage.value,
+                stage_label=initialization.message,
+                processed_documents=status.processed_documents,
+                total_documents=status.total_documents,
+                indexed_documents=coverage.document_count,
+                covered_seconds=coverage.covered_seconds,
+                duration_seconds=coverage.duration_seconds,
+                available_capabilities=capabilities,
+                error_message=initialization.error_message,
+                updated_at=max(status.updated_at, initialization.updated_at),
+            )
         state = {
             "lexical_ready": (
                 "partial" if coverage.document_count > 0 else "initializing"
@@ -454,6 +488,37 @@ class AgentService:
             error_message=status.error_message,
             updated_at=status.updated_at,
         )
+
+    def _latest_initialization(self, asset_id: str | None) -> AnalysisJob | None:
+        if asset_id is None:
+            return None
+        return next(
+            (
+                job
+                for job in reversed(self.library.load_analysis_jobs())
+                if job.asset_id == asset_id
+                and job.operation == AnalysisOperation.INITIALIZATION
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _append_initialization_capabilities(
+        capabilities: list[str],
+        initialization_capabilities: list[AnalysisCapability],
+    ) -> None:
+        labels = {
+            AnalysisCapability.TRANSCRIPT: "字幕检索",
+            AnalysisCapability.TIMELINE: "时间线分析",
+            AnalysisCapability.CHAPTERS: "章节定位",
+            AnalysisCapability.KEY_FRAMES: "关键帧",
+            AnalysisCapability.OCR: "画面文字",
+            AnalysisCapability.VISUAL: "画面描述",
+        }
+        for capability in initialization_capabilities:
+            label = labels[capability]
+            if label not in capabilities:
+                capabilities.append(label)
 
     async def resume_run(self, run_id: str) -> AgentRun:
         run = self.run(run_id)
@@ -643,6 +708,11 @@ class AgentService:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         if self._semantic_index_task is not None:
             await asyncio.gather(self._semantic_index_task, return_exceptions=True)
+
+    def refresh_index(self) -> None:
+        """证据来源提交后立即安排新代际，避免依赖界面轮询触发。"""
+
+        self._schedule_semantic_index()
 
     def _schedule_semantic_index(self) -> None:
         if self.retrieval_models is None:

@@ -15,11 +15,14 @@ MARKER_RANGE_STEP_SECONDS = 5
 
 class AnalysisStage(StrEnum):
     PENDING = "pending"
+    PREPARING_TRANSCRIPTION_MODEL = "preparing_transcription_model"
     EXTRACTING_AUDIO = "extracting_audio"
     TRANSCRIBING = "transcribing"
     BUILDING_TIMELINE = "building_timeline"
     EXTRACTING_FRAMES = "extracting_frames"
+    READING_FRAME_TEXT = "reading_frame_text"
     DESCRIBING_VISUALS = "describing_visuals"
+    QUEUING_INDEX = "queuing_index"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
     COMPLETE = "complete"
     REJECTED = "rejected"
@@ -44,11 +47,15 @@ class AnalysisMode(StrEnum):
 class AnalysisOperation(StrEnum):
     TRANSCRIPTION = "transcription"
     ANALYSIS = "analysis"
+    INITIALIZATION = "initialization"
 
 
 class AnalysisCapability(StrEnum):
     TRANSCRIPT = "transcript"
     TIMELINE = "timeline"
+    CHAPTERS = "chapters"
+    KEY_FRAMES = "key_frames"
+    OCR = "ocr"
     VISUAL = "visual"
 
 

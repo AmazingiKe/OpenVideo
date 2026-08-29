@@ -1,12 +1,15 @@
 import asyncio
+from collections.abc import Callable
 import hashlib
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import RLock
 
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY
 from openvideo.core.analysis_models import (
     AnalysisCapability,
+    AnalysisDepth,
     AnalysisJob,
     AnalysisMode,
     AnalysisOperation,
@@ -21,15 +24,19 @@ from openvideo.core.media_models import MediaAssetStatus, MediaSegment
 from openvideo.core.transcription_models import (
     Transcript,
     TranscriptionMetadata,
+    TranscriptionModelDescriptor,
     TranscriptionOptions,
     TranscriptionStatus,
 )
 from openvideo.settings import Settings
 from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
+    download_transcription_model,
+    is_transcription_model_installed,
     require_transcription_model_installed,
 )
-from openvideo.tools.analysis_pipeline import build_segments
+from openvideo.tools.analysis_pipeline import OcrReader, build_segments
+from openvideo.tools.ocr import LocalOcrReader
 from openvideo.tools.transcribe import (
     Transcriber,
     TranscriptionFailure,
@@ -38,6 +45,12 @@ from openvideo.tools.transcribe import (
     transcribe_media,
 )
 from openvideo.tools.vision import LiteLlmVision
+
+
+TranscriptionModelInstaller = Callable[
+    [TranscriptionModelDescriptor, Path, Callable[[int, int], None]],
+    None,
+]
 
 
 def _segments_overlap(first: MediaSegment, second: MediaSegment) -> bool:
@@ -65,7 +78,15 @@ class AnalysisPrerequisiteError(AnalysisError):
 class AnalysisManager:
     """分析任务把转写等长耗时计算与短生命周期 HTTP 请求隔离开。"""
 
-    def __init__(self, library: MediaLibrary, settings: Settings) -> None:
+    def __init__(
+        self,
+        library: MediaLibrary,
+        settings: Settings,
+        *,
+        model_installer: TranscriptionModelInstaller | None = None,
+        ocr_reader: OcrReader | None = None,
+        on_evidence_ready: Callable[[], None] | None = None,
+    ) -> None:
         self.library = library
         self.settings = settings
         self._jobs: dict[str, AnalysisJob] = {}
@@ -74,6 +95,9 @@ class AnalysisManager:
         self._lock = RLock()
         self._analysis_lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._model_installer = model_installer or download_transcription_model
+        self._ocr_reader = ocr_reader or LocalOcrReader().read_frames
+        self._on_evidence_ready = on_evidence_ready or (lambda: None)
 
     def create_analysis(
         self,
@@ -174,6 +198,74 @@ class AnalysisManager:
         )
         return job.model_copy(deep=True)
 
+    def create_initialization(self, asset_id: str) -> AnalysisJob:
+        """为就绪素材创建无需用户决策的本地渐进分析任务。"""
+
+        asset = self.library.get(asset_id)
+        if not asset or asset.status != MediaAssetStatus.READY:
+            raise AnalysisError("视频尚未就绪，无法初始化")
+        active_job = self._active_job_for(asset_id)
+        if active_job:
+            return active_job
+        transcript = self.library.load_transcript(asset_id)
+        segments = self.library.load_segments(asset_id)
+        capabilities = self._existing_capabilities(transcript, segments)
+        if (
+            transcript is not None
+            and segments
+            and AnalysisCapability.KEY_FRAMES in capabilities
+        ):
+            return AnalysisJob(
+                job_id=f"job-{uuid7().hex}",
+                asset_id=asset_id,
+                operation=AnalysisOperation.INITIALIZATION,
+                capabilities=capabilities,
+                stage=AnalysisStage.COMPLETE,
+                progress_percent=100,
+                message="该视频的本地分析产物已就绪",
+            )
+        job = AnalysisJob(
+            job_id=f"job-{uuid7().hex}",
+            asset_id=asset_id,
+            operation=AnalysisOperation.INITIALIZATION,
+            strategy=AnalysisStrategy(depth=AnalysisDepth.DEEP),
+            capabilities=capabilities,
+            message="等待后台初始化",
+        )
+        with self._lock:
+            self._jobs[job.job_id] = job
+            self._active_job_id_by_asset_id[asset_id] = job.job_id
+            self._transcription_options_by_job_id[job.job_id] = (
+                self.settings.default_transcription
+            )
+        self.library.save_analysis_job(job)
+        if transcript is None:
+            self.library.save_transcription_metadata(
+                TranscriptionMetadata(
+                    job_id=job.job_id,
+                    asset_id=asset_id,
+                    status=TranscriptionStatus.PENDING,
+                    attempt_count=self._next_transcription_attempt_count(
+                        asset_id,
+                        False,
+                    ),
+                    engine=self.settings.default_transcription.engine,
+                    options=self.settings.default_transcription,
+                )
+            )
+        return job.model_copy(deep=True)
+
+    def initialize_asset(self, asset_id: str) -> AnalysisJob:
+        job = self.create_initialization(asset_id)
+        if job.stage not in TERMINAL_ANALYSIS_STAGES:
+            self.start(job.job_id)
+        return job
+
+    def initialize_ready_assets(self) -> None:
+        for asset in self.library.list():
+            if asset.status == MediaAssetStatus.READY:
+                self.initialize_asset(asset.asset_id)
+
     def start(self, job_id: str) -> None:
         with self._lock:
             current = self._tasks.get(job_id)
@@ -201,6 +293,10 @@ class AnalysisManager:
                     self._transcription_options_by_job_id[job.job_id] = metadata.options
             if job.stage == AnalysisStage.PENDING:
                 self.start(job.job_id)
+
+    async def close(self) -> None:
+        if self._tasks:
+            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
 
     def get(self, job_id: str) -> AnalysisJob | None:
         with self._lock:
@@ -261,6 +357,7 @@ class AnalysisManager:
             update={"segments": updated_segments}
         )
         self.library.save_transcript(updated_transcript)
+        self._on_evidence_ready()
         return updated_transcript
 
     def segments(self, asset_id: str) -> list[MediaSegment]:
@@ -276,6 +373,7 @@ class AnalysisManager:
         if _segment_digest(current) != job.proposal_base_digest:
             raise AnalysisError("时间轴已发生变化，请重新运行分析")
         self.library.save_segments(job.asset_id, job.proposed_segments)
+        self._on_evidence_ready()
         self._finish_analysis_proposal(job_id, AnalysisStage.COMPLETE, "分析结果已确认")
         return self.get(job_id) or job
 
@@ -299,6 +397,7 @@ class AnalysisManager:
 
         async with self._analysis_lock:
             transcription_started_at: datetime | None = None
+            transcription_completed = False
             transcription_options = self._transcription_options_by_job_id.get(
                 job_id,
                 self.settings.default_transcription,
@@ -309,6 +408,7 @@ class AnalysisManager:
                 if saved_metadata and saved_metadata.job_id == job_id
                 else 1
             )
+            should_transcribe = False
             try:
                 playback = self.library.resolve_asset_file(asset, asset.playback_path)
                 if not playback:
@@ -319,6 +419,31 @@ class AnalysisManager:
                     or job.operation == AnalysisOperation.TRANSCRIPTION
                 )
                 if should_transcribe:
+                    if job.operation == AnalysisOperation.INITIALIZATION:
+                        descriptor = require_transcription_adapter(
+                            transcription_options
+                        )
+                        if not is_transcription_model_installed(
+                            descriptor,
+                            self.settings.models_root_directory,
+                        ):
+                            self._update_job(
+                                job_id,
+                                AnalysisStage.PREPARING_TRANSCRIPTION_MODEL,
+                                1,
+                                f"正在准备本地转录模型：{descriptor.name}",
+                            )
+                            await asyncio.to_thread(
+                                self._model_installer,
+                                descriptor,
+                                self.settings.models_root_directory,
+                                lambda downloaded, total: self._report_model_progress(
+                                    job_id,
+                                    descriptor.name,
+                                    downloaded,
+                                    total,
+                                ),
+                            )
                     saved_metadata = self.library.load_transcription_metadata(
                         asset.asset_id
                     )
@@ -364,6 +489,7 @@ class AnalysisManager:
                         "正在将音频转写为文字",
                     )
                     self.library.save_transcript(transcript)
+                    self._on_evidence_ready()
                     completed_at = datetime.now(UTC)
                     self.library.save_transcription_metadata(
                         TranscriptionMetadata(
@@ -381,13 +507,18 @@ class AnalysisManager:
                             ).total_seconds(),
                         )
                     )
+                    transcription_completed = True
                 self._add_capability(job_id, AnalysisCapability.TRANSCRIPT)
 
                 if job.operation == AnalysisOperation.TRANSCRIPTION:
                     self._update_job(job_id, AnalysisStage.COMPLETE, 100, "转录完成")
                     return
 
-                describer = self._describer(job.ai_model_id)
+                describer = (
+                    None
+                    if job.operation == AnalysisOperation.INITIALIZATION
+                    else self._describer(job.ai_model_id)
+                )
                 self._update_job(
                     job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件"
                 )
@@ -410,20 +541,19 @@ class AnalysisManager:
                         progress,
                         message,
                     ),
-                    self.settings.ai_model(job.ai_model_id)
-                    if job.ai_model_id
-                    else None,
+                    (
+                        self.settings.ai_model(job.ai_model_id)
+                        if job.ai_model_id
+                        and job.operation != AnalysisOperation.INITIALIZATION
+                        else None
+                    ),
+                    self._ocr_reader,
                 )
                 for segment in segments:
                     segment.key_frame_paths = [
                         f"artifacts/{relative_path}"
                         for relative_path in segment.key_frame_paths
                     ]
-                self._add_capability(job_id, AnalysisCapability.TIMELINE)
-                if describer is not None and any(
-                    segment.visual_description for segment in segments
-                ):
-                    self._add_capability(job_id, AnalysisCapability.VISUAL)
                 completed_stage = (
                     AnalysisStage.DESCRIBING_VISUALS
                     if describer is not None
@@ -436,6 +566,48 @@ class AnalysisManager:
                     f"已生成 {len(segments)} 个时间轴事件",
                 )
                 proposed_segments = self._validate_and_sort_segments(job, segments)
+                if not proposed_segments:
+                    raise AnalysisError(
+                        "未能生成时间轴事件，请检查视频时长和本地媒体文件"
+                    )
+                self._add_capability(job_id, AnalysisCapability.TIMELINE)
+                self._add_capability(job_id, AnalysisCapability.CHAPTERS)
+                has_key_frames = any(
+                    segment.key_frame_paths for segment in proposed_segments
+                )
+                if has_key_frames:
+                    self._add_capability(job_id, AnalysisCapability.KEY_FRAMES)
+                has_ocr_text = any(segment.ocr_text for segment in proposed_segments)
+                if has_ocr_text:
+                    self._add_capability(job_id, AnalysisCapability.OCR)
+                if describer is not None and any(
+                    segment.visual_description for segment in proposed_segments
+                ):
+                    self._add_capability(job_id, AnalysisCapability.VISUAL)
+                if job.operation == AnalysisOperation.INITIALIZATION:
+                    self.library.save_segments(job.asset_id, proposed_segments)
+                    self._on_evidence_ready()
+                    if not has_key_frames:
+                        raise AnalysisError(
+                            "本地时间轴已保存，但未能提取关键帧，请检查 FFmpeg 与媒体文件"
+                        )
+                    self._update_job(
+                        job_id,
+                        AnalysisStage.QUEUING_INDEX,
+                        99,
+                        "本地证据已生成，正在更新检索索引",
+                    )
+                    self._update_job(
+                        job_id,
+                        AnalysisStage.COMPLETE,
+                        100,
+                        (
+                            "转录、章节、关键帧与画面文字已完成"
+                            if has_ocr_text
+                            else "转录、章节与关键帧已完成，画面未检测到可识别文字"
+                        ),
+                    )
+                    return
                 message = (
                     "分析预览已生成，等待确认"
                     if describer is not None
@@ -448,7 +620,15 @@ class AnalysisManager:
                     message,
                 )
             except Exception as error:
-                if job.operation == AnalysisOperation.TRANSCRIPTION:
+                if (
+                    job.operation
+                    in {
+                        AnalysisOperation.TRANSCRIPTION,
+                        AnalysisOperation.INITIALIZATION,
+                    }
+                    and should_transcribe
+                    and not transcription_completed
+                ):
                     failed_at = datetime.now(UTC)
                     self.library.save_transcription_metadata(
                         TranscriptionMetadata(
@@ -583,11 +763,11 @@ class AnalysisManager:
         job = self.get(job_id)
         if not job:
             return
-        failure_message = (
-            "转录失败"
-            if job.operation == AnalysisOperation.TRANSCRIPTION
-            else "分析失败"
-        )
+        failure_message = {
+            AnalysisOperation.TRANSCRIPTION: "转录失败",
+            AnalysisOperation.ANALYSIS: "分析失败",
+            AnalysisOperation.INITIALIZATION: "后台初始化失败",
+        }[job.operation]
         self._update_job(
             job_id,
             AnalysisStage.FAILED,
@@ -595,6 +775,7 @@ class AnalysisManager:
             failure_message,
             message,
         )
+
     def _active_job_for(self, asset_id: str) -> AnalysisJob | None:
         with self._lock:
             job_id = self._active_job_id_by_asset_id.get(asset_id)
@@ -610,6 +791,41 @@ class AnalysisManager:
         if metadata is not None:
             return metadata.attempt_count + 1
         return 2 if has_transcript else 1
+
+    def _report_model_progress(
+        self,
+        job_id: str,
+        model_name: str,
+        downloaded_bytes: int,
+        total_bytes: int,
+    ) -> None:
+        ratio = downloaded_bytes / total_bytes if total_bytes else 0
+        self._update_job(
+            job_id,
+            AnalysisStage.PREPARING_TRANSCRIPTION_MODEL,
+            1 + ratio * 3,
+            f"正在准备本地转录模型：{model_name}",
+        )
+
+    @staticmethod
+    def _existing_capabilities(
+        transcript: Transcript | None,
+        segments: list[MediaSegment],
+    ) -> list[AnalysisCapability]:
+        capabilities: list[AnalysisCapability] = []
+        if transcript is not None:
+            capabilities.append(AnalysisCapability.TRANSCRIPT)
+        if segments:
+            capabilities.extend(
+                [AnalysisCapability.TIMELINE, AnalysisCapability.CHAPTERS]
+            )
+        if any(segment.key_frame_paths for segment in segments):
+            capabilities.append(AnalysisCapability.KEY_FRAMES)
+        if any(segment.ocr_text for segment in segments):
+            capabilities.append(AnalysisCapability.OCR)
+        if any(segment.visual_description for segment in segments):
+            capabilities.append(AnalysisCapability.VISUAL)
+        return capabilities
 
     @staticmethod
     def _completed_job(

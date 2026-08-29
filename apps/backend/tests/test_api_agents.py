@@ -34,6 +34,12 @@ from openvideo.core.agent_governance_models import AgentPermissionMode
 from openvideo.core.agent_evidence_index import IndexedEvidenceDocument
 from openvideo.core.agent_evidence_models import AgentEvidenceSource
 from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.analysis_models import (
+    AnalysisCapability,
+    AnalysisJob,
+    AnalysisOperation,
+    AnalysisStage,
+)
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import (
@@ -212,6 +218,37 @@ def test_index_status_accepts_neural_model_initialization_stages(tmp_path: Path)
 
         assert response.status_code == 200
         assert response.json()["stage"] == "downloading_embedding_model"
+
+
+def test_index_status_exposes_progressive_local_initialization_stage(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        client.app.state.library.save_analysis_job(
+            AnalysisJob(
+                job_id="job-019c0000000070008000000000000000",
+                asset_id=ASSET_ID,
+                operation=AnalysisOperation.INITIALIZATION,
+                stage=AnalysisStage.READING_FRAME_TEXT,
+                capabilities=[
+                    AnalysisCapability.TRANSCRIPT,
+                    AnalysisCapability.CHAPTERS,
+                    AnalysisCapability.KEY_FRAMES,
+                ],
+                message="正在识别第 2/6 个事件的画面文字",
+            )
+        )
+
+        response = client.get(
+            "/api/agent-index-status",
+            params={"asset_id": ASSET_ID},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["state"] == "initializing"
+        assert payload["stage"] == "reading_frame_text"
+        assert payload["stage_label"] == "正在识别第 2/6 个事件的画面文字"
+        assert "章节定位" in payload["available_capabilities"]
+        assert "关键帧" in payload["available_capabilities"]
 
 
 def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypatch):

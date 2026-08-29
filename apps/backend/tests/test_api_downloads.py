@@ -5,8 +5,11 @@ from threading import Event
 from unittest.mock import AsyncMock
 from uuid import UUID
 
+from openvideo.core.download_models import DownloadStage
+from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAssetStatus, SourcePlatform
 from openvideo import download_manager
+from openvideo.download_manager import DownloadManager
 from openvideo.download_accounts import (
     DownloadAccountLoginCancelled,
     DownloadAccountStore,
@@ -16,9 +19,12 @@ from openvideo.settings import Settings
 from openvideo.tools.downloader import (
     DownloadFailure,
     DownloadMetadata,
+    DownloadedMedia,
     PlaylistEntry,
     PlaylistProbe,
 )
+from openvideo.tools.media import MediaProbe
+from openvideo.tools.sources import SourceMatch
 from openvideo.ui import api, download_account_routes, download_routes
 
 
@@ -489,6 +495,87 @@ def test_download_history_restores_title_and_events_after_restart(
     assert history_response.json()[0]["job_id"] == job_id
     assert history_response.json()[0]["name"] == "Blender 角色绑定完整教程"
     assert history_response.json()[0]["events"] == task_response.json()["events"]
+
+
+@pytest.mark.asyncio
+async def test_initialization_start_failure_does_not_rollback_completed_download(
+    monkeypatch,
+    tmp_path,
+):
+    library_path = tmp_path / "library"
+    library_path.mkdir()
+    library = MediaLibrary.initialize_directory(library_path)
+    settings = Settings(library_path=library.library_path)
+    account_store = DownloadAccountStore(
+        tmp_path / "config",
+        MemoryDownloadAccountSecretStore(),
+    )
+
+    def download_successfully(
+        _source_url,
+        _platform,
+        media_directory,
+        *_args,
+        **_options,
+    ):
+        playback_file = media_directory / "playback.mp4"
+        playback_file.write_bytes(b"video")
+        return DownloadedMedia(
+            metadata=DownloadMetadata(
+                source_video_id="BaW_jenozKc",
+                title="下载完成后初始化",
+                author_name="OpenVideo",
+                description=None,
+                duration_seconds=20,
+                width=1920,
+                height=1080,
+                thumbnail_url=None,
+            ),
+            playback_file=playback_file,
+            thumbnail_file=None,
+        )
+
+    monkeypatch.setattr(download_manager, "download_video", download_successfully)
+    monkeypatch.setattr(
+        download_manager,
+        "probe_media",
+        lambda *_: MediaProbe(20, 1920, 1080, "h264", "aac"),
+    )
+    monkeypatch.setattr(download_manager, "generate_scrub_proxy", lambda *_: None)
+    monkeypatch.setattr(
+        download_manager,
+        "generate_thumbnail_sprite",
+        lambda *_: None,
+    )
+
+    def fail_initialization(_asset_id: str) -> None:
+        raise RuntimeError("模拟后台初始化启动失败")
+
+    manager = DownloadManager(
+        library,
+        settings,
+        account_store,
+        on_asset_ready=fail_initialization,
+    )
+    created = manager.create(
+        SourceMatch(
+            platform=SourcePlatform.YOUTUBE,
+            normalized_url="https://www.youtube.com/watch?v=BaW_jenozKc",
+            source_video_id="BaW_jenozKc",
+            is_playlist=False,
+        )
+    )
+
+    await manager._run(created.job_id)
+
+    completed = manager.get(created.job_id)
+    asset = library.get(created.asset_id)
+    assert completed is not None
+    assert completed.stage == DownloadStage.COMPLETE
+    assert asset is not None
+    assert asset.status == MediaAssetStatus.READY
+    assert asset.error_message is None
+    library.close()
 
 
 def test_platform_account_can_be_saved_tested_listed_and_removed(

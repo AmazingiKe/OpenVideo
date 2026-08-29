@@ -361,6 +361,14 @@ class AgentIndexStatus(BaseModel):
     state: Literal["initializing", "partial", "ready", "failed"]
     stage: Literal[
         "queued",
+        "pending",
+        "preparing_transcription_model",
+        "extracting_audio",
+        "transcribing",
+        "building_timeline",
+        "extracting_frames",
+        "reading_frame_text",
+        "queuing_index",
         "tokenizing",
         "building_matrix",
         "projecting",

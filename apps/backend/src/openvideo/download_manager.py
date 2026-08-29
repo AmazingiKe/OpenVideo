@@ -1,5 +1,7 @@
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
+import logging
 from threading import RLock
 
 from openvideo.core.download_models import (
@@ -31,6 +33,9 @@ from openvideo.tools.thumbnails import (
 )
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 class DownloadManager:
     """下载任务把长耗时外部进程与短生命周期 HTTP 请求隔离开。"""
 
@@ -39,10 +44,12 @@ class DownloadManager:
         library: MediaLibrary,
         settings: Settings,
         download_account_store: DownloadAccountStore,
+        on_asset_ready: Callable[[str], None] | None = None,
     ) -> None:
         self.library = library
         self.settings = settings
         self.download_account_store = download_account_store
+        self._on_asset_ready = on_asset_ready or (lambda asset_id: None)
         self._jobs: dict[str, DownloadJob] = {
             job.job_id: job for job in library.list_download_jobs()
         }
@@ -317,6 +324,7 @@ class DownloadManager:
                 asset.error_message = None
                 self.library.save(asset)
                 self._update_job(job_id, DownloadStage.COMPLETE, 100, "下载完成")
+                self._notify_asset_ready(asset.asset_id)
             except DownloadAccountExpired as error:
                 self._fail(job_id, str(error))
             except Exception as error:
@@ -328,6 +336,14 @@ class DownloadManager:
                     active_job_id = self._active_job_id_by_asset_id.get(job.asset_id)
                     if active_job_id == job_id:
                         self._active_job_id_by_asset_id.pop(job.asset_id)
+
+    def _notify_asset_ready(self, asset_id: str) -> None:
+        """后续分析失败不能回滚已经验证并落盘的下载结果。"""
+
+        try:
+            self._on_asset_ready(asset_id)
+        except Exception:
+            LOGGER.exception("素材就绪后的后台初始化启动失败：%s", asset_id)
 
     def _update_stage_message(self, job_id: str, message: str) -> None:
         job = self.get(job_id)

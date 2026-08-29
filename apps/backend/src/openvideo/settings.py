@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import Field
 
+from openvideo.configuration import OPENVIDEO_CONFIG_DIRECTORY
 from openvideo.core.agent_governance_models import AgentPreferences
 from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration
 from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
@@ -29,7 +30,7 @@ AI_MODELS_ENVIRONMENT = "OPENVIDEO_AI_MODELS"
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_RUNTIME_DIRECTORY = PROJECT_ROOT / "runtime"
 DEFAULT_TOOLS_DIRECTORY = DEFAULT_RUNTIME_DIRECTORY / "tools"
-DEFAULT_MODELS_DIRECTORY = DEFAULT_RUNTIME_DIRECTORY / "models"
+DEFAULT_MODELS_DIRECTORY = OPENVIDEO_CONFIG_DIRECTORY / "models"
 
 
 class Settings(AiModelCollection):

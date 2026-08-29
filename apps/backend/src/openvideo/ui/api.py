@@ -116,6 +116,7 @@ def create_app(
     | None = None,
     capability_resolver: CapabilityResolver | None = None,
     retrieval_models: NeuralRetrievalModels | None = None,
+    automatic_initialization: bool = False,
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
@@ -146,8 +147,19 @@ def create_app(
             summary_manager, \
             page_settings_store
         library = opened_library
-        manager = DownloadManager(opened_library, resolved_settings, account_store)
-        analysis_manager = AnalysisManager(opened_library, resolved_settings)
+        analysis_manager = AnalysisManager(
+            opened_library,
+            resolved_settings,
+            on_evidence_ready=lambda: (
+                agent_service.refresh_index() if agent_service is not None else None
+            ),
+        )
+        manager = DownloadManager(
+            opened_library,
+            resolved_settings,
+            account_store,
+            analysis_manager.initialize_asset if automatic_initialization else None,
+        )
         event_analysis_manager = EventAnalysisManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
         agent_service = AgentService(
@@ -163,6 +175,8 @@ def create_app(
             opened_library.library_path / LEGACY_PAGE_SETTINGS_FILE_NAME,
         )
         analysis_manager.restore()
+        if automatic_initialization:
+            analysis_manager.initialize_ready_assets()
         event_analysis_manager.restore()
         app.state.library = opened_library
         app.state.download_manager = manager
@@ -216,6 +230,8 @@ def create_app(
             yield
         finally:
             await account_login_manager.close()
+            if analysis_manager:
+                await analysis_manager.close()
             if agent_service:
                 await agent_service.close()
             if event_analysis_manager:
@@ -312,6 +328,8 @@ def create_app(
                 else "library_create_failed"
             )
             _library_error(422, error_code, str(error))
+        if analysis_manager:
+            await analysis_manager.close()
         if agent_service:
             await agent_service.close()
         if event_analysis_manager:
@@ -344,6 +362,8 @@ def create_app(
                 error.code if isinstance(error, LibraryError) else "library_open_failed"
             )
             _library_error(422, error_code, str(error))
+        if analysis_manager:
+            await analysis_manager.close()
         if agent_service:
             await agent_service.close()
         if event_analysis_manager:
@@ -374,6 +394,8 @@ def create_app(
             event_analysis_manager,
             agent_service,
         )
+        if analysis_manager:
+            await analysis_manager.close()
         if agent_service:
             await agent_service.close()
         if event_analysis_manager:
@@ -588,4 +610,7 @@ def _validate_agent_model_roles(
         )
 
 
-app = create_app(retrieval_models=NeuralRetrievalModels())
+app = create_app(
+    retrieval_models=NeuralRetrievalModels(),
+    automatic_initialization=True,
+)

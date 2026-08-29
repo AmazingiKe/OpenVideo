@@ -81,10 +81,11 @@ def test_environment_values_override_saved_preferences(monkeypatch, tmp_path: Pa
     assert settings.managed_fields == {"models_directory", "ai_models"}
 
 
-def test_default_runtime_directories_are_anchored_to_project_root():
+def test_default_tools_use_runtime_and_models_use_user_configuration():
     settings = Settings()
 
     assert settings.ffmpeg_bin_dir == DEFAULT_TOOLS_DIRECTORY / "ffmpeg" / "bin"
+    assert DEFAULT_MODELS_DIRECTORY == OPENVIDEO_CONFIG_DIRECTORY / "models"
     assert settings.models_root_directory == DEFAULT_MODELS_DIRECTORY
     assert settings.transcription_model_directory(
         TranscriptionEngine.FASTER_WHISPER

@@ -326,35 +326,115 @@ def _download_transcription_model_resources(
         if not _resource_is_installed(resource, descriptor.engine)
     ]
     try:
-        resource_files = [
-            (resource, _resolve_resource_files(resource))
-            for resource in resources
-        ]
-        total_bytes = sum(
-            file.file_size
-            for _, files in resource_files
-            for file in files
-        )
-        downloaded_bytes = 0
-        progress_callback(downloaded_bytes, total_bytes)
-        for resource, files in resource_files:
-            resource.directory.mkdir(parents=True, exist_ok=True)
-            for file in files:
-                hf_hub_download(
-                    resource.repository,
-                    file.filename,
-                    revision=file.revision,
-                    local_dir=resource.directory,
-                )
-                downloaded_bytes += file.file_size
-                progress_callback(downloaded_bytes, total_bytes)
-            _write_resource_manifest(resource)
+        try:
+            _download_modelscope_resources(resources, progress_callback)
+        except Exception:
+            _download_huggingface_resources(resources, progress_callback)
     except TranscriptionModelDownloadError:
         raise
     except Exception as error:
         raise TranscriptionModelDownloadError(
-            f"无法从 Hugging Face 下载 {descriptor.name}：{error}"
+            f"无法从官方 ModelScope 或 Hugging Face 下载 {descriptor.name}：{error}"
         ) from error
+
+
+def _download_modelscope_resources(
+    resources: list[TranscriptionModelResource],
+    progress_callback: Callable[[int, int], None],
+) -> None:
+    resource_files = [
+        (resource, _resolve_modelscope_resource_files(resource))
+        for resource in resources
+    ]
+    total_bytes = sum(
+        file.file_size for _, files in resource_files for file in files
+    )
+    downloaded_bytes = 0
+    progress_callback(downloaded_bytes, total_bytes)
+    for resource, files in resource_files:
+        resource.directory.mkdir(parents=True, exist_ok=True)
+        _modelscope_snapshot_download(
+            model_id=resource.repository,
+            revision="master",
+            local_dir=str(resource.directory),
+        )
+        for file in files:
+            downloaded_file = resource.directory / file.filename
+            if (
+                not downloaded_file.is_file()
+                or downloaded_file.stat().st_size != file.file_size
+            ):
+                raise TranscriptionModelDownloadError(
+                    f"{resource.repository} 官方模型文件校验失败"
+                )
+        downloaded_bytes += sum(file.file_size for file in files)
+        progress_callback(downloaded_bytes, total_bytes)
+        _write_resource_manifest(resource)
+
+
+def _download_huggingface_resources(
+    resources: list[TranscriptionModelResource],
+    progress_callback: Callable[[int, int], None],
+) -> None:
+    resource_files = [
+        (resource, _resolve_resource_files(resource)) for resource in resources
+    ]
+    total_bytes = sum(
+        file.file_size for _, files in resource_files for file in files
+    )
+    downloaded_bytes = 0
+    progress_callback(downloaded_bytes, total_bytes)
+    for resource, files in resource_files:
+        resource.directory.mkdir(parents=True, exist_ok=True)
+        for file in files:
+            hf_hub_download(
+                resource.repository,
+                file.filename,
+                revision=file.revision,
+                local_dir=resource.directory,
+            )
+            downloaded_bytes += file.file_size
+            progress_callback(downloaded_bytes, total_bytes)
+        _write_resource_manifest(resource)
+
+
+def _resolve_modelscope_resource_files(
+    resource: TranscriptionModelResource,
+) -> list[TranscriptionModelResourceFile]:
+    from modelscope.hub.api import HubApi
+
+    raw_files = HubApi().get_model_files(
+        resource.repository,
+        revision="master",
+        recursive=True,
+    )
+    files = [
+        TranscriptionModelResourceFile(
+            filename=str(file["Path"]),
+            file_size=int(file["Size"]),
+            revision="master",
+        )
+        for file in raw_files
+        if int(file.get("Size", 0)) > 0
+    ]
+    if not files:
+        raise TranscriptionModelDownloadError("ModelScope 官方模型文件清单无效")
+    return files
+
+
+def _modelscope_snapshot_download(
+    *,
+    model_id: str,
+    revision: str,
+    local_dir: str,
+) -> str:
+    from modelscope import snapshot_download
+
+    return snapshot_download(
+        model_id=model_id,
+        revision=revision,
+        local_dir=local_dir,
+    )
 
 
 def _resolve_resource_files(
