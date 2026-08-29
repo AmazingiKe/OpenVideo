@@ -16,6 +16,7 @@ from openvideo.agent_intent_router import (
     AgentIntentRoutingError,
     route_agent_intent,
 )
+from openvideo.agent_model_roles import select_automatic_model_id
 from openvideo.agent_runtime import (
     AgentRuntime,
     AgentSessionStore,
@@ -230,7 +231,13 @@ class AgentService:
             )
         request = self._resolve_context_attachments(request)
         routing_started_at = perf_counter()
-        route = await self._route_request(session, registered.definition, request)
+        role_model_ids = self._role_model_ids()
+        route = await self._route_request(
+            session,
+            registered.definition,
+            request,
+            role_model_ids,
+        )
         if route is not None:
             request = request.model_copy(
                 update={
@@ -254,7 +261,7 @@ class AgentService:
         ):
             raise AgentConflictError("当前会话已有正在运行的任务")
         model_role = self._select_model_role(request, route)
-        model_id = self._model_id_for_role(model_role) or request.ai_model_id
+        model_id = role_model_ids[model_role] or request.ai_model_id
         model = self.settings.ai_model(model_id)
         if model is None:
             raise AgentServiceError("所选 AI 模型不存在", "model_not_found")
@@ -444,10 +451,11 @@ class AgentService:
         session: AgentSession,
         definition: AgentDefinition,
         request: AgentRunCreate,
+        role_model_ids: dict[AgentModelRole, str | None],
     ) -> AgentIntentRoute | None:
         if definition.input_mode == "task":
             return None
-        router_model_id = self.settings.agent.fast_model_id or request.ai_model_id
+        router_model_id = role_model_ids[AgentModelRole.FAST] or request.ai_model_id
         router_model = self.settings.ai_model(router_model_id)
         if router_model is None:
             raise AgentServiceError("快速模型不存在，无法判断助手工作方式")
@@ -484,12 +492,23 @@ class AgentService:
             return route.model_role
         return AgentModelRole.COMPLEX
 
-    def _model_id_for_role(self, role: AgentModelRole) -> str | None:
-        return {
+    def _role_model_ids(self) -> dict[AgentModelRole, str | None]:
+        configured_model_ids = {
             AgentModelRole.FAST: self.settings.agent.fast_model_id,
             AgentModelRole.COMPLEX: self.settings.agent.complex_model_id,
             AgentModelRole.VISION: self.settings.agent.vision_model_id,
-        }[role]
+        }
+        if all(configured_model_ids.values()):
+            return configured_model_ids
+        profiles = {
+            model.model_id: self.capability_resolver.resolve(model)
+            for model in self.settings.ai_models
+        }
+        return {
+            role: configured_model_id
+            or select_automatic_model_id(role, self.settings.ai_models, profiles)
+            for role, configured_model_id in configured_model_ids.items()
+        }
 
     def _resolve_context_attachments(self, request: AgentRunCreate) -> AgentRunCreate:
         resolved_attachments = []

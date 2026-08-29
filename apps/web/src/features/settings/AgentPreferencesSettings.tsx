@@ -223,7 +223,7 @@ function AgentRoleModelSelect({
         <SelectContent>
           <SelectGroup>
             <SelectItem value={AUTOMATIC_MODEL_VALUE}>
-              未指定 · 沿用任务模型
+              自动选择推荐模型
             </SelectItem>
             {models.map((model) => (
               <SelectItem key={model.model_id} value={model.model_id}>
@@ -234,7 +234,9 @@ function AgentRoleModelSelect({
         </SelectContent>
       </Select>
       <FieldDescription>
-        {models.length > 0 ? description : "请先在上方注册一个 AI 模型。"}
+        {models.length > 0
+          ? `${description} 留在自动即可按已验证能力选择。`
+          : "请先在上方注册一个 AI 模型。"}
       </FieldDescription>
     </Field>
   );

@@ -206,7 +206,7 @@ export function AiModelConfigurationList({
             </EmptyMedia>
             <EmptyTitle>尚未配置 AI 模型</EmptyTitle>
             <EmptyDescription>
-              添加 LiteLLM 模型后，标记工作台才能选择模型执行内容任务。
+              添加 LiteLLM 模型后，助手会按已验证能力自动分配模型角色。
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
