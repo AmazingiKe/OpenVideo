@@ -1,7 +1,10 @@
 import { CircleCheck, FilePlus2, PanelLeft, PanelRight } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { AgentPanel } from "@/components/AgentPanel";
+import {
+  GlobalAssistantRegistration,
+  use_global_assistant_controls,
+} from "@/app/global_assistant";
 import { AgentContextSource } from "@/components/AgentContextSource";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
@@ -28,8 +31,6 @@ import {
 } from "@/components/ui/select";
 import type {
   AgentArtifact,
-  AgentThinkingMode,
-  AiModelSummary,
   SummaryDocument,
   SummaryVersion,
 } from "@/shared/types";
@@ -42,7 +43,6 @@ import {
 } from "./SummaryWorkspacePanels";
 
 type SummaryEditorLayoutProps = {
-  agent_sheet_open: boolean;
   child_documents: SummaryDocument[];
   compact_layout: boolean;
   create_child: () => void;
@@ -53,8 +53,6 @@ type SummaryEditorLayoutProps = {
   export_pending: boolean;
   export_relative_path: string | null;
   generation_notice: string | null;
-  default_thinking_mode?: AgentThinkingMode;
-  models: AiModelSummary[];
   move_child: (document_id: string, direction: -1 | 1) => void;
   new_document_open: boolean;
   new_document_title: string;
@@ -77,7 +75,6 @@ type SummaryEditorLayoutProps = {
   on_generate_version: () => void;
   selection: MarkdownSelection | null;
   select_document: (document_id: string) => void;
-  set_agent_sheet_open: (open: boolean) => void;
   set_delete_target: (document: SummaryDocument) => void;
   set_editor_mode: (mode: "visual" | "source") => void;
   set_new_document_open: (open: boolean) => void;
@@ -88,7 +85,6 @@ type SummaryEditorLayoutProps = {
 };
 
 export function SummaryEditorLayout({
-  agent_sheet_open,
   child_documents,
   compact_layout,
   create_child,
@@ -99,8 +95,6 @@ export function SummaryEditorLayout({
   export_pending,
   export_relative_path,
   generation_notice,
-  default_thinking_mode = "auto",
-  models,
   move_child,
   new_document_open,
   new_document_title,
@@ -123,7 +117,6 @@ export function SummaryEditorLayout({
   on_generate_version,
   selection,
   select_document,
-  set_agent_sheet_open,
   set_delete_target,
   set_editor_mode,
   set_new_document_open,
@@ -147,6 +140,35 @@ export function SummaryEditorLayout({
   useEffect(() => {
     set_agent_context_attachments([]);
   }, [selected_asset_id, selected_document.document_id]);
+  const assistant_binding = useMemo(
+    () => ({
+      agent_id: "summary",
+      asset_id: selected_asset_id,
+      context_label: `总结文档 · ${selected_document.title}`,
+      context: {
+        document_id: selected_document.document_id,
+        version_id: selected_document.version_id,
+      },
+      task_input: {
+        document_id: selected_document.document_id,
+        version_id: selected_document.version_id,
+        expected_revision: selected_document.revision,
+        selection,
+      },
+      context_attachments: agent_context_attachments,
+      placeholder: "询问视频内容，或直接描述希望怎样修改总结…",
+      panel_size_percent: 30,
+      on_artifact_change,
+    }),
+    [
+      agent_context_attachments,
+      on_artifact_change,
+      selected_asset_id,
+      selected_document,
+      selection,
+    ],
+  );
+  const { open_assistant } = use_global_assistant_controls();
   const context_action = selection_attachment ? (
     <AgentContextSource
       attachment={selection_attachment}
@@ -168,30 +190,6 @@ export function SummaryEditorLayout({
       on_delete={set_delete_target}
     />
   );
-  const agent_panel = (
-    <AgentPanel
-      className="h-full"
-      agent_id="summary"
-      asset_id={selected_asset_id}
-      models={models}
-      context={{
-        document_id: selected_document.document_id,
-        version_id: selected_document.version_id,
-      }}
-      task_input={{
-        document_id: selected_document.document_id,
-        version_id: selected_document.version_id,
-        expected_revision: selected_document.revision,
-        selection,
-      }}
-      context_attachments={agent_context_attachments}
-      default_thinking_mode={default_thinking_mode}
-      thinking_modes_enabled
-      library_scope_enabled
-      placeholder="询问视频内容，或直接描述希望怎样修改总结…"
-      on_artifact_change={on_artifact_change}
-    />
-  );
   const compact_actions: ReactNode = compact_layout ? (
     <>
       <Button
@@ -206,7 +204,7 @@ export function SummaryEditorLayout({
         type="button"
         variant="outline"
         size="sm"
-        onClick={() => set_agent_sheet_open(true)}
+        onClick={open_assistant}
       >
         <PanelRight data-icon="inline-start" /> 助手
       </Button>
@@ -237,6 +235,7 @@ export function SummaryEditorLayout({
       className="flex h-full min-h-0 flex-col bg-background"
       aria-label="Markdown 总结工作台"
     >
+      <GlobalAssistantRegistration binding={assistant_binding} />
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <Select
           value={current_version_id ?? ""}
@@ -280,18 +279,6 @@ export function SummaryEditorLayout({
                 {document_tree}
               </SheetContent>
             </Sheet>
-            <Sheet open={agent_sheet_open} onOpenChange={set_agent_sheet_open}>
-              <SheetContent
-                side="right"
-                className="w-[min(92vw,26rem)] gap-0 p-0"
-              >
-                <SheetHeader className="sr-only">
-                  <SheetTitle>助手</SheetTitle>
-                  <SheetDescription>建议需确认后才会应用</SheetDescription>
-                </SheetHeader>
-                {agent_panel}
-              </SheetContent>
-            </Sheet>
           </>
         ) : (
           <ResizablePanelGroup orientation="horizontal">
@@ -304,17 +291,8 @@ export function SummaryEditorLayout({
               {document_tree}
             </ResizablePanel>
             <ResizableHandle withHandle />
-            <ResizablePanel id="summary-editor" defaultSize="50%" minSize="34%">
+            <ResizablePanel id="summary-editor" defaultSize="80%" minSize="60%">
               {editor}
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              id="summary-agent"
-              defaultSize="30%"
-              minSize="24%"
-              maxSize="42%"
-            >
-              {agent_panel}
             </ResizablePanel>
           </ResizablePanelGroup>
         )}

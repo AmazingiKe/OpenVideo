@@ -3,9 +3,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  DEFAULT_MODEL_CAPABILITY_OVERRIDES,
-  unknown_model_profile,
-  type AiModelSummary,
   type MediaAsset,
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
@@ -15,26 +12,7 @@ import {
   type TranscriptCorrectionScope,
 } from "./TranscriptionToolbarTools";
 
-vi.mock("@/components/AgentPanel", () => ({
-  AgentPanel: ({ task_input }: { task_input: Record<string, unknown> }) => (
-    <div data-testid="transcript-correction-agent">
-      {JSON.stringify(task_input)}
-    </div>
-  ),
-}));
-
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
-
-const AI_MODELS: AiModelSummary[] = [
-  {
-    model_id: "model-0198d12345677890abcdef1234567890",
-    name: "测试模型",
-    litellm_model: "openai/test-model",
-    input_modalities: ["text", "image"],
-    capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
-    profile: unknown_model_profile("openai", "test-model"),
-  },
-];
 
 const TRANSCRIPTION_MODELS: TranscriptionModelDescriptor[] = [
   {
@@ -112,9 +90,12 @@ describe("TranscriptionToolbarTools", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "时间线选择" })).toBeChecked();
     expect(screen.getByText("已选择 2 条")).toBeInTheDocument();
-    expect(screen.getByTestId("transcript-correction-agent")).toHaveTextContent(
-      '"segment_indices":[1,2]',
-    );
+    expect(screen.getByText("已切换到全局助手")).toBeVisible();
+    expect(
+      screen.getByText(
+        "确认处理范围后，在全局助手中启动字幕修正任务；结果仍需审批才会应用。",
+      ),
+    ).toBeVisible();
   });
 
   it("disables correction until a transcript exists", () => {
@@ -170,11 +151,9 @@ function ControlledTools({ options }: { options: RenderOptions }) {
           }
           default_transcription={DEFAULT_TRANSCRIPTION}
           on_transcription_model_change={vi.fn()}
-          ai_models={AI_MODELS}
           selected_transcript_indices={
             options.selected_transcript_indices ?? []
           }
-          on_transcript_changed={vi.fn()}
           correction_open={correction_open}
           correction_scope={correction_scope}
           on_correction_open_change={set_correction_open}

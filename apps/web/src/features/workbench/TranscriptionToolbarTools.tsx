@@ -1,8 +1,8 @@
 import { useId } from "react";
 import { Captions, WandSparkles } from "lucide-react";
 
-import { AgentPanel } from "@/components/AgentPanel";
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +31,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { transcription_runtime_profile } from "@/shared/transcription";
 import {
-  type AiModelSummary,
   type MediaAsset,
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
@@ -48,9 +47,7 @@ type TranscriptionToolbarToolsProps = {
   transcription_models: TranscriptionModelDescriptor[];
   default_transcription: TranscriptionOptions | null;
   on_transcription_model_change: (model: TranscriptionModelDescriptor) => void;
-  ai_models: AiModelSummary[];
   selected_transcript_indices: number[];
-  on_transcript_changed: () => void;
   correction_open: boolean;
   correction_scope: TranscriptCorrectionScope;
   on_correction_open_change: (open: boolean) => void;
@@ -65,9 +62,7 @@ export function TranscriptionToolbarTools({
   transcription_models,
   default_transcription,
   on_transcription_model_change,
-  ai_models,
   selected_transcript_indices,
-  on_transcript_changed,
   correction_open,
   correction_scope,
   on_correction_open_change,
@@ -266,22 +261,13 @@ export function TranscriptionToolbarTools({
                 时间线选择
               </ToggleGroupItem>
             </ToggleGroup>
-            <AgentPanel
-              className="h-96"
-              agent_id="transcript_correction"
-              asset_id={has_transcript ? (asset?.asset_id ?? null) : null}
-              models={ai_models}
-              task_input={{
-                segment_indices:
-                  correction_scope === "selection"
-                    ? selected_transcript_indices
-                    : null,
-                execution_mode: "automatic",
-              }}
-              on_artifact_change={(artifact) => {
-                if (artifact.status === "approved") on_transcript_changed();
-              }}
-            />
+            <Alert>
+              <WandSparkles aria-hidden="true" />
+              <AlertTitle>已切换到全局助手</AlertTitle>
+              <AlertDescription>
+                确认处理范围后，在全局助手中启动字幕修正任务；结果仍需审批才会应用。
+              </AlertDescription>
+            </Alert>
           </div>
         </PopoverContent>
       </Popover>

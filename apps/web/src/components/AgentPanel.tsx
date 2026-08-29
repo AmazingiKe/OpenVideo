@@ -83,6 +83,7 @@ export type AgentPanelProps = {
   library_scope_enabled?: boolean;
   index_status?: AgentIndexStatus;
   title?: string;
+  context_label?: string;
   placeholder?: string;
   on_seek?: (
     seconds: number,
@@ -106,6 +107,7 @@ export function AgentPanel({
   library_scope_enabled = false,
   index_status,
   title,
+  context_label,
   placeholder,
   on_seek,
   current_time,
@@ -218,7 +220,9 @@ export function AgentPanel({
               {panel_title}
             </CardTitle>
             <CardDescription>
-              {definition?.definition.description ?? "正在读取助手配置"}
+              {context_label ??
+                definition?.definition.description ??
+                "正在读取助手配置"}
             </CardDescription>
           </div>
           {active_run ? (
@@ -257,6 +261,9 @@ export function AgentPanel({
               </SelectContent>
             </Select>
           </div>
+          <Badge variant="secondary">
+            {retrieval_scope === "library" ? "资料库范围" : "当前视频"}
+          </Badge>
         </div>
         {definition && compatible_models.length === 0 ? (
           <Alert variant="destructive">

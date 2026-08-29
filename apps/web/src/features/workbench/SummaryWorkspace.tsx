@@ -30,10 +30,7 @@ import {
   load_summary_project,
   type SummaryProject,
 } from "@/features/summary/load_summary_project";
-import {
-  use_agent_preferences,
-  use_ai_models,
-} from "@/features/workbench/use_processing_resources";
+import { use_ai_models } from "@/features/workbench/use_processing_resources";
 import type {
   AgentArtifact,
   AiModelSummary,
@@ -81,8 +78,6 @@ export function SummaryWorkspace({
   });
   const initial_project = project_query.data ?? EMPTY_SUMMARY_PROJECT;
   const { models, error: models_error } = use_ai_models();
-  const { agent_preferences, error: agent_preferences_error } =
-    use_agent_preferences();
   const presets_query = useQuery({
     queryKey: ["summary-presets"],
     queryFn: ({ signal }) => list_summary_presets(signal),
@@ -125,7 +120,6 @@ export function SummaryWorkspace({
   );
   const [selection, set_selection] = useState<MarkdownSelection | null>(null);
   const [tree_sheet_open, set_tree_sheet_open] = useState(false);
-  const [agent_sheet_open, set_agent_sheet_open] = useState(false);
   const [new_document_open, set_new_document_open] = useState(false);
   const [new_document_title, set_new_document_title] = useState("");
   const [delete_target, set_delete_target] = useState<SummaryDocument | null>(
@@ -279,18 +273,11 @@ export function SummaryWorkspace({
 
   useEffect(() => {
     const resource_error =
-      agent_preferences_error ??
       models_error ??
       (presets_query.error ? error_message(presets_query.error) : null) ??
       (project_query.error ? error_message(project_query.error) : null);
     if (resource_error) on_error?.(resource_error);
-  }, [
-    agent_preferences_error,
-    models_error,
-    on_error,
-    presets_query.error,
-    project_query.error,
-  ]);
+  }, [models_error, on_error, presets_query.error, project_query.error]);
 
   useEffect(() => {
     active_asset_id_ref.current = selected_asset_id;
@@ -606,7 +593,6 @@ export function SummaryWorkspace({
   return (
     <>
       <SummaryEditorLayout
-        agent_sheet_open={agent_sheet_open}
         child_documents={child_documents}
         compact_layout={compact_layout}
         create_child={() => void add_child()}
@@ -617,8 +603,6 @@ export function SummaryWorkspace({
         export_pending={export_pending}
         export_relative_path={export_relative_path}
         generation_notice={generation_notice}
-        default_thinking_mode={agent_preferences?.default_thinking_mode}
-        models={models}
         move_child={move_child}
         new_document_open={new_document_open}
         new_document_title={new_document_title}
@@ -641,7 +625,6 @@ export function SummaryWorkspace({
         on_generate_version={() => set_generation_open(true)}
         selection={selection}
         select_document={(document_id) => void select_document(document_id)}
-        set_agent_sheet_open={set_agent_sheet_open}
         set_delete_target={set_delete_target}
         set_editor_mode={set_editor_mode}
         set_new_document_open={set_new_document_open}

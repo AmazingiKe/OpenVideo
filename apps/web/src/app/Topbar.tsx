@@ -1,5 +1,6 @@
 import {
   Clapperboard,
+  Bot,
   Download,
   FileText,
   Flag,
@@ -11,7 +12,9 @@ import { NavLink } from "react-router-dom";
 
 import { SETTINGS_ROUTE, WORKSPACE_ROUTES } from "@/app/workspace_routes";
 import { TaskCenter } from "@/app/TaskCenter";
+import { use_global_assistant_controls } from "@/app/global_assistant";
 import { use_optional_task_manager } from "@/app/task_manager";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const IDLE_PRELOAD_TIMEOUT_MS = 2_000;
@@ -30,6 +33,8 @@ const WORKSPACE_ICONS = {
 
 export function Topbar() {
   const task_manager = use_optional_task_manager();
+  const { assistant_open, set_assistant_open } =
+    use_global_assistant_controls();
 
   useEffect(() => {
     const preload_routes = () => {
@@ -87,6 +92,16 @@ export function Topbar() {
         })}
       </nav>
       <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-2 justify-self-end md:col-start-3">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={assistant_open ? "收起全局助手" : "打开全局助手"}
+          aria-pressed={assistant_open}
+          onClick={() => set_assistant_open(!assistant_open)}
+        >
+          <Bot aria-hidden="true" />
+        </Button>
         {task_manager ? (
           <TaskCenter
             tasks={task_manager.task_records}

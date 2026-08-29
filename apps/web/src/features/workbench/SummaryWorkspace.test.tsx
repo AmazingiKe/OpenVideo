@@ -6,6 +6,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { ReactElement } from "react";
+import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -21,6 +23,7 @@ import {
   update_summary_document,
 } from "@/shared/api";
 import { ApplicationQueryProvider } from "@/app/query_cache";
+import { GlobalAssistantProvider } from "@/app/global_assistant";
 import type {
   AiModelSummary,
   MediaAsset,
@@ -35,8 +38,38 @@ import {
 import { SummaryWorkspace } from "./SummaryWorkspace";
 import { reorder_document_ids } from "./SummaryWorkspacePanels";
 
+const global_assistant_state = vi.hoisted(() => ({
+  binding: null as Record<string, unknown> | null,
+  open: vi.fn(),
+}));
+
+vi.mock("@/app/global_assistant", () => ({
+  GlobalAssistantProvider: ({ children }: { children: ReactNode }) => children,
+  GlobalAssistantRegistration: ({
+    binding,
+  }: {
+    binding: Record<string, unknown>;
+  }) => {
+    global_assistant_state.binding = binding;
+    return null;
+  },
+  use_global_assistant_controls: () => ({
+    open_assistant: global_assistant_state.open,
+  }),
+}));
+
 function render(element: ReactElement) {
-  return testing_render(element, { wrapper: ApplicationQueryProvider });
+  return testing_render(element, { wrapper: SummaryTestProviders });
+}
+
+function SummaryTestProviders({ children }: { children: ReactNode }) {
+  return (
+    <MemoryRouter initialEntries={["/summary"]}>
+      <ApplicationQueryProvider>
+        <GlobalAssistantProvider>{children}</GlobalAssistantProvider>
+      </ApplicationQueryProvider>
+    </MemoryRouter>
+  );
 }
 
 const markdown_editor_state = vi.hoisted(() => ({
@@ -205,6 +238,7 @@ const SUMMARY_MODEL: AiModelSummary = {
 describe("SummaryWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    global_assistant_state.binding = null;
     markdown_editor_state.failing_document_id = null;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -340,7 +374,14 @@ describe("SummaryWorkspace", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "助手" }));
 
-    expect(await screen.findAllByText("课程总结选区")).toHaveLength(2);
+    await waitFor(() =>
+      expect(global_assistant_state.binding).toMatchObject({
+        context_attachments: [
+          expect.objectContaining({ label: "课程总结选区" }),
+        ],
+      }),
+    );
+    expect(global_assistant_state.open).toHaveBeenCalledOnce();
   });
 
   it("opens a generated child document with its markdown", async () => {
@@ -504,7 +545,7 @@ describe("SummaryWorkspace", () => {
     expect(screen.queryByText("所见即所得")).not.toBeInTheDocument();
   });
 
-  it("stretches the desktop Agent panel to the bottom of its workspace", async () => {
+  it("binds the desktop editor to the single global assistant", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -524,9 +565,15 @@ describe("SummaryWorkspace", () => {
     );
 
     await screen.findByRole("region", { name: "Markdown 总结工作台" });
-    expect(document.querySelector('[data-slot="agent-panel"]')).toHaveClass(
-      "h-full",
-    );
+    expect(global_assistant_state.binding).toMatchObject({
+      agent_id: "summary",
+      asset_id: ASSET.asset_id,
+      context_label: "总结文档 · 课程总结",
+      context: {
+        document_id: DOCUMENT.document_id,
+        version_id: DOCUMENT.version_id,
+      },
+    });
   });
 
   it("saves exports in the asset directory without browser download", async () => {

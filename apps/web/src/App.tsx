@@ -11,6 +11,7 @@ import { AppShell } from "@/app/AppShell";
 import { AssetCatalogProvider } from "@/app/asset_catalog";
 import { ApplicationQueryProvider } from "@/app/query_cache";
 import { TaskManagerProvider } from "@/app/task_manager";
+import { GlobalAssistantProvider } from "@/app/global_assistant";
 import { LibraryProvider, use_library_state } from "@/app/library";
 import { WorkspaceLoading } from "@/app/WorkspaceLoading";
 import {
@@ -52,11 +53,13 @@ function LibraryGate() {
     <ApplicationQueryProvider key={library.library_id}>
       <AssetCatalogProvider>
         <TaskManagerProvider>
-          <Routes>
-            <Route element={<AppShell />}>
-              <Route path="*" element={<WorkspaceRouter />} />
-            </Route>
-          </Routes>
+          <GlobalAssistantProvider>
+            <Routes>
+              <Route element={<AppShell />}>
+                <Route path="*" element={<WorkspaceRouter />} />
+              </Route>
+            </Routes>
+          </GlobalAssistantProvider>
         </TaskManagerProvider>
       </AssetCatalogProvider>
     </ApplicationQueryProvider>

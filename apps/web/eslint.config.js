@@ -30,6 +30,7 @@ export default typescript_eslint.config(
     files: [
       "src/**/use_*.{ts,tsx}",
       "src/app/asset_catalog.tsx",
+      "src/app/global_assistant.tsx",
       "src/app/task_manager.tsx",
     ],
     rules: {

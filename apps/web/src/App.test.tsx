@@ -106,6 +106,14 @@ vi.mock("./features/player/Player", () => ({
 
 describe("App", () => {
   beforeEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
     window.history.replaceState(null, "", "/");
     vi.mocked(get_library).mockResolvedValue({
       library_id: "library-0123456789abcdef0123456789abcdef",
@@ -318,7 +326,7 @@ describe("App", () => {
     expect(
       screen.getByRole("button", { name: "展开视频库" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("助手")).toBeInTheDocument();
+    expect(screen.getByLabelText("全局助手")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "选择标记视频" }),
     ).not.toBeInTheDocument();
@@ -425,7 +433,7 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps Agent at the right and retracts the library after opening a video", async () => {
+  it("keeps the global assistant at the right and retracts the library after opening a video", async () => {
     const first_asset = create_asset({
       status: "ready",
       title: "第一段视频",
@@ -465,7 +473,7 @@ describe("App", () => {
     const timeline = await screen.findByRole("region", {
       name: "剪辑时间轴",
     });
-    const agent_panel = screen.getByLabelText("助手");
+    const agent_panel = screen.getByLabelText("全局助手");
     expect(
       within(agent_panel).queryByLabelText("模型"),
     ).not.toBeInTheDocument();
