@@ -141,6 +141,7 @@ export function AgentPanel({
     preparing_attachments,
     resolve_artifact,
     retrieval_scope,
+    restoring,
     select_session,
     sessions,
     set_draft,
@@ -294,7 +295,19 @@ export function AgentPanel({
                     <AgentIndexStatusDisclosure status={visible_index_status} />
                   </MessageScrollerItem>
                 ) : null}
-                {events.length === 0 && artifacts.length === 0 ? (
+                {restoring ? (
+                  <MessageScrollerItem messageId="restoring-session">
+                    <Marker>
+                      <MarkerContent className="shimmer">
+                        正在加载助手会话…
+                      </MarkerContent>
+                    </Marker>
+                  </MessageScrollerItem>
+                ) : null}
+                {!restoring &&
+                !error &&
+                events.length === 0 &&
+                artifacts.length === 0 ? (
                   <MessageScrollerItem messageId="empty-session">
                     <Empty className="border-0">
                       <EmptyHeader>

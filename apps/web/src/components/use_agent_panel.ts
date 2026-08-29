@@ -58,6 +58,11 @@ export function use_agent_panel({
   task_input,
   default_thinking_mode,
 }: AgentPanelStateOptions) {
+  const scope_key = useMemo(
+    () =>
+      asset_id ? agent_scope_key(agent_id, asset_id, context) : "no-asset",
+    [agent_id, asset_id, context],
+  );
   const [definition, set_definition] = useState<
     Awaited<ReturnType<typeof list_agent_definitions>>[number] | null
   >(null);
@@ -79,14 +84,13 @@ export function use_agent_panel({
     null,
   );
   const [error, set_error] = useState<string | null>(null);
+  const [restored_scope_key, set_restored_scope_key] = useState<string | null>(
+    null,
+  );
   const connection_ref = useRef<AbortController | null>(null);
   const run_sequence_ref = useRef(new Map<string, number>());
   const restore_panel_event = useEffectEvent(restore_panel);
-  const scope_key = useMemo(
-    () =>
-      asset_id ? agent_scope_key(agent_id, asset_id, context) : "no-asset",
-    [agent_id, asset_id, context],
-  );
+  const restoring = Boolean(asset_id) && restored_scope_key !== scope_key;
 
   const compatible_models = useMemo(() => {
     if (!definition) return [];
@@ -116,7 +120,10 @@ export function use_agent_panel({
     set_preparing_attachments(false);
     run_sequence_ref.current.clear();
     set_error(null);
-    if (!asset_id) return () => controller.abort();
+    if (!asset_id) {
+      set_restored_scope_key(null);
+      return () => controller.abort();
+    }
     void restore_panel_event(asset_id, controller.signal);
     return () => {
       controller.abort();
@@ -153,6 +160,8 @@ export function use_agent_panel({
       }
     } catch (caught) {
       if (!is_abort_error(caught)) set_error(error_message(caught));
+    } finally {
+      if (!signal.aborted) set_restored_scope_key(scope_key);
     }
   }
 
@@ -389,5 +398,6 @@ export function use_agent_panel({
     submit,
     thinking_mode,
     retrieval_scope,
+    restoring,
   };
 }
