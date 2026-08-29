@@ -16,6 +16,7 @@ import { uuid7 } from "@/shared/identifiers";
 import type {
   AgentArtifact,
   AgentEvent,
+  AgentPermissionGrantScope,
   AgentRun,
   AgentSession,
   AgentSessionState,
@@ -335,11 +336,13 @@ export function use_agent_panel({
   async function resolve_artifact(
     artifact: AgentArtifact,
     action: "approve" | "reject",
+    grant_scope: AgentPermissionGrantScope = "once",
   ) {
     try {
       const resolved = await resolve_agent_artifact(
         artifact.artifact_id,
         action,
+        grant_scope,
       );
       set_state((current) =>
         current

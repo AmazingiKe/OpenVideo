@@ -76,6 +76,8 @@ from openvideo.core.agent_runtime_models import (
 from openvideo.core.agent_governance_models import (
     AgentModelRole,
     AgentPermissionContext,
+    AgentPermissionGrant,
+    AgentPermissionGrantScope,
     AgentPermissionOutcome,
     AgentResourceScope,
     AgentRetrievalScope,
@@ -401,6 +403,31 @@ class AgentService:
             raise AgentConflictError("审批状态已被其他操作更新")
         return approved
 
+    def approve_with_grant(
+        self,
+        artifact_id: str,
+        grant_scope: AgentPermissionGrantScope,
+    ) -> AgentArtifact:
+        artifact = self._require_artifact(artifact_id)
+        if artifact.status != AgentArtifactStatus.PENDING:
+            return artifact
+        approved = self.approve(artifact_id)
+        if approved.status != AgentArtifactStatus.APPROVED:
+            return approved
+        grant = self._permission_grant_for_artifact(artifact, grant_scope)
+        if grant.scope == AgentPermissionGrantScope.SESSION:
+            self.library.save_agent_session_permission_grant(grant)
+        elif grant.scope == AgentPermissionGrantScope.ALWAYS:
+            existing_grants = self.settings.agent.always_allowed_grants
+            if not any(
+                self._same_permission_scope(existing, grant)
+                for existing in existing_grants
+            ):
+                self.settings.agent = self.settings.agent.model_copy(
+                    update={"always_allowed_grants": [*existing_grants, grant]}
+                )
+        return approved
+
     def reject(self, artifact_id: str) -> AgentArtifact:
         artifact = self._require_artifact(artifact_id)
         if artifact.status != AgentArtifactStatus.PENDING:
@@ -579,18 +606,17 @@ class AgentService:
                 continue
             if self._artifact_write_block_reason(artifact) is not None:
                 continue
-            policy = AgentToolPermissionPolicy(
-                capability=f"artifact.apply.{artifact.result_type}",
-                effect=AgentToolEffect.WRITE,
-                resource_scope=AgentResourceScope.CURRENT_ITEM,
-                reversible=False,
-                bulk=True,
-            )
+            policy = self._permission_policy_for_artifact(artifact)
             decision = PermissionPolicy.decide(
                 self.settings.agent.permission_mode,
                 policy,
                 permission_context,
-                self.settings.agent.always_allowed_grants,
+                [
+                    *self.settings.agent.always_allowed_grants,
+                    *self.library.load_agent_session_permission_grants(
+                        context.session.session_id
+                    ),
+                ],
             )
             if decision.outcome != AgentPermissionOutcome.ALLOW:
                 continue
@@ -599,6 +625,54 @@ class AgentService:
             except Exception:
                 # approve 已把失败或版本冲突写入 artifact，Runtime 会返回稳定错误。
                 continue
+
+    @staticmethod
+    def _permission_policy_for_artifact(
+        artifact: AgentArtifact,
+    ) -> AgentToolPermissionPolicy:
+        return AgentToolPermissionPolicy(
+            capability=f"artifact.apply.{artifact.result_type}",
+            effect=AgentToolEffect.WRITE,
+            resource_scope=AgentResourceScope.CURRENT_ITEM,
+            reversible=False,
+            bulk=True,
+        )
+
+    def _permission_grant_for_artifact(
+        self,
+        artifact: AgentArtifact,
+        grant_scope: AgentPermissionGrantScope,
+    ) -> AgentPermissionGrant:
+        policy = self._permission_policy_for_artifact(artifact)
+        run = self.run(artifact.run_id)
+        return AgentPermissionGrant(
+            capability=policy.capability,
+            resource_scope=policy.resource_scope,
+            resource_id=artifact.asset_id,
+            scope=grant_scope,
+            request_id=(
+                run.request_key
+                if grant_scope == AgentPermissionGrantScope.ONCE
+                else None
+            ),
+            session_id=(
+                artifact.session_id
+                if grant_scope == AgentPermissionGrantScope.SESSION
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _same_permission_scope(
+        existing: AgentPermissionGrant,
+        requested: AgentPermissionGrant,
+    ) -> bool:
+        return (
+            existing.capability == requested.capability
+            and existing.resource_scope == requested.resource_scope
+            and existing.resource_id == requested.resource_id
+            and existing.scope == requested.scope
+        )
 
     def _discard_run(self, run_id: str) -> None:
         self._tasks.pop(run_id, None)

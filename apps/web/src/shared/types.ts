@@ -80,8 +80,8 @@ export type AgentPermissionMode =
 export type AgentThinkingMode = "auto" | "fast" | "complex";
 type AgentResourceScope =
   "current_item" | "selection" | "library" | "application" | "external";
-type AgentPermissionGrantScope = "once" | "session" | "always";
-type AgentPermissionGrant = {
+export type AgentPermissionGrantScope = "once" | "session" | "always";
+export type AgentPermissionGrant = {
   grant_id: string;
   capability: string;
   resource_scope: AgentResourceScope;

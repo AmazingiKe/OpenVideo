@@ -3,6 +3,7 @@ import type {
   AgentContextAttachment,
   AgentDefinitionAvailability,
   AgentEventType,
+  AgentPermissionGrantScope,
   AgentRetrievalScope,
   AgentRun,
   AgentSession,
@@ -139,11 +140,20 @@ export async function stream_unified_agent_run(
 export function resolve_agent_artifact(
   artifact_id: string,
   action: "approve" | "reject",
+  grant_scope: AgentPermissionGrantScope = "once",
   signal?: AbortSignal,
 ): Promise<AgentArtifact> {
   return request_json(
     `/api/agent-artifacts/${encodeURIComponent(artifact_id)}/${action}`,
-    { method: "POST", signal },
+    {
+      method: "POST",
+      headers:
+        action === "approve"
+          ? { "Content-Type": "application/json" }
+          : undefined,
+      body: action === "approve" ? JSON.stringify({ grant_scope }) : undefined,
+      signal,
+    },
   );
 }
 

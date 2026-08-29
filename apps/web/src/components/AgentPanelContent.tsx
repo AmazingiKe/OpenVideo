@@ -1,4 +1,10 @@
-import { CheckCircle2, CircleX, RotateCcw, Wrench } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  CircleX,
+  RotateCcw,
+  Wrench,
+} from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -9,6 +15,13 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Card,
   CardContent,
@@ -26,6 +39,7 @@ import type {
   AgentContextAttachment,
   AgentEvent,
   AgentEvidenceBundle,
+  AgentPermissionGrantScope,
   AgentRetrievalScope,
   AgentRun,
   AgentRunMetrics,
@@ -249,7 +263,10 @@ export function AgentArtifactCard({
 }: {
   artifact: AgentArtifact;
   on_seek?: (seconds: number) => void;
-  on_resolve: (action: "approve" | "reject") => void;
+  on_resolve: (
+    action: "approve" | "reject",
+    grant_scope?: AgentPermissionGrantScope,
+  ) => void;
   on_regenerate?: () => void;
 }) {
   const pending = artifact.status === "pending";
@@ -320,7 +337,41 @@ export function AgentArtifactCard({
           <Button variant="outline" onClick={() => on_resolve("reject")}>
             整批拒绝
           </Button>
-          <Button onClick={() => on_resolve("approve")}>整批接受</Button>
+          <div className="flex items-center gap-1">
+            <Button onClick={() => on_resolve("approve", "once")}>
+              仅本次接受
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" size="icon" aria-label="选择更长授权范围">
+                  <ChevronDown />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>授权范围</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onSelect={() => on_resolve("approve", "session")}
+                >
+                  <div className="flex flex-col items-start">
+                    <span>本次对话</span>
+                    <span className="text-xs text-muted-foreground">
+                      自动接受当前对话中的同类操作
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => on_resolve("approve", "always")}
+                >
+                  <div className="flex flex-col items-start">
+                    <span>始终允许</span>
+                    <span className="text-xs text-muted-foreground">
+                      自动接受此视频的同类操作
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </CardFooter>
       ) : null}
     </Card>

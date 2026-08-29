@@ -9,6 +9,11 @@ from openvideo.core.agent_runtime_models import (
     AgentRun,
     AgentSession,
 )
+from openvideo.core.agent_governance_models import (
+    AgentPermissionGrant,
+    AgentPermissionGrantScope,
+    AgentResourceScope,
+)
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAsset, MediaAssetStatus, SourcePlatform
@@ -91,3 +96,25 @@ def test_artifact_terminal_transition_requires_claim(tmp_path: Path):
         assert library.reject_agent_artifact(artifact.artifact_id) is None
     finally:
         library.close()
+
+
+def test_session_permission_grant_survives_library_reopen(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    artifact = create_artifact(library)
+    grant = AgentPermissionGrant(
+        capability="artifact.apply.summary_edit",
+        resource_scope=AgentResourceScope.CURRENT_ITEM,
+        resource_id=artifact.asset_id,
+        scope=AgentPermissionGrantScope.SESSION,
+        session_id=artifact.session_id,
+    )
+    library.save_agent_session_permission_grant(grant)
+    library.close()
+
+    reopened = MediaLibrary.open(tmp_path)
+    try:
+        assert reopened.load_agent_session_permission_grants(
+            artifact.session_id
+        ) == [grant]
+    finally:
+        reopened.close()

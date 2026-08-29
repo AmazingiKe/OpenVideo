@@ -1,7 +1,8 @@
-import { TriangleAlert } from "lucide-react";
+import { Trash2, TriangleAlert } from "lucide-react";
 import { useId } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   Field,
   FieldDescription,
@@ -28,6 +29,12 @@ import type {
 const AUTOMATIC_MODEL_VALUE = "automatic";
 const MINIMUM_CONCURRENT_RUNS = 1;
 const MAXIMUM_CONCURRENT_RUNS = 32;
+const GRANT_CAPABILITY_LABELS: Record<string, string> = {
+  "artifact.apply.marker_changes": "标记变更",
+  "artifact.apply.summary_edit": "总结修改",
+  "artifact.apply.summary_media": "图文增强",
+  "artifact.apply.transcript_correction": "字幕修正",
+};
 
 const PERMISSION_DESCRIPTIONS: Record<AgentPermissionMode, string> = {
   request_approval: "写入、删除或已启用的外部工具操作都会先请求批准。",
@@ -101,6 +108,51 @@ export function AgentPreferencesSettings({
           </Alert>
         ) : null}
       </Field>
+
+      {value.always_allowed_grants.length > 0 ? (
+        <Field>
+          <FieldLabel>始终允许的操作</FieldLabel>
+          <ul className="divide-y rounded-lg border">
+            {value.always_allowed_grants.map((grant) => {
+              const label =
+                GRANT_CAPABILITY_LABELS[grant.capability] ?? "助手操作";
+              return (
+                <li
+                  key={grant.grant_id}
+                  className="flex flex-wrap items-center justify-between gap-3 p-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{label}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {grant.resource_id ? "仅限已授权视频" : "应用范围"}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`移除${label}始终授权`}
+                    onClick={() =>
+                      update_preference(
+                        "always_allowed_grants",
+                        value.always_allowed_grants.filter(
+                          (item) => item.grant_id !== grant.grant_id,
+                        ),
+                      )
+                    }
+                  >
+                    <Trash2 data-icon="inline-start" />
+                    移除
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+          <FieldDescription>
+            授权只覆盖列出的能力与视频；版本检查、证据门槛和安全边界始终有效。
+          </FieldDescription>
+        </Field>
+      ) : null}
 
       <Field>
         <FieldLabel id={`${control_id}-thinking`}>默认思考模式</FieldLabel>

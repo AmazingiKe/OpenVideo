@@ -12,6 +12,7 @@ from openvideo.agent_registry import (
 from openvideo.agent_service import AgentService
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
+    AgentArtifactApprovalRequest,
     AgentDefinitionAvailability,
     AgentRun,
     AgentRunCreate,
@@ -20,6 +21,7 @@ from openvideo.core.agent_runtime_models import (
     AgentSessionState,
     TERMINAL_AGENT_RUN_STAGES,
 )
+from openvideo.core.agent_governance_models import AgentPermissionGrantScope
 from openvideo.ui.event_stream import sse_event
 
 AGENT_EVENT_MIN_POLL_SECONDS = 0.1
@@ -30,6 +32,7 @@ AGENT_EVENT_KEEPALIVE_SECONDS = 15
 def register_agent_routes(
     app: FastAPI,
     agent_service: Callable[[], AgentService],
+    persist_preferences: Callable[[], None],
 ) -> None:
     @app.get(
         "/api/agent-definitions",
@@ -155,9 +158,18 @@ def register_agent_routes(
         "/api/agent-artifacts/{artifact_id}/approve",
         response_model=AgentArtifact,
     )
-    def approve_agent_artifact(artifact_id: str) -> AgentArtifact:
+    def approve_agent_artifact(
+        artifact_id: str,
+        request: AgentArtifactApprovalRequest,
+    ) -> AgentArtifact:
         try:
-            return agent_service().approve(artifact_id)
+            artifact = agent_service().approve_with_grant(
+                artifact_id,
+                request.grant_scope,
+            )
+            if request.grant_scope == AgentPermissionGrantScope.ALWAYS:
+                persist_preferences()
+            return artifact
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 

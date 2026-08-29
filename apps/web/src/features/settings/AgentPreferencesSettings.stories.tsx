@@ -98,6 +98,25 @@ export const EmptyModels: Story = {
   },
 };
 
+export const WithPersistentGrant: Story = {
+  args: {
+    value: {
+      ...DEFAULT_PREFERENCES,
+      always_allowed_grants: [
+        {
+          grant_id: "grant-0198d12345677890abcdef1234567892",
+          capability: "artifact.apply.summary_edit",
+          resource_scope: "current_item",
+          resource_id: "0198d123-4567-7890-abcd-ef1234567890",
+          scope: "always",
+          request_id: null,
+          session_id: null,
+        },
+      ],
+    },
+  },
+};
+
 export const Mobile: Story = {
   parameters: { viewport: { defaultViewport: "mobile1" } },
 };

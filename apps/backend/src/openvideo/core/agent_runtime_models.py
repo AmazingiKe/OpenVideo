@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from openvideo.core.identifiers import is_prefixed_uuid7, is_uuid7
 from openvideo.core.agent_governance_models import (
     AgentModelRole,
+    AgentPermissionGrantScope,
     AgentRetrievalScope,
     AgentThinkingMode,
 )
@@ -193,6 +194,10 @@ class AgentArtifact(BaseModel):
     error_message: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AgentArtifactApprovalRequest(BaseModel):
+    grant_scope: AgentPermissionGrantScope = AgentPermissionGrantScope.ONCE
 
 
 class AgentToolCall(BaseModel):

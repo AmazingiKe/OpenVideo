@@ -492,7 +492,13 @@ def create_app(
 
     register_ai_routes(app, resolved_settings, resolved_capability_resolver)
     register_summary_routes(app, lambda: summary_manager)
-    register_agent_routes(app, lambda: agent_service)
+    register_agent_routes(
+        app,
+        lambda: agent_service,
+        lambda: save_current_path(
+            str(library.library_path) if library is not None else None
+        ),
+    )
     register_library_routes(
         app,
         lambda: library,

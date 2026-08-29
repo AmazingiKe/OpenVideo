@@ -409,8 +409,8 @@ export function AgentPanel({
                     <AgentArtifactCard
                       artifact={artifact}
                       on_seek={on_seek}
-                      on_resolve={(action) =>
-                        void resolve_artifact(artifact, action)
+                      on_resolve={(action, grant_scope) =>
+                        void resolve_artifact(artifact, action, grant_scope)
                       }
                       on_regenerate={() =>
                         void submit(last_content, visible_attachments)

@@ -52,6 +52,7 @@ from openvideo.llm.events import (
 from openvideo.llm.models_dev import ModelsDevCatalog
 from openvideo.llm.model_profile import ModelLimits, ModelProfile
 from openvideo.llm.probe_cache import ProbeCache
+from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
 
@@ -99,7 +100,10 @@ def evidence_gate(
     }
 
 
-def create_client(tmp_path: Path) -> TestClient:
+def create_client(
+    tmp_path: Path,
+    preference_store: PreferenceStore | None = None,
+) -> TestClient:
     library = MediaLibrary.initialize_directory(tmp_path)
     asset_directory = library.asset_directory(ASSET_ID)
     asset_directory.mkdir(parents=True, exist_ok=True)
@@ -130,6 +134,7 @@ def create_client(tmp_path: Path) -> TestClient:
     return TestClient(
         create_app(
             Settings(library_path=tmp_path, ai_models=[model]),
+            preference_store=preference_store,
             capability_resolver=resolver,
         )
     )
@@ -630,6 +635,163 @@ def test_service_approval_uses_single_claim_before_side_effect(
     assert approved.status == AgentArtifactStatus.APPROVED
     assert repeated.status == AgentArtifactStatus.APPROVED
     assert calls == [artifact.artifact_id]
+
+
+def test_approval_scope_controls_future_operations(tmp_path: Path, monkeypatch):
+    applied: list[str] = []
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        other_session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        monkeypatch.setattr(
+            service.registry,
+            "require",
+            lambda _agent_id: SimpleNamespace(
+                approver=lambda artifact: applied.append(artifact.artifact_id)
+            ),
+        )
+        _, first_artifact = create_permission_artifact(service, session)
+
+        approved = client.post(
+            f"/api/agent-artifacts/{first_artifact.artifact_id}/approve",
+            json={"grant_scope": "session"},
+        )
+
+        assert approved.status_code == 200
+        grants = service.library.load_agent_session_permission_grants(
+            session.session_id
+        )
+        assert len(grants) == 1
+        assert grants[0].scope == "session"
+        assert grants[0].session_id == session.session_id
+
+        second_run, second_artifact = create_permission_artifact(service, session)
+        context = AgentRunContext(
+            service=service,
+            session=session,
+            run=second_run,
+            model=service.settings.ai_model(MODEL_ID),
+            task_input={},
+        )
+        service._process_run_artifacts(context, [second_artifact])
+
+        other_run, other_artifact = create_permission_artifact(
+            service,
+            other_session,
+        )
+        other_context = AgentRunContext(
+            service=service,
+            session=other_session,
+            run=other_run,
+            model=service.settings.ai_model(MODEL_ID),
+            task_input={},
+        )
+        service._process_run_artifacts(other_context, [other_artifact])
+
+        second_status = service.library.load_agent_artifact(
+            second_artifact.artifact_id
+        ).status
+        other_status = service.library.load_agent_artifact(
+            other_artifact.artifact_id
+        ).status
+
+    assert applied == [first_artifact.artifact_id, second_artifact.artifact_id]
+    assert second_status == AgentArtifactStatus.APPROVED
+    assert other_status == AgentArtifactStatus.PENDING
+
+
+def test_once_approval_only_applies_current_artifact(tmp_path: Path, monkeypatch):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        monkeypatch.setattr(
+            service.registry,
+            "require",
+            lambda _agent_id: SimpleNamespace(approver=lambda _artifact: None),
+        )
+        _, first_artifact = create_permission_artifact(service, session)
+
+        response = client.post(
+            f"/api/agent-artifacts/{first_artifact.artifact_id}/approve",
+            json={"grant_scope": "once"},
+        )
+
+        assert response.status_code == 200
+        assert service.library.load_agent_session_permission_grants(
+            session.session_id
+        ) == []
+        second_run, second_artifact = create_permission_artifact(service, session)
+        context = AgentRunContext(
+            service=service,
+            session=session,
+            run=second_run,
+            model=service.settings.ai_model(MODEL_ID),
+            task_input={},
+        )
+        service._process_run_artifacts(context, [second_artifact])
+        second_status = service.library.load_agent_artifact(
+            second_artifact.artifact_id
+        ).status
+
+    assert second_status == AgentArtifactStatus.PENDING
+
+
+def test_always_grant_is_scoped_and_persisted_in_user_preferences(
+    tmp_path: Path,
+    monkeypatch,
+):
+    config_path = tmp_path.with_name(f"{tmp_path.name}-config")
+    store = PreferenceStore(config_path / "preferences.json")
+    with create_client(tmp_path, store) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        _, artifact = create_permission_artifact(service, session)
+        monkeypatch.setattr(
+            service.registry,
+            "require",
+            lambda _agent_id: SimpleNamespace(approver=lambda _artifact: None),
+        )
+
+        response = client.post(
+            f"/api/agent-artifacts/{artifact.artifact_id}/approve",
+            json={"grant_scope": "always"},
+        )
+
+        assert response.status_code == 200
+        grant = service.settings.agent.always_allowed_grants[0]
+        assert grant.scope == "always"
+        assert grant.capability == "artifact.apply.test_changes"
+        assert grant.resource_id == ASSET_ID
+
+    assert store.load().agent.always_allowed_grants == [grant]
+
+
+def create_permission_artifact(service, session):
+    run = new_agent_run(
+        session.session_id,
+        f"request-{uuid7().hex}",
+        MODEL_ID,
+    )
+    service.library.save_agent_run(run)
+    artifact = AgentArtifact(
+        artifact_id=f"artifact-{uuid7().hex}",
+        run_id=run.run_id,
+        session_id=session.session_id,
+        agent_id=session.agent_id,
+        asset_id=session.asset_id,
+        result_type="test_changes",
+        payload={ARTIFACT_EVIDENCE_GATE_KEY: evidence_gate()},
+    )
+    service.library.save_agent_artifact(artifact)
+    return run, artifact
 
 
 def test_full_access_permission_auto_applies_completed_artifact(

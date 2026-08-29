@@ -22,6 +22,10 @@ from openvideo.core.agent_runtime_models import (
     AgentRunStage,
     AgentSession,
 )
+from openvideo.core.agent_governance_models import (
+    AgentPermissionGrant,
+    AgentPermissionGrantScope,
+)
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library_index import (
     DATABASE_FILE_NAME,
@@ -255,6 +259,38 @@ class LibraryGeneratedStorageMixin:
                 "DELETE FROM agent_sessions WHERE session_id = ?", (session_id,)
             )
         return cursor.rowcount > 0
+
+    def save_agent_session_permission_grant(
+        self, grant: AgentPermissionGrant
+    ) -> None:
+        if grant.scope != AgentPermissionGrantScope.SESSION:
+            raise ValueError("资料库只能保存本次对话授权")
+        if grant.session_id is None:
+            raise ValueError("本次对话授权必须绑定会话")
+        self._validate_identifier(grant.session_id, "session")
+        values = grant.model_dump(mode="json")
+        columns = tuple(values)
+        with self._lock, self._db():
+            self._db().execute(
+                f"INSERT OR IGNORE INTO agent_permission_grants "
+                f"({', '.join(columns)}) VALUES "
+                f"({', '.join('?' for _ in columns)})",
+                tuple(values[column] for column in columns),
+            )
+
+    def load_agent_session_permission_grants(
+        self, session_id: str
+    ) -> list[AgentPermissionGrant]:
+        self._validate_identifier(session_id, "session")
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM agent_permission_grants WHERE session_id = ?",
+                (session_id,),
+            )
+            .fetchall()
+        )
+        return [AgentPermissionGrant.model_validate(dict(row)) for row in rows]
 
     def save_agent_run(self, run: AgentRun) -> None:
         self._validate_identifier(run.run_id, "run")

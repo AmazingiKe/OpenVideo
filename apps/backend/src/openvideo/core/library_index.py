@@ -50,6 +50,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
         _rebuild_database(database_path, library_path / "temp", assets_path)
     connection = open_index_connection(database_path)
     ensure_agent_evidence_schema(connection)
+    _ensure_agent_permission_grant_schema(connection)
     _ensure_download_quality_schema(connection)
     _ensure_download_event_schema(connection)
     synchronize_folders(connection, library_path / "folders.json")
@@ -436,6 +437,24 @@ def _ensure_download_event_schema(connection: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_agent_permission_grant_schema(connection: sqlite3.Connection) -> None:
+    """对话授权属于运行状态，增量建表以保留已有资料库的任务历史。"""
+
+    with connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS agent_permission_grants ("
+            "grant_id TEXT PRIMARY KEY, capability TEXT NOT NULL, "
+            "resource_scope TEXT NOT NULL, resource_id TEXT, scope TEXT NOT NULL, "
+            "request_id TEXT, session_id TEXT NOT NULL "
+            "REFERENCES agent_sessions(session_id) ON DELETE CASCADE)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS agent_permission_grants_scope_index "
+            "ON agent_permission_grants("
+            "session_id, capability, resource_scope, resource_id, scope)"
+        )
+
+
 def _ensure_download_quality_schema(connection: sqlite3.Connection) -> None:
     """旧资料库增量补齐画质字段，避免为运行时任务表重建整个查询投影。"""
 
@@ -645,6 +664,12 @@ CREATE TABLE agent_sessions (
     title TEXT NOT NULL, context TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE agent_permission_grants (
+    grant_id TEXT PRIMARY KEY, capability TEXT NOT NULL,
+    resource_scope TEXT NOT NULL, resource_id TEXT, scope TEXT NOT NULL,
+    request_id TEXT,
+    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE
+);
 CREATE TABLE agent_runs (
     run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
     request_key TEXT NOT NULL UNIQUE, model_id TEXT NOT NULL, stage TEXT NOT NULL,
@@ -695,6 +720,7 @@ CREATE INDEX summary_versions_asset_created_index ON summary_versions(asset_id, 
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);
 CREATE INDEX agent_sessions_updated_index ON agent_sessions(updated_at DESC);
 CREATE INDEX agent_sessions_asset_agent_index ON agent_sessions(asset_id, agent_id, updated_at DESC);
+CREATE UNIQUE INDEX agent_permission_grants_scope_index ON agent_permission_grants(session_id, capability, resource_scope, resource_id, scope);
 CREATE INDEX agent_runs_session_created_index ON agent_runs(session_id, created_at);
 CREATE INDEX agent_events_session_sequence_index ON agent_events(session_id, sequence);
 CREATE INDEX agent_artifacts_run_created_index ON agent_artifacts(run_id, created_at);
