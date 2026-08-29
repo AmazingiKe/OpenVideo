@@ -191,7 +191,7 @@ export function AgentComposer({
         ) : null}
         <Field className="flex-row items-end gap-2">
           <FieldLabel className="sr-only" htmlFor={`${control_id}-composer`}>
-            Agent 指令
+            助手指令
           </FieldLabel>
           <Textarea
             id={`${control_id}-composer`}
@@ -216,7 +216,7 @@ export function AgentComposer({
               preparing_attachments ||
               (pending ? !on_cancel : !value.trim())
             }
-            aria-label={pending && on_cancel ? "停止 Agent" : "发送指令"}
+            aria-label={pending && on_cancel ? "停止助手" : "发送指令"}
             onClick={pending && on_cancel ? on_cancel : undefined}
           >
             {submitting ? (

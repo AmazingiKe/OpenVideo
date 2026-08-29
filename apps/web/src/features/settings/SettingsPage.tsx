@@ -287,8 +287,8 @@ export function SettingsPage() {
           </SettingsCard>
           <SettingsCard
             icon={ShieldCheck}
-            title="Agent 偏好"
-            description="为所有对话设置默认权限、思考方式和模型角色；单次任务仍可临时调整。"
+            title="助手偏好"
+            description="为所有对话设置默认权限、思考方式和模型角色。"
           >
             <AgentPreferencesSettings
               value={preferences.agent}

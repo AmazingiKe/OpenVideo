@@ -47,7 +47,7 @@ export function MarkerAgentPanel({
         "min-h-0 min-w-0 bg-card",
         compact ? "h-[36rem] shrink-0 border-t" : "h-full",
       )}
-      aria-label="标记 Agent"
+      aria-label="助手"
       data-slot="marker-agent-panel"
     >
       {!asset_id ? (
@@ -57,9 +57,7 @@ export function MarkerAgentPanel({
               <Bot />
             </EmptyMedia>
             <EmptyTitle>请先选择视频</EmptyTitle>
-            <EmptyDescription>
-              Agent 只处理当前播放器中的视频。
-            </EmptyDescription>
+            <EmptyDescription>助手只处理当前播放器中的视频。</EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (

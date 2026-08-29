@@ -256,7 +256,7 @@ export function AgentArtifactCard({
   const applying = artifact.status === "applying";
   const failed = artifact.status === "failed";
   return (
-    <Card aria-label="Agent 审批结果">
+    <Card aria-label="助手审批结果">
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>

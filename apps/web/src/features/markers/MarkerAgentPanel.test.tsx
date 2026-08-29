@@ -10,7 +10,7 @@ const { agent_panel_spy } = vi.hoisted(() => ({
 vi.mock("@/components/AgentPanel", () => ({
   AgentPanel: (props: unknown) => {
     agent_panel_spy(props);
-    return <div>标记 Agent</div>;
+    return <div>助手</div>;
   },
 }));
 

@@ -293,7 +293,7 @@ describe("App", () => {
     expect(
       screen.getByRole("button", { name: "展开视频库" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("标记 Agent")).toBeInTheDocument();
+    expect(screen.getByLabelText("助手")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "选择标记视频" }),
     ).not.toBeInTheDocument();
@@ -440,7 +440,10 @@ describe("App", () => {
     const timeline = await screen.findByRole("region", {
       name: "剪辑时间轴",
     });
-    const agent_panel = screen.getByLabelText("标记 Agent");
+    const agent_panel = screen.getByLabelText("助手");
+    expect(
+      within(agent_panel).queryByLabelText("模型"),
+    ).not.toBeInTheDocument();
     expect(marker_workspace).toContainElement(video_workspace);
     expect(marker_workspace).toContainElement(timeline);
     expect(marker_workspace).not.toContainElement(agent_panel);

@@ -42,7 +42,7 @@ const BASE_ARTIFACT: AgentArtifact = {
 };
 
 const meta = {
-  title: "Agents/UnifiedAgentPanel",
+  title: "Assistant/UnifiedAssistantPanel",
   component: AgentArtifactCard,
   decorators: [
     (Story) => (

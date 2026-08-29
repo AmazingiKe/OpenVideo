@@ -209,7 +209,7 @@ export function SummaryEditorLayout({
         size="sm"
         onClick={() => set_agent_sheet_open(true)}
       >
-        <PanelRight data-icon="inline-start" /> Agent
+        <PanelRight data-icon="inline-start" /> 助手
       </Button>
     </>
   ) : null;
@@ -286,7 +286,7 @@ export function SummaryEditorLayout({
                 className="w-[min(92vw,26rem)] gap-0 p-0"
               >
                 <SheetHeader className="sr-only">
-                  <SheetTitle>总结 Agent</SheetTitle>
+                  <SheetTitle>助手</SheetTitle>
                   <SheetDescription>建议需确认后才会应用</SheetDescription>
                 </SheetHeader>
                 {agent_panel}

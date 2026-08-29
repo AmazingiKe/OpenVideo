@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { AgentComposer } from "@/components/AgentComposer";
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
 import { AgentMarkdown } from "@/components/AgentMarkdown";
-import { AiModelSelect } from "@/components/AiModelSelect";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Marker, MarkerContent } from "@/components/ui/marker";
 import { Message, MessageContent } from "@/components/ui/message";
@@ -141,7 +140,6 @@ export function AgentPanel({
     select_session,
     sessions,
     set_draft,
-    set_model_id,
     set_retrieval_scope,
     set_run_option_value,
     set_scope_pinned,
@@ -181,7 +179,7 @@ export function AgentPanel({
     [context_attachments, dismissed_attachment_ids, dropped_attachments],
   );
 
-  const panel_title = title ?? definition?.definition.title ?? "Agent";
+  const panel_title = title ?? "助手";
 
   async function submit_current(content_override?: string) {
     const submitted = await submit(content_override, visible_attachments);
@@ -201,7 +199,7 @@ export function AgentPanel({
             <Bot />
           </EmptyMedia>
           <EmptyTitle>请先选择视频</EmptyTitle>
-          <EmptyDescription>Agent 只处理当前工作区中的素材。</EmptyDescription>
+          <EmptyDescription>助手只处理当前工作区中的素材。</EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
@@ -220,7 +218,7 @@ export function AgentPanel({
               {panel_title}
             </CardTitle>
             <CardDescription>
-              {definition?.definition.description ?? "正在读取 Agent 配置"}
+              {definition?.definition.description ?? "正在读取助手配置"}
             </CardDescription>
           </div>
           {active_run ? (
@@ -231,7 +229,7 @@ export function AgentPanel({
         </div>
         <FieldGroup
           className="min-w-0 flex-row flex-wrap items-start gap-3"
-          aria-label="Agent 设置"
+          aria-label="助手设置"
         >
           {run_options.length > 0 ? (
             <Field className="min-w-0 flex-1 basis-40 gap-1.5">
@@ -260,15 +258,6 @@ export function AgentPanel({
               </Select>
             </Field>
           ) : null}
-          <div className="min-w-0 flex-1 basis-40">
-            <AiModelSelect
-              id={`${agent_id}-agent-model`}
-              label="模型"
-              models={compatible_models}
-              value={model_id}
-              on_change={set_model_id}
-            />
-          </div>
         </FieldGroup>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1 basis-40">
@@ -281,7 +270,7 @@ export function AgentPanel({
                 id={`${agent_id}-agent-session`}
                 size="sm"
                 className="w-full min-w-0"
-                aria-label="Agent 历史会话"
+                aria-label="助手历史会话"
               >
                 <History />
                 <SelectValue placeholder="发送时创建新会话" />
@@ -315,7 +304,7 @@ export function AgentPanel({
                     .map((capability) => CAPABILITY_LABELS[capability])
                     .join("、")}`
                 : (definition.unavailable_reason ??
-                  "所选 Agent 的能力要求未满足")}
+                  "助手当前缺少完成该操作的模型能力")}
             </AlertDescription>
           </Alert>
         ) : null}
@@ -325,7 +314,7 @@ export function AgentPanel({
           <MessageScroller>
             <MessageScrollerViewport
               role="log"
-              aria-label="Agent 对话消息"
+              aria-label="助手对话消息"
               aria-live="polite"
               tabIndex={0}
             >
@@ -497,7 +486,7 @@ export function AgentPanel({
                 {error ? (
                   <MessageScrollerItem messageId="agent-error">
                     <Alert variant="destructive">
-                      <AlertTitle>Agent 运行失败</AlertTitle>
+                      <AlertTitle>助手运行失败</AlertTitle>
                       <AlertDescription>{error}</AlertDescription>
                     </Alert>
                   </MessageScrollerItem>

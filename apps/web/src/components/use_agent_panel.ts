@@ -342,7 +342,7 @@ export function use_agent_panel({
       set_state(refreshed);
       set_connection_message(null);
       if (final_run.stage === "failed") {
-        set_error(final_run.error_message ?? "Agent 运行失败");
+        set_error(final_run.error_message ?? "助手运行失败");
       }
     } catch (caught) {
       if (is_abort_error(caught)) return;
@@ -408,7 +408,6 @@ export function use_agent_panel({
     select_session,
     sessions,
     set_draft,
-    set_model_id,
     set_retrieval_scope,
     set_run_option_value,
     set_scope_pinned,

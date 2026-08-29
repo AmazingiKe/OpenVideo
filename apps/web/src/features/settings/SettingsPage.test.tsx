@@ -170,7 +170,7 @@ describe("SettingsPage", () => {
     render(<SettingsPage />);
 
     expect(
-      await screen.findByRole("heading", { name: "Agent 偏好" }),
+      await screen.findByRole("heading", { name: "助手偏好" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "仅风险询问" })).toBeChecked();
 

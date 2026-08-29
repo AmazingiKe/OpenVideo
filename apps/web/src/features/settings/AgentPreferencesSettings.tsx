@@ -37,7 +37,7 @@ const PERMISSION_DESCRIPTIONS: Record<AgentPermissionMode, string> = {
 };
 
 const THINKING_DESCRIPTIONS: Record<AgentThinkingMode, string> = {
-  auto: "由 Agent 根据任务复杂度选择快速或复杂模型。",
+  auto: "由助手根据任务复杂度选择快速或复杂模型。",
   fast: "默认优先较低延迟，适合检索、提取与简短问答。",
   complex: "默认优先深度分析，适合多步推理与复杂任务。",
 };
@@ -96,8 +96,7 @@ export function AgentPreferencesSettings({
             <TriangleAlert aria-hidden="true" />
             <AlertTitle>完全访问会跳过逐次批准</AlertTitle>
             <AlertDescription>
-              Agent
-              可直接执行程序已启用的写入与外部工具，请确认运行环境可信。当前版本不提供互联网检索。
+              助手可直接执行程序已启用的写入与外部工具，请确认运行环境可信。当前版本不提供互联网检索。
             </AlertDescription>
           </Alert>
         ) : null}

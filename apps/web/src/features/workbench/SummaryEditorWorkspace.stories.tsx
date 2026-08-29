@@ -145,7 +145,7 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
         {
           definition: {
             agent_id: "summary",
-            title: "总结 Agent",
+            title: "助手",
             description: "围绕视频证据问答或生成文档修改预览。",
             mode: "chat",
             prompt: "总结协作",
