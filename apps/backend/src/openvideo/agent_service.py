@@ -197,7 +197,9 @@ class AgentService:
         self.summary_documents = summary_documents
         self.capability_resolver = capability_resolver or CapabilityResolver()
         self.retrieval_models = retrieval_models
-        self.store = AgentSessionStore(library)
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._run_event_signals: dict[str, asyncio.Event] = {}
+        self.store = AgentSessionStore(library, self._notify_run_event)
         self._tasks: dict[str, asyncio.Task[AgentRun]] = {}
         self._semantic_index_task: asyncio.Task[EvidenceIndexStatus] | None = None
         self._closing = False
@@ -557,6 +559,52 @@ class AgentService:
             if event.run_id == run_id
         ]
 
+    async def wait_for_run_events(
+        self,
+        run_id: str,
+        after_sequence: int,
+        timeout_seconds: float,
+    ) -> list[AgentEvent]:
+        """持久化序号负责恢复，内存信号只用于避免 SSE 轮询数据库。"""
+
+        if self._closing:
+            raise asyncio.CancelledError
+        self._event_loop = asyncio.get_running_loop()
+        events = self.run_events(run_id, after_sequence)
+        if events:
+            return events
+        if self.run(run_id).stage in TERMINAL_AGENT_RUN_STAGES:
+            self._run_event_signals.pop(run_id, None)
+            return []
+        signal = self._run_event_signals.setdefault(run_id, asyncio.Event())
+        signal.clear()
+        events = self.run_events(run_id, after_sequence)
+        if events:
+            return events
+        try:
+            await asyncio.wait_for(signal.wait(), timeout_seconds)
+        except TimeoutError:
+            return []
+        if self._closing:
+            raise asyncio.CancelledError
+        return self.run_events(run_id, after_sequence)
+
+    def _notify_run_event(self, event: AgentEvent) -> None:
+        if event.run_id is None:
+            return
+        signal = self._run_event_signals.get(event.run_id)
+        loop = self._event_loop
+        if signal is None or loop is None or loop.is_closed():
+            return
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if current_loop is loop:
+            signal.set()
+        else:
+            loop.call_soon_threadsafe(signal.set)
+
     async def cancel(self, run_id: str) -> AgentRun:
         run = self.run(run_id)
         if run.stage in TERMINAL_AGENT_RUN_STAGES:
@@ -705,6 +753,9 @@ class AgentService:
 
     async def close(self) -> None:
         self._closing = True
+        for signal in self._run_event_signals.values():
+            signal.set()
+        self._run_event_signals.clear()
         for runtime_id, runtime in list(self._runtimes.items()):
             runtime.cancel(runtime_id)
         if self._tasks:

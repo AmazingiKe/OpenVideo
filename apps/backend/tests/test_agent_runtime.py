@@ -187,6 +187,24 @@ def setup_runtime(
     return repository, registry, executor, runtime, run, model, profile, definition
 
 
+def test_session_store_notifies_after_event_is_persisted():
+    repository = MemoryRepository()
+    observed_events: list[AgentEvent] = []
+    store = AgentSessionStore(repository, observed_events.append)
+    session_id = f"session-{uuid7().hex}"
+    run_id = f"run-{uuid7().hex}"
+
+    event = store.append(
+        session_id,
+        run_id,
+        AgentEventType.MESSAGE_DELTA,
+        {"content": "已持久化"},
+    )
+
+    assert observed_events == [event]
+    assert repository.load_agent_events(session_id) == [event]
+
+
 @pytest.mark.asyncio
 async def test_plain_reply_uses_standardized_events():
     repository, _, _, runtime, run, model, profile, definition = setup_runtime(

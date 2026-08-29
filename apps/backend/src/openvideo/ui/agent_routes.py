@@ -1,5 +1,4 @@
 from collections.abc import Callable
-import asyncio
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -27,8 +26,6 @@ from openvideo.core.agent_runtime_models import (
 from openvideo.core.agent_governance_models import AgentPermissionGrantScope
 from openvideo.ui.event_stream import sse_event
 
-AGENT_EVENT_MIN_POLL_SECONDS = 0.1
-AGENT_EVENT_MAX_POLL_SECONDS = 0.5
 AGENT_EVENT_KEEPALIVE_SECONDS = 15
 
 
@@ -111,10 +108,12 @@ def register_agent_routes(
 
         async def stream_events():
             sequence = after_sequence
-            idle_seconds = 0.0
-            poll_seconds = AGENT_EVENT_MIN_POLL_SECONDS
             while not await request.is_disconnected():
-                events = agent_service().run_events(run_id, sequence)
+                events = await agent_service().wait_for_run_events(
+                    run_id,
+                    sequence,
+                    AGENT_EVENT_KEEPALIVE_SECONDS,
+                )
                 for event in events:
                     sequence = event.sequence
                     yield sse_event(
@@ -130,19 +129,7 @@ def register_agent_routes(
                 if run_state.stage in TERMINAL_AGENT_RUN_STAGES and not events:
                     break
                 if not events:
-                    idle_seconds += poll_seconds
-                    if idle_seconds >= AGENT_EVENT_KEEPALIVE_SECONDS:
-                        yield ": keep-alive\n\n"
-                        idle_seconds = 0.0
-                else:
-                    idle_seconds = 0.0
-                    poll_seconds = AGENT_EVENT_MIN_POLL_SECONDS
-                await asyncio.sleep(poll_seconds)
-                if not events:
-                    poll_seconds = min(
-                        AGENT_EVENT_MAX_POLL_SECONDS,
-                        poll_seconds * 2,
-                    )
+                    yield ": keep-alive\n\n"
 
         return StreamingResponse(
             stream_events(),

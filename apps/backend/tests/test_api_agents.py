@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from threading import Event as ThreadEvent
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -24,6 +25,7 @@ from openvideo.core.agent_runtime_models import (
     AgentArtifactStatus,
     AgentContextAttachment,
     AgentDefinition,
+    AgentEventType,
     AgentMode,
     AgentRunCreate,
     AgentSession,
@@ -311,6 +313,86 @@ def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypat
         assert tasks[0]["resume_available"] is True
         assert resumed.status_code == 200
         assert resumed.json()["run_id"] != run_id
+
+
+def test_run_event_waiter_wakes_without_database_polling(tmp_path: Path, monkeypatch):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        original_run_events = service.run_events
+        first_read = ThreadEvent()
+        read_count = 0
+
+        def tracked_run_events(run_id: str, after_sequence: int = 0):
+            nonlocal read_count
+            read_count += 1
+            first_read.set()
+            return original_run_events(run_id, after_sequence)
+
+        monkeypatch.setattr(service, "run_events", tracked_run_events)
+        assert client.portal is not None
+        future = client.portal.start_task_soon(
+            service.wait_for_run_events,
+            run.run_id,
+            0,
+            1,
+        )
+        assert first_read.wait(timeout=1)
+
+        persisted = service.store.append(
+            session.session_id,
+            run.run_id,
+            AgentEventType.MESSAGE_DELTA,
+            {"content": "事件到达后立即唤醒"},
+        )
+        received = future.result(timeout=1)
+
+        assert received == [persisted]
+        assert read_count <= 3
+
+
+def test_run_event_waiter_uses_one_timeout_instead_of_polling(
+    tmp_path: Path,
+    monkeypatch,
+):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        original_run_events = service.run_events
+        read_count = 0
+
+        def tracked_run_events(run_id: str, after_sequence: int = 0):
+            nonlocal read_count
+            read_count += 1
+            return original_run_events(run_id, after_sequence)
+
+        monkeypatch.setattr(service, "run_events", tracked_run_events)
+        assert client.portal is not None
+        future = client.portal.start_task_soon(
+            service.wait_for_run_events,
+            run.run_id,
+            0,
+            0.03,
+        )
+
+        assert future.result(timeout=1) == []
+        assert read_count == 2
 
 
 def test_natural_language_routes_to_marker_edit_without_ui_mode(

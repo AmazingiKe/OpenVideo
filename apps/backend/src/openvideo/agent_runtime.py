@@ -114,8 +114,13 @@ class AgentEventRepository(Protocol):
 class AgentSessionStore:
     """持久化事件既服务 SSE 恢复，也派生下一轮模型上下文。"""
 
-    def __init__(self, repository: AgentEventRepository) -> None:
+    def __init__(
+        self,
+        repository: AgentEventRepository,
+        on_append: Callable[[AgentEvent], None] | None = None,
+    ) -> None:
         self.repository = repository
+        self.on_append = on_append
 
     def append(
         self,
@@ -127,6 +132,8 @@ class AgentSessionStore:
         event = self.repository.append_agent_event(
             session_id, run_id, event_type, payload or {}
         )
+        if self.on_append is not None:
+            self.on_append(event)
         return event
 
     def events(self, session_id: str, *, after_sequence: int = 0) -> list[AgentEvent]:
