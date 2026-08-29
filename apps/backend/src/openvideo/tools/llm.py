@@ -27,6 +27,56 @@ def complete_text(
     max_tokens: int | None = None,
     disable_thinking: bool = False,
 ) -> str:
+    request = _completion_request(
+        model,
+        messages,
+        timeout_seconds,
+        max_tokens,
+        disable_thinking,
+    )
+    try:
+        response = litellm.completion(**request)
+        content = response.choices[0].message.content
+    except litellm.exceptions.ContextWindowExceededError as error:
+        raise LlmContextLengthError(f"模型上下文不足：{error}") from error
+    except Exception as error:
+        raise LlmCompletionError(f"模型请求失败：{error}") from error
+    return _validated_content(content)
+
+
+async def complete_text_async(
+    model: AiModelConfiguration,
+    messages: list[dict[str, object]],
+    timeout_seconds: int,
+    max_tokens: int | None = None,
+    disable_thinking: bool = False,
+) -> str:
+    """异步请求允许任务取消直接传播到底层 HTTP 连接。"""
+
+    request = _completion_request(
+        model,
+        messages,
+        timeout_seconds,
+        max_tokens,
+        disable_thinking,
+    )
+    try:
+        response = await litellm.acompletion(**request)
+        content = response.choices[0].message.content
+    except litellm.exceptions.ContextWindowExceededError as error:
+        raise LlmContextLengthError(f"模型上下文不足：{error}") from error
+    except Exception as error:
+        raise LlmCompletionError(f"模型请求失败：{error}") from error
+    return _validated_content(content)
+
+
+def _completion_request(
+    model: AiModelConfiguration,
+    messages: list[dict[str, object]],
+    timeout_seconds: int,
+    max_tokens: int | None,
+    disable_thinking: bool,
+) -> dict[str, object]:
     request: dict[str, object] = {
         "model": model.litellm_model,
         "messages": messages,
@@ -42,14 +92,10 @@ def complete_text(
         request["max_tokens"] = max_tokens
     if disable_thinking:
         request["thinking"] = {"type": "disabled"}
+    return request
 
-    try:
-        response = litellm.completion(**request)
-        content = response.choices[0].message.content
-    except litellm.exceptions.ContextWindowExceededError as error:
-        raise LlmContextLengthError(f"模型上下文不足：{error}") from error
-    except Exception as error:
-        raise LlmCompletionError(f"模型请求失败：{error}") from error
+
+def _validated_content(content: object) -> str:
     if not isinstance(content, str) or not content.strip():
         raise LlmCompletionError("模型未返回有效文本")
     return content.strip()

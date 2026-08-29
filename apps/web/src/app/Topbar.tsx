@@ -10,6 +10,8 @@ import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 
 import { SETTINGS_ROUTE, WORKSPACE_ROUTES } from "@/app/workspace_routes";
+import { TaskCenter } from "@/app/TaskCenter";
+import { use_optional_task_manager } from "@/app/task_manager";
 import { cn } from "@/lib/utils";
 
 const IDLE_PRELOAD_TIMEOUT_MS = 2_000;
@@ -27,6 +29,8 @@ const WORKSPACE_ICONS = {
 } as const;
 
 export function Topbar() {
+  const task_manager = use_optional_task_manager();
+
   useEffect(() => {
     const preload_routes = () => {
       for (const route of WORKSPACE_ROUTES) {
@@ -83,6 +87,12 @@ export function Topbar() {
         })}
       </nav>
       <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-2 justify-self-end md:col-start-3">
+        {task_manager ? (
+          <TaskCenter
+            tasks={task_manager.task_records}
+            on_resume={task_manager.resume_agent_task}
+          />
+        ) : null}
         <NavLink
           className={({ isActive }) =>
             cn(

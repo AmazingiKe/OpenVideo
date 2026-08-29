@@ -9,6 +9,7 @@ import type {
   AgentSession,
   AgentSessionState,
   AgentThinkingMode,
+  AgentTaskSnapshot,
 } from "../types";
 import { api_base_url, ApiError, request_json } from "./client";
 
@@ -83,6 +84,22 @@ export function get_agent_run(
   signal?: AbortSignal,
 ): Promise<AgentRun> {
   return request_json(`/api/agent-runs/${encodeURIComponent(run_id)}`, {
+    signal,
+  });
+}
+
+export function list_agent_tasks(
+  signal?: AbortSignal,
+): Promise<AgentTaskSnapshot[]> {
+  return request_json("/api/agent-tasks", { signal });
+}
+
+export function resume_agent_run(
+  run_id: string,
+  signal?: AbortSignal,
+): Promise<AgentRun> {
+  return request_json(`/api/agent-runs/${encodeURIComponent(run_id)}/resume`, {
+    method: "POST",
     signal,
   });
 }

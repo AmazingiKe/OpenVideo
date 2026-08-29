@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from openvideo.agent_runtime import AgentRuntimeError
+from openvideo.agent_runtime import AgentCancellation, AgentRuntimeError
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentEventType,
@@ -219,6 +219,7 @@ class AgentRunContext:
     task_input: dict[str, Any]
     retrieval_scope: AgentRetrievalScope = AgentRetrievalScope.CURRENT_ASSET
     evidence: RunEvidenceState = field(default_factory=RunEvidenceState)
+    cancellation: AgentCancellation = field(default_factory=AgentCancellation)
 
     def create_artifact(
         self, result_type: str, payload: dict[str, Any]

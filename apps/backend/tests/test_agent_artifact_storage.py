@@ -7,6 +7,8 @@ from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentArtifactStatus,
     AgentRun,
+    AgentRunCheckpoint,
+    AgentRunCreate,
     AgentSession,
 )
 from openvideo.core.agent_governance_models import (
@@ -113,8 +115,36 @@ def test_session_permission_grant_survives_library_reopen(tmp_path: Path):
 
     reopened = MediaLibrary.open(tmp_path)
     try:
-        assert reopened.load_agent_session_permission_grants(
-            artifact.session_id
-        ) == [grant]
+        assert reopened.load_agent_session_permission_grants(artifact.session_id) == [
+            grant
+        ]
+    finally:
+        reopened.close()
+
+
+def test_agent_checkpoint_survives_library_reopen(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    artifact = create_artifact(library)
+    checkpoint = AgentRunCheckpoint(
+        run_id=artifact.run_id,
+        session_id=artifact.session_id,
+        request=AgentRunCreate(
+            request_key=f"request-{uuid7().hex}",
+            ai_model_id=f"model-{uuid7().hex}",
+            content="继续分析视频",
+        ),
+        stage="running",
+    )
+    library.save_agent_run_checkpoint(checkpoint)
+    library.close()
+
+    reopened = MediaLibrary.open(tmp_path)
+    try:
+        assert reopened.load_agent_run_checkpoint(artifact.run_id) == checkpoint
+        reopened.interrupt_agent_run_checkpoints()
+        interrupted = reopened.load_agent_run_checkpoint(artifact.run_id)
+        assert interrupted is not None
+        assert interrupted.stage == "interrupted"
+        assert interrupted.resume_allowed is True
     finally:
         reopened.close()

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from openvideo.core.ai_models import AiModelConfiguration
-from openvideo.tools.llm import LlmCompletionError, complete_text
+from openvideo.tools.llm import LlmCompletionError, complete_text, complete_text_async
 
 
 DEFAULT_DESCRIBE_TIMEOUT_SECONDS = 120
@@ -20,8 +20,7 @@ class VisionDescriptionError(RuntimeError):
 class VisionDescriber(Protocol):
     """可插拔的画面描述实现，统一返回自然语言描述。"""
 
-    def describe(self, image_paths: list[Path], prompt: str) -> str:
-        ...
+    def describe(self, image_paths: list[Path], prompt: str) -> str: ...
 
 
 class LiteLlmVision:
@@ -31,28 +30,7 @@ class LiteLlmVision:
         self.model = model
 
     def describe(self, image_paths: list[Path], prompt: str) -> str:
-        if not image_paths:
-            raise VisionDescriptionError("至少需要一张关键帧")
-        image_messages: list[dict[str, object]] = []
-        for index, image_path in enumerate(image_paths, start=1):
-            image_messages.extend(
-                (
-                    {"type": "text", "text": f"候选画面 {index}"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": _image_data_url(image_path)},
-                    },
-                )
-            )
-        messages: list[dict[str, object]] = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    *image_messages,
-                ],
-            }
-        ]
+        messages = _vision_messages(image_paths, prompt)
         try:
             return complete_text(
                 self.model,
@@ -61,6 +39,45 @@ class LiteLlmVision:
             )
         except LlmCompletionError as error:
             raise VisionDescriptionError(str(error)) from error
+
+    async def describe_async(self, image_paths: list[Path], prompt: str) -> str:
+        messages = _vision_messages(image_paths, prompt)
+        try:
+            return await complete_text_async(
+                self.model,
+                messages,
+                DEFAULT_DESCRIBE_TIMEOUT_SECONDS,
+            )
+        except LlmCompletionError as error:
+            raise VisionDescriptionError(str(error)) from error
+
+
+def _vision_messages(
+    image_paths: list[Path],
+    prompt: str,
+) -> list[dict[str, object]]:
+    if not image_paths:
+        raise VisionDescriptionError("至少需要一张关键帧")
+    image_messages: list[dict[str, object]] = []
+    for index, image_path in enumerate(image_paths, start=1):
+        image_messages.extend(
+            (
+                {"type": "text", "text": f"候选画面 {index}"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": _image_data_url(image_path)},
+                },
+            )
+        )
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                *image_messages,
+            ],
+        }
+    ]
 
 
 def _image_data_url(image_path: Path) -> str:

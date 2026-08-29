@@ -12,6 +12,7 @@ import portalocker
 from pydantic import BaseModel
 
 from openvideo.core.download_models import DownloadEvent, DownloadJob, DownloadStage
+from openvideo.core.agent_checkpoint_store import open_agent_checkpoint_database
 from openvideo.core.identifiers import is_uuid7, uuid7
 from openvideo.core.folder_models import (
     Folder,
@@ -106,6 +107,7 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         self.folder_manifest_path = self.library_path / FOLDER_MANIFEST_FILE_NAME
         self._folders = self._load_folder_manifest()
         self._connection: sqlite3.Connection | None = None
+        self._checkpoint_connection: sqlite3.Connection | None = None
         self._file_lock: portalocker.Lock | None = None
         self._lock = RLock()
 
@@ -179,20 +181,24 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         try:
             self._remove_legacy_agent_files()
             self._connection = open_index_database(self.library_path, self.assets_path)
+            self._checkpoint_connection = open_agent_checkpoint_database(
+                self.library_path / AGENT_CHECKPOINT_DATABASE_FILE_NAME
+            )
             self._file_lock = lock
             self._recover_interrupted_downloads()
         except Exception:
             if self._connection is not None:
                 self._connection.close()
                 self._connection = None
+            if self._checkpoint_connection is not None:
+                self._checkpoint_connection.close()
+                self._checkpoint_connection = None
             self._file_lock = None
             lock.release()
             raise
 
     def _remove_legacy_agent_files(self) -> None:
         """旧会话不是业务成果，统一运行时启用后必须避免再次被恢复。"""
-        checkpoint = self.library_path / AGENT_CHECKPOINT_DATABASE_FILE_NAME
-        checkpoint.unlink(missing_ok=True)
         for asset_directory in self.assets_path.iterdir():
             if asset_directory.is_symlink() or not asset_directory.is_dir():
                 continue
@@ -223,6 +229,10 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
                 self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 self._connection.close()
                 self._connection = None
+            if self._checkpoint_connection:
+                self._checkpoint_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self._checkpoint_connection.close()
+                self._checkpoint_connection = None
             if self._file_lock:
                 self._file_lock.release()
                 self._file_lock = None
@@ -592,7 +602,6 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
             thumbnail_storyboard=self._storyboard_for(asset),
         )
 
-
     def _write_asset_metadata(self, asset: MediaAsset) -> None:
         asset_directory = self.asset_directory(asset.asset_id)
         asset_directory.mkdir(parents=True, exist_ok=True)
@@ -748,6 +757,11 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         if self._connection is None:
             raise RuntimeError("资料库未打开")
         return self._connection
+
+    def _checkpoint_db(self) -> sqlite3.Connection:
+        if self._checkpoint_connection is None:
+            raise RuntimeError("Agent 检查点数据库未打开")
+        return self._checkpoint_connection
 
     def _load_folder_manifest(self) -> dict[str, Folder]:
         if not self.folder_manifest_path.exists():

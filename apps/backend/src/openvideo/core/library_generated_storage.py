@@ -5,6 +5,11 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Literal
 
+from openvideo.core.agent_checkpoint_store import (
+    load_agent_checkpoint,
+    load_agent_checkpoints,
+    save_agent_checkpoint,
+)
 from openvideo.core.agent_evidence_index import (
     EvidenceIndexStatus,
     IndexedEvidenceDocument,
@@ -20,6 +25,7 @@ from openvideo.core.agent_runtime_models import (
     AgentEvent,
     AgentEventType,
     AgentRun,
+    AgentRunCheckpoint,
     AgentRunStage,
     AgentSession,
 )
@@ -158,10 +164,14 @@ class LibraryGeneratedStorageMixin:
 
     def load_summary_versions(self, asset_id: str) -> list[SummaryVersion]:
         self._validate_asset_id(asset_id)
-        rows = self._db().execute(
-            "SELECT * FROM summary_versions WHERE asset_id = ? ORDER BY created_at DESC",
-            (asset_id,),
-        ).fetchall()
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_versions WHERE asset_id = ? ORDER BY created_at DESC",
+                (asset_id,),
+            )
+            .fetchall()
+        )
         versions: list[SummaryVersion] = []
         for row in rows:
             values = dict(row)
@@ -265,9 +275,7 @@ class LibraryGeneratedStorageMixin:
             )
         return cursor.rowcount > 0
 
-    def save_agent_session_permission_grant(
-        self, grant: AgentPermissionGrant
-    ) -> None:
+    def save_agent_session_permission_grant(self, grant: AgentPermissionGrant) -> None:
         if grant.scope != AgentPermissionGrantScope.SESSION:
             raise ValueError("资料库只能保存本次对话授权")
         if grant.session_id is None:
@@ -302,6 +310,53 @@ class LibraryGeneratedStorageMixin:
         values = run.model_dump(mode="json")
         values["metrics"] = json.dumps(values["metrics"], ensure_ascii=False)
         self._upsert_runtime_model("agent_runs", values)
+
+    def save_agent_run_checkpoint(self, checkpoint: AgentRunCheckpoint) -> None:
+        self._validate_identifier(checkpoint.run_id, "run")
+        self._validate_identifier(checkpoint.session_id, "session")
+        with self._lock:
+            save_agent_checkpoint(self._checkpoint_db(), checkpoint)
+
+    def load_agent_run_checkpoint(
+        self,
+        run_id: str,
+    ) -> AgentRunCheckpoint | None:
+        self._validate_identifier(run_id, "run")
+        with self._lock:
+            return load_agent_checkpoint(self._checkpoint_db(), run_id)
+
+    def load_agent_run_checkpoints(self) -> list[AgentRunCheckpoint]:
+        with self._lock:
+            return load_agent_checkpoints(self._checkpoint_db())
+
+    def update_agent_run_checkpoint(
+        self,
+        run_id: str,
+        stage: AgentRunStage,
+        *,
+        resume_allowed: bool,
+    ) -> AgentRunCheckpoint | None:
+        checkpoint = self.load_agent_run_checkpoint(run_id)
+        if checkpoint is None:
+            return None
+        updated = checkpoint.model_copy(
+            update={
+                "stage": stage,
+                "resume_allowed": resume_allowed,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.save_agent_run_checkpoint(updated)
+        return updated
+
+    def interrupt_agent_run_checkpoints(self) -> None:
+        for checkpoint in self.load_agent_run_checkpoints():
+            if checkpoint.stage in {AgentRunStage.PENDING, AgentRunStage.RUNNING}:
+                self.update_agent_run_checkpoint(
+                    checkpoint.run_id,
+                    AgentRunStage.INTERRUPTED,
+                    resume_allowed=True,
+                )
 
     def load_agent_run(self, run_id: str) -> AgentRun | None:
         self._validate_identifier(run_id, "run")
@@ -477,11 +532,15 @@ class LibraryGeneratedStorageMixin:
         self._validate_identifier(artifact_id, "artifact")
         updated_at = datetime.now(UTC)
         with self._lock, self._db():
-            row = self._db().execute(
-                "SELECT payload FROM agent_artifacts "
-                "WHERE artifact_id = ? AND status = ?",
-                (artifact_id, AgentArtifactStatus.APPLYING.value),
-            ).fetchone()
+            row = (
+                self._db()
+                .execute(
+                    "SELECT payload FROM agent_artifacts "
+                    "WHERE artifact_id = ? AND status = ?",
+                    (artifact_id, AgentArtifactStatus.APPLYING.value),
+                )
+                .fetchone()
+            )
             if row is None:
                 return None
             payload = json.loads(row["payload"])
@@ -501,10 +560,14 @@ class LibraryGeneratedStorageMixin:
             )
             if cursor.rowcount != 1:
                 return None
-            updated_row = self._db().execute(
-                "SELECT * FROM agent_artifacts WHERE artifact_id = ?",
-                (artifact_id,),
-            ).fetchone()
+            updated_row = (
+                self._db()
+                .execute(
+                    "SELECT * FROM agent_artifacts WHERE artifact_id = ?",
+                    (artifact_id,),
+                )
+                .fetchone()
+            )
         return self._agent_artifact_from_row(updated_row) if updated_row else None
 
     def reject_agent_artifact(self, artifact_id: str) -> AgentArtifact | None:
@@ -552,8 +615,7 @@ class LibraryGeneratedStorageMixin:
         self._validate_identifier(version.artifact_id, "artifact")
         self._validate_asset_id(version.asset_id)
         directory = (
-            self.artifacts_directory(version.asset_id)
-            / AGENT_CHANGES_DIRECTORY_NAME
+            self.artifacts_directory(version.asset_id) / AGENT_CHANGES_DIRECTORY_NAME
         )
         directory.mkdir(parents=True, exist_ok=True)
         if directory.is_symlink():
@@ -636,10 +698,14 @@ class LibraryGeneratedStorageMixin:
             )
             if cursor.rowcount != 1:
                 return None
-            row = self._db().execute(
-                "SELECT * FROM agent_artifacts WHERE artifact_id = ?",
-                (artifact_id,),
-            ).fetchone()
+            row = (
+                self._db()
+                .execute(
+                    "SELECT * FROM agent_artifacts WHERE artifact_id = ?",
+                    (artifact_id,),
+                )
+                .fetchone()
+            )
         return self._agent_artifact_from_row(row) if row else None
 
     def load_agent_artifact(self, artifact_id: str) -> AgentArtifact | None:

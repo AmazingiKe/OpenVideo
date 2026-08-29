@@ -6,7 +6,12 @@ import json
 
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.transcription_models import Transcript
-from openvideo.tools.llm import LlmCompletionError, LlmContextLengthError, complete_text
+from openvideo.tools.llm import (
+    LlmCompletionError,
+    LlmContextLengthError,
+    complete_text,
+    complete_text_async,
+)
 
 
 CORRECTION_MAX_TOKENS = 16_384
@@ -43,6 +48,18 @@ class LiteLlmTranscriptCorrector:
             segment_indices,
         )
 
+    async def correct_async(
+        self,
+        transcript: Transcript,
+        segment_indices: list[int],
+    ) -> dict[int, str]:
+        if not segment_indices:
+            return {}
+        return await self._request_corrections_async(
+            _correction_prompt(transcript, segment_indices),
+            segment_indices,
+        )
+
     def correct_chunked(
         self,
         transcript: Transcript,
@@ -51,11 +68,31 @@ class LiteLlmTranscriptCorrector:
     ) -> dict[int, str]:
         corrections: dict[int, str] = {}
         for target_indices in _continuous_chunks(transcript, segment_indices):
-            context_indices = _context_indices(
-                len(transcript.segments), target_indices
-            )
+            context_indices = _context_indices(len(transcript.segments), target_indices)
             corrections.update(
                 self._request_corrections(
+                    _correction_prompt(
+                        transcript,
+                        target_indices,
+                        context_indices,
+                        global_context,
+                    ),
+                    target_indices,
+                )
+            )
+        return corrections
+
+    async def correct_chunked_async(
+        self,
+        transcript: Transcript,
+        segment_indices: list[int],
+        global_context: str | None = None,
+    ) -> dict[int, str]:
+        corrections: dict[int, str] = {}
+        for target_indices in _continuous_chunks(transcript, segment_indices):
+            context_indices = _context_indices(len(transcript.segments), target_indices)
+            corrections.update(
+                await self._request_corrections_async(
                     _correction_prompt(
                         transcript,
                         target_indices,
@@ -82,6 +119,24 @@ class LiteLlmTranscriptCorrector:
         global_context = self._merge_context(summaries)
         return self.correct_chunked(transcript, segment_indices, global_context)
 
+    async def correct_with_compressed_context_async(
+        self,
+        transcript: Transcript,
+        segment_indices: list[int],
+    ) -> dict[int, str]:
+        summaries: list[str] = []
+        for chunk in _continuous_chunks(
+            transcript,
+            list(range(len(transcript.segments))),
+        ):
+            summaries.append(await self._extract_context_async(transcript, chunk))
+        global_context = await self._merge_context_async(summaries)
+        return await self.correct_chunked_async(
+            transcript,
+            segment_indices,
+            global_context,
+        )
+
     def _request_corrections(
         self,
         prompt: str,
@@ -107,16 +162,61 @@ class LiteLlmTranscriptCorrector:
             repaired_content = self._complete(repair_messages)
             return _parse_corrections(repaired_content, target_indices)
 
+    async def _request_corrections_async(
+        self,
+        prompt: str,
+        target_indices: list[int],
+    ) -> dict[int, str]:
+        content = await self._complete_async([{"role": "user", "content": prompt}])
+        try:
+            return _parse_corrections(content, target_indices)
+        except TranscriptCorrectionError as first_error:
+            repair_messages = [
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": (
+                        f"上一个响应无法通过校验：{first_error}。"
+                        "请只修复响应格式，不重新分析转录，也不要添加解释。"
+                        "严格返回 JSON："
+                        '{"corrections":[{"index":整数,"text":"修正后的文字"}]}。'
+                        "未变化项不要返回；无变化返回空数组。"
+                    ),
+                },
+            ]
+            repaired_content = await self._complete_async(repair_messages)
+            return _parse_corrections(repaired_content, target_indices)
+
     def _extract_context(
         self,
         transcript: Transcript,
         segment_indices: list[int],
     ) -> str:
         lines = [
-            f"[{index}] {transcript.segments[index].text}"
-            for index in segment_indices
+            f"[{index}] {transcript.segments[index].text}" for index in segment_indices
         ]
         return self._complete(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "从以下转录片段提取校对所需的术语、人物、组织、主题和语言风格。"
+                        "只返回简洁事实列表，不修正文稿。\n\n" + "\n".join(lines)
+                    ),
+                }
+            ],
+            max_tokens=CONTEXT_EXTRACTION_MAX_TOKENS,
+        )
+
+    async def _extract_context_async(
+        self,
+        transcript: Transcript,
+        segment_indices: list[int],
+    ) -> str:
+        lines = [
+            f"[{index}] {transcript.segments[index].text}" for index in segment_indices
+        ]
+        return await self._complete_async(
             [
                 {
                     "role": "user",
@@ -145,6 +245,22 @@ class LiteLlmTranscriptCorrector:
             max_tokens=CONTEXT_EXTRACTION_MAX_TOKENS,
         )
 
+    async def _merge_context_async(self, summaries: list[str]) -> str:
+        if len(summaries) == 1:
+            return summaries[0]
+        return await self._complete_async(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "合并以下分段上下文，去重后保留统一的术语、人物、组织、主题和语言风格。"
+                        "只返回简洁事实列表。\n\n" + "\n\n".join(summaries)
+                    ),
+                }
+            ],
+            max_tokens=CONTEXT_EXTRACTION_MAX_TOKENS,
+        )
+
     def _complete(
         self,
         messages: list[dict[str, object]],
@@ -152,6 +268,24 @@ class LiteLlmTranscriptCorrector:
     ) -> str:
         try:
             return complete_text(
+                self.model,
+                messages,
+                DEFAULT_CORRECTION_TIMEOUT_SECONDS,
+                max_tokens=max_tokens,
+                disable_thinking=True,
+            )
+        except LlmContextLengthError as error:
+            raise TranscriptCorrectionContextLengthError(str(error)) from error
+        except LlmCompletionError as error:
+            raise TranscriptCorrectionError(str(error)) from error
+
+    async def _complete_async(
+        self,
+        messages: list[dict[str, object]],
+        max_tokens: int = CORRECTION_MAX_TOKENS,
+    ) -> str:
+        try:
+            return await complete_text_async(
                 self.model,
                 messages,
                 DEFAULT_CORRECTION_TIMEOUT_SECONDS,

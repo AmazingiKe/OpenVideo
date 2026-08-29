@@ -217,8 +217,14 @@ def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypat
         )
         assert "id: 1\n" not in events.text
         run = client.get(f"/api/agent-runs/{run_id}").json()
+        tasks = client.get("/api/agent-tasks").json()
+        resumed = client.post(f"/api/agent-runs/{run_id}/resume")
         assert run["stage"] == "failed"
         assert run["error_code"] == "required_result_missing"
+        assert tasks[0]["run"]["run_id"] == run_id
+        assert tasks[0]["resume_available"] is True
+        assert resumed.status_code == 200
+        assert resumed.json()["run_id"] != run_id
 
 
 def test_natural_language_routes_to_marker_edit_without_ui_mode(
@@ -710,13 +716,12 @@ def test_marker_approval_rebases_safe_changes_and_skips_conflicts(tmp_path: Path
     application = approved.payload["application_result"]
     assert application["rebased"] is True
     assert application["applied_change_count"] == 1
-    assert application["skipped_conflicts"] == [
-        "标记修改 1 的来源标记已变化"
-    ]
+    assert application["skipped_conflicts"] == ["标记修改 1 的来源标记已变化"]
     assert len(history) == 1
-    assert history[0]["application_result"]["change_version_id"] == application[
-        "change_version_id"
-    ]
+    assert (
+        history[0]["application_result"]["change_version_id"]
+        == application["change_version_id"]
+    )
     assert undone_response.status_code == 200
     assert undone_response.json()["status"] == "undone"
     assert restored[first.marker_id].start_seconds == 1.5
@@ -728,9 +733,9 @@ def marker_update(marker: MediaMarker, *, start_seconds: float) -> dict[str, obj
     return {
         "operation": "update",
         "before": [marker.model_dump(mode="json")],
-        "after": marker.model_copy(
-            update={"start_seconds": start_seconds}
-        ).model_dump(mode="json"),
+        "after": marker.model_copy(update={"start_seconds": start_seconds}).model_dump(
+            mode="json"
+        ),
         "reason": "调整范围",
         "evidence": [],
     }
@@ -878,9 +883,10 @@ def test_once_approval_only_applies_current_artifact(tmp_path: Path, monkeypatch
         )
 
         assert response.status_code == 200
-        assert service.library.load_agent_session_permission_grants(
-            session.session_id
-        ) == []
+        assert (
+            service.library.load_agent_session_permission_grants(session.session_id)
+            == []
+        )
         second_run, second_artifact = create_permission_artifact(service, session)
         context = AgentRunContext(
             service=service,

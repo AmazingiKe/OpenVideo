@@ -13,13 +13,16 @@ import { use_asset_catalog } from "@/app/asset_catalog";
 import {
   create_download,
   list_downloads,
+  list_agent_tasks,
   request_download_retry,
+  resume_agent_run,
   transcribe_asset,
 } from "@/shared/api";
 import { poll_transcription_job } from "@/shared/poll_transcription_job";
 import { poll_download } from "@/shared/poll_download";
 import type {
   AnalysisJob,
+  AgentTaskSnapshot,
   DownloadDestination,
   DownloadJob,
   TranscriptionOptions,
@@ -28,6 +31,7 @@ import { merge_task_record, type TaskRecord } from "@/features/workbench/tasks";
 
 const TERMINAL_DOWNLOAD_STAGES = new Set(["complete", "failed"]);
 const INITIAL_DOWNLOAD_TASK_LIMIT = 50;
+const AGENT_TASK_REFRESH_INTERVAL_MS = 2_000;
 
 type TaskManager = {
   task_records: TaskRecord[];
@@ -41,6 +45,7 @@ type TaskManager = {
     options: TranscriptionOptions,
   ) => Promise<AnalysisJob>;
   is_transcription_running: (asset_id: string) => boolean;
+  resume_agent_task: (run_id: string) => Promise<void>;
 };
 
 const TaskManagerContext = createContext<TaskManager | null>(null);
@@ -100,6 +105,16 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [record_task],
   );
 
+  const record_agent_tasks = useCallback((snapshots: AgentTaskSnapshot[]) => {
+    set_task_records((current) =>
+      snapshots.reduce(
+        (tasks, snapshot) =>
+          merge_task_record(tasks, agent_task_record(snapshot)),
+        current,
+      ),
+    );
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     try {
@@ -111,6 +126,28 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     }
     return () => controller.abort();
   }, [record_download_job]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const refresh_agent_tasks = () => {
+      try {
+        void list_agent_tasks(controller.signal)
+          .then(record_agent_tasks)
+          .catch(() => undefined);
+      } catch {
+        // 离线壳层未提供 Agent 端点时不影响下载与转录任务。
+      }
+    };
+    refresh_agent_tasks();
+    const interval_id = window.setInterval(
+      refresh_agent_tasks,
+      AGENT_TASK_REFRESH_INTERVAL_MS,
+    );
+    return () => {
+      controller.abort();
+      window.clearInterval(interval_id);
+    };
+  }, [record_agent_tasks]);
 
   const track_download_jobs = useCallback(
     async (jobs: DownloadJob[], controller: AbortController) => {
@@ -216,11 +253,24 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [record_transcription_job],
   );
 
+  const resume_agent_task = useCallback(
+    async (run_id: string) => {
+      await resume_agent_run(run_id);
+      try {
+        record_agent_tasks(await list_agent_tasks());
+      } catch {
+        // 恢复已成功时不因一次刷新失败误报，下一轮轮询会补齐状态。
+      }
+    },
+    [record_agent_tasks],
+  );
+
   const value = useMemo<TaskManager>(
     () => ({
       task_records,
       start_downloads,
       retry_download,
+      resume_agent_task,
       start_transcription,
       is_transcription_running: (asset_id) =>
         active_transcriptions.has(asset_id),
@@ -229,6 +279,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       active_transcriptions,
       start_downloads,
       retry_download,
+      resume_agent_task,
       start_transcription,
       task_records,
     ],
@@ -241,10 +292,54 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   );
 }
 
+function agent_task_message(stage: AgentTaskSnapshot["run"]["stage"]): string {
+  return {
+    pending: "等待助手开始",
+    running: "助手正在处理",
+    waiting_for_approval: "等待用户批准变更",
+    complete: "助手任务已完成",
+    failed: "助手任务失败",
+    cancelled: "助手任务已取消",
+    interrupted: "应用退出时任务中断",
+  }[stage];
+}
+
+function agent_task_progress(stage: AgentTaskSnapshot["run"]["stage"]): number {
+  return {
+    pending: 0,
+    running: 50,
+    waiting_for_approval: 90,
+    complete: 100,
+    failed: 100,
+    cancelled: 100,
+    interrupted: 100,
+  }[stage];
+}
+
+function agent_task_record(snapshot: AgentTaskSnapshot): TaskRecord {
+  const run = snapshot.run;
+  return {
+    task_id: run.run_id,
+    task_type: "agent",
+    stage: run.stage,
+    message: agent_task_message(run.stage),
+    progress_percent: agent_task_progress(run.stage),
+    error_message: run.error_message,
+    created_at: run.created_at,
+    name: snapshot.session_title,
+    events: [],
+    resume_available: snapshot.resume_available,
+  };
+}
+
 export function use_task_manager(): TaskManager {
   const manager = useContext(TaskManagerContext);
   if (!manager) {
     throw new Error("use_task_manager 必须在 TaskManagerProvider 内使用");
   }
   return manager;
+}
+
+export function use_optional_task_manager(): TaskManager | null {
+  return useContext(TaskManagerContext);
 }

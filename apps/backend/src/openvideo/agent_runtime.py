@@ -10,6 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import monotonic
+from threading import Event
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
@@ -66,6 +67,20 @@ class AgentCancelledError(AgentRuntimeError):
 
     def __init__(self) -> None:
         super().__init__("用户已取消 Agent 运行", "cancelled")
+
+
+class AgentCancellation:
+    """同一取消信号同时覆盖协程、工作线程与媒体子进程。"""
+
+    def __init__(self) -> None:
+        self.thread_event = Event()
+
+    def cancel(self) -> None:
+        self.thread_event.set()
+
+    def raise_if_cancelled(self) -> None:
+        if self.thread_event.is_set():
+            raise AgentCancelledError()
 
 
 class AgentEventRepository(Protocol):
@@ -309,17 +324,20 @@ class AgentRuntime:
         executor: AgentExecutor,
         completion_payload_builder: CompletionPayloadBuilder | None = None,
         artifact_processor: ArtifactProcessor | None = None,
+        cancellation: AgentCancellation | None = None,
     ) -> None:
         self.store = store
         self.registry = registry
         self.executor = executor
         self.completion_payload_builder = completion_payload_builder
         self.artifact_processor = artifact_processor
+        self.cancellation = cancellation or AgentCancellation()
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._active_tasks: dict[str, asyncio.Task[Any]] = {}
         self._metric_trackers: dict[str, AgentRunMetricTracker] = {}
 
     def cancel(self, run_id: str) -> None:
+        self.cancellation.cancel()
         self._cancel_events.setdefault(run_id, asyncio.Event()).set()
         if task := self._active_tasks.get(run_id):
             task.cancel()
@@ -595,10 +613,10 @@ class AgentRuntime:
         )
         return kept
 
-    @staticmethod
-    def _raise_if_cancelled(cancel_event: asyncio.Event) -> None:
+    def _raise_if_cancelled(self, cancel_event: asyncio.Event) -> None:
         if cancel_event.is_set():
             raise AgentCancelledError()
+        self.cancellation.raise_if_cancelled()
 
     def _finish(
         self,

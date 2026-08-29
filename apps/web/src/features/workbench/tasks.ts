@@ -2,7 +2,7 @@ import type { DownloadEvent } from "@/shared/types";
 
 export type TaskRecord = {
   task_id: string;
-  task_type: "download" | "transcription" | "agent";
+  task_type: "download" | "transcription" | "agent" | "index";
   stage: string;
   message: string;
   progress_percent: number;
@@ -10,6 +10,7 @@ export type TaskRecord = {
   created_at: string;
   name: string;
   events: DownloadEvent[];
+  resume_available?: boolean;
 };
 
 const MAX_TASK_RECORDS = 100;
@@ -57,4 +58,7 @@ export const TASK_STAGE_LABELS: Record<string, string> = {
   cancelled: "已取消",
   complete: "已完成",
   failed: "失败",
+  running: "运行中",
+  waiting_for_approval: "等待批准",
+  interrupted: "已中断",
 };

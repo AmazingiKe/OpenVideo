@@ -760,3 +760,10 @@ export type AgentSessionState = {
   events: AgentEvent[];
   artifacts: AgentArtifact[];
 };
+
+export type AgentTaskSnapshot = {
+  run: AgentRun;
+  session_title: string;
+  asset_id: string;
+  resume_available: boolean;
+};

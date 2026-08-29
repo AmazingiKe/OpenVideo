@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from threading import Event
+from time import monotonic
 
 from openvideo.tools.media import resolve_tool
 
@@ -22,6 +24,7 @@ def extract_frames(
     output_directory: Path,
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None = None,
+    cancel_event: Event | None = None,
 ) -> list[Path]:
     """对每个时间点抽一帧 JPEG，返回与输入一一对应的帧文件路径。"""
     if not media_path.is_file():
@@ -33,6 +36,8 @@ def extract_frames(
     output_directory.mkdir(parents=True, exist_ok=True)
     frame_paths: list[Path] = []
     for index, seconds in enumerate(time_points):
+        if cancel_event is not None and cancel_event.is_set():
+            raise FrameExtractionError("关键帧抽取已取消")
         frame_path = output_directory / f"frame_{index:03d}_{seconds:.1f}s.jpg"
         command = [
             ffmpeg_path,
@@ -47,14 +52,56 @@ def extract_frames(
             str(FRAME_QUALITY),
             str(frame_path),
         ]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=COMMAND_TIMEOUT_SECONDS,
+        result = (
+            _run_cancellable(command, cancel_event)
+            if cancel_event is not None
+            else subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=COMMAND_TIMEOUT_SECONDS,
+            )
         )
         if result.returncode != 0 or not frame_path.is_file():
             raise FrameExtractionError(f"第 {index + 1} 帧抽取失败")
         frame_paths.append(frame_path)
     return frame_paths
+
+
+def _run_cancellable(
+    command: list[str],
+    cancel_event: Event,
+) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    started_at = monotonic()
+    try:
+        while process.poll() is None:
+            if cancel_event.wait(0.05):
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
+                raise FrameExtractionError("关键帧抽取已取消")
+            if monotonic() - started_at >= COMMAND_TIMEOUT_SECONDS:
+                process.kill()
+                process.wait(timeout=2)
+                raise FrameExtractionError("关键帧抽取超时")
+        stdout, stderr = process.communicate()
+        return subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout,
+            stderr,
+        )
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=2)

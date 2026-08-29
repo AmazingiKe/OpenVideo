@@ -18,6 +18,7 @@ from openvideo.agent_intent_router import (
 )
 from openvideo.agent_model_roles import select_automatic_model_id
 from openvideo.agent_runtime import (
+    AgentCancellation,
     AgentRuntime,
     AgentSessionStore,
     AgentTool,
@@ -67,11 +68,14 @@ from openvideo.core.agent_runtime_models import (
     AgentEventType,
     AgentMode,
     AgentRun,
+    AgentRunCheckpoint,
     AgentRunCreate,
+    AgentRunStage,
     AgentSession,
     AgentSessionCreate,
     AgentSessionState,
     AgentToolDescriptor,
+    AgentTaskSnapshot,
     TERMINAL_AGENT_RUN_STAGES,
 )
 from openvideo.core.agent_governance_models import (
@@ -184,6 +188,7 @@ class AgentService:
         self._runtimes: dict[str, AgentRuntime] = {}
         self.registry = AgentDefinitionRegistry(self._registered_agents())
         self.library.interrupt_agent_runs()
+        self.library.interrupt_agent_run_checkpoints()
         self._schedule_semantic_index()
 
     def definitions(self) -> list[AgentDefinitionAvailability]:
@@ -288,6 +293,7 @@ class AgentService:
         routing_ms = round((perf_counter() - routing_started_at) * 1_000)
         content = build_run_content(definition, request, session.context)
         run = new_agent_run(session_id, request.request_key, model.model_id)
+        cancellation = AgentCancellation()
         context = AgentRunContext(
             self,
             session,
@@ -295,10 +301,18 @@ class AgentService:
             model,
             request.task_input,
             request.retrieval_scope,
+            cancellation=cancellation,
         )
         tool_registry = registered.tool_builder(context, definition)
         tool_registry.validate(definition.allowed_tools)
         self.library.save_agent_run(run)
+        self.library.save_agent_run_checkpoint(
+            AgentRunCheckpoint(
+                run_id=run.run_id,
+                session_id=session.session_id,
+                request=request,
+            )
+        )
         if not self.library.load_agent_events(session_id):
             requested_title = request.content.strip().splitlines()[0]
             self.library.save_agent_session(
@@ -318,6 +332,7 @@ class AgentService:
             artifact_processor=lambda artifacts: self._process_run_artifacts(
                 context, artifacts
             ),
+            cancellation=cancellation,
         )
         self._runtimes[run.run_id] = runtime
         task = asyncio.create_task(
@@ -356,6 +371,60 @@ class AgentService:
         if run is None:
             raise AgentNotFoundError("Agent 运行不存在")
         return run
+
+    def tasks(self) -> list[AgentTaskSnapshot]:
+        checkpoints = {
+            checkpoint.run_id: checkpoint
+            for checkpoint in self.library.load_agent_run_checkpoints()
+        }
+        snapshots: list[AgentTaskSnapshot] = []
+        for run in reversed(self.library.load_agent_runs()):
+            session = self.library.load_agent_session(run.session_id)
+            if session is None:
+                continue
+            checkpoint = checkpoints.get(run.run_id)
+            snapshots.append(
+                AgentTaskSnapshot(
+                    run=run,
+                    session_title=session.title,
+                    asset_id=session.asset_id,
+                    resume_available=bool(
+                        checkpoint is not None
+                        and checkpoint.resume_allowed
+                        and run.stage
+                        in {
+                            AgentRunStage.CANCELLED,
+                            AgentRunStage.FAILED,
+                            AgentRunStage.INTERRUPTED,
+                        }
+                    ),
+                )
+            )
+        return snapshots
+
+    async def resume_run(self, run_id: str) -> AgentRun:
+        run = self.run(run_id)
+        checkpoint = self.library.load_agent_run_checkpoint(run_id)
+        if checkpoint is None:
+            raise AgentConflictError("此任务没有可安全继续的检查点")
+        if not checkpoint.resume_allowed:
+            raise AgentConflictError("此任务检查点尚未达到可恢复状态")
+        if run.stage not in {
+            AgentRunStage.CANCELLED,
+            AgentRunStage.FAILED,
+            AgentRunStage.INTERRUPTED,
+        }:
+            raise AgentConflictError("只有已停止或中断的任务可以继续")
+        resumed_request = checkpoint.request.model_copy(
+            update={
+                "request_key": f"request-{uuid7().hex}",
+                "task_input": {
+                    **checkpoint.request.task_input,
+                    "resumed_from_run_id": run_id,
+                },
+            }
+        )
+        return await self.create_run(checkpoint.session_id, resumed_request)
 
     def run_events(self, run_id: str, after_sequence: int = 0) -> list[AgentEvent]:
         run = self.run(run_id)
@@ -779,6 +848,17 @@ class AgentService:
         _task: asyncio.Task[AgentRun],
     ) -> None:
         run = self.library.load_agent_run(run_id)
+        if run is not None:
+            self.library.update_agent_run_checkpoint(
+                run_id,
+                run.stage,
+                resume_allowed=run.stage
+                in {
+                    AgentRunStage.CANCELLED,
+                    AgentRunStage.FAILED,
+                    AgentRunStage.INTERRUPTED,
+                },
+            )
         if run is not None and any(
             event.event_type == AgentEventType.TOOL_STATUS
             and event.payload.get("stage") == "completed"
@@ -1284,21 +1364,6 @@ class AgentService:
                 "error_code": "vision_unavailable",
                 "error": "当前模型不支持图像输入",
             }
-        result = await asyncio.to_thread(self._inspect_frames_sync, context, parameters)
-        if result.get("ok") is True:
-            context.evidence.frames_inspected = True
-            context.evidence.inspected_frame_ranges.append(
-                (parameters.start_seconds, parameters.end_seconds)
-            )
-            context.evidence.inspected_frame_times.extend(
-                float(candidate["time_seconds"])
-                for candidate in result.get("candidates", [])
-            )
-        return result
-
-    def _inspect_frames_sync(
-        self, context: AgentRunContext, parameters: InspectFramesInput
-    ) -> dict[str, Any]:
         asset = self.library.get(context.session.asset_id)
         if asset is None:
             return {"ok": False, "error": "媒体资源不存在"}
@@ -1333,18 +1398,29 @@ class AgentService:
             f"agent-frame-{uuid7().hex}"
         )
         try:
-            frames = extract_frames(
+            frames = await asyncio.to_thread(
+                extract_frames,
                 media_path,
                 points,
                 temporary_directory,
                 self.settings.ffmpeg_path,
                 self.settings.ffmpeg_bin_dir,
+                context.cancellation.thread_event,
             )
-            description = LiteLlmVision(context.model).describe(
+            context.cancellation.raise_if_cancelled()
+            description = await LiteLlmVision(context.model).describe_async(
                 frames, selection_question
             )
         finally:
             shutil.rmtree(temporary_directory, ignore_errors=True)
+        context.cancellation.raise_if_cancelled()
+        context.evidence.frames_inspected = True
+        context.evidence.inspected_frame_ranges.append(
+            (parameters.start_seconds, parameters.end_seconds)
+        )
+        context.evidence.inspected_frame_times.extend(
+            float(candidate["time_seconds"]) for candidate in candidates
+        )
         return {"ok": True, "description": description, "candidates": candidates}
 
     def _propose_marker_changes(
@@ -1583,11 +1659,12 @@ class AgentService:
             return {"ok": False, "error": "字幕片段范围无效"}
         corrector = LiteLlmTranscriptCorrector(context.model)
         method = {
-            "automatic": corrector.correct,
-            "chunked": corrector.correct_chunked,
-            "compressed": corrector.correct_with_compressed_context,
+            "automatic": corrector.correct_async,
+            "chunked": corrector.correct_chunked_async,
+            "compressed": corrector.correct_with_compressed_context_async,
         }[parameters.execution_mode]
-        corrections = await asyncio.to_thread(method, transcript, resolved)
+        corrections = await method(transcript, resolved)
+        context.cancellation.raise_if_cancelled()
         changes = [
             {
                 "segment_index": index,
@@ -1673,10 +1750,7 @@ class AgentService:
     def _approve_summary_artifact(self, artifact: AgentArtifact) -> dict[str, Any]:
         payload = artifact.payload
         document = self.library.load_summary_document(payload["document_id"])
-        if (
-            document is None
-            or document.version_id != payload["version_id"]
-        ):
+        if document is None or document.version_id != payload["version_id"]:
             raise AgentConflictError("总结文档不存在或不属于原版本")
         base_revision = payload["base_revision"]
         if artifact.result_type == SUMMARY_MEDIA_ARTIFACT_TYPE:
@@ -1756,9 +1830,7 @@ class AgentService:
             },
         )
 
-    def _approve_transcript_correction(
-        self, artifact: AgentArtifact
-    ) -> dict[str, Any]:
+    def _approve_transcript_correction(self, artifact: AgentArtifact) -> dict[str, Any]:
         transcript = self.library.load_transcript(artifact.asset_id)
         if transcript is None:
             raise AgentConflictError("字幕不存在")
@@ -1833,8 +1905,7 @@ class AgentService:
         application: dict[str, Any],
     ) -> None:
         indices = [
-            int(value)
-            for value in application.get("applied_change_indices", [])
+            int(value) for value in application.get("applied_change_indices", [])
         ]
         undo = application.get("undo")
         if not isinstance(undo, dict):
@@ -1859,9 +1930,7 @@ class AgentService:
             change = changes[index]
             before = [MediaMarker.model_validate(value) for value in change["before"]]
             after = (
-                MediaMarker.model_validate(change["after"])
-                if change["after"]
-                else None
+                MediaMarker.model_validate(change["after"]) if change["after"] else None
             )
             operation = MarkerChangeOperation(change["operation"])
             if operation == MarkerChangeOperation.CREATE:
@@ -1883,9 +1952,7 @@ class AgentService:
             change = changes[index]
             before = [MediaMarker.model_validate(value) for value in change["before"]]
             after = (
-                MediaMarker.model_validate(change["after"])
-                if change["after"]
-                else None
+                MediaMarker.model_validate(change["after"]) if change["after"] else None
             )
             if after is not None:
                 markers_by_id.pop(after.marker_id, None)
@@ -1911,8 +1978,7 @@ class AgentService:
             raise AgentConflictError("字幕不存在")
         segments = list(transcript.segments)
         indices = [
-            int(value)
-            for value in application.get("applied_change_indices", [])
+            int(value) for value in application.get("applied_change_indices", [])
         ]
         changes = artifact.payload["changes"]
         for index in indices:
@@ -1953,9 +2019,7 @@ class AgentService:
                 str(undo["before_markdown"]),
                 [str(value) for value in undo["created_document_ids"]],
                 [str(value) for value in undo["created_media_ids"]],
-                restored_revision=(
-                    int(undo["before_revision"]) if rollback else None
-                ),
+                restored_revision=(int(undo["before_revision"]) if rollback else None),
             )
         except SummaryRevisionConflictError as error:
             raise AgentConflictError(str(error)) from error

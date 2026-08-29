@@ -20,6 +20,7 @@ from openvideo.core.agent_runtime_models import (
     AgentSession,
     AgentSessionCreate,
     AgentSessionState,
+    AgentTaskSnapshot,
     TERMINAL_AGENT_RUN_STAGES,
 )
 from openvideo.core.agent_governance_models import AgentPermissionGrantScope
@@ -171,6 +172,17 @@ def register_agent_routes(
             if request.grant_scope == AgentPermissionGrantScope.ALWAYS:
                 persist_preferences()
             return artifact
+        except AgentServiceError as error:
+            raise agent_http_error(error) from error
+
+    @app.get("/api/agent-tasks", response_model=list[AgentTaskSnapshot])
+    def list_agent_tasks() -> list[AgentTaskSnapshot]:
+        return agent_service().tasks()
+
+    @app.post("/api/agent-runs/{run_id}/resume", response_model=AgentRun)
+    async def resume_agent_run(run_id: str) -> AgentRun:
+        try:
+            return await agent_service().resume_run(run_id)
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 

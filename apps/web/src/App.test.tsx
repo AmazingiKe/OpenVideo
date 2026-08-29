@@ -27,6 +27,8 @@ import {
   list_assets,
   list_folders,
   list_ai_models,
+  list_agent_tasks,
+  list_downloads,
   list_event_analyses,
   list_transcription_models,
   probe_source,
@@ -66,6 +68,8 @@ vi.mock("./shared/api", () => ({
   list_assets: vi.fn(),
   list_folders: vi.fn(),
   list_ai_models: vi.fn(),
+  list_agent_tasks: vi.fn(),
+  list_downloads: vi.fn(),
   list_event_analyses: vi.fn(),
   list_summary_documents: vi.fn(),
   list_summary_presets: vi.fn(),
@@ -138,6 +142,8 @@ describe("App", () => {
       agent_panel_size_percent: 34,
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
+    vi.mocked(list_agent_tasks).mockResolvedValue([]);
+    vi.mocked(list_downloads).mockResolvedValue([]);
     vi.mocked(get_focus_selection).mockResolvedValue(null);
     vi.mocked(list_event_analyses).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
@@ -769,11 +775,13 @@ describe("App", () => {
 
     render(<App />);
 
-    await waitFor(() => expect(window.location.pathname).toBe("/downloads"));
-    expect(screen.getByRole("link", { name: "下载" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/downloads");
+      expect(screen.getByRole("link", { name: "下载" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    });
   });
 
   it("preserves workspace input while switching modules", async () => {
