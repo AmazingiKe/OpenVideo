@@ -48,9 +48,7 @@ describe("AgentArtifactCard", () => {
     render(<AgentArtifactCard artifact={value} on_resolve={on_resolve} />);
 
     expect(screen.getByText("已合并可安全应用的部分")).toBeInTheDocument();
-    expect(
-      screen.getByText(/已应用 2 项，跳过 1 项冲突/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/已应用 2 项，跳过 1 项冲突/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "撤销整批变更" }));
     expect(on_resolve).toHaveBeenCalledWith("undo");
   });

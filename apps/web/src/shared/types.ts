@@ -344,12 +344,7 @@ export type TranscriptionModelDescriptor = {
   download_job: TranscriptionModelDownloadJob | null;
 };
 type AnalysisCapability =
-  | "transcript"
-  | "timeline"
-  | "chapters"
-  | "key_frames"
-  | "ocr"
-  | "visual";
+  "transcript" | "timeline" | "chapters" | "key_frames" | "ocr" | "visual";
 
 export type AnalysisJob = {
   job_id: string;

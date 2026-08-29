@@ -23,8 +23,8 @@ from openvideo.core.event_analysis_models import (
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaAssetStatus, MediaMarker, MediaSegment
-from openvideo.core.transcription_models import Transcript, TranscriptSegment
+from openvideo.core.media_models import MediaAssetStatus, MediaSegment
+from openvideo.core.transcription_models import TranscriptSegment
 from openvideo.settings import Settings
 from openvideo.tools.llm import LlmCompletionError, complete_text
 

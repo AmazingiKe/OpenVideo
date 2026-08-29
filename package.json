@@ -8,6 +8,8 @@
     "build:web": "pnpm --filter @openvideo/web build",
     "storybook:web": "pnpm --filter @openvideo/web storybook",
     "build:storybook": "pnpm --filter @openvideo/web build-storybook",
+    "lint:backend": "uv run --directory apps/backend ruff check src tests",
+    "test:backend": "uv run --directory apps/backend pytest",
     "lint:web": "pnpm --filter @openvideo/web lint",
     "format:web": "pnpm --filter @openvideo/web format",
     "format:check:web": "pnpm --filter @openvideo/web format:check",

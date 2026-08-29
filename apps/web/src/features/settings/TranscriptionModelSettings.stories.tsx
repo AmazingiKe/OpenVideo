@@ -36,7 +36,8 @@ const MODELS: TranscriptionModelDescriptor[] = [
     engine: "qwen3-asr",
     model: "qwen3-asr-1.7b",
     name: "Qwen3-ASR 1.7B",
-    description: "中文高精度方案，使用 ForcedAligner 生成准确时间戳，仅支持 CUDA。",
+    description:
+      "中文高精度方案，使用 ForcedAligner 生成准确时间戳，仅支持 CUDA。",
     accuracy: "最高",
     speed: "较慢",
     languages: ["中文", "22 种中文方言"],
@@ -50,7 +51,8 @@ const MODELS: TranscriptionModelDescriptor[] = [
     engine: "sensevoice",
     model: "sensevoice-small",
     name: "SenseVoice Small",
-    description: "低延迟多语言转录，同时保存声音事件与情绪标签，支持 CPU 回退。",
+    description:
+      "低延迟多语言转录，同时保存声音事件与情绪标签，支持 CPU 回退。",
     accuracy: "高",
     speed: "很快",
     languages: ["中文", "粤语"],
