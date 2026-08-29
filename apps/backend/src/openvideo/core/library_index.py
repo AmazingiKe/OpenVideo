@@ -9,6 +9,11 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from openvideo.core.agent_evidence_index import (
+    ensure_agent_evidence_schema,
+    remove_asset_evidence_projection,
+    replace_asset_evidence_projection,
+)
 from openvideo.core.library_files import (
     AssetFileBundle,
     AssetIndexError,
@@ -43,7 +48,8 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     database_path = library_path / DATABASE_FILE_NAME
     if not _database_matches_schema(database_path):
         _rebuild_database(database_path, library_path / "temp", assets_path)
-    connection = _connect(database_path)
+    connection = open_index_connection(database_path)
+    ensure_agent_evidence_schema(connection)
     _ensure_download_quality_schema(connection)
     _ensure_download_event_schema(connection)
     synchronize_folders(connection, library_path / "folders.json")
@@ -101,7 +107,17 @@ def synchronize_index(connection: sqlite3.Connection, assets_path: Path) -> None
                 "SELECT content_digest FROM index_states WHERE asset_id = ?",
                 (asset_id,),
             ).fetchone()
-            if row is None or row[0] != bundle.digest:
+            evidence_row = connection.execute(
+                "SELECT content_digest FROM agent_evidence_asset_states "
+                "WHERE asset_id = ?",
+                (asset_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row[0] != bundle.digest
+                or evidence_row is None
+                or evidence_row[0] != bundle.digest
+            ):
                 try:
                     replace_asset_projection(connection, bundle)
                 except sqlite3.IntegrityError as error:
@@ -305,9 +321,17 @@ def replace_asset_projection(
         "content_digest=excluded.content_digest, indexed_at=excluded.indexed_at",
         (asset.asset_id, bundle.digest, datetime.now(UTC).isoformat()),
     )
+    replace_asset_evidence_projection(
+        connection,
+        asset,
+        bundle.transcript,
+        bundle.segments,
+        bundle.digest,
+    )
 
 
 def remove_asset_projection(connection: sqlite3.Connection, asset_id: str) -> None:
+    remove_asset_evidence_projection(connection, asset_id)
     connection.execute("DELETE FROM assets WHERE asset_id = ?", (asset_id,))
     connection.execute("DELETE FROM index_states WHERE asset_id = ?", (asset_id,))
 
@@ -370,6 +394,7 @@ def _rebuild_database(
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(_SCHEMA)
+        ensure_agent_evidence_schema(connection)
         connection.execute(f"PRAGMA user_version = {DATABASE_VERSION}")
         synchronize_folders(connection, database_path.parent / "folders.json")
         synchronize_index(connection, assets_path)
@@ -382,7 +407,9 @@ def _rebuild_database(
         temporary_path.unlink(missing_ok=True)
 
 
-def _connect(database_path: Path) -> sqlite3.Connection:
+def open_index_connection(database_path: Path) -> sqlite3.Connection:
+    """为后台索引任务提供独立 WAL 连接，避免占用主查询连接。"""
+
     connection = sqlite3.connect(database_path, timeout=5, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")

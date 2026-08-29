@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-import hashlib
-import json
-import math
 import re
 from typing import Iterable
 
+from openvideo.core.agent_evidence_index import IndexedEvidenceDocument
 from openvideo.core.agent_evidence_models import (
     AgentEvidenceBundle,
     AgentEvidenceCoverage,
@@ -19,17 +17,9 @@ from openvideo.core.agent_evidence_models import (
     AgentEvidenceSource,
     AgentAnswerStatus,
 )
-from openvideo.core.identifiers import uuid7
-from openvideo.core.media_models import MediaSegment
-from openvideo.core.transcription_models import TranscriptSegment
 
 
 TEMPORAL_BUCKET_COUNT = 8
-NEIGHBOR_WINDOW_SECONDS = 45.0
-EXACT_QUERY_SCORE = 0.58
-TOKEN_OVERLAP_SCORE = 0.36
-TITLE_MATCH_BONUS = 0.12
-SOURCE_DIVERSITY_BONUS = 0.08
 HIGH_RELEVANCE_THRESHOLD = 0.72
 MEDIUM_RELEVANCE_THRESHOLD = 0.3
 HIGH_OVERVIEW_COVERAGE = 0.6
@@ -43,58 +33,86 @@ NUMBER_PATTERN = re.compile(r"(?<![a-z])\d+(?:\.\d+)?", re.IGNORECASE)
 @dataclass(frozen=True)
 class RetrievalCandidate:
     source: AgentEvidenceSource
-    position: int
     start_seconds: float
     end_seconds: float
     title: str | None
     text: str
+    asset_id: str
+    evidence_id: str
+    source_version: str
     relevance_score: float = 0
     match_reasons: tuple[str, ...] = ()
     supporting_sources: tuple[AgentEvidenceSource, ...] = ()
     retrieval_relation: str = "direct"
 
 
-def retrieve_evidence(
+def retrieve_indexed_evidence(
     *,
-    asset_id: str,
+    documents: Iterable[IndexedEvidenceDocument],
     query: str | None,
     start_seconds: float | None,
     end_seconds: float | None,
     limit: int,
     duration_seconds: float | None,
-    transcript_segments: Iterable[TranscriptSegment],
-    analysis_segments: Iterable[MediaSegment],
 ) -> AgentEvidenceSearchResult:
-    normalized_query = _normalize_text(query or "")
-    candidates = _build_candidates(transcript_segments, analysis_segments)
-    ranged = [
-        candidate
-        for candidate in candidates
-        if _ranges_intersect(
-            candidate.start_seconds,
-            candidate.end_seconds,
-            start_seconds,
-            end_seconds,
+    """把持久化混合召回转换为统一证据契约，不再二次覆盖索引评分。"""
+
+    candidates = [
+        RetrievalCandidate(
+            source=document.source_type,
+            start_seconds=document.start_seconds,
+            end_seconds=document.end_seconds,
+            title=document.title,
+            text=document.text,
+            relevance_score=document.relevance_score,
+            match_reasons=document.match_reasons,
+            retrieval_relation=document.retrieval_relation,
+            asset_id=document.asset_id,
+            evidence_id=document.document_id,
+            source_version=document.source_version,
         )
+        for document in documents
     ]
-    if normalized_query:
-        selected = _select_query_evidence(ranged, normalized_query, limit)
-    else:
-        selected = _select_overview_evidence(
-            ranged,
-            limit,
-            start_seconds,
-            end_seconds,
-            duration_seconds,
-        )
+    selected = sorted(
+        candidates,
+        key=lambda candidate: (
+            -candidate.relevance_score,
+            candidate.asset_id,
+            candidate.start_seconds,
+            candidate.source.value,
+        ),
+    )
+    return _build_search_result(
+        candidates=candidates,
+        selected=selected,
+        query=query,
+        normalized_query=_normalize_text(query or ""),
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        duration_seconds=duration_seconds,
+        limit=limit,
+    )
+
+
+def _build_search_result(
+    *,
+    candidates: list[RetrievalCandidate],
+    selected: list[RetrievalCandidate],
+    query: str | None,
+    normalized_query: str,
+    start_seconds: float | None,
+    end_seconds: float | None,
+    duration_seconds: float | None,
+    limit: int,
+) -> AgentEvidenceSearchResult:
     selected = _merge_duplicate_evidence(selected)
     items = [
         AgentEvidenceItem(
-            evidence_id=f"evidence-{uuid7().hex}",
+            evidence_id=candidate.evidence_id,
             citation_key=f"E{index}",
             source_type=candidate.source,
-            source_version=_source_version(candidate),
-            asset_id=asset_id,
+            source_version=candidate.source_version,
+            asset_id=candidate.asset_id,
             start_seconds=candidate.start_seconds,
             end_seconds=candidate.end_seconds,
             title=candidate.title,
@@ -108,7 +126,7 @@ def retrieve_evidence(
         for index, candidate in enumerate(selected[:limit], start=1)
     ]
     range_start, range_end = _coverage_range(
-        ranged,
+        candidates,
         start_seconds,
         end_seconds,
         duration_seconds,
@@ -160,330 +178,6 @@ def retrieve_evidence(
     )
 
 
-def combine_library_evidence(
-    results: Iterable[AgentEvidenceSearchResult],
-    *,
-    query: str,
-    limit: int,
-) -> AgentEvidenceSearchResult:
-    """跨视频检索只合并显式查询结果，避免默认把整个资料库送进上下文。"""
-
-    collected_results = list(results)
-    items = sorted(
-        (item for result in collected_results for item in result.evidence_bundle.items),
-        key=lambda item: (
-            -item.relevance_score,
-            item.asset_id,
-            item.start_seconds,
-            item.source_type.value,
-        ),
-    )[:limit]
-    items = [
-        item.model_copy(update={"citation_key": f"E{index}"})
-        for index, item in enumerate(items, start=1)
-    ]
-    conflicts = _find_conflicts(items)
-    conflicting_evidence_ids = {
-        evidence_id for conflict in conflicts for evidence_id in conflict.evidence_ids
-    }
-    if conflicting_evidence_ids:
-        items = [
-            item.model_copy(update={"relation": "conflicts"})
-            if item.evidence_id in conflicting_evidence_ids
-            else item
-            for item in items
-        ]
-    source_types = sorted(
-        {
-            source
-            for item in items
-            for source in (item.source_type, *item.supporting_source_types)
-        },
-        key=lambda source: source.value,
-    )
-    represented_asset_ids = {item.asset_id for item in items}
-    represented_coverages = [
-        result.evidence_bundle.coverage.temporal
-        for result in collected_results
-        if any(
-            item.asset_id in represented_asset_ids
-            for item in result.evidence_bundle.items
-        )
-    ]
-    temporal_coverage = (
-        sum(represented_coverages) / len(represented_coverages)
-        if represented_coverages
-        else 0.0
-    )
-    confidence, confidence_reasons = _confidence(
-        items,
-        _normalize_text(query),
-        temporal_coverage,
-        conflicts,
-    )
-    bundle = AgentEvidenceBundle(
-        query=query,
-        items=items,
-        conflicts=conflicts,
-        coverage=AgentEvidenceCoverage(
-            temporal=round(temporal_coverage, 4),
-            source_types=source_types,
-        ),
-    )
-    return AgentEvidenceSearchResult(
-        confidence=confidence,
-        confidence_reasons=confidence_reasons,
-        answer_status=_answer_status(confidence, items, conflicts),
-        evidence_bundle=bundle,
-        answer_instruction=_answer_instruction(confidence, items, conflicts),
-    )
-
-
-def _build_candidates(
-    transcript_segments: Iterable[TranscriptSegment],
-    analysis_segments: Iterable[MediaSegment],
-) -> list[RetrievalCandidate]:
-    candidates = [
-        RetrievalCandidate(
-            source=AgentEvidenceSource.TRANSCRIPT,
-            position=position,
-            start_seconds=segment.start_seconds,
-            end_seconds=segment.end_seconds,
-            title=None,
-            text=segment.text.strip(),
-        )
-        for position, segment in enumerate(transcript_segments)
-        if segment.text.strip()
-    ]
-    field_sources = (
-        ("transcript_text", AgentEvidenceSource.TRANSCRIPT),
-        ("detailed_summary", AgentEvidenceSource.ANALYSIS),
-        ("visual_description", AgentEvidenceSource.VISUAL),
-        ("ocr_text", AgentEvidenceSource.OCR),
-    )
-    for position, segment in enumerate(analysis_segments):
-        for field_name, source in field_sources:
-            value = getattr(segment, field_name)
-            if not value or not value.strip():
-                continue
-            candidates.append(
-                RetrievalCandidate(
-                    source=source,
-                    position=position,
-                    start_seconds=segment.start_seconds,
-                    end_seconds=segment.end_seconds,
-                    title=(
-                        segment.title.strip()
-                        if source == AgentEvidenceSource.ANALYSIS
-                        and segment.title.strip()
-                        else None
-                    ),
-                    text=value.strip(),
-                )
-            )
-    return candidates
-
-
-def _select_query_evidence(
-    candidates: list[RetrievalCandidate], query: str, limit: int
-) -> list[RetrievalCandidate]:
-    scored = [_score_candidate(candidate, query) for candidate in candidates]
-    matches = [candidate for candidate in scored if candidate.relevance_score > 0]
-    matches.sort(
-        key=lambda candidate: (
-            -candidate.relevance_score,
-            candidate.start_seconds,
-            candidate.source.value,
-        )
-    )
-    if not matches:
-        return []
-
-    source_count = len({candidate.source for candidate in matches})
-    seed_limit = min(limit, max(1, math.ceil(limit * 0.65), source_count))
-    seeds = _select_diverse_seeds(matches, seed_limit)
-    selected = list(seeds)
-    selected_keys = {_candidate_key(candidate) for candidate in selected}
-    neighbors: list[RetrievalCandidate] = []
-    for seed in seeds:
-        same_source = [
-            candidate
-            for candidate in candidates
-            if candidate.source == seed.source
-            and abs(candidate.position - seed.position) == 1
-            and _distance_seconds(candidate, seed) <= NEIGHBOR_WINDOW_SECONDS
-        ]
-        for neighbor in same_source:
-            key = _candidate_key(neighbor)
-            if key in selected_keys:
-                continue
-            neighbors.append(
-                replace(
-                    neighbor,
-                    relevance_score=max(seed.relevance_score * 0.35, 0.08),
-                    match_reasons=("邻近上下文",),
-                    retrieval_relation="neighbor",
-                )
-            )
-            selected_keys.add(key)
-    neighbors.sort(
-        key=lambda candidate: (candidate.start_seconds, candidate.source.value)
-    )
-    selected.extend(neighbors[: max(0, limit - len(selected))])
-    selected.sort(
-        key=lambda candidate: (
-            -candidate.relevance_score,
-            candidate.start_seconds,
-            candidate.source.value,
-        )
-    )
-    return selected[:limit]
-
-
-def _select_diverse_seeds(
-    candidates: list[RetrievalCandidate], limit: int
-) -> list[RetrievalCandidate]:
-    selected: list[RetrievalCandidate] = []
-    used_sources: set[AgentEvidenceSource] = set()
-    used_buckets: set[int] = set()
-    extent_start = min(candidate.start_seconds for candidate in candidates)
-    extent_end = max(candidate.end_seconds for candidate in candidates)
-    for candidate in candidates:
-        bucket = _bucket_index(candidate.start_seconds, extent_start, extent_end)
-        if candidate.source in used_sources and bucket in used_buckets:
-            continue
-        diversity_bonus = 0.0
-        reasons = list(candidate.match_reasons)
-        if candidate.source not in used_sources:
-            diversity_bonus = SOURCE_DIVERSITY_BONUS
-            reasons.append("来源覆盖")
-        selected.append(
-            replace(
-                candidate,
-                relevance_score=min(1.0, candidate.relevance_score + diversity_bonus),
-                match_reasons=tuple(reasons),
-            )
-        )
-        used_sources.add(candidate.source)
-        used_buckets.add(bucket)
-        if len(selected) >= limit:
-            return selected
-    for candidate in candidates:
-        if _candidate_key(candidate) in {_candidate_key(item) for item in selected}:
-            continue
-        selected.append(candidate)
-        if len(selected) >= limit:
-            break
-    return selected
-
-
-def _select_overview_evidence(
-    candidates: list[RetrievalCandidate],
-    limit: int,
-    requested_start: float | None,
-    requested_end: float | None,
-    duration_seconds: float | None,
-) -> list[RetrievalCandidate]:
-    if not candidates:
-        return []
-    range_start, range_end = _coverage_range(
-        candidates,
-        requested_start,
-        requested_end,
-        duration_seconds,
-    )
-    bucket_count = min(TEMPORAL_BUCKET_COUNT, limit)
-    selected: list[RetrievalCandidate] = []
-    selected_keys: set[tuple[object, ...]] = set()
-    for bucket in range(bucket_count):
-        bucket_start = range_start + (range_end - range_start) * bucket / bucket_count
-        bucket_end = (
-            range_start + (range_end - range_start) * (bucket + 1) / bucket_count
-        )
-        available = [
-            candidate
-            for candidate in candidates
-            if _ranges_intersect(
-                candidate.start_seconds,
-                candidate.end_seconds,
-                bucket_start,
-                bucket_end,
-            )
-            and _candidate_key(candidate) not in selected_keys
-        ]
-        if not available:
-            continue
-        source_rotation = tuple(AgentEvidenceSource)
-        preferred_source = source_rotation[bucket % len(source_rotation)]
-        available.sort(
-            key=lambda candidate: (
-                candidate.source != preferred_source,
-                abs(
-                    (candidate.start_seconds + candidate.end_seconds) / 2
-                    - (bucket_start + bucket_end) / 2
-                ),
-                candidate.start_seconds,
-            )
-        )
-        chosen = replace(
-            available[0],
-            relevance_score=0.5,
-            match_reasons=("时间覆盖",),
-            retrieval_relation="overview",
-        )
-        selected.append(chosen)
-        selected_keys.add(_candidate_key(chosen))
-    for candidate in sorted(
-        candidates, key=lambda item: (item.start_seconds, item.source.value)
-    ):
-        if len(selected) >= limit:
-            break
-        key = _candidate_key(candidate)
-        if key in selected_keys:
-            continue
-        selected.append(
-            replace(
-                candidate,
-                relevance_score=0.35,
-                match_reasons=("补充上下文",),
-                retrieval_relation="overview",
-            )
-        )
-        selected_keys.add(key)
-    selected.sort(
-        key=lambda candidate: (candidate.start_seconds, candidate.source.value)
-    )
-    return selected
-
-
-def _score_candidate(
-    candidate: RetrievalCandidate, normalized_query: str
-) -> RetrievalCandidate:
-    candidate_text = _normalize_text(
-        "\n".join(value for value in (candidate.title, candidate.text) if value)
-    )
-    query_tokens = _tokens(normalized_query)
-    text_tokens = _tokens(candidate_text)
-    reasons: list[str] = []
-    score = 0.0
-    if normalized_query in candidate_text:
-        score += EXACT_QUERY_SCORE
-        reasons.append("完整短语")
-    if query_tokens:
-        overlap = len(query_tokens & text_tokens) / len(query_tokens)
-        if overlap:
-            score += TOKEN_OVERLAP_SCORE * overlap
-            reasons.append("关键词匹配")
-    if candidate.title and query_tokens & _tokens(_normalize_text(candidate.title)):
-        score += TITLE_MATCH_BONUS
-        reasons.append("标题匹配")
-    return replace(
-        candidate,
-        relevance_score=min(1.0, score),
-        match_reasons=tuple(reasons),
-    )
-
-
 def _merge_duplicate_evidence(
     candidates: list[RetrievalCandidate],
 ) -> list[RetrievalCandidate]:
@@ -494,7 +188,8 @@ def _merge_duplicate_evidence(
             (
                 index
                 for index, existing in enumerate(merged)
-                if normalized == _normalize_text(existing.text)
+                if candidate.asset_id == existing.asset_id
+                and normalized == _normalize_text(existing.text)
                 and _overlap_ratio(candidate, existing) >= 0.8
             ),
             None,
@@ -716,29 +411,6 @@ def _has_negation(value: str) -> bool:
     return any(term in normalized for term in NEGATION_TERMS)
 
 
-def _bucket_index(value: float, start: float, end: float) -> int:
-    if end <= start:
-        return 0
-    return min(
-        TEMPORAL_BUCKET_COUNT - 1,
-        int((value - start) / (end - start) * TEMPORAL_BUCKET_COUNT),
-    )
-
-
-def _distance_seconds(left: RetrievalCandidate, right: RetrievalCandidate) -> float:
-    if _ranges_intersect(
-        left.start_seconds,
-        left.end_seconds,
-        right.start_seconds,
-        right.end_seconds,
-    ):
-        return 0.0
-    return min(
-        abs(left.start_seconds - right.end_seconds),
-        abs(right.start_seconds - left.end_seconds),
-    )
-
-
 def _ranges_intersect(
     start: float,
     end: float,
@@ -749,28 +421,6 @@ def _ranges_intersect(
         (range_start is not None and end < range_start)
         or (range_end is not None and start > range_end)
     )
-
-
-def _candidate_key(candidate: RetrievalCandidate) -> tuple[object, ...]:
-    return (
-        candidate.source,
-        round(candidate.start_seconds, 3),
-        round(candidate.end_seconds, 3),
-        _normalize_text(candidate.text),
-    )
-
-
-def _source_version(candidate: RetrievalCandidate) -> str:
-    payload = {
-        "source_type": candidate.source.value,
-        "start_seconds": candidate.start_seconds,
-        "end_seconds": candidate.end_seconds,
-        "title": candidate.title,
-        "excerpt": candidate.text,
-    }
-    return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
 
 
 def _overlap_ratio(left: RetrievalCandidate, right: RetrievalCandidate) -> float:

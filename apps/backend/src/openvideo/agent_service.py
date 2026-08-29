@@ -28,7 +28,7 @@ from openvideo.agent_registry import (
     build_run_content,
     validate_model,
 )
-from openvideo.agent_retrieval import combine_library_evidence, retrieve_evidence
+from openvideo.agent_retrieval import retrieve_indexed_evidence
 from openvideo.agent_tooling import (
     AgentRunContext,
     CorrectTranscriptInput,
@@ -78,6 +78,7 @@ from openvideo.core.agent_governance_models import (
 )
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, AiModelConfiguration
 from openvideo.core.identifiers import uuid7
+from openvideo.core.agent_evidence_index import EvidenceIndexStatus
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaMarker
 from openvideo.core.summary_models import (
@@ -159,9 +160,11 @@ class AgentService:
         self.capability_resolver = capability_resolver or CapabilityResolver()
         self.store = AgentSessionStore(library)
         self._tasks: dict[str, asyncio.Task[AgentRun]] = {}
+        self._semantic_index_task: asyncio.Task[EvidenceIndexStatus] | None = None
         self._runtimes: dict[str, AgentRuntime] = {}
         self.registry = AgentDefinitionRegistry(self._registered_agents())
         self.library.interrupt_agent_runs()
+        self._schedule_semantic_index()
 
     def definitions(self) -> list[AgentDefinitionAvailability]:
         models = self.settings.ai_models
@@ -379,6 +382,23 @@ class AgentService:
             runtime.cancel(runtime_id)
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+        if self._semantic_index_task is not None:
+            await asyncio.gather(self._semantic_index_task, return_exceptions=True)
+
+    def _schedule_semantic_index(self) -> None:
+        status = self.library.agent_evidence_index_status()
+        if status.state != "lexical_ready" or (
+            self._semantic_index_task is not None
+            and not self._semantic_index_task.done()
+        ):
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._semantic_index_task = asyncio.create_task(
+            asyncio.to_thread(self.library.rebuild_agent_semantic_index)
+        )
 
     def has_active_jobs(self) -> bool:
         return any(not task.done() for task in self._tasks.values())
@@ -948,6 +968,7 @@ class AgentService:
     def _search_evidence(
         self, context: AgentRunContext, parameters: EvidenceSearchInput
     ) -> dict[str, Any]:
+        self._schedule_semantic_index()
         if context.retrieval_scope == AgentRetrievalScope.LIBRARY:
             return self._search_library_evidence(context, parameters)
         focus_selection = self.library.load_focus_selection(context.session.asset_id)
@@ -961,17 +982,21 @@ class AgentService:
         ):
             start_seconds = focus_selection.in_seconds
             end_seconds = focus_selection.out_seconds
-        transcript = self.library.load_transcript(context.session.asset_id)
         asset = self.library.get(context.session.asset_id)
-        result = retrieve_evidence(
-            asset_id=context.session.asset_id,
+        documents = self.library.search_agent_evidence(
+            asset_ids=[context.session.asset_id],
             query=parameters.query,
             start_seconds=start_seconds,
             end_seconds=end_seconds,
             limit=parameters.limit,
+        )
+        result = retrieve_indexed_evidence(
+            documents=documents,
+            query=parameters.query,
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
             duration_seconds=asset.duration_seconds if asset is not None else None,
-            transcript_segments=transcript.segments if transcript else [],
-            analysis_segments=self.library.load_segments(context.session.asset_id),
+            limit=parameters.limit,
         )
         result = context.evidence.record_search(result)
         return {
@@ -993,25 +1018,20 @@ class AgentService:
                 "error": "跨视频检索必须提供明确问题或关键词",
                 "retryable": True,
             }
-        results = []
-        for asset in self.library.list():
-            transcript = self.library.load_transcript(asset.asset_id)
-            results.append(
-                retrieve_evidence(
-                    asset_id=asset.asset_id,
-                    query=query,
-                    start_seconds=None,
-                    end_seconds=None,
-                    limit=parameters.limit,
-                    duration_seconds=asset.duration_seconds,
-                    transcript_segments=transcript.segments if transcript else [],
-                    analysis_segments=self.library.load_segments(asset.asset_id),
-                )
-            )
-        result = combine_library_evidence(
-            results,
+        documents = self.library.search_agent_evidence(
+            asset_ids=[asset.asset_id for asset in self.library.list()],
             query=query,
+            start_seconds=None,
+            end_seconds=None,
             limit=parameters.limit,
+        )
+        result = retrieve_indexed_evidence(
+            documents=documents,
+            query=query,
+            start_seconds=None,
+            end_seconds=None,
+            limit=parameters.limit,
+            duration_seconds=None,
         )
         result = context.evidence.record_search(result)
         return {"ok": True, **result.model_dump(mode="json")}

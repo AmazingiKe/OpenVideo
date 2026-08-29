@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -26,7 +26,6 @@ from openvideo.core.media_models import (
     MediaType,
     VideoMetadata,
 )
-from openvideo.core.transcription_models import Transcript, TranscriptionMetadata
 from openvideo.core.summary_files import (
     SUMMARY_DIRECTORY_NAME,
     SUMMARY_MANIFEST_FILE_NAME,
@@ -42,8 +41,10 @@ from openvideo.core.summary_models import (
     SummaryMediaArtifact,
     SummaryVersion,
 )
+from openvideo.core.transcription_models import Transcript, TranscriptionMetadata
 
 
+AssetModel = TypeVar("AssetModel", Transcript, TranscriptionMetadata)
 ASSET_METADATA_FILE_NAME = "meta.json"
 ARTIFACTS_DIRECTORY_NAME = "artifacts"
 TRANSCRIPT_FILE_NAME = "transcript.json"
@@ -84,6 +85,7 @@ class MarkersFile(BaseModel):
 @dataclass(frozen=True)
 class AssetFileBundle:
     asset: MediaAsset
+    transcript: Transcript | None
     segments: list[MediaSegment]
     markers: list[MediaMarker]
     focus_selection: FocusSelection | None
@@ -261,7 +263,7 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
     transcription_path = (
         asset_directory / ARTIFACTS_DIRECTORY_NAME / TRANSCRIPTION_METADATA_FILE_NAME
     )
-    _read_optional_asset_model(
+    transcript = _read_optional_asset_model(
         transcript_path, Transcript, asset_id, tracked_paths, assets_root.parent
     )
     _read_optional_asset_model(
@@ -406,6 +408,7 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
     digest = _business_digest(asset_directory, tracked_paths)
     return AssetFileBundle(
         asset=asset,
+        transcript=transcript,
         segments=segments,
         markers=markers,
         focus_selection=focus_selection,
@@ -598,11 +601,11 @@ def _load_summary(
 
 def _read_optional_asset_model(
     path: Path,
-    model_type: type[Transcript] | type[TranscriptionMetadata],
+    model_type: type[AssetModel],
     asset_id: str,
     tracked_paths: list[Path],
     library_root: Path,
-) -> None:
+) -> AssetModel | None:
     model = _read_optional_model(
         path, model_type, asset_id, tracked_paths, library_root
     )
@@ -614,6 +617,7 @@ def _read_optional_asset_model(
             "cross_asset_reference",
             "业务文件属于其他素材",
         )
+    return model
 
 
 def _read_optional_model(

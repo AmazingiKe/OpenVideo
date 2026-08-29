@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from openvideo.agent_registry import build_run_content
-from openvideo.agent_retrieval import retrieve_evidence
+from openvideo.agent_retrieval import retrieve_indexed_evidence
 from openvideo.agent_runtime import new_agent_run
 from openvideo.agent_service import AgentService
 from openvideo.agent_tooling import (
@@ -28,6 +28,8 @@ from openvideo.core.agent_runtime_models import (
     AgentToolCall,
 )
 from openvideo.core.agent_governance_models import AgentPermissionMode
+from openvideo.core.agent_evidence_index import IndexedEvidenceDocument
+from openvideo.core.agent_evidence_models import AgentEvidenceSource
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -308,17 +310,27 @@ def test_evidence_citations_stay_unique_across_searches_and_invalid_keys_downgra
         task_input={},
     )
     for query, text in (("光照", "光照影响明暗"), ("反射", "反射影响材质")):
-        result = retrieve_evidence(
-            asset_id=ASSET_ID,
+        result = retrieve_indexed_evidence(
+            documents=[
+                IndexedEvidenceDocument(
+                    document_id=f"evidence-{uuid7().hex}",
+                    asset_id=ASSET_ID,
+                    source_type=AgentEvidenceSource.TRANSCRIPT,
+                    source_version=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    source_position=0,
+                    start_seconds=5,
+                    end_seconds=10,
+                    title=None,
+                    text=text,
+                    relevance_score=0.8,
+                    match_reasons=("测试召回",),
+                )
+            ],
             query=query,
             start_seconds=None,
             end_seconds=None,
             limit=4,
             duration_seconds=60,
-            transcript_segments=[
-                TranscriptSegment(start_seconds=5, end_seconds=10, text=text)
-            ],
-            analysis_segments=[],
         )
         context.evidence.record_search(result)
 
@@ -586,6 +598,9 @@ def test_explicit_library_scope_retrieves_evidence_from_multiple_assets(
 ):
     captured: dict[str, object] = {}
 
+    def reject_raw_evidence_scan(*_args, **_kwargs):
+        raise AssertionError("Agent 检索不应逐素材读取原始业务文件")
+
     async def answer_from_library(
         self,
         model,
@@ -645,6 +660,16 @@ def test_explicit_library_scope_retrieves_evidence_from_multiple_assets(
                     ],
                 )
             )
+        monkeypatch.setattr(
+            library,
+            "load_transcript",
+            reject_raw_evidence_scan,
+        )
+        monkeypatch.setattr(
+            library,
+            "load_segments",
+            reject_raw_evidence_scan,
+        )
         session = client.post(
             "/api/agent-sessions",
             json={"agent_id": "marker", "asset_id": ASSET_ID},

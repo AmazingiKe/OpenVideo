@@ -3,7 +3,16 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
+from typing import Literal
 
+from openvideo.core.agent_evidence_index import (
+    EvidenceIndexStatus,
+    IndexedEvidenceDocument,
+    load_evidence_index_status,
+    rebuild_semantic_index,
+    save_verified_memory,
+    search_indexed_evidence,
+)
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentArtifactStatus,
@@ -14,7 +23,11 @@ from openvideo.core.agent_runtime_models import (
     AgentSession,
 )
 from openvideo.core.identifiers import uuid7
-from openvideo.core.library_index import synchronize_asset
+from openvideo.core.library_index import (
+    DATABASE_FILE_NAME,
+    open_index_connection,
+    synchronize_asset,
+)
 from openvideo.core.summary_files import load_version_manifest, write_version_manifest
 from openvideo.core.summary_models import (
     SummaryDocument,
@@ -25,6 +38,61 @@ from openvideo.core.summary_models import (
 
 class LibraryGeneratedStorageMixin:
     """集中保存总结与 Agent 运行产物，避免生命周期逻辑耦合数据库细节。"""
+
+    def search_agent_evidence(
+        self,
+        *,
+        asset_ids: list[str],
+        query: str | None,
+        start_seconds: float | None,
+        end_seconds: float | None,
+        limit: int,
+    ) -> list[IndexedEvidenceDocument]:
+        for asset_id in asset_ids:
+            self._validate_asset_id(asset_id)
+        with self._lock:
+            return search_indexed_evidence(
+                self._db(),
+                asset_ids=asset_ids,
+                query=query,
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
+                limit=limit,
+            )
+
+    def rebuild_agent_semantic_index(self) -> EvidenceIndexStatus:
+        connection = open_index_connection(self.library_path / DATABASE_FILE_NAME)
+        try:
+            return rebuild_semantic_index(connection)
+        finally:
+            connection.close()
+
+    def agent_evidence_index_status(self) -> EvidenceIndexStatus:
+        with self._lock:
+            return load_evidence_index_status(self._db())
+
+    def save_agent_verified_memory(
+        self,
+        *,
+        asset_id: str | None,
+        fact_type: str,
+        fact: str,
+        source_version: str,
+        memory_kind: Literal["user_confirmed", "execution"] = "user_confirmed",
+    ) -> str:
+        if asset_id is not None:
+            self._validate_asset_id(asset_id)
+        if memory_kind not in {"user_confirmed", "execution"}:
+            raise ValueError("项目记忆类型无效")
+        with self._lock, self._db():
+            return save_verified_memory(
+                self._db(),
+                asset_id=asset_id,
+                fact_type=fact_type,
+                fact=fact,
+                source_version=source_version,
+                memory_kind=memory_kind,
+            )
 
     def create_summary_documents(
         self, documents: list[SummaryDocument]
