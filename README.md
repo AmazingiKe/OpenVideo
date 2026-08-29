@@ -21,7 +21,7 @@ OpenVideo 源于一个真实的学习需求：面对一小时以上的数学、�
 - 对已就绪视频重复发起音频转写：优先复用平台字幕，缺失时用本地模型提取带时间戳文字，结果按资源保存为 JSON
 - 支持全片时间轴与标记重点两种分析模式，按语音停顿和画面变化组织课程事件
 - 为每个事件提取多张时序画面；视觉模型不可用时仍保留可回跳的音频分析结果
-- 通过 LiteLLM 配置多个云端或本地模型，并按任务选择文本修正或视觉分析模型
+- 通过 LiteLLM 注册在线 API，并按任务自动选择快速文本、复杂文本或视觉模型
 - 标记重要程度按 0～5 星线性调节附近内容的分析优先级
 
 ## 工程结构
@@ -108,13 +108,13 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 | `OPENVIDEO_FFPROBE_PATH` | 从 `PATH` 查找 | ffprobe 完整路径 |
 | `OPENVIDEO_TOOLS_DIRECTORY` | `runtime/tools` | 第三方工具根目录 |
 | `OPENVIDEO_CORS_ORIGINS` | 本机 Vite 来源 | 允许访问 API 的本机 Web 来源，逗号分隔 |
-| `OPENVIDEO_MODELS_DIRECTORY` | `runtime/models` | 本地模型根目录 |
+| `OPENVIDEO_MODELS_DIRECTORY` | `%LOCALAPPDATA%\OpenVideo\models` | 本地转录与检索模型根目录 |
 | `OPENVIDEO_AI_MODELS` | `[]` | LiteLLM 模型配置 JSON 数组；设置后 Web 中的模型配置只读 |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 
 未配置 `OPENVIDEO_LIBRARY_PATH` 时，应用从系统用户配置目录的 `OpenVideo/preferences.json` 恢复上次资料库；路径失效时进入初始化页。Windows 的配置根目录为 `%LOCALAPPDATA%\OpenVideo`，应用生成的偏好与页面设置统一保存在该目录，不写入项目 `runtime` 或资料库。
 
-推荐在 Web 设置页添加模型。`LiteLLM 模型` 使用 `供应商/模型` 格式，例如 `openai/gpt-5`、`anthropic/claude-sonnet-4-5` 或 `ollama/qwen2.5-vl`。自定义兼容网关可同时填写 API 地址。`input_modalities` 支持 `text`、`image`、`audio`、`video`；当前任务必须包含 `text`，关键帧分析还要求包含 `image`。
+推荐在 Web 设置页添加模型。大语言与视觉模型只通过在线 API 执行，不使用本机推理服务；转录、OCR、关键帧和检索仍默认在本地执行。`LiteLLM 模型` 使用 `供应商/模型` 格式，例如 `openai/gpt-5` 或 `anthropic/claude-sonnet-4-5`。自定义兼容网关必须填写 HTTPS API 地址。`input_modalities` 支持 `text`、`image`、`audio`、`video`；当前任务必须包含 `text`，关键帧分析还要求包含 `image`。
 
 环境变量配置示例：
 

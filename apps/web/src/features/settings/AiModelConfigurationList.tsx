@@ -5,11 +5,14 @@ import {
   CircleCheck,
   CircleHelp,
   CircleX,
+  Cloud,
   Pencil,
   Plus,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -55,6 +58,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { model_id } from "@/shared/identifiers";
+import { online_ai_model_error } from "@/shared/online_ai_models";
 import {
   AI_INPUT_MODALITIES,
   DEFAULT_MODEL_CAPABILITY_OVERRIDES,
@@ -206,7 +210,7 @@ export function AiModelConfigurationList({
             </EmptyMedia>
             <EmptyTitle>尚未配置 AI 模型</EmptyTitle>
             <EmptyDescription>
-              添加 LiteLLM 模型后，助手会按已验证能力自动分配模型角色。
+              添加在线 LiteLLM API 后，助手会按已验证能力自动分配模型角色。
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -215,6 +219,7 @@ export function AiModelConfigurationList({
           {models.map((model) => {
             const test_state = test_states[model.model_id];
             const testing = test_state?.phase === "testing";
+            const configuration_error = online_ai_model_error(model);
             const test_status_id = `ai-model-${model.model_id}-test-status`;
             const profile =
               test_state?.phase === "complete"
@@ -230,6 +235,19 @@ export function AiModelConfigurationList({
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-3">
+                    {configuration_error ? (
+                      <Alert variant="destructive">
+                        <TriangleAlert aria-hidden="true" />
+                        <AlertTitle>不能用于助手</AlertTitle>
+                        <AlertDescription>
+                          {configuration_error}
+                        </AlertDescription>
+                      </Alert>
+                    ) : (
+                      <Badge variant="outline" className="w-fit">
+                        <Cloud aria-hidden="true" /> 在线 API
+                      </Badge>
+                    )}
                     <div className="flex flex-wrap gap-1">
                       {model.input_modalities.map((modality) => (
                         <Badge key={modality} variant="secondary">
@@ -247,7 +265,7 @@ export function AiModelConfigurationList({
                         size="sm"
                         variant="outline"
                         onClick={() => void test_model(model)}
-                        disabled={testing}
+                        disabled={testing || configuration_error !== null}
                         aria-describedby={test_status_id}
                       >
                         {testing ? (
@@ -322,7 +340,11 @@ function AiModelConfigurationDialog({
   on_submit: (model: AiModelConfiguration) => void;
 }) {
   const field_prefix = `ai-model-dialog-${model.model_id}`;
-  const submit_disabled = !model.name.trim() || !model.litellm_model.trim();
+  const configuration_error = online_ai_model_error(model);
+  const submit_disabled =
+    !model.name.trim() ||
+    !model.litellm_model.trim() ||
+    configuration_error !== null;
 
   function update_model(patch: Partial<AiModelConfiguration>) {
     on_change({ ...model, ...patch });
@@ -342,9 +364,23 @@ function AiModelConfigurationDialog({
             {mode === "add" ? "添加 AI 模型" : "编辑 AI 模型"}
           </DialogTitle>
           <DialogDescription>
-            配置 LiteLLM 模型标识、连接凭据和模型支持的输入模态。
+            配置在线 LiteLLM API、连接凭据和模型支持的输入模态。
           </DialogDescription>
         </DialogHeader>
+        <Alert variant={configuration_error ? "destructive" : "default"}>
+          {configuration_error ? (
+            <TriangleAlert aria-hidden="true" />
+          ) : (
+            <Cloud aria-hidden="true" />
+          )}
+          <AlertTitle>
+            {configuration_error ? "配置不符合在线模型要求" : "仅使用在线 API"}
+          </AlertTitle>
+          <AlertDescription>
+            {configuration_error ??
+              "助手的大语言与视觉推理通过在线 API 执行；转录、OCR、关键帧和检索仍默认在本机完成。"}
+          </AlertDescription>
+        </Alert>
         <FieldGroup>
           <div className="grid gap-4 md:grid-cols-2">
             <Field>
@@ -383,7 +419,7 @@ function AiModelConfigurationDialog({
               onChange={(event) =>
                 update_model({ api_base: event.target.value || null })
               }
-              placeholder="可选；Ollama 或兼容网关填写自定义地址"
+              placeholder="可选；在线兼容网关的 HTTPS 地址"
             />
           </Field>
           <div className="grid gap-4 md:grid-cols-2">

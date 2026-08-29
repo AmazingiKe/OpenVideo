@@ -41,3 +41,24 @@ async def test_async_completion_propagates_cancellation(monkeypatch):
         await task
 
     assert provider_cancelled.is_set()
+
+
+def test_completion_rejects_local_provider_before_network(monkeypatch):
+    monkeypatch.setattr(
+        llm.litellm,
+        "completion",
+        lambda **_kwargs: pytest.fail("本地模型不应发起请求"),
+    )
+    model = AiModelConfiguration(
+        model_id=MODEL_ID,
+        name="本地模型",
+        litellm_model="ollama/qwen2.5-vl",
+        api_base="http://127.0.0.1:11434",
+    )
+
+    with pytest.raises(llm.LlmCompletionError, match="仅支持在线 API"):
+        llm.complete_text(
+            model,
+            [{"role": "user", "content": "测试"}],
+            timeout_seconds=30,
+        )

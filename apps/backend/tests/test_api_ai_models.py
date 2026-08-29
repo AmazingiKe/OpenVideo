@@ -112,6 +112,27 @@ def test_ai_model_reports_availability_and_latency(tmp_path: Path, monkeypatch):
     assert captured_request["disable_thinking"] is True
 
 
+def test_ai_model_test_rejects_local_inference_without_calling_provider(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        ai_routes,
+        "complete_text",
+        lambda *_args, **_kwargs: pytest.fail("本地模型不应发起请求"),
+    )
+    request = {
+        **MODEL_REQUEST,
+        "litellm_model": "ollama/qwen2.5-vl",
+        "api_base": "http://127.0.0.1:11434",
+    }
+
+    with create_client(tmp_path) as client:
+        response = client.post("/api/ai/models/test", json=request)
+
+    assert response.status_code == 422
+    assert "仅支持在线 API" in response.json()["detail"]
+
+
 def test_ai_model_returns_provider_failure_as_test_result(tmp_path: Path, monkeypatch):
     def reject_model(*_args, **_kwargs):
         raise LlmCompletionError("模型请求失败：密钥 secret 无法识别 LiteLLM 供应商")
@@ -189,6 +210,23 @@ def test_preferences_patch_preserves_typed_ai_models(tmp_path: Path):
     assert payload["input_modalities"] == ["text"]
     assert payload["capabilities"]["tools"] == "auto"
     assert payload["profile"]["capabilities"]["tools"] == "unknown"
+
+
+def test_preferences_patch_rejects_local_ai_models(tmp_path: Path):
+    request = {
+        **MODEL_REQUEST,
+        "name": "本地模型",
+        "litellm_model": "ollama/qwen2.5-vl",
+        "api_base": "http://127.0.0.1:11434",
+    }
+
+    with create_client(tmp_path) as client:
+        response = client.patch("/api/preferences", json={"ai_models": [request]})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "本地模型：大语言与视觉模型仅支持在线 API，不能使用本地推理供应商"
+    )
 
 
 def test_transcription_catalog_exposes_available_and_extension_models(tmp_path: Path):

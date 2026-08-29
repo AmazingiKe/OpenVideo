@@ -17,7 +17,10 @@ from openvideo.core.agent_governance_models import (
     AgentResourceScope,
     AgentThinkingMode,
 )
-from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.ai_models import (
+    AiModelConfiguration,
+    online_api_configuration_error,
+)
 from openvideo.core.identifiers import uuid7
 from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
 from openvideo.preferences import PreferenceStore, Preferences
@@ -172,3 +175,38 @@ def test_model_configuration_requires_text_and_unique_modalities():
                 "input_modalities": ["text", "text"],
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("litellm_model", "api_base", "message"),
+    [
+        ("ollama/qwen2.5-vl", None, "本地推理供应商"),
+        ("openai/custom", "http://models.example.com/v1", "HTTPS"),
+        ("openai/custom", "https://127.0.0.1:1234/v1", "本机或局域网地址"),
+        ("openai/custom", "https://192.168.1.20:1234/v1", "本机或局域网地址"),
+    ],
+)
+def test_local_llm_configuration_remains_loadable_but_cannot_run(
+    litellm_model: str,
+    api_base: str | None,
+    message: str,
+):
+    local_model = MODEL.model_copy(
+        update={"litellm_model": litellm_model, "api_base": api_base}
+    )
+    settings = Settings(ai_models=[local_model])
+
+    assert message in (online_api_configuration_error(local_model) or "")
+    assert settings.online_ai_models == []
+    assert settings.ai_model(local_model.model_id) is None
+
+
+def test_hosted_llm_configuration_is_available_to_runtime():
+    hosted_model = MODEL.model_copy(
+        update={"api_base": "https://models.example.com/v1"}
+    )
+    settings = Settings(ai_models=[hosted_model])
+
+    assert online_api_configuration_error(hosted_model) is None
+    assert settings.online_ai_models == [hosted_model]
+    assert settings.ai_model(hosted_model.model_id) == hosted_model

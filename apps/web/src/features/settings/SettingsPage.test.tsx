@@ -238,6 +238,24 @@ describe("SettingsPage", () => {
     );
   });
 
+  it("rejects local LLM providers before saving", async () => {
+    render(<SettingsPage />);
+    await screen.findByText("尚未配置 AI 模型");
+    fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
+    const dialog = screen.getByRole("dialog", { name: "添加 AI 模型" });
+    fireEvent.change(within(dialog).getByLabelText("显示名称"), {
+      target: { value: "本地模型" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("LiteLLM 模型"), {
+      target: { value: "ollama/qwen2.5-vl" },
+    });
+
+    expect(within(dialog).getByText(/不能使用本地推理供应商/)).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "确认添加" }),
+    ).toBeDisabled();
+  });
+
   it("tests an unsaved AI model and displays its latency", async () => {
     render(<SettingsPage />);
     await screen.findByText("尚未配置 AI 模型");

@@ -3,6 +3,8 @@
 - 状态：已接受
 - 日期：2026-08-27
 
+> 后续约束：ADR 0004 已取代本文对本地 LLM 推理的支持。能力解析与 Agno Runtime 决策继续有效，但大语言和视觉模型只能使用在线 API；Ollama 不再是可注册的运行 Provider。
+
 ## 背景
 
 OpenVideo 通过 LiteLLM 接入不同模型。旧 Agent Runtime 在请求前调用 `litellm.supports_function_calling(model)`，并把返回的 `False` 直接解释为模型不支持工具调用。LiteLLM 的静态模型表无法及时识别实验模型、自定义模型名和部分 Provider 新能力，因此会在真实请求前错误阻止可用模型。
@@ -103,7 +105,6 @@ Qwen        DashScope
 xAI         xAI
 Mistral     MistralChat
 OpenRouter  OpenRouter
-Ollama      Ollama
 其他兼容服务 OpenAILike
 ```
 

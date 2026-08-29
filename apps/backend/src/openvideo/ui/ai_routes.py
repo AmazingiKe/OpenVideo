@@ -1,13 +1,14 @@
 from collections.abc import Callable
 from time import perf_counter
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from openvideo.core.ai_models import (
     AiModelConfiguration,
     IMAGE_INPUT_MODALITY,
     InputModality,
+    online_api_configuration_error,
 )
 from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.llm.errors import LlmRuntimeError, ToolCallingUnsupportedError
@@ -85,6 +86,9 @@ def register_ai_routes(
 
     @app.post("/api/ai/models/test", response_model=AiModelTestResponse)
     def test_ai_model(request: AiModelConfiguration) -> AiModelTestResponse:
+        configuration_error = online_api_configuration_error(request)
+        if configuration_error is not None:
+            raise HTTPException(status_code=422, detail=configuration_error)
         started_at = perf_counter()
         capabilities: dict[str, AiModelCapabilityTest] = {}
         profile = capability_resolver.resolve(request, refresh_models_dev=True)

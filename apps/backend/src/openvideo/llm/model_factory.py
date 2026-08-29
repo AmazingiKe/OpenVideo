@@ -6,13 +6,16 @@ from agno.models.dashscope import DashScope
 from agno.models.deepseek import DeepSeek
 from agno.models.google import Gemini
 from agno.models.mistral import MistralChat
-from agno.models.ollama import Ollama
 from agno.models.openai import OpenAIChat
 from agno.models.openai.like import OpenAILike
 from agno.models.openrouter import OpenRouter
 from agno.models.xai import xAI
 
-from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.ai_models import (
+    AiModelConfiguration,
+    online_api_configuration_error,
+)
+from openvideo.llm.errors import ProviderRequestError
 from openvideo.llm.model_profile import ModelProfile
 
 
@@ -31,6 +34,9 @@ def create_agent_model(
 ) -> Model:
     """业务 Agent 只传统一配置；Provider 构造和组合降级集中在这里。"""
 
+    configuration_error = online_api_configuration_error(config)
+    if configuration_error is not None:
+        raise ProviderRequestError(configuration_error)
     if (
         forced_tool_name
         and reasoning_enabled
@@ -84,13 +90,6 @@ def create_agent_model(
             **common,
             base_url=config.api_base or DEFAULT_OPENROUTER_API_BASE,
             max_tokens=12_000,
-        )
-    if profile.provider == "ollama":
-        return Ollama(
-            id=profile.model,
-            host=config.api_base,
-            api_key=config.api_key,
-            timeout=120,
         )
     return OpenAILike(
         **common,

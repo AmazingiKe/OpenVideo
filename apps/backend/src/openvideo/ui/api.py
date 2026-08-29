@@ -21,6 +21,7 @@ from openvideo.summary_manager import SummaryManager
 from openvideo.core.ai_models import (
     AiModelCollection,
     AiModelConfiguration,
+    online_api_configuration_error,
 )
 from openvideo.core.transcription_models import (
     TranscriptionEngine,
@@ -439,6 +440,11 @@ def create_app(
             and request.agent is not None
             else resolved_settings.agent
         )
+        if (
+            AI_MODELS_FIELD in provided_fields
+            and AI_MODELS_FIELD not in managed_fields
+        ):
+            _validate_online_ai_models(candidate_models)
         _validate_agent_model_roles(candidate_agent, candidate_models)
         if (
             TOOLS_DIRECTORY_FIELD in provided_fields
@@ -593,7 +599,11 @@ def _validate_agent_model_roles(
 ) -> None:
     """模型角色必须引用同一份用户模型注册表，避免运行时才发现悬空配置。"""
 
-    registered_model_ids = {model.model_id for model in models}
+    registered_model_ids = {
+        model.model_id
+        for model in models
+        if online_api_configuration_error(model) is None
+    }
     role_model_ids = {
         model_id
         for model_id in (
@@ -608,6 +618,16 @@ def _validate_agent_model_roles(
             status_code=422,
             detail="Agent 模型角色必须从已注册模型中选择",
         )
+
+
+def _validate_online_ai_models(models: list[AiModelConfiguration]) -> None:
+    for model in models:
+        error = online_api_configuration_error(model)
+        if error is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{model.name}：{error}",
+            )
 
 
 app = create_app(

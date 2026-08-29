@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import litellm
 
-from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.ai_models import (
+    AiModelConfiguration,
+    online_api_configuration_error,
+)
 
 
 class LlmCompletionError(RuntimeError):
@@ -77,6 +80,9 @@ def _completion_request(
     max_tokens: int | None,
     disable_thinking: bool,
 ) -> dict[str, object]:
+    configuration_error = online_api_configuration_error(model)
+    if configuration_error is not None:
+        raise LlmCompletionError(configuration_error)
     request: dict[str, object] = {
         "model": model.litellm_model,
         "messages": messages,

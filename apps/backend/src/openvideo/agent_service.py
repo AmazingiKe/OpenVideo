@@ -213,7 +213,7 @@ class AgentService:
         self._schedule_semantic_index()
 
     def definitions(self) -> list[AgentDefinitionAvailability]:
-        models = self.settings.ai_models
+        models = self.settings.online_ai_models
         return [
             agent_availability(registered.definition, models, self.capability_resolver)
             for registered in self.registry.values()
@@ -855,20 +855,28 @@ class AgentService:
         return AgentModelRole.COMPLEX
 
     def _role_model_ids(self) -> dict[AgentModelRole, str | None]:
-        configured_model_ids = {
+        preferred_model_ids = {
             AgentModelRole.FAST: self.settings.agent.fast_model_id,
             AgentModelRole.COMPLEX: self.settings.agent.complex_model_id,
             AgentModelRole.VISION: self.settings.agent.vision_model_id,
+        }
+        configured_model_ids = {
+            role: (
+                model_id
+                if model_id is not None and self.settings.ai_model(model_id) is not None
+                else None
+            )
+            for role, model_id in preferred_model_ids.items()
         }
         if all(configured_model_ids.values()):
             return configured_model_ids
         profiles = {
             model.model_id: self.capability_resolver.resolve(model)
-            for model in self.settings.ai_models
+            for model in self.settings.online_ai_models
         }
         return {
             role: configured_model_id
-            or select_automatic_model_id(role, self.settings.ai_models, profiles)
+            or select_automatic_model_id(role, self.settings.online_ai_models, profiles)
             for role, configured_model_id in configured_model_ids.items()
         }
 

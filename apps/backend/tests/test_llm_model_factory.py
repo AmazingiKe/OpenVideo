@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from agno.models.deepseek import DeepSeek
 from agno.models.message import Message
 
 from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.llm.errors import ProviderRequestError
 from openvideo.llm.model_factory import agent_tool_choice, create_agent_model
 from openvideo.llm.model_profile import ModelProfile, ModelQuirks
 
@@ -53,3 +55,15 @@ def test_deepseek_reasoning_content_preserved():
 
     assert formatted["reasoning_content"] == "保留的推理内容"
     assert formatted["content"] == ""
+
+
+def test_agent_factory_rejects_local_provider():
+    config = AiModelConfiguration(
+        name="本地模型",
+        litellm_model="ollama/qwen2.5-vl",
+        api_base="http://127.0.0.1:11434",
+    )
+    profile = ModelProfile(provider="ollama", model="qwen2.5-vl")
+
+    with pytest.raises(ProviderRequestError, match="仅支持在线 API"):
+        create_agent_model(config, profile)

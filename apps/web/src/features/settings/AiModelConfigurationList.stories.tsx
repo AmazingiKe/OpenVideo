@@ -10,9 +10,9 @@ import {
 } from "@/shared/types";
 
 const PROFILE = {
-  ...unknown_model_profile("ollama", "qwen2.5-vl"),
+  ...unknown_model_profile("openai", "gpt-5"),
   capabilities: {
-    ...unknown_model_profile("ollama", "qwen2.5-vl").capabilities,
+    ...unknown_model_profile("openai", "gpt-5").capabilities,
     tools: "yes" as const,
     vision: "yes" as const,
     streaming_tools: "yes" as const,
@@ -33,10 +33,10 @@ const meta = {
     models: [
       {
         model_id: "model-0198d12345677890abcdef1234567890",
-        name: "本地视觉模型",
-        litellm_model: "ollama/qwen2.5-vl",
-        api_key: null,
-        api_base: "http://127.0.0.1:11434",
+        name: "在线视觉模型",
+        litellm_model: "openai/gpt-5",
+        api_key: "secret",
+        api_base: null,
         api_version: null,
         input_modalities: ["text", "image", "audio", "video"],
         capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
@@ -104,6 +104,20 @@ export const Default: Story = {};
 export const Empty: Story = { args: { models: [] } };
 
 export const Managed: Story = { args: { managed: true } };
+
+export const LegacyLocalModel: Story = {
+  args: {
+    models: [
+      {
+        ...meta.args.models[0],
+        name: "旧本地模型",
+        litellm_model: "ollama/qwen2.5-vl",
+        api_key: null,
+        api_base: "http://127.0.0.1:11434",
+      },
+    ],
+  },
+};
 
 export const Available: Story = {
   play: async ({ canvasElement }) => {

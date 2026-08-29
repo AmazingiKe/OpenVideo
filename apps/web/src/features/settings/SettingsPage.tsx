@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { LibraryPathForm } from "@/features/library/LibraryPathForm";
 import { error_message, is_abort_error } from "@/shared/errors";
+import { is_online_ai_model } from "@/shared/online_ai_models";
 import { AgentPreferencesSettings } from "@/features/settings/AgentPreferencesSettings";
 import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
 import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
@@ -263,7 +264,7 @@ export function SettingsPage() {
           <SettingsCard
             icon={Bot}
             title="AI 模型"
-            description="集中配置 LiteLLM 模型，任务执行时只引用模型标识。"
+            description="集中配置在线 LiteLLM API，任务执行时只引用模型标识。"
           >
             <Alert>
               <Info aria-hidden="true" />
@@ -292,7 +293,7 @@ export function SettingsPage() {
           >
             <AgentPreferencesSettings
               value={preferences.agent}
-              models={preferences.ai_models}
+              models={preferences.ai_models.filter(is_online_ai_model)}
               on_change={(agent) =>
                 set_preferences((current) =>
                   current ? { ...current, agent } : current,

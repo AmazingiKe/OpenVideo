@@ -8,7 +8,7 @@ from pydantic import Field
 
 from openvideo.configuration import OPENVIDEO_CONFIG_DIRECTORY
 from openvideo.core.agent_governance_models import AgentPreferences
-from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration
+from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration, is_online_api_model
 from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
 from openvideo.preferences import PreferenceStore, Preferences
 
@@ -68,9 +68,17 @@ class Settings(AiModelCollection):
 
     def ai_model(self, model_id: str) -> AiModelConfiguration | None:
         return next(
-            (model for model in self.ai_models if model.model_id == model_id),
+            (
+                model
+                for model in self.ai_models
+                if model.model_id == model_id and is_online_api_model(model)
+            ),
             None,
         )
+
+    @property
+    def online_ai_models(self) -> list[AiModelConfiguration]:
+        return [model for model in self.ai_models if is_online_api_model(model)]
 
 
 def load_settings(store: PreferenceStore | None = None) -> Settings:

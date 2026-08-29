@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from ipaddress import ip_address
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -23,6 +25,17 @@ INPUT_MODALITIES = (
 )
 LEGACY_VISION_FIELD = "supports_vision"
 INPUT_MODALITIES_FIELD = "input_modalities"
+LOCAL_MODEL_PROVIDERS = frozenset(
+    {
+        "llama_cpp",
+        "lm_studio",
+        "localai",
+        "ollama",
+        "ollama_chat",
+        "vllm",
+    }
+)
+LOOPBACK_HOST_NAMES = frozenset({"localhost", "localhost.localdomain"})
 
 InputModality = Literal["text", "image", "audio", "video"]
 
@@ -121,3 +134,39 @@ class AiModelCollection(BaseModel):
         if len(model_ids) != len(set(model_ids)):
             raise ValueError("AI 模型标识不能重复")
         return models
+
+
+def online_api_configuration_error(model: AiModelConfiguration) -> str | None:
+    """阻止 LLM 占用本机算力，同时允许旧配置被加载后由用户修正。"""
+
+    provider = model.litellm_model.partition("/")[0].casefold()
+    if provider in LOCAL_MODEL_PROVIDERS:
+        return "大语言与视觉模型仅支持在线 API，不能使用本地推理供应商"
+    if model.api_base is None:
+        return None
+    try:
+        parsed_url = urlsplit(model.api_base)
+        hostname_value = parsed_url.hostname
+    except ValueError:
+        return "自定义 API 地址必须是完整的 HTTPS 地址"
+    if parsed_url.scheme.casefold() != "https" or hostname_value is None:
+        return "在线 AI 模型的自定义 API 地址必须使用 HTTPS"
+    hostname = hostname_value.casefold().rstrip(".")
+    if hostname in LOOPBACK_HOST_NAMES:
+        return "在线 AI 模型不能连接本机或局域网地址"
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        return None
+    if (
+        address.is_loopback
+        or address.is_unspecified
+        or address.is_private
+        or address.is_link_local
+    ):
+        return "在线 AI 模型不能连接本机或局域网地址"
+    return None
+
+
+def is_online_api_model(model: AiModelConfiguration) -> bool:
+    return online_api_configuration_error(model) is None
