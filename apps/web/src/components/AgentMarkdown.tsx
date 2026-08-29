@@ -1,9 +1,13 @@
 import type { ComponentProps } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
 
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { normalize_math_delimiters } from "./markdown_document";
 
 export function AgentMarkdown({
   content,
@@ -21,7 +25,8 @@ export function AgentMarkdown({
       data-slot="agent-markdown"
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         skipHtml
         urlTransform={safe_url}
         components={{
@@ -75,7 +80,7 @@ export function AgentMarkdown({
           hr: () => <Separator />,
         }}
       >
-        {content}
+        {normalize_math_delimiters(content)}
       </ReactMarkdown>
     </div>
   );

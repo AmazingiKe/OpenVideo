@@ -14,6 +14,7 @@ import { SummaryWorkspace } from "./SummaryWorkspace";
 const ASSET_ID = "asset-0198dbf112347abc8123456789abcdef";
 const ROOT_DOCUMENT_ID = "document-0198dbf212347abc8123456789abcdef";
 const CHILD_DOCUMENT_ID = "document-0198dbf312347abc8123456789abcdef";
+const GRANDCHILD_DOCUMENT_ID = "document-0198dbf412347abc8123456789abcdef";
 const CREATED_AT = "2026-08-24T08:00:00Z";
 
 const SUMMARY_VERSION: SummaryVersion = {
@@ -76,11 +77,26 @@ const DOCUMENTS: SummaryDocument[] = [
     parent_document_id: null,
     title: "镜头语言课程笔记",
     markdown:
-      "# 镜头语言课程笔记\n\n## 核心结论\n\n镜头不仅记录动作，也通过景别与运动组织观众注意力。\n\n- 全景建立空间关系\n- 特写强调人物反应\n\n详见 [案例拆解](docs/document-0198dbf312347abc8123456789abcdef.md)。",
+      "# 镜头语言课程笔记\n\n> 镜头不仅记录动作，也通过景别与运动组织观众注意力。\n\n## 核心结论\n\n行内公式 \\(E = mc^2\\) 与独立公式：\n\n\\[\nA = \\pi r^2\n\\]\n\n- [x] 全景建立空间关系\n- [ ] 复盘特写中的人物反应\n\n| 镜头 | 叙事作用 |\n| --- | --- |\n| 推轨 | 缩短心理距离 |\n| 拉远 | 暴露空间关系 |\n\n## 关系图\n\n```mermaid\ngraph LR\n  景别 --> 注意力\n  运动 --> 情绪\n```\n\n详见 [案例拆解](docs/document-0198dbf312347abc8123456789abcdef.md)。[^source]\n\n[^source]: 示例来自课程 00:42 的推轨镜头。",
     relative_path: "index.md",
     content_digest: "storybook-root-digest",
     position: 0,
     revision: 3,
+    created_at: CREATED_AT,
+    updated_at: CREATED_AT,
+  },
+  {
+    document_id: GRANDCHILD_DOCUMENT_ID,
+    asset_id: ASSET_ID,
+    version_id: "summary-version-0198dbfa12347abc8123456789abcdef",
+    parent_document_id: CHILD_DOCUMENT_ID,
+    title: "推轨镜头公式",
+    markdown:
+      "# 推轨镜头公式\n\n## 速度\n\n$$v = \\frac{d}{t}$$\n\n## 观察\n\n推进速度越稳定，注意力引导越自然。",
+    relative_path: `docs/${GRANDCHILD_DOCUMENT_ID}.md`,
+    content_digest: "storybook-grandchild-digest",
+    position: 0,
+    revision: 1,
     created_at: CREATED_AT,
     updated_at: CREATED_AT,
   },
@@ -239,4 +255,12 @@ export const Dark: Story = {
   ],
 };
 
-export const Narrow: Story = {};
+export const Narrow: Story = {
+  decorators: [
+    (StoryComponent) => (
+      <div className="h-[760px] w-[390px] max-w-full overflow-hidden bg-background text-foreground">
+        <StoryComponent />
+      </div>
+    ),
+  ],
+};

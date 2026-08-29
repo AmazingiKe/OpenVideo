@@ -242,21 +242,6 @@ class LibraryGeneratedStorageMixin:
             return None
         return updated
 
-    def reorder_summary_documents(
-        self, parent_document_id: str, document_ids: list[str]
-    ) -> None:
-        parent = self.load_summary_document(parent_document_id)
-        if parent is None:
-            raise ValueError("主文档不存在")
-        synchronize_asset(self._db(), self.assets_path, parent.asset_id)
-        indexed_ids = [
-            document.document_id
-            for document in self.load_summary_documents(parent.asset_id)
-            if document.parent_document_id == parent_document_id
-        ]
-        if indexed_ids != document_ids:
-            raise ValueError("总结 manifest 排序与请求不一致")
-
     def delete_summary_document(self, document_id: str) -> bool:
         document = self.load_summary_document(document_id)
         if document is None:

@@ -20,6 +20,7 @@ from openvideo.core.library import MediaLibrary
 from openvideo.core.library_index import synchronize_asset
 from openvideo.core.summary_files import (
     SUMMARY_ASSETS_DIRECTORY_NAME,
+    SUMMARY_DOCUMENT_MAX_DEPTH,
     SUMMARY_DIRECTORY_NAME,
     SUMMARY_MANIFEST_FILE_NAME,
     SUMMARY_OUTPUT_DIRECTORY_NAME,
@@ -33,6 +34,7 @@ from openvideo.core.summary_files import (
     markdown_digest,
     resolve_summary_path,
     resolve_version_path,
+    summary_document_depths,
     version_relative_directory,
     write_root_manifest,
     write_version_manifest,
@@ -42,6 +44,7 @@ from openvideo.core.summary_models import (
     SummaryDetail,
     SummaryDocument,
     SummaryDocumentCreate,
+    SummaryDocumentMove,
     SummaryDocumentUpdate,
     SummaryExportResult,
     SummaryGenerationRequest,
@@ -130,12 +133,26 @@ class SummaryPlan(BaseModel):
             for document in self.documents
         ):
             raise ValueError("总结规划引用了不存在的父文档")
-        root_key = roots[0].key
-        if any(
-            document.parent_key not in {None, root_key}
-            for document in self.documents
-        ):
-            raise ValueError("本期总结文档只支持主文档与一级子文档")
+        by_key = {document.key: document for document in self.documents}
+        depths: dict[str, int] = {}
+        visiting: set[str] = set()
+
+        def resolve_depth(key: str) -> int:
+            if key in depths:
+                return depths[key]
+            if key in visiting:
+                raise ValueError("总结规划不能形成循环")
+            visiting.add(key)
+            parent_key = by_key[key].parent_key
+            depth = 0 if parent_key is None else resolve_depth(parent_key) + 1
+            visiting.remove(key)
+            if depth > SUMMARY_DOCUMENT_MAX_DEPTH:
+                raise ValueError("总结规划最多支持三级文档")
+            depths[key] = depth
+            return depth
+
+        for key in keys:
+            resolve_depth(key)
         return self
 
 
@@ -259,9 +276,7 @@ class SummaryManager:
             raise SummaryError(f"总结文档规划无效：{error}") from error
 
         allocated = _allocate_documents(asset_id, version_id, plan)
-        allowed_paths = {
-            document.relative_path: document for document in allocated
-        }
+        allowed_paths = {document.relative_path: document for document in allocated}
         body_messages = _body_messages(
             asset.title,
             context,
@@ -293,10 +308,9 @@ class SummaryManager:
         except (LlmCompletionError, ValidationError, ValueError) as error:
             raise SummaryError(f"总结正文输出无效：{error}") from error
         generated_paths = [document.relative_path for document in body.documents]
-        if (
-            len(generated_paths) != len(set(generated_paths))
-            or set(generated_paths) != set(allowed_paths)
-        ):
+        if len(generated_paths) != len(set(generated_paths)) or set(
+            generated_paths
+        ) != set(allowed_paths):
             raise SummaryError("总结正文只能写入后端预分配的完整路径表")
         markdown_by_path = {
             document.relative_path: document.markdown for document in body.documents
@@ -320,24 +334,27 @@ class SummaryManager:
 
     def create_child(
         self,
-        root_document_id: str,
+        parent_document_id: str,
         request: SummaryDocumentCreate,
     ) -> SummaryDocument:
-        root = self._require_document(root_document_id)
-        if root.parent_document_id is not None:
-            raise SummaryError("子文档下不能继续创建文档")
-        documents = self.documents(root.asset_id, root.version_id)
+        parent = self._require_document(parent_document_id)
+        documents = self.documents(parent.asset_id, parent.version_id)
+        depths = summary_document_depths(documents)
+        if depths[parent.document_id] >= SUMMARY_DOCUMENT_MAX_DEPTH:
+            raise SummaryError("总结文档最多支持三级")
+        if len(documents) >= 100:
+            raise SummaryError("单个总结版本最多包含 100 篇文档")
         children = [
             document
             for document in documents
-            if document.parent_document_id == root.document_id
+            if document.parent_document_id == parent.document_id
         ]
         document = self._prepare_document(
             SummaryDocument(
                 document_id=f"document-{uuid7().hex}",
-                asset_id=root.asset_id,
-                version_id=root.version_id,
-                parent_document_id=root.document_id,
+                asset_id=parent.asset_id,
+                version_id=parent.version_id,
+                parent_document_id=parent.document_id,
                 title=request.title,
                 markdown=request.markdown,
                 position=len(children),
@@ -346,12 +363,28 @@ class SummaryManager:
         updated_documents = [*documents, document]
         try:
             self._write_document(document)
-            self._write_version_manifest(root.asset_id, root.version_id, updated_documents)
+            self._write_version_manifest(
+                parent.asset_id,
+                parent.version_id,
+                updated_documents,
+            )
         except Exception:
             self._document_path(document).unlink(missing_ok=True)
             raise
         self.library.create_summary_documents([document])
         return self._require_document(document.document_id)
+
+    def duplicate_document(self, document_id: str) -> SummaryDocument:
+        document = self._require_document(document_id)
+        if document.parent_document_id is None:
+            raise SummaryError("主文档不能复制")
+        return self.create_child(
+            document.parent_document_id,
+            SummaryDocumentCreate(
+                title=f"{document.title} 副本",
+                markdown=document.markdown,
+            ),
+        )
 
     def update_document(
         self,
@@ -361,12 +394,16 @@ class SummaryManager:
         document = self._require_document(document_id)
         if document.revision != request.expected_revision:
             raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
-        markdown = request.markdown if request.markdown is not None else document.markdown
+        markdown = (
+            request.markdown if request.markdown is not None else document.markdown
+        )
         updated = document.model_copy(
             update={
                 "title": request.title if request.title is not None else document.title,
                 "markdown": markdown,
-                "position": request.position if request.position is not None else document.position,
+                "position": request.position
+                if request.position is not None
+                else document.position,
                 "content_digest": markdown_digest(markdown),
                 "revision": document.revision + 1,
                 "updated_at": datetime.now(UTC),
@@ -423,9 +460,7 @@ class SummaryManager:
                 if updated.parent_document_id is None
                 else updated.parent_document_id
             )
-            child_count = sum(
-                item.parent_document_id == root_id for item in documents
-            )
+            child_count = sum(item.parent_document_id == root_id for item in documents)
             children = [
                 self._prepare_document(
                     SummaryDocument(
@@ -595,51 +630,179 @@ class SummaryManager:
                 raise
             return self._require_document(document.document_id)
 
-    def reorder_children(
+    def move_document(
         self,
-        root_document_id: str,
-        document_ids: list[str],
+        document_id: str,
+        request: SummaryDocumentMove,
     ) -> list[SummaryDocument]:
-        root = self._require_document(root_document_id)
-        documents = self.documents(root.asset_id, root.version_id)
-        current_ids = {
-            document.document_id
-            for document in documents
-            if document.parent_document_id == root_document_id
-        }
-        if set(document_ids) != current_ids or len(document_ids) != len(current_ids):
-            raise ValueError("排序列表必须包含全部子文档且不能重复")
-        positions = {document_id: position for position, document_id in enumerate(document_ids)}
-        now = datetime.now(UTC)
-        reordered = [
-            document.model_copy(
-                update={
-                    "position": positions[document.document_id],
-                    "revision": document.revision + 1,
-                    "updated_at": now,
-                }
+        with self.library._lock:
+            document = self._require_document(document_id)
+            if document.parent_document_id is None:
+                raise SummaryError("主文档不能移动")
+            parent = self._require_document(request.parent_document_id)
+            if (
+                parent.asset_id != document.asset_id
+                or parent.version_id != document.version_id
+            ):
+                raise SummaryError("目标父文档不属于当前总结版本")
+            documents = self.documents(document.asset_id, document.version_id)
+            depths = summary_document_depths(documents)
+            subtree_ids = _summary_subtree_ids(documents, document.document_id)
+            if parent.document_id in subtree_ids:
+                raise SummaryError("文档不能移动到自身或其子文档下")
+            subtree_height = max(
+                depths[item_id] - depths[document.document_id]
+                for item_id in subtree_ids
             )
-            if document.document_id in positions
-            else document
-            for document in documents
-        ]
-        self._write_version_manifest(root.asset_id, root.version_id, reordered)
-        self.library.reorder_summary_documents(root_document_id, document_ids)
-        return self.documents(root.asset_id, root.version_id)
+            if (
+                depths[parent.document_id] + 1 + subtree_height
+                > SUMMARY_DOCUMENT_MAX_DEPTH
+            ):
+                raise SummaryError("移动后文档树将超过三级")
 
-    def delete_child(self, document_id: str) -> None:
-        document = self._require_document(document_id)
-        if document.parent_document_id is None:
-            raise ValueError("主文档不能单独删除")
-        remaining = [
-            item
-            for item in self.documents(document.asset_id, document.version_id)
-            if item.document_id != document_id
-        ]
-        self._write_version_manifest(document.asset_id, document.version_id, remaining)
-        if not self.library.delete_summary_document(document_id):
-            raise SummaryNotFoundError("总结文档不存在")
-        self._document_path(document).unlink(missing_ok=True)
+            sibling_orders: dict[str, list[SummaryDocument]] = {}
+            for parent_id in {document.parent_document_id, parent.document_id}:
+                sibling_orders[parent_id] = sorted(
+                    (
+                        item
+                        for item in documents
+                        if item.parent_document_id == parent_id
+                        and item.document_id != document.document_id
+                    ),
+                    key=lambda item: (item.position, item.created_at),
+                )
+            target_siblings = sibling_orders[parent.document_id]
+            target_position = min(request.position, len(target_siblings))
+            target_siblings.insert(target_position, document)
+
+            placements: dict[str, tuple[str, int]] = {}
+            for parent_id, siblings in sibling_orders.items():
+                for position, sibling in enumerate(siblings):
+                    placements[sibling.document_id] = (parent_id, position)
+            now = datetime.now(UTC)
+            moved_documents = []
+            for item in documents:
+                placement = placements.get(item.document_id)
+                if placement is None:
+                    moved_documents.append(item)
+                    continue
+                next_parent_id, next_position = placement
+                changed = (
+                    item.parent_document_id != next_parent_id
+                    or item.position != next_position
+                )
+                moved_documents.append(
+                    item.model_copy(
+                        update={
+                            "parent_document_id": next_parent_id,
+                            "position": next_position,
+                            "revision": item.revision + 1,
+                            "updated_at": now,
+                        }
+                    )
+                    if changed
+                    else item
+                )
+
+            asset_directory = self.library.asset_directory(document.asset_id)
+            manifest_path = resolve_version_path(
+                asset_directory,
+                document.version_id,
+                SUMMARY_MANIFEST_FILE_NAME,
+            )
+            manifest_snapshot = manifest_path.read_bytes()
+            try:
+                self._write_version_manifest(
+                    document.asset_id,
+                    document.version_id,
+                    moved_documents,
+                )
+                synchronize_asset(
+                    self.library._db(),
+                    self.library.assets_path,
+                    document.asset_id,
+                )
+            except Exception:
+                atomic_write_bytes(manifest_path, manifest_snapshot)
+                synchronize_asset(
+                    self.library._db(),
+                    self.library.assets_path,
+                    document.asset_id,
+                )
+                raise
+            return self.documents(document.asset_id, document.version_id)
+
+    def delete_document(self, document_id: str) -> None:
+        with self.library._lock:
+            document = self._require_document(document_id)
+            if document.parent_document_id is None:
+                raise ValueError("主文档不能单独删除")
+            documents = self.documents(document.asset_id, document.version_id)
+            removed_ids = _summary_subtree_ids(documents, document_id)
+            manifest = load_version_manifest(
+                self.library.asset_directory(document.asset_id),
+                document.version_id,
+            )
+            removed_documents = [
+                item for item in documents if item.document_id in removed_ids
+            ]
+            removed_media = [
+                item for item in manifest.media if item.document_id in removed_ids
+            ]
+            remaining_media = [
+                item for item in manifest.media if item.document_id not in removed_ids
+            ]
+            remaining_documents = [
+                item for item in documents if item.document_id not in removed_ids
+            ]
+            remaining_documents = _normalize_sibling_positions(
+                remaining_documents,
+                document.parent_document_id,
+            )
+            asset_directory = self.library.asset_directory(document.asset_id)
+            manifest_path = resolve_version_path(
+                asset_directory,
+                document.version_id,
+                SUMMARY_MANIFEST_FILE_NAME,
+            )
+            removed_paths = [
+                self._document_path(item) for item in removed_documents
+            ] + [
+                resolve_summary_path(asset_directory, item.relative_path)
+                for item in removed_media
+            ]
+            snapshots = {
+                path: path.read_bytes() if path.is_file() else None
+                for path in [manifest_path, *removed_paths]
+            }
+            try:
+                write_version_manifest(
+                    asset_directory,
+                    build_version_manifest(
+                        manifest.version,
+                        remaining_documents,
+                        remaining_media,
+                    ),
+                )
+                for path in removed_paths:
+                    path.unlink(missing_ok=True)
+                synchronize_asset(
+                    self.library._db(),
+                    self.library.assets_path,
+                    document.asset_id,
+                )
+            except Exception:
+                for path, content in snapshots.items():
+                    if content is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic_write_bytes(path, content)
+                synchronize_asset(
+                    self.library._db(),
+                    self.library.assets_path,
+                    document.asset_id,
+                )
+                raise
 
     def create_media(
         self,
@@ -827,7 +990,9 @@ class SummaryManager:
             if analysis.target.source == "marker"
             and analysis.status == EventAnalysisStatus.VALID
         ]
-        transcript_values = [segment.model_dump(mode="json") for segment in transcript.segments]
+        transcript_values = [
+            segment.model_dump(mode="json") for segment in transcript.segments
+        ]
         marker_values = []
         for marker in markers:
             excerpts = [
@@ -1009,17 +1174,13 @@ def _allocate_documents(
     version_id: str,
     plan: SummaryPlan,
 ) -> list[SummaryDocument]:
-    identifiers = {
-        item.key: f"document-{uuid7().hex}" for item in plan.documents
-    }
-    root = next(item for item in plan.documents if item.parent_key is None)
+    identifiers = {item.key: f"document-{uuid7().hex}" for item in plan.documents}
     documents = []
-    child_position = 0
+    sibling_positions: dict[str | None, int] = {}
     for item in plan.documents:
         parent_id = identifiers[item.parent_key] if item.parent_key else None
-        position = 0 if item.key == root.key else child_position
-        if item.key != root.key:
-            child_position += 1
+        position = sibling_positions.get(parent_id, 0)
+        sibling_positions[parent_id] = position + 1
         document = SummaryDocument(
             document_id=identifiers[item.key],
             asset_id=asset_id,
@@ -1029,7 +1190,9 @@ def _allocate_documents(
             position=position,
         )
         documents.append(
-            document.model_copy(update={"relative_path": document_relative_path(document)})
+            document.model_copy(
+                update={"relative_path": document_relative_path(document)}
+            )
         )
     return documents
 
@@ -1045,15 +1208,65 @@ def _plan_messages(
             "role": "system",
             "content": (
                 "你负责规划 Markdown 总结的文档树，但此阶段不能写正文。"
-                "只返回 JSON：{\"documents\":[{\"key\":\"root\","
-                "\"title\":\"...\",\"parent_key\":null}]}。"
-                "必须只有一个根文档，其他文档只能是根文档的一级子文档。"
+                '只返回 JSON：{"documents":[{"key":"root",'
+                '"title":"...","parent_key":null}]}。'
+                "必须只有一个根文档，文档树最多三级，不得形成循环。"
             ),
         },
         {
             "role": "user",
-            "content": _generation_control(asset_title, context, preset_prompt, request),
+            "content": _generation_control(
+                asset_title, context, preset_prompt, request
+            ),
         },
+    ]
+
+
+def _summary_subtree_ids(
+    documents: list[SummaryDocument],
+    document_id: str,
+) -> set[str]:
+    descendants = {document_id}
+    while True:
+        next_ids = {
+            document.document_id
+            for document in documents
+            if document.parent_document_id in descendants
+        }
+        unseen = next_ids - descendants
+        if not unseen:
+            return descendants
+        descendants.update(unseen)
+
+
+def _normalize_sibling_positions(
+    documents: list[SummaryDocument],
+    parent_document_id: str,
+) -> list[SummaryDocument]:
+    siblings = sorted(
+        (
+            document
+            for document in documents
+            if document.parent_document_id == parent_document_id
+        ),
+        key=lambda document: (document.position, document.created_at),
+    )
+    positions = {
+        document.document_id: position for position, document in enumerate(siblings)
+    }
+    now = datetime.now(UTC)
+    return [
+        document.model_copy(
+            update={
+                "position": positions[document.document_id],
+                "revision": document.revision + 1,
+                "updated_at": now,
+            }
+        )
+        if document.document_id in positions
+        and document.position != positions[document.document_id]
+        else document
+        for document in documents
     ]
 
 
@@ -1078,8 +1291,8 @@ def _body_messages(
             "role": "system",
             "content": (
                 "你负责生成 Markdown 正文。只返回 JSON："
-                "{\"documents\":[{\"relative_path\":\"index.md\","
-                "\"markdown\":\"...\"}]}。不得返回或构造路径表以外的路径。"
+                '{"documents":[{"relative_path":"index.md",'
+                '"markdown":"..."}]}。不得返回或构造路径表以外的路径。'
                 "文档之间只能使用路径表中的相对路径建立链接。"
             ),
         },
@@ -1112,7 +1325,9 @@ def _generation_control(
 
 
 def _digest(value: object) -> str:
-    content = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    content = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
@@ -1138,9 +1353,8 @@ def _validate_markdown_links(
         source_directory = PurePosixPath(source_path).parent.as_posix()
         for match in MARKDOWN_LINK_PATTERN.finditer(markdown):
             destination = match.group(1).strip("<>")
-            if (
-                destination.startswith("#")
-                or destination.lower().startswith(EXTERNAL_LINK_SCHEMES)
+            if destination.startswith("#") or destination.lower().startswith(
+                EXTERNAL_LINK_SCHEMES
             ):
                 continue
             path_without_fragment = destination.split("#", 1)[0].split("?", 1)[0]
@@ -1157,7 +1371,9 @@ def _insert_markdown(markdown: str, insert_after: str | None, content: str) -> s
     insertion = f"\n\n{content}\n"
     if insert_after is None:
         return markdown.rstrip() + insertion
-    occurrences = [match.start() for match in re.finditer(re.escape(insert_after), markdown)]
+    occurrences = [
+        match.start() for match in re.finditer(re.escape(insert_after), markdown)
+    ]
     if len(occurrences) != 1:
         raise SummaryError("媒体插入锚点必须在文档中唯一存在")
     index = occurrences[0] + len(insert_after)

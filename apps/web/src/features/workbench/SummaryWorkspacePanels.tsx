@@ -1,19 +1,5 @@
-import { Component, lazy, Suspense, useState, type ReactNode } from "react";
-import {
-  ArrowDown,
-  ArrowUp,
-  CircleX,
-  Code2,
-  Download,
-  Eye,
-  FilePlus2,
-  FileText,
-  FolderTree,
-  GripVertical,
-  MoreVertical,
-  Save,
-  Trash2,
-} from "lucide-react";
+import { Component, lazy, Suspense, type ReactNode } from "react";
+import { CircleX, Code2, Download, Eye, FileText, Save } from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
@@ -37,14 +23,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyDescription,
@@ -86,7 +64,19 @@ const MarkdownEditor = lazy(() =>
   })),
 );
 
+const MarkdownSourceEditor = lazy(() =>
+  import("@/components/MarkdownSourceEditor").then((module) => ({
+    default: module.MarkdownSourceEditor,
+  })),
+);
+
 export type SaveStatus = "saved" | "pending" | "saving" | "failed" | "conflict";
+
+export type DocumentConflict = {
+  local_markdown: string;
+  local_title: string;
+  remote_document: SummaryDocument;
+};
 
 export function SummaryGeneration({
   asset,
@@ -244,241 +234,6 @@ export function SummaryGeneration({
   );
 }
 
-export function DocumentTree({
-  root,
-  children,
-  selected_document_id,
-  on_select,
-  on_create,
-  on_move,
-  on_reorder,
-  reordering,
-  on_delete,
-}: {
-  root: SummaryDocument;
-  children: SummaryDocument[];
-  selected_document_id: string;
-  on_select: (document_id: string) => void;
-  on_create: () => void;
-  on_move: (document_id: string, direction: -1 | 1) => void;
-  on_reorder: (document_ids: string[]) => void;
-  reordering: boolean;
-  on_delete: (document: SummaryDocument) => void;
-}) {
-  const [dragged_document_id, set_dragged_document_id] = useState<
-    string | null
-  >(null);
-  const [drop_target, set_drop_target] = useState<{
-    document_id: string;
-    edge: "before" | "after";
-  } | null>(null);
-
-  function finish_drag() {
-    set_dragged_document_id(null);
-    set_drop_target(null);
-  }
-
-  function drop_document(target_document_id: string, edge: "before" | "after") {
-    if (!dragged_document_id) return;
-    const document_ids = children.map((document) => document.document_id);
-    const reordered = reorder_document_ids(
-      document_ids,
-      dragged_document_id,
-      target_document_id,
-      edge,
-    );
-    finish_drag();
-    if (reordered.join() !== document_ids.join()) on_reorder(reordered);
-  }
-
-  return (
-    <nav className="flex h-full min-h-0 flex-col bg-card" aria-label="总结文档">
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <FolderTree aria-hidden="true" /> 文档
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          onClick={on_create}
-          aria-label="新建子文档"
-        >
-          <FilePlus2 />
-        </Button>
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
-        <DocumentButton
-          document={root}
-          selected={root.document_id === selected_document_id}
-          on_select={on_select}
-        />
-        <div className="flex flex-col gap-1 pl-3">
-          {children.map((document, index) => (
-            <div
-              className={cn(
-                "flex min-w-0 items-center gap-1 rounded-md border-y-2 border-transparent",
-                drop_target?.document_id === document.document_id &&
-                  drop_target.edge === "before" &&
-                  "border-t-primary",
-                drop_target?.document_id === document.document_id &&
-                  drop_target.edge === "after" &&
-                  "border-b-primary",
-                dragged_document_id === document.document_id && "opacity-50",
-              )}
-              key={document.document_id}
-              onDragOver={(event) => {
-                if (!dragged_document_id || reordering) return;
-                event.preventDefault();
-                const bounds = event.currentTarget.getBoundingClientRect();
-                set_drop_target({
-                  document_id: document.document_id,
-                  edge:
-                    event.clientY < bounds.top + bounds.height / 2
-                      ? "before"
-                      : "after",
-                });
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                const bounds = event.currentTarget.getBoundingClientRect();
-                drop_document(
-                  document.document_id,
-                  event.clientY < bounds.top + bounds.height / 2
-                    ? "before"
-                    : "after",
-                );
-              }}
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                draggable={!reordering}
-                disabled={reordering}
-                onDragStart={(event) => {
-                  set_dragged_document_id(document.document_id);
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData(
-                    "text/plain",
-                    document.document_id,
-                  );
-                }}
-                onDragEnd={finish_drag}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowUp" && index > 0) {
-                    event.preventDefault();
-                    on_move(document.document_id, -1);
-                  }
-                  if (
-                    event.key === "ArrowDown" &&
-                    index < children.length - 1
-                  ) {
-                    event.preventDefault();
-                    on_move(document.document_id, 1);
-                  }
-                }}
-                aria-label={`拖动 ${document.title} 调整顺序；也可使用上下方向键`}
-              >
-                <GripVertical />
-              </Button>
-              <DocumentButton
-                document={document}
-                selected={document.document_id === selected_document_id}
-                on_select={on_select}
-                className="flex-1"
-              />
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    disabled={reordering}
-                    aria-label={`${document.title} 操作`}
-                  >
-                    <MoreVertical />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      disabled={index === 0}
-                      onSelect={() => on_move(document.document_id, -1)}
-                    >
-                      <ArrowUp /> 上移
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={index === children.length - 1}
-                      onSelect={() => on_move(document.document_id, 1)}
-                    >
-                      <ArrowDown /> 下移
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onSelect={() => on_delete(document)}
-                    >
-                      <Trash2 /> 删除
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          ))}
-        </div>
-      </div>
-      <span className="sr-only" aria-live="polite">
-        {reordering ? "正在保存文档顺序" : ""}
-      </span>
-    </nav>
-  );
-}
-
-export function reorder_document_ids(
-  document_ids: string[],
-  dragged_document_id: string,
-  target_document_id: string,
-  edge: "before" | "after",
-): string[] {
-  if (dragged_document_id === target_document_id) return document_ids;
-  const reordered = document_ids.filter(
-    (document_id) => document_id !== dragged_document_id,
-  );
-  const target_index = reordered.indexOf(target_document_id);
-  if (target_index < 0) return document_ids;
-  const insertion_index = target_index + (edge === "after" ? 1 : 0);
-  reordered.splice(insertion_index, 0, dragged_document_id);
-  return reordered;
-}
-
-function DocumentButton({
-  document,
-  selected,
-  on_select,
-  className,
-}: {
-  document: SummaryDocument;
-  selected: boolean;
-  on_select: (document_id: string) => void;
-  className?: string;
-}) {
-  return (
-    <Button
-      type="button"
-      variant={selected ? "secondary" : "ghost"}
-      className={cn("min-w-0 justify-start", className)}
-      onClick={() => on_select(document.document_id)}
-      aria-current={selected ? "page" : undefined}
-    >
-      <FileText data-icon="inline-start" />
-      <span className="truncate">{document.title}</span>
-    </Button>
-  );
-}
-
 export function DocumentEditor({
   document,
   title,
@@ -495,6 +250,9 @@ export function DocumentEditor({
   export_pending,
   export_relative_path,
   on_export,
+  target_heading_id,
+  on_active_heading_change,
+  on_target_heading_reached,
 }: {
   document: SummaryDocument;
   title: string;
@@ -511,6 +269,9 @@ export function DocumentEditor({
   export_pending: boolean;
   export_relative_path: string | null;
   on_export: () => void;
+  target_heading_id: string | null;
+  on_active_heading_change: (heading_id: string | null) => void;
+  on_target_heading_reached: () => void;
 }) {
   return (
     <Tabs
@@ -561,7 +322,7 @@ export function DocumentEditor({
           </span>
         ) : null}
       </header>
-      <TabsContent value="visual" className="min-h-0">
+      <TabsContent value="visual" className="flex min-h-0 overflow-hidden">
         <MarkdownEditorErrorBoundary
           document_id={document.document_id}
           on_use_source={() => on_mode_change("source")}
@@ -582,32 +343,30 @@ export function DocumentEditor({
               markdown={markdown}
               on_change={on_markdown_change}
               on_selection_change={on_selection_change}
+              target_heading_id={target_heading_id}
+              on_active_heading_change={on_active_heading_change}
+              on_target_heading_reached={on_target_heading_reached}
             />
           </Suspense>
         </MarkdownEditorErrorBoundary>
       </TabsContent>
-      <TabsContent value="source" className="min-h-0">
-        <Textarea
-          value={markdown}
-          onChange={(event) => on_markdown_change(event.target.value)}
-          onSelect={(event) => {
-            const target = event.currentTarget;
-            on_selection_change(
-              target.selectionStart === target.selectionEnd
-                ? null
-                : {
-                    start: target.selectionStart,
-                    end: target.selectionEnd,
-                    text: target.value.slice(
-                      target.selectionStart,
-                      target.selectionEnd,
-                    ),
-                  },
-            );
-          }}
-          aria-label="Markdown 源码"
-          className="min-h-0 flex-1 resize-none rounded-none border-0 p-6 font-mono shadow-none focus-visible:ring-0"
-        />
+      <TabsContent value="source" className="flex min-h-0 overflow-hidden">
+        <Suspense
+          fallback={
+            <div
+              className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"
+              role="status"
+            >
+              <Spinner /> 正在加载源码编辑器…
+            </div>
+          }
+        >
+          <MarkdownSourceEditor
+            markdown={markdown}
+            on_change={on_markdown_change}
+            on_selection_change={on_selection_change}
+          />
+        </Suspense>
       </TabsContent>
     </Tabs>
   );
@@ -728,7 +487,7 @@ export function NewDocumentDialog({
         <DialogHeader>
           <DialogTitle>新建子文档</DialogTitle>
           <DialogDescription>
-            子文档只允许一级，文件路径由文档 ID 固定生成。
+            文档最多支持三级，文件路径由文档 ID 固定生成。
           </DialogDescription>
         </DialogHeader>
         <Field>
@@ -768,7 +527,8 @@ export function DeleteDocumentDialog({
         <DialogHeader>
           <DialogTitle>删除子文档</DialogTitle>
           <DialogDescription>
-            “{document?.title}”将从当前总结项目中删除，此操作不可撤销。
+            “{document?.title}
+            ”及其子文档将从当前总结项目中删除，此操作不可撤销。
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -781,6 +541,76 @@ export function DeleteDocumentDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function DocumentConflictDialog({
+  conflict,
+  on_keep_local,
+  on_use_remote,
+}: {
+  conflict: DocumentConflict | null;
+  on_keep_local: () => void;
+  on_use_remote: () => void;
+}) {
+  return (
+    <Dialog open={conflict !== null}>
+      <DialogContent
+        className="max-h-[min(88vh,48rem)] sm:max-w-5xl"
+        showCloseButton={false}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onPointerDownOutside={(event) => event.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle>选择要保留的文档版本</DialogTitle>
+          <DialogDescription>
+            保存期间检测到其他修改。本地草稿仍在当前窗口中，请对比后选择。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid min-h-0 gap-3 md:grid-cols-2">
+          <ConflictVersion
+            label="本地草稿"
+            title={conflict?.local_title ?? ""}
+            markdown={conflict?.local_markdown ?? ""}
+          />
+          <ConflictVersion
+            label="已保存版本"
+            title={conflict?.remote_document.title ?? ""}
+            markdown={conflict?.remote_document.markdown ?? ""}
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={on_use_remote}>
+            使用已保存版本
+          </Button>
+          <Button type="button" onClick={on_keep_local}>
+            保留本地草稿并覆盖
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ConflictVersion({
+  label,
+  markdown,
+  title,
+}: {
+  label: string;
+  markdown: string;
+  title: string;
+}) {
+  return (
+    <section className="flex min-h-48 flex-col overflow-hidden rounded-lg border bg-muted/30">
+      <header className="border-b px-3 py-2">
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+        <p className="truncate text-sm font-semibold">{title}</p>
+      </header>
+      <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap">
+        {markdown || "（空文档）"}
+      </pre>
+    </section>
   );
 }
 
