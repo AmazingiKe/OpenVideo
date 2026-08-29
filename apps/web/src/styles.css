@@ -574,6 +574,19 @@
   gap: 4px;
 }
 
+.media_timeline_transport {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.media_timeline_transport::-webkit-scrollbar {
+  display: none;
+}
+
+.media_timeline_transport > * {
+  flex: 0 0 auto;
+}
+
 .media_timeline_toolbar
   :is([data-slot="button"], [data-slot="popover-trigger"]) {
   color: var(--timeline-color-control-foreground);
@@ -821,6 +834,16 @@
 
 .media_timeline .timeline-editor-action-selected {
   z-index: 2;
+}
+
+.media_timeline_evidence_range {
+  position: absolute;
+  z-index: 2;
+  top: var(--timeline-ruler-height);
+  bottom: 0;
+  border-inline: 2px solid var(--timeline-color-selection-border);
+  background: var(--focus-subtle);
+  pointer-events: none;
 }
 
 .media_timeline .timeline_action_content {

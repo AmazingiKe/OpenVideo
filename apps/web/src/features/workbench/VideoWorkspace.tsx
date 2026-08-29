@@ -33,7 +33,12 @@ import { Slider } from "@/components/ui/slider";
 import { Player, type PlayerHandle } from "@/features/player/Player";
 import { media_url } from "@/shared/api";
 import { format_marker_label } from "@/shared/marker_labels";
-import type { MediaAsset, MediaMarker, Transcript } from "@/shared/types";
+import type {
+  AgentEvidenceRange,
+  MediaAsset,
+  MediaMarker,
+  Transcript,
+} from "@/shared/types";
 
 const SEEK_STEP_SECONDS = 10;
 const LOW_VOLUME_THRESHOLD = 0.5;
@@ -44,6 +49,7 @@ type VideoWorkspaceProps = {
   asset: MediaAsset | null;
   markers: MediaMarker[];
   transcript: Transcript | null;
+  evidence_range?: AgentEvidenceRange | null;
   player_ref: RefObject<PlayerHandle | null>;
   is_paused: boolean;
   playback_rate: number;
@@ -56,6 +62,7 @@ export function VideoWorkspace({
   asset,
   markers,
   transcript,
+  evidence_range = null,
   player_ref,
   is_paused,
   playback_rate,
@@ -128,6 +135,7 @@ export function VideoWorkspace({
                   : null
               }
               subtitles={transcript?.segments ?? []}
+              evidence_range={evidence_range}
               markers={markers.map((marker) => ({
                 start_seconds: marker.start_seconds,
                 label: format_marker_label(marker),

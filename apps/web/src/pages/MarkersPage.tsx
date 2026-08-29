@@ -22,6 +22,7 @@ import { use_compact_markers_layout } from "@/features/markers/use_compact_marke
 import { use_markers_page_settings } from "@/features/markers/use_markers_page_settings";
 import { MarkerAgentPanel } from "@/features/markers/MarkerAgentPanel";
 import { MarkerLibraryPanel } from "@/features/markers/MarkerLibraryPanel";
+import { evidence_range_for_asset } from "@/features/markers/evidence_navigation";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/player/use_asset_markers";
 import {
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/resizable";
 import { Spinner } from "@/components/ui/spinner";
 import { FloatingError } from "@/components/FloatingError";
+import type { AgentContextAttachmentDraft } from "@/components/agent_context";
 import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
@@ -48,6 +50,8 @@ import {
   update_focus_selection,
 } from "@/shared/api";
 import type {
+  AgentEvidenceRange,
+  AgentEvidenceReference,
   EventAnalysis,
   FocusSelection,
   MediaMarker,
@@ -102,6 +106,11 @@ export function MarkersPage() {
   const [page_error, set_page_error] = useState<string | null>(null);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
+  const [agent_context_attachments, set_agent_context_attachments] = useState<
+    AgentContextAttachmentDraft[]
+  >([]);
+  const [evidence_range, set_evidence_range] =
+    useState<AgentEvidenceRange | null>(null);
   const [event_analyses, set_event_analyses] = useState<EventAnalysis[]>([]);
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
     new Set(),
@@ -159,6 +168,8 @@ export function MarkersPage() {
     set_transcript_correction_scope("all");
     set_candidate_markers([]);
     set_focus_selection(null);
+    set_agent_context_attachments([]);
+    set_evidence_range(null);
     set_event_analyses([]);
     set_selected_marker_ids(new Set());
   }, [selected_asset_id]);
@@ -250,6 +261,17 @@ export function MarkersPage() {
   function seek_player(seconds: number) {
     set_current_time(seconds);
     player_ref.current?.seek_to(seconds);
+  }
+
+  function seek_agent_evidence(
+    seconds: number,
+    end_seconds?: number | null,
+    evidence?: AgentEvidenceReference,
+  ) {
+    set_evidence_range(
+      evidence_range_for_asset(selected_asset_id, evidence, end_seconds),
+    );
+    seek_player(seconds);
   }
 
   function preview_player(seconds: number) {
@@ -351,10 +373,10 @@ export function MarkersPage() {
     <MarkerAgentPanel
       asset_id={selected_asset_id}
       models={ai_models}
-      focus_selection={focus_selection}
+      context_attachments={agent_context_attachments}
       default_thinking_mode={agent_preferences?.default_thinking_mode}
       compact={is_compact_layout}
-      on_seek={seek_player}
+      on_seek={seek_agent_evidence}
       current_time={current_time}
       on_candidate_markers_change={set_candidate_markers}
       on_markers_changed={reload_markers}
@@ -375,6 +397,7 @@ export function MarkersPage() {
       asset={selected_asset}
       markers={markers}
       transcript={transcript}
+      evidence_range={evidence_range}
       player_ref={player_ref}
       is_paused={is_paused}
       playback_rate={playback_rate}
@@ -442,6 +465,7 @@ export function MarkersPage() {
         markers={markers}
         candidate_markers={candidate_markers}
         focus_selection={focus_selection}
+        evidence_range={evidence_range}
         event_analyses={visible_event_analyses}
         selected_marker_ids={selected_marker_ids}
         selected_transcript_indices={selected_transcript_indices}
@@ -463,6 +487,9 @@ export function MarkersPage() {
           void set_focus_endpoint("out_seconds", seconds)
         }
         on_clear_focus={() => void clear_focus()}
+        on_add_agent_context={(attachment) =>
+          set_agent_context_attachments((current) => [...current, attachment])
+        }
         on_delete_event_analysis={remove_event_analysis}
         on_add_marker={add_marker}
         on_update_marker={update_marker}

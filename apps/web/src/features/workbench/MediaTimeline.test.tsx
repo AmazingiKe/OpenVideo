@@ -14,6 +14,7 @@ import type {
 
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
+  AgentEvidenceRange,
   EventAnalysis,
   FocusSelection,
   MediaMarker,
@@ -226,6 +227,7 @@ function render_timeline(options?: {
   analysis_segments?: MediaSegment[];
   focus_selection?: FocusSelection;
   event_analyses?: EventAnalysis[];
+  evidence_range?: AgentEvidenceRange;
   update_marker?: (
     marker_id: string,
     update: MediaMarkerUpdate,
@@ -252,6 +254,7 @@ function render_timeline(options?: {
     set_focus_out: vi.fn(),
     clear_focus: vi.fn(),
     delete_event_analysis: vi.fn().mockResolvedValue(undefined),
+    add_agent_context: vi.fn(),
   };
   const default_transcript_segments: TranscriptSegment[] = [
     {
@@ -309,6 +312,7 @@ function render_timeline(options?: {
         markers={markers}
         candidate_markers={options?.candidate_markers}
         focus_selection={options?.focus_selection}
+        evidence_range={options?.evidence_range}
         event_analyses={options?.event_analyses}
         selected_transcript_indices={selected_transcript_indices}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
@@ -328,6 +332,7 @@ function render_timeline(options?: {
         on_set_focus_in={callbacks.set_focus_in}
         on_set_focus_out={callbacks.set_focus_out}
         on_clear_focus={callbacks.clear_focus}
+        on_add_agent_context={callbacks.add_agent_context}
         on_delete_event_analysis={callbacks.delete_event_analysis}
         on_add_marker={callbacks.add_marker}
         on_update_marker={callbacks.update_marker}
@@ -440,6 +445,66 @@ describe("MediaTimeline", () => {
       });
     });
     HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("adds selected subtitles or a focus range to the visible AI context", () => {
+    const { add_agent_context } = render_timeline({
+      focus_selection: {
+        selection_id: "focus-selection-0198d12345677890abcdef1234567890",
+        asset_id: ASSET_ID,
+        in_seconds: 6,
+        out_seconds: 10,
+        revision: 1,
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /转写：原始转写/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /将字幕选区（1 条）添加给 AI/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /将时间线理解范围添加给 AI/ }),
+    );
+
+    expect(add_agent_context).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        kind: "transcript_selection",
+        snapshot_text: "原始转写",
+        start_seconds: 5,
+        end_seconds: 8,
+      }),
+    );
+    expect(add_agent_context).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        kind: "time_range",
+        start_seconds: 6,
+        end_seconds: 10,
+      }),
+    );
+  });
+
+  it("renders the exact evidence range without replacing the playhead", () => {
+    const { result } = render_timeline({
+      evidence_range: {
+        evidence_id: "evidence-0198d12345677890abcdef1234567890",
+        start_seconds: 5,
+        end_seconds: 8,
+      },
+    });
+
+    const highlight = result.container.querySelector(
+      ".media_timeline_evidence_range",
+    );
+    expect(highlight).toHaveAttribute(
+      "data-evidence-id",
+      "evidence-0198d12345677890abcdef1234567890",
+    );
+    expect(
+      screen.getByText(/已高亮答案证据 00:05 至00:08/),
+    ).toBeInTheDocument();
   });
 
   it("maps four action kinds without exposing mutable business objects", () => {

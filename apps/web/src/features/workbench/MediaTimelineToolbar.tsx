@@ -46,6 +46,7 @@ type MediaTimelineToolbarProps = {
   has_focus_selection: boolean;
   on_zoom_change: (zoom_pixels_per_second: number) => void;
   tools: ReactNode;
+  context_sources?: ReactNode;
 };
 
 export function MediaTimelineToolbar({
@@ -63,6 +64,7 @@ export function MediaTimelineToolbar({
   has_focus_selection,
   on_zoom_change,
   tools,
+  context_sources,
 }: MediaTimelineToolbarProps) {
   const bounded_time = current_time;
   return (
@@ -116,6 +118,7 @@ export function MediaTimelineToolbar({
           <span className="media_timeline_add_label">添加标记</span>
         </Button>
         {tools}
+        {context_sources}
         <Button
           type="button"
           size="sm"

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agent_scope_key,
   materialize_context_attachments,
+  parse_context_attachment,
   session_context_matches_scope,
 } from "./agent_context";
 
@@ -65,5 +66,31 @@ describe("agent context", () => {
     ]);
 
     expect(attachment?.content_digest).toBeUndefined();
+  });
+
+  it("rejects incomplete or reversed attachments at the drop boundary", () => {
+    expect(
+      parse_context_attachment(
+        JSON.stringify({
+          draft_id: "range-1",
+          kind: "time_range",
+          asset_id: "asset-1",
+          label: "时间范围",
+          start_seconds: 24,
+          end_seconds: 12,
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parse_context_attachment(
+        JSON.stringify({
+          draft_id: "selection-1",
+          kind: "summary_selection",
+          asset_id: "asset-1",
+          label: "总结选区",
+          snapshot_text: " ",
+        }),
+      ),
+    ).toBeNull();
   });
 });

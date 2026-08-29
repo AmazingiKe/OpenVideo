@@ -20,7 +20,7 @@ import {
   useState,
 } from "react";
 
-import type { TranscriptSegment } from "../../shared/types";
+import type { AgentEvidenceRange, TranscriptSegment } from "../../shared/types";
 import "./player.css";
 
 const SEEK_CONFIRMATION_TOLERANCE_SECONDS = 0.5;
@@ -63,6 +63,7 @@ type PlayerProps = {
   scrub_src?: string | null;
   markers?: TimelineMarker[];
   subtitles?: TranscriptSegment[];
+  evidence_range?: AgentEvidenceRange | null;
   thumbnails?: Storyboard | null;
   on_time_change?: (seconds: number) => void;
   on_pause_change?: (paused: boolean) => void;
@@ -76,6 +77,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     scrub_src = null,
     markers = [],
     subtitles = [],
+    evidence_range = null,
     thumbnails = null,
     on_time_change,
     on_pause_change,
@@ -284,7 +286,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         }}
       >
         <MediaProvider />
-        <SubtitleOverlay segments={subtitles} />
+        <SubtitleOverlay segments={subtitles} evidence_range={evidence_range} />
         <PlyrLayout
           icons={plyrLayoutIcons}
           controls={[]}
@@ -345,13 +347,28 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   );
 });
 
-function SubtitleOverlay({ segments }: { segments: TranscriptSegment[] }) {
+function SubtitleOverlay({
+  segments,
+  evidence_range,
+}: {
+  segments: TranscriptSegment[];
+  evidence_range: AgentEvidenceRange | null;
+}) {
   const { currentTime } = useMediaStore();
-  const text = active_subtitle_text(segments, currentTime);
+  const active_segment = active_subtitle_segment(segments, currentTime);
+  if (!active_segment) return null;
+  const text = active_segment.text.trim();
   if (!text) return null;
+  const evidence_highlight =
+    evidence_range !== null &&
+    subtitle_is_evidence(active_segment, evidence_range);
 
   return (
-    <div className="openvideo_subtitle" aria-label="视频字幕">
+    <div
+      className="openvideo_subtitle"
+      data-evidence-highlight={evidence_highlight || undefined}
+      aria-label={evidence_highlight ? "视频字幕，答案证据" : "视频字幕"}
+    >
       {text}
     </div>
   );
@@ -361,12 +378,41 @@ export function active_subtitle_text(
   segments: TranscriptSegment[],
   current_time: number,
 ): string | null {
-  const active_segment = segments.find(
-    (segment) =>
-      segment.start_seconds <= current_time &&
-      current_time < segment.end_seconds,
+  return active_subtitle_segment(segments, current_time)?.text.trim() || null;
+}
+
+export function active_subtitle_segment(
+  segments: TranscriptSegment[],
+  current_time: number,
+): TranscriptSegment | null {
+  return (
+    segments.find(
+      (segment) =>
+        segment.start_seconds <= current_time &&
+        current_time < segment.end_seconds,
+    ) ?? null
   );
-  return active_segment?.text.trim() || null;
+}
+
+export function subtitle_is_evidence(
+  segment: TranscriptSegment,
+  evidence_range: AgentEvidenceRange,
+) {
+  return ranges_overlap(
+    segment.start_seconds,
+    segment.end_seconds,
+    evidence_range.start_seconds,
+    evidence_range.end_seconds,
+  );
+}
+
+function ranges_overlap(
+  left_start: number,
+  left_end: number,
+  right_start: number,
+  right_end: number,
+) {
+  return left_start <= right_end && right_start <= left_end;
 }
 
 type PlayerRef = {

@@ -1,5 +1,5 @@
 import { Pin, Send, Square } from "lucide-react";
-import { useId, type DragEvent, type FormEvent } from "react";
+import { useId, useState, type DragEvent, type FormEvent } from "react";
 
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
 import { Button } from "@/components/ui/button";
@@ -9,9 +9,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { AgentRetrievalScope, AgentThinkingMode } from "@/shared/types";
-import type { AgentContextAttachmentDraft } from "./agent_context";
-
-const CONTEXT_ATTACHMENT_MIME = "application/x-openvideo-agent-context";
+import {
+  AGENT_CONTEXT_ATTACHMENT_MIME,
+  read_context_attachment_drag_data,
+  type AgentContextAttachmentDraft,
+} from "./agent_context";
 
 export function AgentComposer({
   value,
@@ -56,6 +58,7 @@ export function AgentComposer({
 }) {
   const submitting = pending || preparing_attachments;
   const control_id = useId();
+  const [context_drop_active, set_context_drop_active] = useState(false);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -64,24 +67,38 @@ export function AgentComposer({
 
   function drop_attachment(event: DragEvent<HTMLFormElement>) {
     if (!on_attachment_drop) return;
-    const encoded = event.dataTransfer.getData(CONTEXT_ATTACHMENT_MIME);
-    if (!encoded) return;
+    const attachment = read_context_attachment_drag_data(event.dataTransfer);
+    set_context_drop_active(false);
+    if (!attachment) return;
     event.preventDefault();
-    const attachment = parse_context_attachment(encoded);
-    if (attachment) on_attachment_drop(attachment);
+    on_attachment_drop(attachment);
   }
 
   return (
     <form
-      className="flex flex-col gap-3 border-t bg-surface-background-soft p-3"
+      className="flex flex-col gap-3 border-t bg-surface-background-soft p-3 data-[context-drop-active=true]:ring-2 data-[context-drop-active=true]:ring-focus data-[context-drop-active=true]:ring-inset"
+      data-slot="agent-composer"
+      data-context-drop-active={context_drop_active}
       onSubmit={submit}
       onDragOver={(event) => {
-        if (event.dataTransfer.types.includes(CONTEXT_ATTACHMENT_MIME)) {
+        if (event.dataTransfer.types.includes(AGENT_CONTEXT_ATTACHMENT_MIME)) {
           event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          set_context_drop_active(true);
+        }
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          set_context_drop_active(false);
         }
       }}
       onDrop={drop_attachment}
     >
+      {context_drop_active ? (
+        <p className="text-center text-xs font-medium text-focus" role="status">
+          松开即可添加为可见上下文
+        </p>
+      ) : null}
       {attachments.length > 0 ? (
         <AgentContextAttachments
           attachments={attachments}
@@ -232,62 +249,6 @@ export function AgentComposer({
         </Field>
       </FieldGroup>
     </form>
-  );
-}
-
-function parse_context_attachment(
-  encoded: string,
-): AgentContextAttachmentDraft | null {
-  try {
-    const value = JSON.parse(encoded) as Record<string, unknown>;
-    if (
-      typeof value.draft_id !== "string" ||
-      !is_attachment_kind(value.kind) ||
-      typeof value.asset_id !== "string" ||
-      typeof value.label !== "string"
-    ) {
-      return null;
-    }
-    return {
-      draft_id: value.draft_id,
-      kind: value.kind,
-      asset_id: value.asset_id,
-      label: value.label,
-      reference_id:
-        typeof value.reference_id === "string" ? value.reference_id : undefined,
-      version_id:
-        typeof value.version_id === "string" ? value.version_id : undefined,
-      start_seconds:
-        typeof value.start_seconds === "number"
-          ? value.start_seconds
-          : undefined,
-      end_seconds:
-        typeof value.end_seconds === "number" ? value.end_seconds : undefined,
-      snapshot_text:
-        typeof value.snapshot_text === "string"
-          ? value.snapshot_text
-          : undefined,
-      selection_start:
-        typeof value.selection_start === "number"
-          ? value.selection_start
-          : undefined,
-      selection_end:
-        typeof value.selection_end === "number"
-          ? value.selection_end
-          : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function is_attachment_kind(
-  value: unknown,
-): value is AgentContextAttachmentDraft["kind"] {
-  return (
-    value === "summary_selection" ||
-    value === "transcript_selection" ||
-    value === "time_range"
   );
 }
 

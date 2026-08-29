@@ -48,10 +48,18 @@ vi.mock("@/components/MarkdownEditor", () => ({
     document_key,
     markdown,
     on_change,
+    on_selection_change,
   }: {
     document_key: string;
     markdown: string;
     on_change: (markdown: string) => void;
+    on_selection_change: (
+      selection: {
+        start: number;
+        end: number;
+        text: string;
+      } | null,
+    ) => void;
   }) => {
     if (markdown_editor_state.failing_document_id === document_key) {
       throw new Error("编辑器初始化失败");
@@ -61,6 +69,21 @@ vi.mock("@/components/MarkdownEditor", () => ({
         aria-label="可视化 Markdown"
         value={markdown}
         onChange={(event) => on_change(event.target.value)}
+        onSelect={(event) => {
+          const target = event.currentTarget;
+          on_selection_change(
+            target.selectionStart === target.selectionEnd
+              ? null
+              : {
+                  start: target.selectionStart,
+                  end: target.selectionEnd,
+                  text: target.value.slice(
+                    target.selectionStart,
+                    target.selectionEnd,
+                  ),
+                },
+          );
+        }}
       />
     );
   },
@@ -293,6 +316,31 @@ describe("SummaryWorkspace", () => {
       { timeout: 2_000 },
     );
     expect(await screen.findByText("已保存")).toBeInTheDocument();
+  });
+
+  it("adds a selected summary passage as visible AI context", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    const source = await screen.findByRole("textbox", {
+      name: "可视化 Markdown",
+    });
+    fireEvent.select(source, {
+      target: { selectionStart: 0, selectionEnd: 6 },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /将课程总结选区添加给 AI/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "助手" }));
+
+    expect(await screen.findAllByText("课程总结选区")).toHaveLength(2);
   });
 
   it("opens a generated child document with its markdown", async () => {

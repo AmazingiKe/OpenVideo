@@ -73,6 +73,12 @@
   pointer-events: none;
 }
 
+.openvideo_subtitle[data-evidence-highlight] {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--focus-subtle);
+}
+
 .openvideo_player .plyr__progress,
 .openvideo_player .plyr__control--overlaid,
 .openvideo_player [data-plyr="play"],

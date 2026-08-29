@@ -668,6 +668,10 @@ export type AgentEvidenceReference = {
   relation: AgentEvidenceRelation;
   retrieval_relation?: "direct" | "neighbor" | "overview" | "corroborated";
 };
+export type AgentEvidenceRange = Pick<
+  AgentEvidenceReference,
+  "evidence_id" | "start_seconds" | "end_seconds"
+>;
 export type AgentEvidenceConflict = {
   evidence_ids: string[];
   reason: string;

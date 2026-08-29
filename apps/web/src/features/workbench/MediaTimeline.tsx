@@ -1,6 +1,7 @@
 import { Timeline, type TimelineEditor } from "@xzdarcy/react-timeline-editor";
 import "@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css";
 import {
+  Bot,
   Captions,
   Crosshair,
   Flag,
@@ -22,6 +23,11 @@ import {
   type ReactNode,
 } from "react";
 
+import { AgentContextSource } from "@/components/AgentContextSource";
+import {
+  renew_context_attachment_draft,
+  type AgentContextAttachmentDraft,
+} from "@/components/agent_context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -51,9 +57,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { format_time } from "@/shared/format";
 import { format_marker_importance } from "@/shared/marker_labels";
 import type {
   AnalysisStrategy,
+  AgentEvidenceRange,
   EventAnalysis,
   FocusSelection,
   MarkerImportance,
@@ -89,6 +97,10 @@ import {
 } from "./use_media_timeline_editors";
 import { use_media_timeline_viewport } from "./use_media_timeline_viewport";
 import { use_media_timeline_marquee } from "./use_media_timeline_marquee";
+import {
+  focus_context_attachment,
+  transcript_context_attachment,
+} from "./timeline_agent_context";
 
 const TIMELINE_SCALE_SECONDS = 1;
 const TIMELINE_SCALE_SPLIT_COUNT = 1;
@@ -137,6 +149,7 @@ type MediaTimelineProps = {
   markers: MediaMarker[];
   candidate_markers?: MediaMarker[];
   focus_selection?: FocusSelection | null;
+  evidence_range?: AgentEvidenceRange | null;
   event_analyses?: EventAnalysis[];
   selected_marker_ids?: Set<string>;
   selected_transcript_indices: number[];
@@ -162,6 +175,7 @@ type MediaTimelineProps = {
   on_set_focus_in?: (seconds: number) => void;
   on_set_focus_out?: (seconds: number) => void;
   on_clear_focus?: () => void;
+  on_add_agent_context?: (attachment: AgentContextAttachmentDraft) => void;
   on_delete_event_analysis?: (event_analysis_id: string) => Promise<void>;
   toolbar_tools: ReactNode;
 };
@@ -178,6 +192,7 @@ export function MediaTimeline({
   markers,
   candidate_markers = EMPTY_MARKERS,
   focus_selection = null,
+  evidence_range = null,
   event_analyses = EMPTY_EVENT_ANALYSES,
   selected_marker_ids,
   selected_transcript_indices,
@@ -197,6 +212,7 @@ export function MediaTimeline({
   on_set_focus_in,
   on_set_focus_out,
   on_clear_focus,
+  on_add_agent_context,
   on_delete_event_analysis,
   toolbar_tools,
 }: MediaTimelineProps) {
@@ -234,6 +250,19 @@ export function MediaTimeline({
   const selected_transcript_index_set = useMemo(
     () => new Set(selected_transcript_indices),
     [selected_transcript_indices],
+  );
+  const focus_attachment = useMemo(
+    () => focus_context_attachment(focus_selection),
+    [focus_selection],
+  );
+  const transcript_attachment = useMemo(
+    () =>
+      transcript_context_attachment(
+        asset_id,
+        transcript,
+        selected_transcript_indices,
+      ),
+    [asset_id, selected_transcript_indices, transcript],
   );
   const effective_selected_marker_ids =
     selected_marker_ids ?? uncontrolled_selected_marker_ids;
@@ -345,6 +374,27 @@ export function MediaTimeline({
       filter_timeline_rows_for_window(full_editor_data, editor_render_window),
     [editor_render_window, full_editor_data],
   );
+  const evidence_start_seconds = Math.min(
+    Math.max(evidence_range?.start_seconds ?? 0, 0),
+    duration,
+  );
+  const evidence_end_seconds = Math.min(
+    Math.max(evidence_range?.end_seconds ?? evidence_start_seconds, 0),
+    duration,
+  );
+  const evidence_range_style = evidence_range
+    ? {
+        left:
+          TIMELINE_START_LEFT +
+          evidence_start_seconds * viewport.zoom_pixels_per_second -
+          viewport.scroll_left,
+        width: Math.max(
+          2,
+          (evidence_end_seconds - evidence_start_seconds) *
+            viewport.zoom_pixels_per_second,
+        ),
+      }
+    : null;
   const context_marker = markers.find(
     (marker) => marker.marker_id === context_marker_id,
   );
@@ -816,6 +866,26 @@ export function MediaTimeline({
         on_clear_focus={() => on_clear_focus?.()}
         has_focus_selection={focus_selection !== null}
         tools={toolbar_tools}
+        context_sources={
+          on_add_agent_context ? (
+            <>
+              {transcript_attachment ? (
+                <AgentContextSource
+                  attachment={transcript_attachment}
+                  on_add={on_add_agent_context}
+                  compact
+                />
+              ) : null}
+              {focus_attachment ? (
+                <AgentContextSource
+                  attachment={focus_attachment}
+                  on_add={on_add_agent_context}
+                  compact
+                />
+              ) : null}
+            </>
+          ) : null
+        }
       />
 
       <MediaTimelineTranscriptEditor
@@ -957,6 +1027,14 @@ export function MediaTimeline({
                   void persist_marker_bounds(action, start, end, "resize");
                 }}
               />
+              {evidence_range_style && evidence_range ? (
+                <div
+                  className="media_timeline_evidence_range"
+                  style={evidence_range_style}
+                  data-evidence-id={evidence_range.evidence_id}
+                  aria-hidden="true"
+                />
+              ) : null}
               {marquee_rectangle ? (
                 <div
                   className="media_timeline_marquee"
@@ -1016,6 +1094,18 @@ export function MediaTimeline({
                   <WandSparkles aria-hidden="true" />
                   修正字幕
                 </ContextMenuItem>
+                {transcript_attachment && on_add_agent_context ? (
+                  <ContextMenuItem
+                    onSelect={() =>
+                      on_add_agent_context(
+                        renew_context_attachment_draft(transcript_attachment),
+                      )
+                    }
+                  >
+                    <Bot aria-hidden="true" />
+                    添加给 AI
+                  </ContextMenuItem>
+                ) : null}
                 {context_transcript_indices.length === 1 ? (
                   <ContextMenuItem
                     onSelect={() => {
@@ -1040,6 +1130,12 @@ export function MediaTimeline({
         <Alert className="media_timeline_error" variant="destructive">
           <AlertDescription>{timeline_error}</AlertDescription>
         </Alert>
+      ) : null}
+      {evidence_range ? (
+        <output className="sr_only" aria-live="polite">
+          已高亮答案证据 {format_time(evidence_range.start_seconds)} 至
+          {format_time(evidence_range.end_seconds)}
+        </output>
       ) : null}
       <Sheet
         open={selected_event_analysis_ids.length > 0}

@@ -12,20 +12,24 @@ import {
 import { cn } from "@/lib/utils";
 import type {
   AgentArtifact,
+  AgentEvidenceReference,
   AgentThinkingMode,
   AiModelSummary,
-  FocusSelection,
   MediaMarker,
 } from "@/shared/types";
 
 type MarkerAgentPanelProps = {
   asset_id: string | null;
   models: AiModelSummary[];
-  on_seek: (seconds: number) => void;
+  on_seek: (
+    seconds: number,
+    end_seconds?: number | null,
+    evidence?: AgentEvidenceReference,
+  ) => void;
   current_time: number;
+  context_attachments?: AgentContextAttachmentDraft[];
   on_candidate_markers_change: (markers: MediaMarker[]) => void;
   on_markers_changed: () => Promise<void>;
-  focus_selection?: FocusSelection | null;
   default_thinking_mode?: AgentThinkingMode;
   compact?: boolean;
 };
@@ -35,9 +39,9 @@ export function MarkerAgentPanel({
   models,
   on_seek,
   current_time,
+  context_attachments = [],
   on_candidate_markers_change,
   on_markers_changed,
-  focus_selection = null,
   default_thinking_mode = "auto",
   compact = false,
 }: MarkerAgentPanelProps) {
@@ -69,7 +73,7 @@ export function MarkerAgentPanel({
           on_seek={on_seek}
           current_time={current_time}
           placeholder="询问视频内容，或直接描述希望创建的标记…"
-          context_attachments={time_range_attachment(focus_selection)}
+          context_attachments={context_attachments}
           default_thinking_mode={default_thinking_mode}
           thinking_modes_enabled
           library_scope_enabled
@@ -101,27 +105,4 @@ export function MarkerAgentPanel({
       }),
     );
   }
-}
-
-function time_range_attachment(
-  selection: FocusSelection | null,
-): AgentContextAttachmentDraft[] {
-  if (
-    selection?.in_seconds === null ||
-    selection?.out_seconds === null ||
-    !selection
-  ) {
-    return [];
-  }
-  return [
-    {
-      draft_id: `${selection.selection_id}-${selection.revision}`,
-      kind: "time_range",
-      asset_id: selection.asset_id,
-      label: "时间线理解范围",
-      reference_id: selection.selection_id,
-      start_seconds: selection.in_seconds,
-      end_seconds: selection.out_seconds,
-    },
-  ];
 }

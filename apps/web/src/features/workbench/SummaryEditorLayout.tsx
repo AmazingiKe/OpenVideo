@@ -1,7 +1,8 @@
 import { CircleCheck, FilePlus2, PanelLeft, PanelRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { AgentPanel } from "@/components/AgentPanel";
+import { AgentContextSource } from "@/components/AgentContextSource";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -131,6 +132,29 @@ export function SummaryEditorLayout({
   set_tree_sheet_open,
   tree_sheet_open,
 }: SummaryEditorLayoutProps) {
+  const selection_attachment = useMemo(
+    () =>
+      summary_context_attachment(
+        selected_asset_id,
+        selected_document,
+        selection,
+      ),
+    [selected_asset_id, selected_document, selection],
+  );
+  const [agent_context_attachments, set_agent_context_attachments] = useState<
+    AgentContextAttachmentDraft[]
+  >([]);
+  useEffect(() => {
+    set_agent_context_attachments([]);
+  }, [selected_asset_id, selected_document.document_id]);
+  const context_action = selection_attachment ? (
+    <AgentContextSource
+      attachment={selection_attachment}
+      on_add={(attachment) =>
+        set_agent_context_attachments((current) => [...current, attachment])
+      }
+    />
+  ) : null;
   const document_tree = (
     <DocumentTree
       root={root_document}
@@ -160,11 +184,7 @@ export function SummaryEditorLayout({
         expected_revision: selected_document.revision,
         selection,
       }}
-      context_attachments={summary_context_attachments(
-        selected_asset_id,
-        selected_document,
-        selection,
-      )}
+      context_attachments={agent_context_attachments}
       default_thinking_mode={default_thinking_mode}
       thinking_modes_enabled
       library_scope_enabled
@@ -205,6 +225,7 @@ export function SummaryEditorLayout({
       on_selection_change={set_selection}
       on_retry={on_retry}
       compact_actions={compact_actions}
+      context_action={context_action}
       export_pending={export_pending}
       export_relative_path={export_relative_path}
       on_export={on_export}
@@ -316,23 +337,21 @@ export function SummaryEditorLayout({
   );
 }
 
-function summary_context_attachments(
+function summary_context_attachment(
   asset_id: string,
   document: SummaryDocument,
   selection: MarkdownSelection | null,
-): AgentContextAttachmentDraft[] {
-  if (!selection?.text.trim()) return [];
-  return [
-    {
-      draft_id: `${document.document_id}-${document.revision}-${selection.start}-${selection.end}`,
-      kind: "summary_selection",
-      asset_id,
-      label: `${document.title}选区`,
-      reference_id: document.document_id,
-      version_id: document.version_id,
-      snapshot_text: selection.text,
-      selection_start: selection.start,
-      selection_end: selection.end,
-    },
-  ];
+): AgentContextAttachmentDraft | null {
+  if (!selection?.text.trim()) return null;
+  return {
+    draft_id: `${document.document_id}-${document.revision}-${selection.start}-${selection.end}`,
+    kind: "summary_selection",
+    asset_id,
+    label: `${document.title}选区`,
+    reference_id: document.document_id,
+    version_id: document.version_id,
+    snapshot_text: selection.text,
+    selection_start: selection.start,
+    selection_end: selection.end,
+  };
 }

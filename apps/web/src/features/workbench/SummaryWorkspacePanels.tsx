@@ -491,6 +491,7 @@ export function DocumentEditor({
   on_selection_change,
   on_retry,
   compact_actions,
+  context_action,
   export_pending,
   export_relative_path,
   on_export,
@@ -506,6 +507,7 @@ export function DocumentEditor({
   on_selection_change: (selection: MarkdownSelection | null) => void;
   on_retry: () => void;
   compact_actions: ReactNode;
+  context_action?: ReactNode;
   export_pending: boolean;
   export_relative_path: string | null;
   on_export: () => void;
@@ -526,6 +528,7 @@ export function DocumentEditor({
           className="min-w-40 flex-1 border-transparent bg-transparent font-medium shadow-none focus-visible:border-input"
         />
         <SaveState status={save_status} on_retry={on_retry} />
+        {context_action}
         <TabsList aria-label="编辑模式">
           <TabsTrigger value="visual" aria-label="预览模式" title="预览模式">
             <Eye />
