@@ -1,6 +1,6 @@
-# 本地运行目录
+# 本地运行与模型目录
 
-OpenVideo 将可变的本地运行内容与源码分开管理。以下目录默认位于仓库根目录，均不会提交到 Git。
+OpenVideo 将第三方工具、本地模型和业务资料库分开管理。所有目录都不会提交到 Git，但它们的默认根目录不同。
 
 ```text
 OpenVideo/
@@ -10,11 +10,15 @@ OpenVideo/
    │     └─ bin/
    │        ├─ ffmpeg.exe
    │        └─ ffprobe.exe
-   └─ models/
-      ├─ faster-whisper/
-      ├─ qwen3-asr/
-      └─ sensevoice/
-         └─ …模型缓存文件
+
+系统用户配置目录/OpenVideo/
+├─ models/
+│  ├─ faster-whisper/
+│  ├─ qwen3-asr/
+│  └─ sensevoice/
+└─ retrieval-models/
+   ├─ qwen3-embedding-0.6b/
+   └─ qwen3-reranker-0.6b/
 ```
 
 ## FFmpeg
@@ -23,13 +27,13 @@ FFmpeg 与 FFprobe 是第三方本地可执行程序，负责下载后的合并�
 
 设置页选择工具根目录；应用会在其中的 `ffmpeg/bin/` 查找两个程序。环境变量 `OPENVIDEO_TOOLS_DIRECTORY` 可用于固定工具根目录。部署场景仍可通过 `OPENVIDEO_FFMPEG_PATH`、`OPENVIDEO_FFPROBE_PATH` 分别覆盖单个程序路径。
 
-## faster-whisper
+## 本地模型
 
-faster-whisper 是当前可执行的本地语音转写引擎。没有平台字幕时，应用会使用设置页保存的默认转录方案，也允许工作台按任务覆盖模型。模型文件缓存到 `runtime/models/faster-whisper/`。
+没有平台字幕时，应用会使用设置页保存的默认转录方案，也允许工作台按任务覆盖模型。Faster Whisper、Qwen3-ASR 与 SenseVoice 分别保存在系统用户配置目录的 `OpenVideo/models/faster-whisper/`、`qwen3-asr/` 和 `sensevoice/` 子目录。
 
-转录模型目录与任务选项共用统一引擎接口。Qwen3-ASR 和 SenseVoice 分别预留 `qwen3-asr/`、`sensevoice/` 子目录；运行适配器未安装前，模型目录 API 会返回 `adapter_required`，任务不会静默回退到其他引擎。
+转录模型目录与任务选项共用统一引擎接口。设置页可以选择其他模型根目录，环境变量 `OPENVIDEO_MODELS_DIRECTORY` 也可以固定该目录；留空时始终使用系统用户配置目录，不在项目 `runtime` 中创建模型缓存。
 
-设置页选择模型根目录，应用会在其中管理 `faster-whisper/` 等不同模型的子目录。环境变量 `OPENVIDEO_MODELS_DIRECTORY` 可用于固定模型根目录。
+神经嵌入与重排模型由 OpenVideo 统一选择，按需保存到系统用户配置目录的 `OpenVideo/retrieval-models/`。用户不需要配置这两个模型，也不需要启动独立向量服务。
 
 转录正文保存在资源的 `artifacts/transcript.json`。每次重新转录成功后会原子替换正文；失败时保留上一份可用结果。
 
@@ -39,4 +43,4 @@ faster-whisper 是当前可执行的本地语音转写引擎。没有平台字�
 
 资料库不属于应用运行目录。首次启动时必须由用户创建或打开一个外部资料库；应用只在用户配置中保存上次使用的路径，不会在 OpenVideo 目录内隐式创建资料库。
 
-后台任务记录保存在资料库主数据库 `openvideo.sqlite3`，LangGraph 检查点保存在资料库根目录的 `agent_checkpoints.sqlite3`。两者都属于可丢弃运行状态，不是用户成果或应用配置；删除后不会影响业务文件恢复。
+后台任务记录保存在资料库主数据库 `openvideo.sqlite3`，Agent 运行检查点保存在资料库根目录的 `agent_checkpoints.sqlite3`。两者都属于可丢弃运行状态，不是用户成果或应用配置；删除后不会影响业务文件恢复。

@@ -147,7 +147,17 @@ describe("SettingsPage", () => {
       screen.getByRole("heading", { name: "配置 OpenVideo 工作环境" }),
     ).toBeInTheDocument();
     expect(await screen.findByLabelText(/工具目录/)).toBeDisabled();
-    expect(screen.getByLabelText("模型目录")).toHaveValue("");
+    const models_directory = screen.getByLabelText("模型目录");
+    expect(models_directory).toHaveValue("");
+    expect(models_directory).toHaveAttribute(
+      "placeholder",
+      "默认：系统用户配置目录/OpenVideo/models",
+    );
+    expect(
+      screen.getByText(
+        "留空时使用系统用户配置目录中的 OpenVideo/models；不同转录引擎分别使用独立子目录。",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("auto-saves editable settings through the preferences API", async () => {

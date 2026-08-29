@@ -428,8 +428,8 @@ function ModelDirectoryInput({
     <DirectoryPreferenceInput
       field="models_directory"
       label="模型目录"
-      default_path="runtime/models"
-      description="留空时使用 runtime/models；不同转录引擎分别使用独立子目录。"
+      default_path="系统用户配置目录/OpenVideo/models"
+      description="留空时使用系统用户配置目录中的 OpenVideo/models；不同转录引擎分别使用独立子目录。"
       value={value}
       preferences={preferences}
       on_change={on_change}

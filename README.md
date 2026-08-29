@@ -112,11 +112,13 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:38471`。
 | `OPENVIDEO_FFPROBE_PATH` | 从 `PATH` 查找 | ffprobe 完整路径 |
 | `OPENVIDEO_TOOLS_DIRECTORY` | `runtime/tools` | 第三方工具根目录 |
 | `OPENVIDEO_CORS_ORIGINS` | 本机 Vite 来源 | 允许访问 API 的本机 Web 来源，逗号分隔 |
-| `OPENVIDEO_MODELS_DIRECTORY` | `%LOCALAPPDATA%\OpenVideo\models` | 本地转录与检索模型根目录 |
+| `OPENVIDEO_MODELS_DIRECTORY` | `%LOCALAPPDATA%\OpenVideo\models` | 本地转录模型根目录 |
 | `OPENVIDEO_AI_MODELS` | `[]` | LiteLLM 模型配置 JSON 数组；设置后 Web 中的模型配置只读 |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 
 未配置 `OPENVIDEO_LIBRARY_PATH` 时，应用从系统用户配置目录的 `OpenVideo/preferences.json` 恢复上次资料库；路径失效时进入初始化页。Windows 的配置根目录为 `%LOCALAPPDATA%\OpenVideo`，应用生成的偏好与页面设置统一保存在该目录，不写入项目 `runtime` 或资料库。
+
+OpenVideo 推荐的神经嵌入与重排模型固定保存在 `%LOCALAPPDATA%\OpenVideo\retrieval-models`，由后台按需下载和复用，不要求用户选择模型或维护独立向量服务。
 
 推荐在 Web 设置页添加模型。大语言与视觉模型只通过在线 API 执行，不使用本机推理服务；转录、OCR、关键帧和检索仍默认在本地执行。`LiteLLM 模型` 使用 `供应商/模型` 格式，例如 `openai/gpt-5` 或 `anthropic/claude-sonnet-4-5`。自定义兼容网关必须填写 HTTPS API 地址。`input_modalities` 支持 `text`、`image`、`audio`、`video`；当前任务必须包含 `text`，关键帧分析还要求包含 `image`。
 
