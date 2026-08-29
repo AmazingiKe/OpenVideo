@@ -5,8 +5,8 @@ import { GlobalAssistantProvider } from "../src/app/global_assistant";
 import { ApplicationQueryProvider } from "../src/app/query_cache";
 import "../src/styles.css";
 
-const with_design_surface: Decorator = (Story) => (
-  <MemoryRouter initialEntries={["/summary"]}>
+const with_design_surface: Decorator = (Story, context) => (
+  <MemoryRouter initialEntries={[context.parameters.route ?? "/summary"]}>
     <ApplicationQueryProvider>
       <GlobalAssistantProvider>
         <div className="min-h-screen bg-background text-foreground">

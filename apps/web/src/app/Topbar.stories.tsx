@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { MemoryRouter } from "react-router-dom";
 
 import { Topbar } from "@/app/Topbar";
 
@@ -13,21 +12,9 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const DownloadsActive: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <MemoryRouter initialEntries={["/downloads"]}>
-        <StoryComponent />
-      </MemoryRouter>
-    ),
-  ],
+  parameters: { route: "/downloads" },
 };
 
 export const SettingsActive: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <MemoryRouter initialEntries={["/settings"]}>
-        <StoryComponent />
-      </MemoryRouter>
-    ),
-  ],
+  parameters: { route: "/settings" },
 };
