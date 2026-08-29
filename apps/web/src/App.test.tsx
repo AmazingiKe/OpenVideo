@@ -20,6 +20,7 @@ import {
   get_library,
   get_preferences,
   import_download_account_from_browser,
+  import_local_video,
   get_markers,
   get_focus_selection,
   get_agent_index_status,
@@ -62,6 +63,7 @@ vi.mock("./shared/api", () => ({
   get_library: vi.fn(),
   get_preferences: vi.fn(),
   import_download_account_from_browser: vi.fn(),
+  import_local_video: vi.fn(),
   get_markers: vi.fn(),
   get_focus_selection: vi.fn(),
   get_agent_index_status: vi.fn(),
@@ -652,6 +654,36 @@ describe("App", () => {
       expect(test_download_account).toHaveBeenCalledWith("bilibili", undefined),
     );
     expect(await screen.findByText("可用")).toBeInTheDocument();
+  });
+
+  it("imports one dropped local video and reports completion", async () => {
+    window.history.replaceState(null, "", "/downloads");
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    vi.mocked(import_local_video).mockResolvedValue({
+      ...create_asset({
+        status: "ready",
+        title: "本地演示",
+        playback_url: `/api/media/assets/${ASSET_ID}/stream`,
+      }),
+      source_url: "local://本地演示.mp4",
+      source_platform: "local",
+      source_video_id: null,
+    });
+    render(<App />);
+    const drop_region = await screen.findByRole("region", {
+      name: "本地视频拖拽导入区",
+    });
+    const file = new File(["video"], "本地演示.mp4", { type: "video/mp4" });
+
+    fireEvent.drop(drop_region, {
+      dataTransfer: { files: [file], types: ["Files"] },
+    });
+
+    await waitFor(() => expect(import_local_video).toHaveBeenCalledWith(file));
+    expect(await screen.findByText("“本地演示”已导入")).toBeVisible();
   });
 
   it("connects a Douyin account through the dedicated login window", async () => {

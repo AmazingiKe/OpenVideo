@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable
 
-from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
 from openvideo.agent_service import AgentService
@@ -14,6 +14,8 @@ from openvideo.core.library import (
 )
 from openvideo.core.media_models import MediaAssetResponse
 from openvideo.download_manager import DownloadManager
+from openvideo.local_video_import import LocalVideoImportError, persist_local_video
+from openvideo.settings import Settings
 from openvideo.ui.media_routes import ready_asset
 
 
@@ -45,6 +47,7 @@ def register_library_routes(
     download_manager: Callable[[], DownloadManager | None],
     analysis_manager: Callable[[], AnalysisManager | None],
     agent_service: Callable[[], AgentService | None],
+    settings: Settings,
 ) -> None:
     @app.get("/api/library/folders", response_model=list[FolderResponse])
     def list_folders() -> list[FolderResponse]:
@@ -120,9 +123,38 @@ def register_library_routes(
             ) from error
         return [media_library.response_for(asset) for asset in assets]
 
-    @app.delete(
-        "/api/media/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT
+    @app.post(
+        "/api/media/assets/import",
+        response_model=MediaAssetResponse,
+        status_code=status.HTTP_201_CREATED,
     )
+    async def import_local_video(
+        file: UploadFile = File(...),
+    ) -> MediaAssetResponse:
+        media_library = library()
+        try:
+            asset = await asyncio.to_thread(
+                persist_local_video,
+                media_library,
+                settings,
+                file.file,
+                file.filename,
+            )
+        except LocalVideoImportError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(error),
+            ) from error
+        except OSError as error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="视频文件无法写入资料库",
+            ) from error
+        finally:
+            await file.close()
+        return media_library.response_for(asset)
+
+    @app.delete("/api/media/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_asset(asset_id: str) -> Response:
         media_library = library()
         try:

@@ -15,6 +15,7 @@ MarkerImportance = Literal[0, 1, 2, 3, 4, 5]
 class SourcePlatform(StrEnum):
     BILIBILI = "bilibili"
     DOUYIN = "douyin"
+    LOCAL = "local"
     YOUTUBE = "youtube"
 
 

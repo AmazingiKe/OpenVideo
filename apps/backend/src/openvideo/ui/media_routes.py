@@ -12,7 +12,15 @@ from openvideo.settings import Settings
 from openvideo.tools.thumbnails import generate_scrub_proxy
 
 STREAM_CHUNK_SIZE = 1024 * 1024
-VIDEO_MEDIA_TYPE = "video/mp4"
+DEFAULT_VIDEO_MEDIA_TYPE = "video/mp4"
+VIDEO_MEDIA_TYPES = {
+    ".avi": "video/x-msvideo",
+    ".m4v": "video/mp4",
+    ".mkv": "video/x-matroska",
+    ".mov": "video/quicktime",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+}
 
 
 def register_media_routes(
@@ -87,6 +95,7 @@ def register_media_routes(
             raise HTTPException(status_code=404, detail="预览图拼板不存在")
         return FileResponse(sprite_file, media_type="image/jpeg")
 
+
 def ready_asset(library: MediaLibrary, asset_id: str):
     try:
         asset = library.get(asset_id)
@@ -135,6 +144,9 @@ def stream_video_file(
     range_header: str | None,
 ) -> Response:
     total_size = media_file.stat().st_size
+    media_type = VIDEO_MEDIA_TYPES.get(
+        media_file.suffix.lower(), DEFAULT_VIDEO_MEDIA_TYPE
+    )
     common_headers = {
         "Accept-Ranges": "bytes",
         "Cache-Control": "private, max-age=0",
@@ -158,21 +170,21 @@ def stream_video_file(
         if request.method == "HEAD":
             return Response(
                 status_code=206,
-                media_type=VIDEO_MEDIA_TYPE,
+                media_type=media_type,
                 headers=headers,
             )
         return StreamingResponse(
             _read_file_range(media_file, byte_range.start, byte_range.length),
             status_code=206,
-            media_type=VIDEO_MEDIA_TYPE,
+            media_type=media_type,
             headers=headers,
         )
     headers = {**common_headers, "Content-Length": str(total_size)}
     if request.method == "HEAD":
-        return Response(status_code=200, media_type=VIDEO_MEDIA_TYPE, headers=headers)
+        return Response(status_code=200, media_type=media_type, headers=headers)
     return StreamingResponse(
         _read_file_range(media_file, 0, total_size),
         status_code=200,
-        media_type=VIDEO_MEDIA_TYPE,
+        media_type=media_type,
         headers=headers,
     )

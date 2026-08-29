@@ -78,6 +78,7 @@ def download_account_test_url(
     source_url: str | None,
 ) -> str:
     """账号测试必须使用同平台链接，避免误把另一平台的公开访问判为登录成功。"""
+    require_download_account_platform(platform)
     if not source_url:
         return DOWNLOAD_ACCOUNT_TEST_URLS[platform]
     try:
@@ -87,6 +88,11 @@ def download_account_test_url(
     if match.platform != platform:
         raise HTTPException(status_code=422, detail="请使用当前平台的视频地址测试账号")
     return match.normalized_url
+
+
+def require_download_account_platform(platform: SourcePlatform) -> None:
+    if platform not in DOWNLOAD_ACCOUNT_TEST_URLS:
+        raise HTTPException(status_code=422, detail="本地视频不需要连接平台账号")
 
 
 class DownloadAccountLoginManager:
@@ -235,6 +241,7 @@ def register_download_account_routes(
     async def create_login_session(
         platform: SourcePlatform,
     ) -> DownloadAccountLoginSession:
+        require_download_account_platform(platform)
         return await login_manager.create(platform)
 
     @app.get(
@@ -257,6 +264,7 @@ def register_download_account_routes(
         response_model=DownloadAccount | None,
     )
     def get_download_account(platform: SourcePlatform) -> DownloadAccount | None:
+        require_download_account_platform(platform)
         try:
             return account_store.get(platform)
         except DownloadAccountError as error:
@@ -267,6 +275,7 @@ def register_download_account_routes(
         platform: SourcePlatform,
         request: DownloadAccountConnectRequest,
     ) -> DownloadAccount:
+        require_download_account_platform(platform)
         try:
             return account_store.save(platform, request.cookie.get_secret_value())
         except DownloadAccountError as error:
@@ -280,6 +289,7 @@ def register_download_account_routes(
         platform: SourcePlatform,
         request: DownloadAccountBrowserImportRequest,
     ) -> DownloadAccount:
+        require_download_account_platform(platform)
         test_url = download_account_test_url(platform, request.source_url)
         try:
             cookie_header = await asyncio.to_thread(
@@ -303,6 +313,7 @@ def register_download_account_routes(
         platform: SourcePlatform,
         request: DownloadAccountTestRequest,
     ) -> DownloadAccount:
+        require_download_account_platform(platform)
         if account_store.get(platform) is None:
             raise HTTPException(status_code=404, detail="尚未连接该平台账号")
         test_url = download_account_test_url(platform, request.source_url)
@@ -333,6 +344,7 @@ def register_download_account_routes(
         status_code=status.HTTP_204_NO_CONTENT,
     )
     def delete_download_account(platform: SourcePlatform) -> Response:
+        require_download_account_platform(platform)
         try:
             account_store.delete(platform)
         except DownloadAccountError as error:

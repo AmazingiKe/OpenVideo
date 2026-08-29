@@ -539,6 +539,7 @@ def create_app(
         lambda: manager,
         lambda: analysis_manager,
         lambda: agent_service,
+        resolved_settings,
     )
 
     register_media_routes(app, lambda: library, resolved_settings)

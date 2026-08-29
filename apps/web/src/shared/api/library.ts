@@ -79,6 +79,19 @@ export function list_folders(signal?: AbortSignal): Promise<LibraryFolder[]> {
   return request_json("/api/library/folders", { signal });
 }
 
+export function import_local_video(
+  file: File,
+  signal?: AbortSignal,
+): Promise<MediaAsset> {
+  const form_data = new FormData();
+  form_data.append("file", file, file.name);
+  return request_json("/api/media/assets/import", {
+    method: "POST",
+    body: form_data,
+    signal,
+  });
+}
+
 export function create_folder(
   name: string,
   parent_id: string | null,

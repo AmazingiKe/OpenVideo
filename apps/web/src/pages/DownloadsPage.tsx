@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { use_task_manager } from "@/app/task_manager";
+import type { VideoImportState } from "@/features/downloads/VideoImportCard";
 import { DownloadWorkspace } from "@/features/workbench/DownloadWorkspace";
 import {
   create_download_account_login_session,
@@ -11,6 +12,7 @@ import {
   get_download_accounts,
   get_health,
   import_download_account_from_browser,
+  import_local_video,
   list_folders,
   probe_source,
   save_download_account,
@@ -71,6 +73,8 @@ export function DownloadsPage() {
     string | null
   >(null);
   const [page_error, set_page_error] = useState<string | null>(null);
+  const [video_import_state, set_video_import_state] =
+    useState<VideoImportState>({ stage: "idle" });
   const [account_loading_platform, set_account_loading_platform] =
     useState<SourcePlatform | null>(null);
   const [account_errors, set_account_errors] = useState<
@@ -163,6 +167,24 @@ export function DownloadsPage() {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
       set_is_submitting(false);
+    }
+  }
+
+  async function import_dropped_video(file: File) {
+    set_video_import_state({ stage: "importing", filename: file.name });
+    try {
+      const asset = await import_local_video(file);
+      await query_client.invalidateQueries({
+        queryKey: RESOURCE_QUERY_KEYS.assets,
+      });
+      set_video_import_state({ stage: "complete", title: asset.title });
+    } catch (error) {
+      if (!is_abort_error(error)) {
+        set_video_import_state({
+          stage: "failed",
+          message: error_message(error),
+        });
+      }
     }
   }
 
@@ -391,6 +413,7 @@ export function DownloadsPage() {
       download_accounts={download_accounts}
       account_loading_platform={account_loading_platform}
       account_errors={account_errors}
+      video_import_state={video_import_state}
       on_source_url_change={set_source_url}
       on_submit_probe={submit_source_probe}
       on_toggle_url={toggle_url}
@@ -405,6 +428,10 @@ export function DownloadsPage() {
       on_import_download_account={import_platform_account}
       on_test_download_account={test_platform_account}
       on_disconnect_download_account={disconnect_platform_account}
+      on_video_drop={(file) => void import_dropped_video(file)}
+      on_invalid_video_drop={(message) =>
+        set_video_import_state({ stage: "failed", message })
+      }
     />
   );
 }

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import PROJECT_ROOT, Settings
+from openvideo.tools.media import MediaProbe
 from openvideo.ui.api import create_app
 from openvideo.ui.directory_picker import DirectoryPickerError
 
@@ -150,3 +151,62 @@ def test_folder_api_manages_nested_virtual_folders(tmp_path: Path):
         assert unconfirmed.status_code == 409
         assert confirmed.status_code == 204
         assert client.get("/api/library/folders").json() == []
+
+
+def test_dragged_video_is_imported_into_the_library(tmp_path: Path, monkeypatch):
+    library_path = tmp_path / "portable"
+    library_path.mkdir()
+    preference_store = PreferenceStore(tmp_path / "config" / "preferences.json")
+    monkeypatch.setattr(
+        "openvideo.local_video_import.probe_media",
+        lambda *_: MediaProbe(12.5, 1920, 1080, "h264", "aac"),
+    )
+    monkeypatch.setattr("openvideo.local_video_import.resolve_tool", lambda *_: None)
+    app = create_app(Settings(), preference_store)
+
+    with TestClient(app) as client:
+        client.post("/api/library/create", json={"path": str(library_path)})
+        response = client.post(
+            "/api/media/assets/import",
+            files={"file": ("课程片段.mp4", b"video-content", "video/mp4")},
+        )
+
+        assert response.status_code == 201
+        asset = response.json()
+        assert asset["source_platform"] == "local"
+        assert asset["source_url"] == "local://%E8%AF%BE%E7%A8%8B%E7%89%87%E6%AE%B5.mp4"
+        assert asset["title"] == "课程片段"
+        assert asset["duration_seconds"] == 12.5
+        assert asset["status"] == "ready"
+        assert asset["playback_url"].endswith(f"/{asset['asset_id']}/stream")
+        saved_files = list(
+            (library_path / "assets" / asset["asset_id"] / "media").iterdir()
+        )
+        assert [path.name for path in saved_files] == ["source.mp4"]
+        assert saved_files[0].read_bytes() == b"video-content"
+        assert client.head(asset["playback_url"]).headers["content-type"] == "video/mp4"
+
+
+def test_local_video_import_rejects_unsupported_and_empty_files(tmp_path: Path):
+    library_path = tmp_path / "portable"
+    library_path.mkdir()
+    app = create_app(
+        Settings(), PreferenceStore(tmp_path / "config" / "preferences.json")
+    )
+
+    with TestClient(app) as client:
+        client.post("/api/library/create", json={"path": str(library_path)})
+        unsupported = client.post(
+            "/api/media/assets/import",
+            files={"file": ("说明.txt", b"not-video", "text/plain")},
+        )
+        empty = client.post(
+            "/api/media/assets/import",
+            files={"file": ("empty.mp4", b"", "video/mp4")},
+        )
+
+        assert unsupported.status_code == 422
+        assert "仅支持" in unsupported.json()["detail"]
+        assert empty.status_code == 422
+        assert empty.json()["detail"] == "不能导入空的视频文件"
+        assert client.get("/api/media/assets").json() == []

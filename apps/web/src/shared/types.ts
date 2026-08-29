@@ -4,7 +4,7 @@ type DependencyStatus = {
   ffprobe: boolean;
 };
 
-export type SourcePlatform = "bilibili" | "douyin" | "youtube";
+export type SourcePlatform = "bilibili" | "douyin" | "local" | "youtube";
 
 export type DownloadAccount = {
   account_id: string;
