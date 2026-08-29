@@ -11,7 +11,7 @@ import json
 import math
 import re
 import sqlite3
-from typing import Callable, Iterable, Literal
+from typing import Callable, Iterable, Literal, Sequence
 
 from openvideo.core.agent_evidence_models import AgentEvidenceSource
 from openvideo.core.identifiers import uuid7
@@ -20,13 +20,21 @@ from openvideo.core.transcription_models import Transcript
 
 
 SEMANTIC_MODEL_NAME = "openvideo-library-lsa-v1"
+SEMANTIC_MODEL_VERSION = "1"
 SEMANTIC_MAX_FEATURES = 2_048
 SEMANTIC_MAX_DIMENSIONS = 64
 SEMANTIC_BATCH_SIZE = 128
 QUERY_CANDIDATE_MULTIPLIER = 6
+NEURAL_RERANK_WEIGHT = 0.55
 MEMORY_ASSET_BONUS = 0.08
 STALE_CONTENT_DIGEST = ""
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+|[\u3400-\u9fff]", re.IGNORECASE)
+
+
+ProgressReporter = Callable[[str, int, int], None]
+DocumentEncoder = Callable[[Sequence[str], ProgressReporter], list[list[float]]]
+QueryEncoder = Callable[[str, str, str, int], list[float]]
+NeuralReranker = Callable[[str, Sequence[str]], list[float]]
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,11 @@ class EvidenceIndexStatus:
         "tokenizing",
         "building_matrix",
         "projecting",
+        "downloading_embedding_model",
+        "loading_embedding_model",
+        "embedding_documents",
+        "downloading_reranker_model",
+        "loading_reranker_model",
         "committing",
         "ready",
         "failed",
@@ -132,6 +145,8 @@ def ensure_agent_evidence_schema(connection: sqlite3.Connection) -> None:
             CREATE TABLE IF NOT EXISTS agent_semantic_models (
                 model_id TEXT PRIMARY KEY,
                 model_name TEXT NOT NULL,
+                model_version TEXT NOT NULL DEFAULT '1',
+                model_kind TEXT NOT NULL DEFAULT 'lsa',
                 content_digest TEXT NOT NULL,
                 vocabulary TEXT NOT NULL,
                 inverse_document_frequency BLOB NOT NULL,
@@ -163,6 +178,7 @@ def ensure_agent_evidence_schema(connection: sqlite3.Connection) -> None:
             );
             """
         )
+        _ensure_semantic_model_columns(connection)
         _ensure_status_columns(connection)
         _ensure_status_row(connection)
 
@@ -276,8 +292,15 @@ def remove_asset_evidence_projection(
         _mark_semantic_index_stale(connection)
 
 
-def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatus:
-    """在后台训练资料库级 LSA，新代际完整写入后一次性原子切换。"""
+def rebuild_semantic_index(
+    connection: sqlite3.Connection,
+    *,
+    model_name: str = SEMANTIC_MODEL_NAME,
+    model_version: str = SEMANTIC_MODEL_VERSION,
+    dimensions: int | None = None,
+    encode_documents: DocumentEncoder | None = None,
+) -> EvidenceIndexStatus:
+    """后台构建完整语义代际，新索引提交前继续保留旧代际。"""
 
     rows = connection.execute(
         "SELECT document_id, title, text FROM agent_evidence_documents "
@@ -313,11 +336,7 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
         return load_evidence_index_status(connection)
     try:
 
-        def report_progress(
-            stage: Literal["tokenizing", "building_matrix", "projecting", "committing"],
-            processed: int,
-            stage_total: int,
-        ) -> None:
+        def report_progress(stage: str, processed: int, stage_total: int) -> None:
             with connection:
                 status_digest = connection.execute(
                     "SELECT content_digest FROM agent_evidence_index_status "
@@ -334,16 +353,33 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
                     stage=stage,
                 )
 
-        tokenized = _tokenize_documents(rows, report_progress)
-        vocabulary, inverse_document_frequency = _semantic_vocabulary(tokenized)
-        matrix = _semantic_matrix(
-            tokenized,
-            vocabulary,
-            inverse_document_frequency,
-            report_progress,
-        )
-        report_progress("projecting", 0, 0)
-        projection, vectors = _latent_vectors(matrix)
+        if encode_documents is None:
+            tokenized = _tokenize_documents(rows, report_progress)
+            vocabulary, inverse_document_frequency = _semantic_vocabulary(tokenized)
+            matrix = _semantic_matrix(
+                tokenized,
+                vocabulary,
+                inverse_document_frequency,
+                report_progress,
+            )
+            report_progress("projecting", 0, 0)
+            projection, vectors = _latent_vectors(matrix)
+            model_kind = "lsa"
+            resolved_dimensions = len(projection[0]) if projection else 0
+        else:
+            if dimensions is None or dimensions <= 0:
+                raise ValueError("神经语义索引必须声明向量维度")
+            report_progress("loading_embedding_model", 0, 0)
+            vectors = encode_documents(
+                [f"{row['title'] or ''}\n{row['text']}" for row in rows],
+                report_progress,
+            )
+            _validate_neural_vectors(vectors, total, dimensions)
+            vocabulary = {}
+            inverse_document_frequency = []
+            projection = []
+            model_kind = "neural"
+            resolved_dimensions = dimensions
         report_progress("committing", 0, 0)
         model_id = f"semantic-index-{uuid7().hex}"
         created_at = datetime.now(UTC).isoformat()
@@ -353,18 +389,21 @@ def rebuild_semantic_index(connection: sqlite3.Connection) -> EvidenceIndexStatu
                 return load_evidence_index_status(connection)
             connection.execute(
                 "INSERT INTO agent_semantic_models "
-                "(model_id, model_name, content_digest, vocabulary, "
+                "(model_id, model_name, model_version, model_kind, "
+                "content_digest, vocabulary, "
                 "inverse_document_frequency, projection, feature_count, dimensions, "
-                "active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                "active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
                 (
                     model_id,
-                    SEMANTIC_MODEL_NAME,
+                    model_name,
+                    model_version,
+                    model_kind,
                     digest,
                     json.dumps(vocabulary, ensure_ascii=False, sort_keys=True),
                     _float_blob(inverse_document_frequency),
                     _matrix_blob(projection),
                     len(vocabulary),
-                    len(projection[0]) if projection else 0,
+                    resolved_dimensions,
                     created_at,
                 ),
             )
@@ -418,6 +457,8 @@ def search_indexed_evidence(
     start_seconds: float | None,
     end_seconds: float | None,
     limit: int,
+    query_encoder: QueryEncoder | None = None,
+    reranker: NeuralReranker | None = None,
 ) -> list[IndexedEvidenceDocument]:
     scoped_asset_ids = tuple(dict.fromkeys(asset_ids))
     if not scoped_asset_ids:
@@ -447,6 +488,7 @@ def search_indexed_evidence(
         start_seconds,
         end_seconds,
         candidate_limit,
+        query_encoder,
     )
     memory_assets = _memory_asset_matches(
         connection, scoped_asset_ids, normalized_query, candidate_limit
@@ -459,11 +501,16 @@ def search_indexed_evidence(
         rows[document_id] = row
         scores[document_id] = scores.get(document_id, 0.0) + 0.64 / (1 + rank * 0.18)
         reasons.setdefault(document_id, []).append("FTS5 关键词匹配")
-    for row, similarity in semantic:
+    for row, similarity, model_kind in semantic:
         document_id = row["document_id"]
         rows[document_id] = row
         scores[document_id] = scores.get(document_id, 0.0) + 0.36 * similarity
-        reasons.setdefault(document_id, []).append("资料库语义向量匹配")
+        reason = (
+            "神经语义向量匹配"
+            if model_kind == "neural"
+            else "资料库语义向量匹配"
+        )
+        reasons.setdefault(document_id, []).append(reason)
     for row in _memory_context_documents(
         connection,
         memory_assets,
@@ -490,6 +537,29 @@ def search_indexed_evidence(
             row["source_type"],
         ),
     )
+    if reranker is not None and ranked:
+        rerank_scores = reranker(
+            normalized_query,
+            [f"{row['title'] or ''}\n{row['text']}" for row in ranked],
+        )
+        if len(rerank_scores) != len(ranked):
+            raise ValueError("神经重排返回数量与候选数量不一致")
+        for row, rerank_score in zip(ranked, rerank_scores, strict=True):
+            document_id = row["document_id"]
+            hybrid_score = min(1.0, max(0.0, scores[document_id]))
+            neural_score = min(1.0, max(0.0, float(rerank_score)))
+            scores[document_id] = (
+                (1 - NEURAL_RERANK_WEIGHT) * hybrid_score
+                + NEURAL_RERANK_WEIGHT * neural_score
+            )
+            reasons.setdefault(document_id, []).append("神经交叉编码重排")
+        ranked.sort(
+            key=lambda row: (
+                -scores[row["document_id"]],
+                row["start_seconds"],
+                row["source_type"],
+            )
+        )
     direct_limit = min(
         limit,
         max(
@@ -602,6 +672,29 @@ def load_evidence_index_coverage(
         document_count=len(rows),
         source_types=tuple(sorted(source_types, key=lambda source: source.value)),
     )
+
+
+def ensure_semantic_index_target(
+    connection: sqlite3.Connection,
+    model_name: str,
+    model_version: str,
+) -> bool:
+    """目标模型变化时只标记待重建，旧代际继续服务到原子切换。"""
+
+    active = connection.execute(
+        "SELECT model_name, model_version FROM agent_semantic_models "
+        "WHERE active = 1"
+    ).fetchone()
+    matches = bool(
+        active
+        and active["model_name"] == model_name
+        and active["model_version"] == model_version
+    )
+    if matches:
+        return False
+    with connection:
+        _mark_semantic_index_stale(connection)
+    return True
 
 
 def save_verified_memory(
@@ -778,6 +871,19 @@ def _mark_semantic_index_stale(connection: sqlite3.Connection) -> None:
     )
 
 
+def _validate_neural_vectors(
+    vectors: list[list[float]],
+    expected_count: int,
+    expected_dimensions: int,
+) -> None:
+    if len(vectors) != expected_count:
+        raise ValueError("神经嵌入数量与索引文档数量不一致")
+    if any(len(vector) != expected_dimensions for vector in vectors):
+        raise ValueError("神经嵌入维度与模型声明不一致")
+    if any(not all(math.isfinite(value) for value in vector) for vector in vectors):
+        raise ValueError("神经嵌入包含非有限数值")
+
+
 def _lexical_matches(
     connection: sqlite3.Connection,
     asset_ids: tuple[str, ...],
@@ -813,13 +919,26 @@ def _semantic_matches(
     start_seconds: float | None,
     end_seconds: float | None,
     limit: int,
-) -> list[tuple[sqlite3.Row, float]]:
+    query_encoder: QueryEncoder | None,
+) -> list[tuple[sqlite3.Row, float, str]]:
     model = connection.execute(
         "SELECT * FROM agent_semantic_models WHERE active = 1"
     ).fetchone()
     if model is None:
         return []
-    query_vector = _semantic_query_vector(model, query)
+    if model["model_kind"] == "neural":
+        query_vector = (
+            query_encoder(
+                query,
+                model["model_name"],
+                model["model_version"],
+                model["dimensions"],
+            )
+            if query_encoder is not None
+            else []
+        )
+    else:
+        query_vector = _semantic_query_vector(model, query)
     if not query_vector:
         return []
     placeholders = ", ".join("?" for _ in asset_ids)
@@ -832,7 +951,12 @@ def _semantic_matches(
         (model["model_id"], *asset_ids, *range_parameters),
     ).fetchall()
     scored = [
-        (row, max(0.0, _dot(query_vector, _blob_floats(row["vector"])))) for row in rows
+        (
+            row,
+            max(0.0, _dot(query_vector, _blob_floats(row["vector"]))),
+            model["model_kind"],
+        )
+        for row in rows
     ]
     scored.sort(key=lambda item: (-item[1], item[0]["start_seconds"]))
     return [item for item in scored[:limit] if item[1] > 0]
@@ -1193,6 +1317,23 @@ def _ensure_status_row(connection: sqlite3.Connection) -> None:
             datetime.now(UTC).isoformat(),
         ),
     )
+
+
+def _ensure_semantic_model_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(agent_semantic_models)")
+    }
+    if "model_version" not in columns:
+        connection.execute(
+            "ALTER TABLE agent_semantic_models "
+            "ADD COLUMN model_version TEXT NOT NULL DEFAULT '1'"
+        )
+    if "model_kind" not in columns:
+        connection.execute(
+            "ALTER TABLE agent_semantic_models "
+            "ADD COLUMN model_kind TEXT NOT NULL DEFAULT 'lsa'"
+        )
 
 
 def _ensure_status_columns(connection: sqlite3.Connection) -> None:

@@ -11,9 +11,13 @@ from openvideo.core.agent_checkpoint_store import (
     save_agent_checkpoint,
 )
 from openvideo.core.agent_evidence_index import (
+    DocumentEncoder,
     EvidenceIndexCoverage,
     EvidenceIndexStatus,
     IndexedEvidenceDocument,
+    NeuralReranker,
+    QueryEncoder,
+    ensure_semantic_index_target,
     load_evidence_index_coverage,
     load_evidence_index_status,
     rebuild_semantic_index,
@@ -64,6 +68,8 @@ class LibraryGeneratedStorageMixin:
         start_seconds: float | None,
         end_seconds: float | None,
         limit: int,
+        query_encoder: QueryEncoder | None = None,
+        reranker: NeuralReranker | None = None,
     ) -> list[IndexedEvidenceDocument]:
         for asset_id in asset_ids:
             self._validate_asset_id(asset_id)
@@ -75,14 +81,41 @@ class LibraryGeneratedStorageMixin:
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
                 limit=limit,
+                query_encoder=query_encoder,
+                reranker=reranker,
             )
 
-    def rebuild_agent_semantic_index(self) -> EvidenceIndexStatus:
+    def rebuild_agent_semantic_index(
+        self,
+        *,
+        model_name: str,
+        model_version: str,
+        dimensions: int,
+        encode_documents: DocumentEncoder,
+    ) -> EvidenceIndexStatus:
         connection = open_index_connection(self.library_path / DATABASE_FILE_NAME)
         try:
-            return rebuild_semantic_index(connection)
+            return rebuild_semantic_index(
+                connection,
+                model_name=model_name,
+                model_version=model_version,
+                dimensions=dimensions,
+                encode_documents=encode_documents,
+            )
         finally:
             connection.close()
+
+    def ensure_agent_semantic_index_target(
+        self,
+        model_name: str,
+        model_version: str,
+    ) -> bool:
+        with self._lock:
+            return ensure_semantic_index_target(
+                self._db(),
+                model_name,
+                model_version,
+            )
 
     def agent_evidence_index_status(self) -> EvidenceIndexStatus:
         with self._lock:

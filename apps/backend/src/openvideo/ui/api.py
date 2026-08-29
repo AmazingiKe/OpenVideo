@@ -59,6 +59,7 @@ from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
     TranscriptionModelManager,
 )
+from openvideo.agent_retrieval_models import NeuralRetrievalModels
 from openvideo.ui.directory_picker import DirectoryPickerError, select_directory
 from openvideo.ui.media_routes import register_media_routes
 from openvideo.ui.page_settings_routes import register_page_settings_routes
@@ -114,6 +115,7 @@ def create_app(
     download_account_login_capture: Callable[[SourcePlatform, Event], str]
     | None = None,
     capability_resolver: CapabilityResolver | None = None,
+    retrieval_models: NeuralRetrievalModels | None = None,
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
@@ -153,6 +155,7 @@ def create_app(
             resolved_settings,
             summary_manager,
             resolved_capability_resolver,
+            retrieval_models,
         )
         page_settings_store = PageSettingsStore(
             preference_store.path.parent,
@@ -585,4 +588,4 @@ def _validate_agent_model_roles(
         )
 
 
-app = create_app()
+app = create_app(retrieval_models=NeuralRetrievalModels())

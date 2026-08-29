@@ -36,6 +36,7 @@ from openvideo.agent_registry import (
     validate_model,
 )
 from openvideo.agent_retrieval import retrieve_indexed_evidence
+from openvideo.agent_retrieval_models import NeuralRetrievalModels
 from openvideo.agent_tooling import (
     ARTIFACT_EVIDENCE_GATE_KEY,
     AgentRunContext,
@@ -99,7 +100,11 @@ from openvideo.core.agent_evidence_models import (
 )
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, AiModelConfiguration
 from openvideo.core.identifiers import uuid7
-from openvideo.core.agent_evidence_index import EvidenceIndexStatus
+from openvideo.core.agent_evidence_index import (
+    EvidenceIndexStatus,
+    NeuralReranker,
+    QueryEncoder,
+)
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaMarker, MediaSegment
 from openvideo.core.summary_models import (
@@ -179,11 +184,13 @@ class AgentService:
         settings: Settings,
         summary_documents: SummaryDocumentService,
         capability_resolver: CapabilityResolver | None = None,
+        retrieval_models: NeuralRetrievalModels | None = None,
     ) -> None:
         self.library = library
         self.settings = settings
         self.summary_documents = summary_documents
         self.capability_resolver = capability_resolver or CapabilityResolver()
+        self.retrieval_models = retrieval_models
         self.store = AgentSessionStore(library)
         self._tasks: dict[str, asyncio.Task[AgentRun]] = {}
         self._semantic_index_task: asyncio.Task[EvidenceIndexStatus] | None = None
@@ -192,6 +199,11 @@ class AgentService:
         self.registry = AgentDefinitionRegistry(self._registered_agents())
         self.library.interrupt_agent_runs()
         self.library.interrupt_agent_run_checkpoints()
+        if self.retrieval_models is not None:
+            self.library.ensure_agent_semantic_index_target(
+                self.retrieval_models.model_name,
+                self.retrieval_models.model_version,
+            )
         self._schedule_semantic_index()
 
     def definitions(self) -> list[AgentDefinitionAvailability]:
@@ -633,6 +645,8 @@ class AgentService:
             await asyncio.gather(self._semantic_index_task, return_exceptions=True)
 
     def _schedule_semantic_index(self) -> None:
+        if self.retrieval_models is None:
+            return
         status = self.library.agent_evidence_index_status()
         if status.state != "lexical_ready" or (
             self._semantic_index_task is not None
@@ -644,7 +658,7 @@ class AgentService:
         except RuntimeError:
             return
         self._semantic_index_task = asyncio.create_task(
-            asyncio.to_thread(self.library.rebuild_agent_semantic_index)
+            asyncio.to_thread(self._rebuild_semantic_index)
         )
         self._semantic_index_task.add_done_callback(self._semantic_index_completed)
 
@@ -659,6 +673,16 @@ class AgentService:
         if not self._closing:
             self._schedule_semantic_index()
 
+    def _rebuild_semantic_index(self) -> EvidenceIndexStatus:
+        if self.retrieval_models is None:
+            raise RuntimeError("生产语义索引必须配置神经检索模型")
+        return self.library.rebuild_agent_semantic_index(
+            model_name=self.retrieval_models.model_name,
+            model_version=self.retrieval_models.model_version,
+            dimensions=self.retrieval_models.dimensions,
+            encode_documents=self.retrieval_models.encode_documents,
+        )
+
     @staticmethod
     def _index_stage_label(status: EvidenceIndexStatus) -> str:
         if status.state == "error":
@@ -668,6 +692,11 @@ class AgentService:
             "tokenizing": "正在解析检索文本",
             "building_matrix": "正在建立语义特征",
             "projecting": "正在计算语义投影，耗时暂不可估计",
+            "downloading_embedding_model": "正在下载推荐嵌入模型",
+            "loading_embedding_model": "正在加载推荐嵌入模型",
+            "embedding_documents": "正在生成神经语义向量",
+            "downloading_reranker_model": "正在下载推荐重排模型",
+            "loading_reranker_model": "正在加载推荐重排模型",
             "committing": "正在切换新索引",
             "ready": "检索索引已就绪",
             "failed": "语义索引失败",
@@ -1374,6 +1403,16 @@ class AgentService:
             ),
         }
 
+    def _retrieval_callbacks(
+        self,
+    ) -> tuple[QueryEncoder | None, NeuralReranker | None]:
+        if self.retrieval_models is None:
+            return None, None
+        status = self.library.agent_evidence_index_status()
+        if status.state != "ready" or status.active_model is None:
+            return None, None
+        return self.retrieval_models.encode_query, self.retrieval_models.rerank
+
     def _search_evidence(
         self, context: AgentRunContext, parameters: EvidenceSearchInput
     ) -> dict[str, Any]:
@@ -1392,12 +1431,15 @@ class AgentService:
             start_seconds = focus_selection.in_seconds
             end_seconds = focus_selection.out_seconds
         asset = self.library.get(context.session.asset_id)
+        query_encoder, reranker = self._retrieval_callbacks()
         documents = self.library.search_agent_evidence(
             asset_ids=[context.session.asset_id],
             query=parameters.query,
             start_seconds=start_seconds,
             end_seconds=end_seconds,
             limit=parameters.limit,
+            query_encoder=query_encoder,
+            reranker=reranker,
         )
         result = retrieve_indexed_evidence(
             documents=documents,
@@ -1430,12 +1472,15 @@ class AgentService:
                 "error": "跨视频检索必须提供明确问题或关键词",
                 "retryable": True,
             }
+        query_encoder, reranker = self._retrieval_callbacks()
         documents = self.library.search_agent_evidence(
             asset_ids=[asset.asset_id for asset in self.library.list()],
             query=query,
             start_seconds=None,
             end_seconds=None,
             limit=parameters.limit,
+            query_encoder=query_encoder,
+            reranker=reranker,
         )
         result = retrieve_indexed_evidence(
             documents=documents,

@@ -3,7 +3,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
 
-from openvideo.core import agent_evidence_index
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import (
     MediaAsset,
@@ -16,6 +15,39 @@ from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 FIRST_ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 SECOND_ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c073990"
+TEST_NEURAL_MODEL = "test/neural-video-retrieval"
+TEST_NEURAL_VERSION = "revision-1"
+TEST_NEURAL_DIMENSIONS = 4
+
+
+def _test_vector(value: str) -> list[float]:
+    normalized = value.casefold()
+    vector = [
+        float(any(term in normalized for term in ("量子", "并行", "quantum"))),
+        float(any(term in normalized for term in ("神经", "人工智能", "ai"))),
+        float(any(term in normalized for term in ("透视", "相机", "projection"))),
+        0.1,
+    ]
+    magnitude = sum(component * component for component in vector) ** 0.5
+    return [component / magnitude for component in vector]
+
+
+def _encode_test_documents(texts, report_progress):
+    vectors = []
+    for position, text in enumerate(texts, start=1):
+        vectors.append(_test_vector(text))
+        report_progress("embedding_documents", position, len(texts))
+    return vectors
+
+
+def _encode_test_query(query, model_name, model_version, dimensions):
+    if (
+        model_name != TEST_NEURAL_MODEL
+        or model_version != TEST_NEURAL_VERSION
+        or dimensions != TEST_NEURAL_DIMENSIONS
+    ):
+        return []
+    return _test_vector(query)
 
 
 def _save_asset(library: MediaLibrary, asset_id: str, title: str) -> MediaAsset:
@@ -217,7 +249,12 @@ def test_semantic_generation_swaps_atomically_and_keeps_stable_documents(
         end_seconds=None,
         limit=4,
     )[0]
-    first_status = library.rebuild_agent_semantic_index()
+    first_status = library.rebuild_agent_semantic_index(
+        model_name=TEST_NEURAL_MODEL,
+        model_version=TEST_NEURAL_VERSION,
+        dimensions=TEST_NEURAL_DIMENSIONS,
+        encode_documents=_encode_test_documents,
+    )
 
     asset.title = "芯片课程（已校对）"
     library.save(asset)
@@ -252,18 +289,24 @@ def test_semantic_generation_swaps_atomically_and_keeps_stable_documents(
     assert stale_status.active_model == first_status.active_model
     assert changed_document.document_id != first_document.document_id
 
-    rebuilt_status = library.rebuild_agent_semantic_index()
+    rebuilt_status = library.rebuild_agent_semantic_index(
+        model_name=TEST_NEURAL_MODEL,
+        model_version=TEST_NEURAL_VERSION,
+        dimensions=TEST_NEURAL_DIMENSIONS,
+        encode_documents=_encode_test_documents,
+    )
     semantic_result = library.search_agent_evidence(
         asset_ids=[FIRST_ASSET_ID],
         query="量子芯片并行计算",
         start_seconds=None,
         end_seconds=None,
         limit=4,
+        query_encoder=_encode_test_query,
     )
 
     assert rebuilt_status.state == "ready"
     assert rebuilt_status.active_model != first_status.active_model
-    assert any("语义向量" in reason for reason in semantic_result[0].match_reasons)
+    assert "神经语义向量匹配" in semantic_result[0].match_reasons
     assert (
         library._db()
         .execute("SELECT COUNT(*) FROM agent_semantic_models WHERE active = 1")
@@ -273,10 +316,7 @@ def test_semantic_generation_swaps_atomically_and_keeps_stable_documents(
     library.close()
 
 
-def test_unknown_projection_duration_reports_stage_without_fake_progress(
-    tmp_path: Path,
-    monkeypatch,
-):
+def test_neural_model_loading_reports_stage_without_fake_progress(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     _save_asset(library, FIRST_ASSET_ID, "索引进度课程")
     _save_transcript(
@@ -286,27 +326,26 @@ def test_unknown_projection_duration_reports_stage_without_fake_progress(
     )
     projection_started = Event()
     release_projection = Event()
-    original_latent_vectors = agent_evidence_index._latent_vectors
-
-    def blocked_latent_vectors(matrix):
+    def blocked_encoder(texts, report_progress):
+        del report_progress
         projection_started.set()
         release_projection.wait(timeout=5)
-        return original_latent_vectors(matrix)
-
-    monkeypatch.setattr(
-        agent_evidence_index,
-        "_latent_vectors",
-        blocked_latent_vectors,
-    )
+        return [_test_vector(text) for text in texts]
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(library.rebuild_agent_semantic_index)
+            future = executor.submit(
+                library.rebuild_agent_semantic_index,
+                model_name=TEST_NEURAL_MODEL,
+                model_version=TEST_NEURAL_VERSION,
+                dimensions=TEST_NEURAL_DIMENSIONS,
+                encode_documents=blocked_encoder,
+            )
             assert projection_started.wait(timeout=5)
             status = library.agent_evidence_index_status()
             coverage = library.agent_evidence_index_coverage(FIRST_ASSET_ID)
 
             assert status.state == "semantic_building"
-            assert status.stage == "projecting"
+            assert status.stage == "loading_embedding_model"
             assert status.processed_documents == 0
             assert status.total_documents == 0
             assert coverage.covered_seconds == 20
@@ -345,6 +384,64 @@ def test_existing_index_status_schema_migrates_without_rebuilding_library(
     assert status.stage == "ready"
     assert re.fullmatch(r"index-task-[0-9a-f]{32}", status.index_task_id)
     reopened.close()
+
+
+def test_neural_target_change_keeps_old_generation_until_rebuild(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, FIRST_ASSET_ID, "检索迁移")
+    _save_transcript(library, FIRST_ASSET_ID, [(0, 20, "神经检索旧代际")])
+    old_status = library.rebuild_agent_semantic_index(
+        model_name=TEST_NEURAL_MODEL,
+        model_version="old-revision",
+        dimensions=TEST_NEURAL_DIMENSIONS,
+        encode_documents=_encode_test_documents,
+    )
+
+    changed = library.ensure_agent_semantic_index_target(
+        TEST_NEURAL_MODEL,
+        TEST_NEURAL_VERSION,
+    )
+    waiting = library.agent_evidence_index_status()
+
+    assert changed is True
+    assert waiting.state == "lexical_ready"
+    assert waiting.active_model == old_status.active_model
+    library.close()
+
+
+def test_neural_reranker_controls_final_candidate_order(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, FIRST_ASSET_ID, "重排课程")
+    _save_transcript(
+        library,
+        FIRST_ASSET_ID,
+        [
+            (0, 20, "透视投影只是本节的背景术语"),
+            (20, 40, "透视投影的正式定义和推导过程"),
+        ],
+    )
+    library.rebuild_agent_semantic_index(
+        model_name=TEST_NEURAL_MODEL,
+        model_version=TEST_NEURAL_VERSION,
+        dimensions=TEST_NEURAL_DIMENSIONS,
+        encode_documents=_encode_test_documents,
+    )
+
+    evidence = library.search_agent_evidence(
+        asset_ids=[FIRST_ASSET_ID],
+        query="透视投影",
+        start_seconds=None,
+        end_seconds=None,
+        limit=2,
+        query_encoder=_encode_test_query,
+        reranker=lambda query, documents: [
+            0.99 if "正式定义" in document else 0.01 for document in documents
+        ],
+    )
+
+    assert evidence[0].start_seconds == 20
+    assert "神经交叉编码重排" in evidence[0].match_reasons
+    library.close()
 
 
 def test_verified_memory_locates_evidence_and_invalidates_with_its_source(
