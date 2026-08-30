@@ -33,6 +33,7 @@ from openvideo.core.transcription_models import (
 from openvideo.transcription_model_manager import (
     QWEN_FORCED_ALIGNER_DIRECTORY_NAME,
     SENSEVOICE_VAD_DIRECTORY_NAME,
+    is_transcription_model_installed,
     transcription_model_directory,
 )
 from openvideo.tools.media import resolve_tool
@@ -57,12 +58,27 @@ AUTOMATIC_COMPUTE_TYPE = "default"
 AUTOMATIC_DEVICE = "auto"
 CPU_DEVICE_NAME = "cpu"
 FASTER_WHISPER_ENGINE_NAME = "Faster-Whisper"
-QWEN_MAX_CHUNK_SECONDS = 240
+QWEN_TARGET_CHUNK_SECONDS = 30
+QWEN_MIN_RETRY_CHUNK_SECONDS = 8
+QWEN_CHUNK_CONTEXT_SECONDS = 0.5
+QWEN_BOUNDARY_SEARCH_SECONDS = 2
+QWEN_ENERGY_WINDOW_MILLISECONDS = 20
+QWEN_MAX_RETRY_DEPTH = 2
 QWEN_MAX_SEGMENT_SECONDS = 15
 # 过滤字词对齐的自然间隔，同时让清晰的口语停顿形成字幕断点。
 QWEN_SILENCE_BREAK_SECONDS = 0.8
 QWEN_MAX_INFERENCE_BATCH_SIZE = 1
-QWEN_MAX_NEW_TOKENS = 256
+QWEN_MAX_NEW_TOKENS = 4_096
+QWEN_MIN_NEW_TOKENS = 512
+QWEN_GENERATION_TOKENS_PER_SECOND = 24
+QWEN_VAD_THRESHOLD = 0.5
+QWEN_VAD_MIN_SPEECH_MILLISECONDS = 160
+QWEN_VAD_MIN_SILENCE_MILLISECONDS = 300
+QWEN_ALIGNMENT_PADDING_SECONDS = 0.2
+QWEN_MIN_QUALITY_SPEECH_SECONDS = 0.5
+# 运行时质量门只拦截灾难性缺失，精确率另由完整评测集验收。
+QWEN_MIN_SPEECH_COVERAGE = 0.85
+QWEN_MAX_UNCOVERED_SPEECH_SECONDS = 3
 QWEN_SENTENCE_ENDINGS = frozenset("。！？!?；;.")
 QWEN_LANGUAGE_NAMES = {
     "zh": "Chinese",
@@ -124,6 +140,10 @@ class TranscriptionFailure(RuntimeError):
     """媒体无法产生可用的带时间戳文本时抛出。"""
 
 
+class TranscriptionQualityFailure(TranscriptionFailure):
+    """识别进程完成但语音内容不完整时拒绝静默保存结果。"""
+
+
 @dataclass(frozen=True)
 class AudioExtractionResult:
     audio_path: Path
@@ -139,6 +159,7 @@ class Transcriber(Protocol):
     """可插拔的文字识别实现，统一返回领域层 Transcript。"""
 
     engine: TranscriptionEngine
+    output_source: str
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
         ...
@@ -152,6 +173,25 @@ class TimedText:
     text: str
     start_seconds: float
     end_seconds: float
+
+
+@dataclass(frozen=True)
+class QwenAudioChunk:
+    """保留原音频绝对时间的 Qwen 推理块，避免重试后时间轴漂移。"""
+
+    samples: object
+    sample_rate: int
+    start_seconds: float
+    end_seconds: float
+
+
+@dataclass(frozen=True)
+class QwenChunkQuality:
+    """衡量对齐文本是否覆盖了块内实际存在的语音。"""
+
+    speech_seconds: float
+    covered_speech_ratio: float
+    max_uncovered_speech_seconds: float
 
 
 def extract_audio(
@@ -263,7 +303,7 @@ def transcribe_media(
         )
         return TranscriptionResult(
             transcript=transcriber.transcribe(audio.audio_path, asset_id),
-            output_source=transcriber.engine.value,
+            output_source=transcriber.output_source,
         )
     finally:
         if transcriber is not None:
@@ -274,6 +314,7 @@ class FasterWhisperTranscriber:
     """基于 faster-whisper 的本地 ASR，按任务配置运行设备与量化精度。"""
 
     engine = TranscriptionEngine.FASTER_WHISPER
+    output_source = engine.value
 
     def __init__(
         self,
@@ -362,6 +403,7 @@ class Qwen3AsrTranscriber:
     """用强制对齐结果构建精确字幕；仅支持其覆盖的 11 种语言。"""
 
     engine = TranscriptionEngine.QWEN3_ASR
+    output_source = engine.value
 
     def __init__(
         self,
@@ -385,36 +427,14 @@ class Qwen3AsrTranscriber:
                 self._model = self._load_model()
             timed_items: list[TimedText] = []
             detected_languages: list[str] = []
-            for audio_chunk, sample_rate, offset_seconds in _load_qwen_audio_chunks(
-                audio_path
-            ):
-                results = self._model.transcribe(
-                    audio=(audio_chunk, sample_rate),
-                    language=self.language,
-                    return_time_stamps=True,
+            for chunk in _load_qwen_audio_chunks(audio_path):
+                chunk_items, language_codes = self._transcribe_chunk_with_retry(
+                    chunk,
+                    retry_depth=0,
                 )
-                if not results:
-                    continue
-                result = results[0]
-                if not result.text.strip():
-                    continue
-                language_codes = _qwen_result_language_codes(result.language)
+                timed_items.extend(chunk_items)
                 detected_languages.extend(language_codes)
-                if result.time_stamps is None or not result.time_stamps.items:
-                    raise TranscriptionFailure("Qwen3-ASR 未返回有效的强制对齐时间戳")
-                for item in result.time_stamps.items:
-                    text = item.text.strip()
-                    start_seconds = float(item.start_time) + offset_seconds
-                    end_seconds = float(item.end_time) + offset_seconds
-                    if not text or end_seconds <= start_seconds:
-                        continue
-                    timed_items.append(
-                        TimedText(
-                            text=text,
-                            start_seconds=start_seconds,
-                            end_seconds=end_seconds,
-                        )
-                    )
+            timed_items = _deduplicate_qwen_items(timed_items)
             if not timed_items:
                 raise TranscriptionFailure("Qwen3-ASR 没有识别到可用的带时间戳文本")
             language = _merge_language_codes(detected_languages)
@@ -431,6 +451,85 @@ class Qwen3AsrTranscriber:
             ) from error
         except Exception as error:
             raise _runtime_transcription_failure("Qwen3-ASR", error) from error
+
+    def _transcribe_chunk_with_retry(
+        self,
+        chunk: QwenAudioChunk,
+        retry_depth: int,
+    ) -> tuple[list[TimedText], list[str]]:
+        items, language_codes = self._transcribe_chunk(chunk)
+        quality = _qwen_chunk_quality(chunk, items)
+        if _qwen_quality_is_acceptable(quality):
+            return items, language_codes
+
+        duration_seconds = chunk.end_seconds - chunk.start_seconds
+        can_retry = (
+            retry_depth < QWEN_MAX_RETRY_DEPTH
+            and duration_seconds > QWEN_MIN_RETRY_CHUNK_SECONDS
+        )
+        if can_retry:
+            target_seconds = max(
+                duration_seconds / 2,
+                QWEN_MIN_RETRY_CHUNK_SECONDS,
+            )
+            retry_chunks = _split_qwen_audio_chunk(chunk, target_seconds)
+            if len(retry_chunks) > 1:
+                retried_items: list[TimedText] = []
+                retried_languages: list[str] = []
+                for retry_chunk in retry_chunks:
+                    retry_items, retry_languages = self._transcribe_chunk_with_retry(
+                        retry_chunk,
+                        retry_depth + 1,
+                    )
+                    retried_items.extend(retry_items)
+                    retried_languages.extend(retry_languages)
+                retried_items = _deduplicate_qwen_items(retried_items)
+                retried_quality = _qwen_chunk_quality(chunk, retried_items)
+                if _qwen_quality_is_acceptable(retried_quality):
+                    return retried_items, retried_languages
+                quality = retried_quality
+
+        raise TranscriptionQualityFailure(
+            "Qwen3-ASR 检测到字幕不完整："
+            f"{chunk.start_seconds:.1f}–{chunk.end_seconds:.1f} 秒语音覆盖 "
+            f"{quality.covered_speech_ratio:.1%}，最长未覆盖语音 "
+            f"{quality.max_uncovered_speech_seconds:.1f} 秒"
+        )
+
+    def _transcribe_chunk(
+        self,
+        chunk: QwenAudioChunk,
+    ) -> tuple[list[TimedText], list[str]]:
+        duration_seconds = chunk.end_seconds - chunk.start_seconds
+        self._model.max_new_tokens = _qwen_generation_token_budget(duration_seconds)
+        results = self._model.transcribe(
+            audio=(chunk.samples, chunk.sample_rate),
+            language=self.language,
+            return_time_stamps=True,
+        )
+        if not results:
+            return [], []
+        result = results[0]
+        if not result.text.strip():
+            return [], []
+        language_codes = _qwen_result_language_codes(result.language)
+        if result.time_stamps is None or not result.time_stamps.items:
+            raise TranscriptionFailure("Qwen3-ASR 未返回有效的强制对齐时间戳")
+        items: list[TimedText] = []
+        for item in result.time_stamps.items:
+            text = item.text.strip()
+            start_seconds = float(item.start_time) + chunk.start_seconds
+            end_seconds = float(item.end_time) + chunk.start_seconds
+            if not text or end_seconds <= start_seconds:
+                continue
+            items.append(
+                TimedText(
+                    text=text,
+                    start_seconds=start_seconds,
+                    end_seconds=end_seconds,
+                )
+            )
+        return items, language_codes
 
     def _load_model(self):
         model_directory = _require_model_directory(
@@ -483,6 +582,7 @@ class SenseVoiceTranscriber:
     """保留 SenseVoice 的语种、情绪和声音事件，并拒绝无时间轴结果。"""
 
     engine = TranscriptionEngine.SENSEVOICE
+    output_source = engine.value
 
     def __init__(
         self,
@@ -557,9 +657,46 @@ class SenseVoiceTranscriber:
         _release_cuda_memory(self._torch)
 
 
+class AutomaticFallbackTranscriber:
+    """主模型失败时自动使用已安装备用模型，避免用户逐条批准或重建任务。"""
+
+    def __init__(self, primary: Transcriber, fallback: Transcriber) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self.engine = primary.engine
+        self.output_source = primary.output_source
+        self._primary_closed = False
+
+    def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
+        try:
+            return self.primary.transcribe(audio_path, asset_id)
+        except TranscriptionFailure as primary_error:
+            self.primary.close()
+            self._primary_closed = True
+            try:
+                transcript = self.fallback.transcribe(audio_path, asset_id)
+            except TranscriptionFailure as fallback_error:
+                raise TranscriptionFailure(
+                    f"{primary_error}；自动回退 {self.fallback.output_source} 也失败："
+                    f"{fallback_error}"
+                ) from fallback_error
+            self.output_source = (
+                f"{self.primary.output_source}->{self.fallback.output_source}"
+            )
+            return transcript
+
+    def close(self) -> None:
+        if not self._primary_closed:
+            self.primary.close()
+            self._primary_closed = True
+        self.fallback.close()
+
+
 def create_transcriber(
     options: TranscriptionOptions,
     models_root_directory: Path,
+    *,
+    automatic_fallback: bool = True,
 ) -> Transcriber:
     """根据持久化任务选项路由 ASR；未接入的引擎会返回明确状态。"""
     require_transcription_adapter(options)
@@ -577,13 +714,24 @@ def create_transcriber(
             compute_type=compute_type,
         )
     if options.engine == TranscriptionEngine.QWEN3_ASR:
-        return Qwen3AsrTranscriber(
+        primary = Qwen3AsrTranscriber(
             model=options.model,
             models_root_directory=models_root_directory,
             language=options.language,
             device=options.device.value,
             compute_type=options.compute_type.value,
         )
+        fallback = (
+            _qwen_fallback_transcriber(
+                models_root_directory,
+                options.language,
+            )
+            if automatic_fallback
+            else None
+        )
+        if fallback is None:
+            return primary
+        return AutomaticFallbackTranscriber(primary, fallback)
     if options.engine == TranscriptionEngine.SENSEVOICE:
         return SenseVoiceTranscriber(
             model=options.model,
@@ -592,6 +740,54 @@ def create_transcriber(
             device=options.device.value,
         )
     raise TranscriptionFailure(f"不支持的转录引擎：{options.engine.value}")
+
+
+def _qwen_fallback_transcriber(
+    models_root_directory: Path,
+    language: str | None,
+) -> Transcriber | None:
+    sensevoice_descriptor = find_transcription_model(
+        TranscriptionEngine.SENSEVOICE,
+        "sensevoice-small",
+    )
+    sensevoice_supports_language = (
+        language is None
+        or language == AUTOMATIC_LANGUAGE
+        or language in SENSEVOICE_LANGUAGE_CODES
+    )
+    if (
+        sensevoice_descriptor is not None
+        and sensevoice_supports_language
+        and is_transcription_model_installed(
+            sensevoice_descriptor,
+            models_root_directory,
+        )
+    ):
+        return SenseVoiceTranscriber(
+            model=sensevoice_descriptor.model,
+            models_root_directory=models_root_directory,
+            language=language,
+            device=AUTOMATIC_DEVICE,
+        )
+
+    whisper_descriptor = find_transcription_model(
+        TranscriptionEngine.FASTER_WHISPER,
+        "large-v3-turbo",
+    )
+    if whisper_descriptor is not None and is_transcription_model_installed(
+        whisper_descriptor,
+        models_root_directory,
+    ):
+        return FasterWhisperTranscriber(
+            model_size=whisper_descriptor.model,
+            model_root_directory=(
+                models_root_directory / TranscriptionEngine.FASTER_WHISPER.value
+            ),
+            language=language,
+            device=AUTOMATIC_DEVICE,
+            compute_type=AUTOMATIC_COMPUTE_TYPE,
+        )
+    return None
 
 
 def require_transcription_adapter(
@@ -669,17 +865,301 @@ def _load_qwen_audio_chunks(audio_path: Path):
                 or sample_rate != AUDIO_SAMPLE_RATE
             ):
                 raise TranscriptionFailure("Qwen3-ASR 输入必须是 16kHz 单声道 PCM WAV")
-            frames_per_chunk = sample_rate * QWEN_MAX_CHUNK_SECONDS
-            offset_frames = 0
-            while audio_frames := audio.readframes(frames_per_chunk):
-                samples = numpy.frombuffer(audio_frames, dtype="<i2").astype(
+            total_frames = audio.getnframes()
+            target_frames = round(QWEN_TARGET_CHUNK_SECONDS * sample_rate)
+            search_frames = round(QWEN_BOUNDARY_SEARCH_SECONDS * sample_rate)
+            base_ranges: list[tuple[int, int]] = []
+            range_start = 0
+            while total_frames - range_start > target_frames:
+                audio.setpos(range_start)
+                search_bytes = audio.readframes(target_frames + search_frames)
+                search_samples = numpy.frombuffer(search_bytes, dtype="<i2").astype(
                     numpy.float32
                 )
-                samples /= PCM16_SCALE
-                yield samples, sample_rate, offset_frames / sample_rate
-                offset_frames += len(samples)
+                search_samples /= PCM16_SCALE
+                relative_boundary = _qwen_low_energy_ranges(
+                    search_samples,
+                    sample_rate,
+                    QWEN_TARGET_CHUNK_SECONDS,
+                )[0][1]
+                boundary = range_start + relative_boundary
+                base_ranges.append((range_start, boundary))
+                range_start = boundary
+            base_ranges.append((range_start, total_frames))
+
+            context_frames = round(QWEN_CHUNK_CONTEXT_SECONDS * sample_rate)
+            for index, (base_start, base_end) in enumerate(base_ranges):
+                chunk_start = (
+                    base_start if index == 0 else max(base_start - context_frames, 0)
+                )
+                chunk_end = (
+                    base_end
+                    if index == len(base_ranges) - 1
+                    else min(base_end + context_frames, total_frames)
+                )
+                audio.setpos(chunk_start)
+                chunk_bytes = audio.readframes(chunk_end - chunk_start)
+                chunk_samples = numpy.frombuffer(chunk_bytes, dtype="<i2").astype(
+                    numpy.float32
+                )
+                chunk_samples /= PCM16_SCALE
+                yield QwenAudioChunk(
+                    samples=chunk_samples,
+                    sample_rate=sample_rate,
+                    start_seconds=chunk_start / sample_rate,
+                    end_seconds=chunk_end / sample_rate,
+                )
     except (OSError, wave.Error) as error:
         raise TranscriptionFailure("Qwen3-ASR 无法读取提取后的 WAV 音频") from error
+
+
+def _split_qwen_audio_chunk(
+    chunk: QwenAudioChunk,
+    target_seconds: float,
+) -> list[QwenAudioChunk]:
+    return _split_qwen_samples(
+        chunk.samples,
+        chunk.sample_rate,
+        start_seconds=chunk.start_seconds,
+        target_seconds=target_seconds,
+    )
+
+
+def _split_qwen_samples(
+    samples,
+    sample_rate: int,
+    start_seconds: float,
+    target_seconds: float,
+) -> list[QwenAudioChunk]:
+    import numpy
+
+    normalized_samples = numpy.asarray(samples, dtype=numpy.float32)
+    total_samples = len(normalized_samples)
+    if total_samples == 0:
+        return []
+    base_ranges = _qwen_low_energy_ranges(
+        normalized_samples,
+        sample_rate,
+        target_seconds,
+    )
+    context_samples = round(QWEN_CHUNK_CONTEXT_SECONDS * sample_rate)
+    chunks: list[QwenAudioChunk] = []
+    for index, (base_start, base_end) in enumerate(base_ranges):
+        chunk_start = base_start if index == 0 else max(base_start - context_samples, 0)
+        chunk_end = (
+            base_end
+            if index == len(base_ranges) - 1
+            else min(base_end + context_samples, total_samples)
+        )
+        absolute_start = start_seconds + (chunk_start / sample_rate)
+        absolute_end = start_seconds + (chunk_end / sample_rate)
+        chunks.append(
+            QwenAudioChunk(
+                samples=normalized_samples[chunk_start:chunk_end],
+                sample_rate=sample_rate,
+                start_seconds=absolute_start,
+                end_seconds=absolute_end,
+            )
+        )
+    return chunks
+
+
+def _qwen_low_energy_ranges(
+    samples,
+    sample_rate: int,
+    target_seconds: float,
+) -> list[tuple[int, int]]:
+    import numpy
+
+    total_samples = len(samples)
+    target_samples = max(round(target_seconds * sample_rate), 1)
+    if total_samples <= target_samples:
+        return [(0, total_samples)]
+    search_samples = round(QWEN_BOUNDARY_SEARCH_SECONDS * sample_rate)
+    energy_window_samples = max(
+        round(QWEN_ENERGY_WINDOW_MILLISECONDS * sample_rate / MILLISECONDS_PER_SECOND),
+        1,
+    )
+    ranges: list[tuple[int, int]] = []
+    range_start = 0
+    while total_samples - range_start > target_samples:
+        target_boundary = range_start + target_samples
+        search_start = max(
+            range_start + energy_window_samples,
+            target_boundary - search_samples,
+        )
+        search_end = min(
+            total_samples - energy_window_samples,
+            target_boundary + search_samples,
+        )
+        if search_end <= search_start:
+            boundary = target_boundary
+        else:
+            search_region = numpy.abs(samples[search_start:search_end])
+            window = numpy.ones(energy_window_samples, dtype=numpy.float32)
+            energies = numpy.convolve(search_region, window, mode="valid")
+            minimum_energy = float(numpy.min(energies))
+            tolerance = max(minimum_energy * 0.05, 1e-8)
+            low_energy_positions = numpy.flatnonzero(
+                energies <= minimum_energy + tolerance
+            )
+            target_position = (
+                target_boundary - search_start - energy_window_samples // 2
+            )
+            energy_position = min(
+                (int(position) for position in low_energy_positions),
+                key=lambda position: abs(position - target_position),
+            )
+            boundary = search_start + energy_position
+            boundary += energy_window_samples // 2
+        boundary = min(max(boundary, range_start + 1), total_samples)
+        ranges.append((range_start, boundary))
+        range_start = boundary
+    ranges.append((range_start, total_samples))
+    return ranges
+
+
+def _qwen_generation_token_budget(duration_seconds: float) -> int:
+    estimated_tokens = round(duration_seconds * QWEN_GENERATION_TOKENS_PER_SECOND)
+    return min(
+        max(estimated_tokens, QWEN_MIN_NEW_TOKENS),
+        QWEN_MAX_NEW_TOKENS,
+    )
+
+
+def _qwen_chunk_quality(
+    chunk: QwenAudioChunk,
+    items: list[TimedText],
+) -> QwenChunkQuality:
+    import numpy
+
+    samples = numpy.asarray(chunk.samples, dtype=numpy.float32)
+    frame_samples = max(
+        round(
+            QWEN_ENERGY_WINDOW_MILLISECONDS
+            * chunk.sample_rate
+            / MILLISECONDS_PER_SECOND
+        ),
+        1,
+    )
+    frame_seconds = frame_samples / chunk.sample_rate
+    frame_count = max((len(samples) + frame_samples - 1) // frame_samples, 1)
+    speech_mask = _qwen_speech_activity_mask(
+        samples,
+        chunk.sample_rate,
+        frame_samples,
+        frame_count,
+    )
+    speech_frame_count = sum(speech_mask)
+    if speech_frame_count == 0:
+        return QwenChunkQuality(
+            speech_seconds=0,
+            covered_speech_ratio=1,
+            max_uncovered_speech_seconds=0,
+        )
+
+    covered_mask = [False] * frame_count
+    for item in items:
+        relative_start = max(
+            item.start_seconds - chunk.start_seconds - QWEN_ALIGNMENT_PADDING_SECONDS,
+            0,
+        )
+        relative_end = min(
+            item.end_seconds - chunk.start_seconds + QWEN_ALIGNMENT_PADDING_SECONDS,
+            chunk.end_seconds - chunk.start_seconds,
+        )
+        start_frame = max(int(relative_start / frame_seconds), 0)
+        end_frame = min(
+            int(numpy.ceil(relative_end / frame_seconds)),
+            frame_count,
+        )
+        for frame_index in range(start_frame, end_frame):
+            covered_mask[frame_index] = True
+    covered_speech_frames = sum(
+        speech and covered
+        for speech, covered in zip(speech_mask, covered_mask, strict=True)
+    )
+    uncovered_speech_mask = [
+        speech and not covered
+        for speech, covered in zip(speech_mask, covered_mask, strict=True)
+    ]
+    return QwenChunkQuality(
+        speech_seconds=speech_frame_count * frame_seconds,
+        covered_speech_ratio=covered_speech_frames / speech_frame_count,
+        max_uncovered_speech_seconds=(
+            _maximum_true_run(uncovered_speech_mask) * frame_seconds
+        ),
+    )
+
+
+def _qwen_speech_activity_mask(
+    samples,
+    sample_rate: int,
+    frame_samples: int,
+    frame_count: int,
+) -> list[bool]:
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    speech_ranges = get_speech_timestamps(
+        samples,
+        VadOptions(
+            threshold=QWEN_VAD_THRESHOLD,
+            min_speech_duration_ms=QWEN_VAD_MIN_SPEECH_MILLISECONDS,
+            min_silence_duration_ms=QWEN_VAD_MIN_SILENCE_MILLISECONDS,
+            speech_pad_ms=0,
+        ),
+        sampling_rate=sample_rate,
+    )
+    speech_mask = [False] * frame_count
+    for speech_range in speech_ranges:
+        start_frame = max(int(speech_range["start"] / frame_samples), 0)
+        end_frame = min(
+            int((speech_range["end"] + frame_samples - 1) / frame_samples),
+            frame_count,
+        )
+        speech_mask[start_frame:end_frame] = [True] * (end_frame - start_frame)
+    return speech_mask
+
+
+def _maximum_true_run(values: list[bool]) -> int:
+    maximum_length = 0
+    current_length = 0
+    for value in values:
+        if value:
+            current_length += 1
+            maximum_length = max(maximum_length, current_length)
+        else:
+            current_length = 0
+    return maximum_length
+
+
+def _qwen_quality_is_acceptable(quality: QwenChunkQuality) -> bool:
+    if quality.speech_seconds < QWEN_MIN_QUALITY_SPEECH_SECONDS:
+        return True
+    return (
+        quality.covered_speech_ratio >= QWEN_MIN_SPEECH_COVERAGE
+        and quality.max_uncovered_speech_seconds
+        <= QWEN_MAX_UNCOVERED_SPEECH_SECONDS
+    )
+
+
+def _deduplicate_qwen_items(items: list[TimedText]) -> list[TimedText]:
+    deduplicated: list[TimedText] = []
+    for item in sorted(items, key=lambda candidate: candidate.start_seconds):
+        if not deduplicated:
+            deduplicated.append(item)
+            continue
+        previous = deduplicated[-1]
+        overlaps = item.start_seconds <= previous.end_seconds
+        if overlaps and item.text == previous.text:
+            deduplicated[-1] = TimedText(
+                text=previous.text,
+                start_seconds=min(previous.start_seconds, item.start_seconds),
+                end_seconds=max(previous.end_seconds, item.end_seconds),
+            )
+            continue
+        deduplicated.append(item)
+    return deduplicated
 
 
 def _aggregate_qwen_segments(

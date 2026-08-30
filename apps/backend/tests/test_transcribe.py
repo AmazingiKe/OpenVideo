@@ -4,6 +4,7 @@ import wave
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import numpy
 import pytest
 
 from openvideo.core.transcription_models import (
@@ -20,22 +21,30 @@ from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAsset, SourcePlatform
 from openvideo.tools.transcribe import (
     AUTOMATIC_COMPUTE_TYPE,
+    AutomaticFallbackTranscriber,
     CPU_DEVICE_NAME,
     DEFAULT_WHISPER_COMPUTE_TYPE,
     FasterWhisperTranscriber,
-    QWEN_MAX_CHUNK_SECONDS,
+    QWEN_TARGET_CHUNK_SECONDS,
+    QwenAudioChunk,
     Qwen3AsrTranscriber,
     SenseVoiceTranscriber,
     TimedText,
     TranscriptionFailure,
+    TranscriptionQualityFailure,
     _aggregate_qwen_segments,
+    _deduplicate_qwen_items,
     _load_qwen_audio_chunks,
     _parse_json3_subtitles,
+    _qwen_chunk_quality,
+    _qwen_generation_token_budget,
     _qwen_language_name,
+    _qwen_quality_is_acceptable,
     _qwen_result_language_codes,
     _resolve_sensevoice_device,
     _runtime_transcription_failure,
     _sensevoice_transcript,
+    _split_qwen_audio_chunk,
     create_transcriber,
     extract_audio,
     resolve_whisper_model_source,
@@ -43,6 +52,10 @@ from openvideo.tools.transcribe import (
 
 
 TRANSCRIPT_ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
+
+
+def _all_frames_are_speech(_samples, _sample_rate, _frame_samples, frame_count):
+    return [True] * frame_count
 
 
 def test_parses_json3_subtitles_with_timestamps(tmp_path: Path):
@@ -231,6 +244,45 @@ def test_factory_creates_qwen_and_sensevoice_adapters(tmp_path: Path):
     assert isinstance(sensevoice, SenseVoiceTranscriber)
 
 
+def test_automatic_fallback_uses_installed_alternative_without_confirmation(
+    tmp_path: Path,
+):
+    closed: list[str] = []
+
+    class Primary:
+        engine = TranscriptionEngine.QWEN3_ASR
+        output_source = "qwen3-asr"
+
+        def transcribe(self, *_args):
+            raise TranscriptionQualityFailure("字幕不完整")
+
+        def close(self):
+            closed.append("primary")
+
+    class Fallback:
+        engine = TranscriptionEngine.SENSEVOICE
+        output_source = "sensevoice"
+
+        def transcribe(self, _audio_path, asset_id):
+            return Transcript(
+                asset_id=asset_id,
+                language="zh",
+                segments=[TranscriptSegment(start_seconds=0, end_seconds=1, text="完整")],
+            )
+
+        def close(self):
+            closed.append("fallback")
+
+    transcriber = AutomaticFallbackTranscriber(Primary(), Fallback())
+
+    transcript = transcriber.transcribe(tmp_path / "audio.wav", TRANSCRIPT_ASSET_ID)
+    transcriber.close()
+
+    assert transcript.segments[0].text == "完整"
+    assert transcriber.output_source == "qwen3-asr->sensevoice"
+    assert closed == ["primary", "fallback"]
+
+
 def test_faster_whisper_auto_device_falls_back_to_cpu(tmp_path: Path, monkeypatch):
     class UnavailableCudaModel:
         def transcribe(self, *_args, **_kwargs):
@@ -300,19 +352,171 @@ def test_rejects_unsupported_qwen_alignment_language():
         _qwen_result_language_codes("Arabic")
 
 
-def test_qwen_audio_is_split_at_240_seconds(tmp_path: Path):
+def test_qwen_audio_uses_overlapping_thirty_second_chunks(tmp_path: Path):
     audio_path = tmp_path / "long.wav"
     with wave.open(str(audio_path), "wb") as audio:
         audio.setnchannels(1)
         audio.setsampwidth(2)
         audio.setframerate(16_000)
-        audio.writeframes(b"\0\0" * 16_000 * (QWEN_MAX_CHUNK_SECONDS + 1))
+        audio.writeframes(b"\0\0" * 16_000 * (QWEN_TARGET_CHUNK_SECONDS + 1))
 
     chunks = list(_load_qwen_audio_chunks(audio_path))
 
     assert len(chunks) == 2
-    assert len(chunks[0][0]) == 16_000 * QWEN_MAX_CHUNK_SECONDS
-    assert chunks[1][2] == QWEN_MAX_CHUNK_SECONDS
+    assert chunks[0].end_seconds == pytest.approx(30.5, abs=0.03)
+    assert chunks[1].start_seconds == pytest.approx(29.5, abs=0.03)
+    assert chunks[0].end_seconds - chunks[1].start_seconds == pytest.approx(1)
+
+
+def test_qwen_generation_budget_scales_with_chunk_duration():
+    assert _qwen_generation_token_budget(5) == 512
+    assert _qwen_generation_token_budget(30) == 720
+    assert _qwen_generation_token_budget(300) == 4096
+
+
+def test_qwen_retry_chunks_preserve_absolute_time_and_overlap():
+    chunk = QwenAudioChunk(
+        samples=numpy.zeros(16_000 * 20),
+        sample_rate=16_000,
+        start_seconds=100,
+        end_seconds=120,
+    )
+
+    chunks = _split_qwen_audio_chunk(chunk, target_seconds=10)
+
+    assert len(chunks) == 2
+    assert chunks[0].start_seconds == 100
+    assert chunks[-1].end_seconds == 120
+    assert chunks[0].end_seconds - chunks[1].start_seconds == pytest.approx(1)
+
+
+def test_qwen_quality_gate_measures_uncovered_speech(monkeypatch):
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe._qwen_speech_activity_mask",
+        _all_frames_are_speech,
+    )
+    samples = numpy.sin(
+        numpy.linspace(0, 400 * numpy.pi, 16_000 * 10, dtype=numpy.float32)
+    )
+    chunk = QwenAudioChunk(samples, 16_000, 0, 10)
+
+    complete = _qwen_chunk_quality(chunk, [TimedText("完整", 0, 10)])
+    short_non_speech_tail = _qwen_chunk_quality(chunk, [TimedText("正文", 0, 9)])
+    truncated = _qwen_chunk_quality(chunk, [TimedText("截断", 0, 1)])
+
+    assert _qwen_quality_is_acceptable(complete)
+    assert _qwen_quality_is_acceptable(short_non_speech_tail)
+    assert not _qwen_quality_is_acceptable(truncated)
+    assert truncated.max_uncovered_speech_seconds > 3
+
+
+def test_qwen_quality_gate_ignores_audio_without_detected_speech(monkeypatch):
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe._qwen_speech_activity_mask",
+        lambda _samples, _sample_rate, _frame_samples, frame_count: (
+            [False] * frame_count
+        ),
+    )
+    chunk = QwenAudioChunk(numpy.ones(16_000 * 10), 16_000, 0, 10)
+
+    quality = _qwen_chunk_quality(chunk, [])
+
+    assert quality.speech_seconds == 0
+    assert _qwen_quality_is_acceptable(quality)
+
+
+def test_qwen_retries_incomplete_chunk_with_smaller_chunks(
+    tmp_path: Path,
+    monkeypatch,
+):
+    samples = numpy.sin(
+        numpy.linspace(0, 800 * numpy.pi, 16_000 * 20, dtype=numpy.float32)
+    )
+    chunk = QwenAudioChunk(samples, 16_000, 0, 20)
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe._load_qwen_audio_chunks",
+        lambda _: iter([chunk]),
+    )
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe._qwen_speech_activity_mask",
+        _all_frames_are_speech,
+    )
+    durations: list[float] = []
+
+    class RetryModel:
+        max_new_tokens = 0
+
+        def transcribe(self, **kwargs):
+            audio_samples, sample_rate = kwargs["audio"]
+            duration = len(audio_samples) / sample_rate
+            durations.append(duration)
+            aligned_end = duration if duration <= 11 else 1
+            return [
+                SimpleNamespace(
+                    language="Chinese",
+                    text="完整。",
+                    time_stamps=SimpleNamespace(
+                        items=[
+                            SimpleNamespace(
+                                text="完整。",
+                                start_time=0,
+                                end_time=aligned_end,
+                            )
+                        ]
+                    ),
+                )
+            ]
+
+    transcriber = Qwen3AsrTranscriber(
+        "qwen3-asr-0.6b", tmp_path, "zh", "cuda", "float16"
+    )
+    transcriber._model = RetryModel()
+
+    transcript = transcriber.transcribe(tmp_path / "audio.wav", TRANSCRIPT_ASSET_ID)
+
+    assert len(durations) == 3
+    assert durations[0] == 20
+    assert transcript.segments[0].start_seconds == 0
+    assert transcript.segments[-1].end_seconds == pytest.approx(20)
+
+
+def test_qwen_rejects_incomplete_minimum_chunk(tmp_path: Path, monkeypatch):
+    samples = numpy.sin(
+        numpy.linspace(0, 320 * numpy.pi, 16_000 * 8, dtype=numpy.float32)
+    )
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe._load_qwen_audio_chunks",
+        lambda _: iter([QwenAudioChunk(samples, 16_000, 0, 8)]),
+    )
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe._qwen_speech_activity_mask",
+        _all_frames_are_speech,
+    )
+    transcriber = Qwen3AsrTranscriber(
+        "qwen3-asr-0.6b", tmp_path, "zh", "cuda", "float16"
+    )
+    transcriber._model = SimpleNamespace(
+        max_new_tokens=0,
+        transcribe=lambda **_: [],
+    )
+
+    with pytest.raises(TranscriptionQualityFailure, match="字幕不完整"):
+        transcriber.transcribe(tmp_path / "audio.wav", TRANSCRIPT_ASSET_ID)
+
+
+def test_qwen_deduplicates_identical_items_from_overlap():
+    items = _deduplicate_qwen_items(
+        [
+            TimedText("边界词", 9.5, 10.2),
+            TimedText("边界词", 9.8, 10.4),
+            TimedText("下一词", 10.4, 11),
+        ]
+    )
+
+    assert items == [
+        TimedText("边界词", 9.5, 10.4),
+        TimedText("下一词", 10.4, 11),
+    ]
 
 
 def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
@@ -323,8 +527,8 @@ def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
         audio.setframerate(16_000)
         audio.writeframes(b"\0\0" * 32_000)
     chunks = [
-        (object(), 16_000, 0.0),
-        (object(), 16_000, 240.0),
+        QwenAudioChunk(numpy.zeros(16_000), 16_000, 0.0, 1.0),
+        QwenAudioChunk(numpy.zeros(16_000), 16_000, 240.0, 241.0),
     ]
     monkeypatch.setattr(
         "openvideo.tools.transcribe._load_qwen_audio_chunks",
@@ -408,7 +612,9 @@ def test_qwen_splits_text_at_silence_break():
 def test_qwen_rejects_empty_timestamp_result(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "openvideo.tools.transcribe._load_qwen_audio_chunks",
-        lambda _: iter([(object(), 16_000, 0.0)]),
+        lambda _: iter(
+            [QwenAudioChunk(numpy.zeros(16_000), 16_000, 0.0, 1.0)]
+        ),
     )
     transcriber = Qwen3AsrTranscriber(
         "qwen3-asr-0.6b", tmp_path, "zh", "cuda", "float16"
