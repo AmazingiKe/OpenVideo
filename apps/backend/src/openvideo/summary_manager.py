@@ -176,7 +176,7 @@ class SummaryPlan(BaseModel):
 
 
 class SummaryGeneratedDocument(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     relative_path: str
     markdown: str

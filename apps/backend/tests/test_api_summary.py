@@ -491,6 +491,42 @@ def test_generation_prunes_oversized_plan_for_concise_summary(
     ]
 
 
+def test_generation_ignores_unused_document_fields(tmp_path: Path, monkeypatch):
+    install_generation_mocks(monkeypatch)
+
+    def complete(_model, messages, *_args, **_kwargs):
+        if "规划" in messages[0]["content"]:
+            return json.dumps(
+                {"documents": [{"key": "root", "title": "总结", "parent_key": None}]},
+                ensure_ascii=False,
+            )
+        match = re.search(r"<允许路径表>\n(.*?)\n</允许路径表>", messages[1]["content"])
+        assert match is not None
+        path = json.loads(match.group(1))[0]["relative_path"]
+        return json.dumps(
+            {
+                "documents": [
+                    {
+                        "relative_path": path,
+                        "markdown": "# 总结",
+                        "parent_document_id": None,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete)
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={"ai_model_id": MODEL_ID, "preset_id": "knowledge_notes"},
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["documents"][0]["markdown"] == "# 总结\n"
+
+
 def test_generation_sanitizes_unallocated_markdown_links(
     tmp_path: Path,
     monkeypatch,
