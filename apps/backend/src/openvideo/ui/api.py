@@ -79,6 +79,8 @@ from openvideo.ui.ai_routes import register_ai_routes
 from openvideo.ui.library_routes import register_library_routes
 from openvideo.ui.health_routes import register_health_routes
 from openvideo.ui.summary_routes import register_summary_routes
+from openvideo.ui.visual_index_routes import register_visual_index_routes
+from openvideo.visual_index_service import VisualIndexService
 from openvideo.ui.download_account_routes import (
     DownloadAccountLoginManager,
     register_download_account_routes,
@@ -138,6 +140,7 @@ def create_app(
     agent_service: AgentService | None = None
     summary_manager: SummaryManager | None = None
     summary_illustration_manager: SummaryIllustrationManager | None = None
+    visual_index_service: VisualIndexService | None = None
     resolved_capability_resolver = capability_resolver or CapabilityResolver()
     transcription_model_manager = TranscriptionModelManager(resolved_settings)
     formula_model_manager = FormulaModelManager(resolved_settings)
@@ -159,6 +162,7 @@ def create_app(
             agent_service, \
             summary_manager, \
             summary_illustration_manager, \
+            visual_index_service, \
             page_settings_store
         library = opened_library
         analysis_manager = AnalysisManager(
@@ -176,12 +180,14 @@ def create_app(
         )
         event_analysis_manager = EventAnalysisManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
+        visual_index_service = VisualIndexService(opened_library, resolved_settings)
         summary_illustration_manager = SummaryIllustrationManager(
             opened_library,
             resolved_settings,
             summary_manager,
             resolved_capability_resolver,
             retrieval_models,
+            visual_index_service,
         )
         agent_service = AgentService(
             opened_library,
@@ -207,6 +213,7 @@ def create_app(
         app.state.agent_service = agent_service
         app.state.summary_manager = summary_manager
         app.state.summary_illustration_manager = summary_illustration_manager
+        app.state.visual_index_service = visual_index_service
         app.state.page_settings_store = page_settings_store
 
     def require_library() -> MediaLibrary:
@@ -583,6 +590,7 @@ def create_app(
         lambda: summary_manager,
         lambda: summary_illustration_manager,
     )
+    register_visual_index_routes(app, lambda: visual_index_service)
     register_agent_routes(
         app,
         lambda: agent_service,

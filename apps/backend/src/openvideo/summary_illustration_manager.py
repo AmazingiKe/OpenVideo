@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -33,6 +34,7 @@ from openvideo.core.summary_models import (
     SummaryMediaType,
     TERMINAL_SUMMARY_ILLUSTRATION_STAGES,
 )
+from openvideo.core.visual_index_models import VisualIndexState
 from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.settings import Settings
 from openvideo.summary_manager import SummaryManager
@@ -41,6 +43,7 @@ from openvideo.tools.frames import extract_frames
 from openvideo.tools.llm import LlmCompletionError, complete_text
 from openvideo.tools.scenes import refine_scene_candidates
 from openvideo.tools.vision import LiteLlmVision, VisionDescriptionError
+from openvideo.visual_index_service import VisualIndexService
 
 
 ILLUSTRATION_PLAN_TIMEOUT_SECONDS = 120
@@ -94,12 +97,14 @@ class SummaryIllustrationManager:
         summary_manager: SummaryManager,
         capability_resolver: CapabilityResolver,
         retrieval_models: NeuralRetrievalModels | None = None,
+        visual_index_service: VisualIndexService | None = None,
     ) -> None:
         self.library = library
         self.settings = settings
         self.summary_manager = summary_manager
         self.capability_resolver = capability_resolver
         self.retrieval_models = retrieval_models
+        self.visual_index_service = visual_index_service
         self._jobs: dict[str, SummaryIllustrationJob] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = RLock()
@@ -331,7 +336,23 @@ class SummaryIllustrationManager:
         )
         evidence = await asyncio.to_thread(self._retrieve_evidence, job, slot)
         if evidence is None:
-            self._skip_slot(job_id, slot_id, "没有找到足够相关的视频证据")
+            visual_index_state = (
+                self.visual_index_service.status().state
+                if self.visual_index_service is not None
+                else None
+            )
+            if self.visual_index_service is not None and visual_index_state in {
+                VisualIndexState.NOT_PREPARED,
+                VisualIndexState.ERROR,
+            }:
+                self.visual_index_service.prepare(job.asset_id)
+                self._skip_slot(
+                    job_id,
+                    slot_id,
+                    "文本证据不足，已在后台按需准备视觉索引",
+                )
+            else:
+                self._skip_slot(job_id, slot_id, "没有找到足够相关的视频证据")
             return
         asset = self.library.get(job.asset_id)
         if asset is None:
@@ -487,7 +508,38 @@ class SummaryIllustrationManager:
                 item.start_seconds,
             ),
         )
-        return ranked[0] if ranked else None
+        if ranked:
+            return ranked[0]
+        if (
+            self.visual_index_service is None
+            or self.visual_index_service.status().state != VisualIndexState.READY
+        ):
+            return None
+        matches = self.visual_index_service.search(
+            job.asset_id,
+            slot.retrieval_query,
+            limit=1,
+        )
+        if not matches:
+            return None
+        match = matches[0]
+        source_text = f"视觉索引匹配画面：{slot.retrieval_query}"
+        source_version = hashlib.sha256(
+            f"{match.relative_path}:{match.seconds}".encode()
+        ).hexdigest()
+        return IndexedEvidenceDocument(
+            document_id=f"visual-match-{source_version[:16]}",
+            asset_id=match.asset_id,
+            source_type=AgentEvidenceSource.VISUAL,
+            source_version=source_version,
+            source_position=0,
+            start_seconds=max(0, match.seconds - 1),
+            end_seconds=match.seconds + 1,
+            title="视觉索引候选",
+            text=source_text,
+            relevance_score=min(1, max(0, (match.similarity + 1) / 2)),
+            match_reasons=("SigLIP2 画面语义匹配",),
+        )
 
     async def _validate_frames(
         self,

@@ -51,6 +51,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
         _rebuild_database(database_path, library_path / "temp", assets_path)
     connection = open_index_connection(database_path)
     ensure_agent_evidence_schema(connection)
+    _ensure_visual_index_schema(connection)
     _ensure_agent_permission_grant_schema(connection)
     _ensure_download_quality_schema(connection)
     _ensure_download_event_schema(connection)
@@ -455,6 +456,34 @@ def _ensure_download_event_schema(connection: sqlite3.Connection) -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS download_events_job_created_index "
             "ON download_events(job_id, created_at)"
+        )
+
+
+def _ensure_visual_index_schema(connection: sqlite3.Connection) -> None:
+    """视觉向量属于可重建投影，按需建表且绝不触发模型加载。"""
+
+    with connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS visual_index_status (
+                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                state TEXT NOT NULL, progress_percent REAL NOT NULL,
+                message TEXT NOT NULL, model_name TEXT NOT NULL,
+                model_revision TEXT NOT NULL, indexed_frames INTEGER NOT NULL,
+                total_frames INTEGER NOT NULL, error_message TEXT,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS visual_frame_embeddings (
+                asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+                relative_path TEXT NOT NULL, seconds REAL NOT NULL,
+                model_name TEXT NOT NULL, model_revision TEXT NOT NULL,
+                dimensions INTEGER NOT NULL, vector BLOB NOT NULL,
+                content_digest TEXT NOT NULL, indexed_at TEXT NOT NULL,
+                PRIMARY KEY(asset_id, relative_path, model_revision)
+            );
+            CREATE INDEX IF NOT EXISTS visual_frame_embeddings_asset_time_index
+                ON visual_frame_embeddings(asset_id, seconds);
+            """
         )
 
 

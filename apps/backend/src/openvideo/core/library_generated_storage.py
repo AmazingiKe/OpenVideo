@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from array import array
 import json
 import sqlite3
 from datetime import UTC, datetime
@@ -53,6 +54,7 @@ from openvideo.core.summary_models import (
     SummaryMediaArtifact,
     SummaryVersion,
 )
+from openvideo.core.visual_index_models import VisualIndexStatus
 
 AGENT_CHANGES_DIRECTORY_NAME = "agent-changes"
 AGENT_CHANGE_VERSION_PATTERN = "agent-version-*.json"
@@ -85,6 +87,95 @@ class LibraryGeneratedStorageMixin:
                 query_encoder=query_encoder,
                 reranker=reranker,
             )
+
+    def save_visual_index_status(self, status: VisualIndexStatus) -> None:
+        values = status.model_dump(mode="json", exclude={"model_loaded"})
+        columns = tuple(values)
+        updates = ", ".join(f"{column}=excluded.{column}" for column in columns)
+        with self._lock, self._db():
+            self._db().execute(
+                "INSERT INTO visual_index_status "
+                f"(singleton, {', '.join(columns)}) VALUES "
+                f"(1, {', '.join('?' for _ in columns)}) "
+                f"ON CONFLICT(singleton) DO UPDATE SET {updates}",
+                tuple(values[column] for column in columns),
+            )
+
+    def load_visual_index_status(self) -> VisualIndexStatus | None:
+        row = (
+            self._db()
+            .execute(
+                "SELECT state, progress_percent, message, model_name, model_revision, "
+                "indexed_frames, total_frames, error_message, updated_at "
+                "FROM visual_index_status WHERE singleton = 1"
+            )
+            .fetchone()
+        )
+        return VisualIndexStatus.model_validate(dict(row)) if row else None
+
+    def replace_visual_frame_embeddings(
+        self,
+        *,
+        asset_id: str,
+        model_name: str,
+        model_revision: str,
+        dimensions: int,
+        frames: list[tuple[str, float, str, list[float]]],
+    ) -> None:
+        self._validate_asset_id(asset_id)
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._db():
+            self._db().execute(
+                "DELETE FROM visual_frame_embeddings WHERE asset_id = ?",
+                (asset_id,),
+            )
+            self._db().executemany(
+                "INSERT INTO visual_frame_embeddings "
+                "(asset_id, relative_path, seconds, model_name, model_revision, "
+                "dimensions, vector, content_digest, indexed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        asset_id,
+                        relative_path,
+                        seconds,
+                        model_name,
+                        model_revision,
+                        dimensions,
+                        array("f", vector).tobytes(),
+                        content_digest,
+                        now,
+                    )
+                    for relative_path, seconds, content_digest, vector in frames
+                ],
+            )
+
+    def load_visual_frame_vectors(
+        self,
+        *,
+        asset_id: str,
+        model_name: str,
+        model_revision: str,
+    ) -> list[tuple[str, float, list[float]]]:
+        self._validate_asset_id(asset_id)
+        rows = (
+            self._db()
+            .execute(
+                "SELECT relative_path, seconds, dimensions, vector "
+                "FROM visual_frame_embeddings WHERE asset_id = ? "
+                "AND model_name = ? AND model_revision = ? ORDER BY seconds",
+                (asset_id, model_name, model_revision),
+            )
+            .fetchall()
+        )
+        vectors: list[tuple[str, float, list[float]]] = []
+        for row in rows:
+            vector = array("f")
+            vector.frombytes(row["vector"])
+            if len(vector) != row["dimensions"]:
+                continue
+            vectors.append((row["relative_path"], row["seconds"], vector.tolist()))
+        return vectors
 
     def rebuild_agent_semantic_index(
         self,
