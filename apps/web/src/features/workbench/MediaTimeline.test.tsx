@@ -278,6 +278,7 @@ function render_timeline(options?: {
       key_frame_paths: [],
       visual_description: null,
       ocr_text: null,
+      formula_latex: [],
       marker_ids: [],
       tags: ["公式"],
     },

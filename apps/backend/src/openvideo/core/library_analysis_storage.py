@@ -99,6 +99,7 @@ class LibraryAnalysisStorageMixin:
             segment_id = row["segment_id"]
             values = dict(row)
             values.pop("position")
+            values["formula_latex"] = json.loads(values["formula_latex"])
             values.update(
                 key_frame_paths=self._relation_values(
                     "segment_frames",

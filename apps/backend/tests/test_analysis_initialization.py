@@ -110,6 +110,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         progress_callback,
         chapter_model,
         ocr_reader,
+        formula_reader,
     ):
         del (
             transcript,
@@ -124,6 +125,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
             chapter_model=chapter_model,
             depth=strategy.depth,
             ocr_reader=ocr_reader,
+            formula_reader=formula_reader,
         )
         progress_callback(AnalysisStage.READING_FRAME_TEXT, 90, "正在识别画面文字")
         return [
@@ -181,6 +183,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     assert captured_pipeline["chapter_model"] is None
     assert captured_pipeline["depth"] == AnalysisDepth.DEEP
     assert callable(captured_pipeline["ocr_reader"])
+    assert callable(captured_pipeline["formula_reader"])
     assert len(evidence_updates) == 2
     library.close()
 

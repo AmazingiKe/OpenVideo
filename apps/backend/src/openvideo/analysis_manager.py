@@ -35,7 +35,7 @@ from openvideo.transcription_model_manager import (
     is_transcription_model_installed,
     require_transcription_model_installed,
 )
-from openvideo.tools.analysis_pipeline import OcrReader, build_segments
+from openvideo.tools.analysis_pipeline import FormulaReader, OcrReader, build_segments
 from openvideo.tools.ocr import LocalOcrReader
 from openvideo.tools.transcribe import (
     Transcriber,
@@ -98,6 +98,7 @@ class AnalysisManager:
         *,
         model_installer: TranscriptionModelInstaller | None = None,
         ocr_reader: OcrReader | None = None,
+        formula_reader: FormulaReader | None = None,
         on_evidence_ready: Callable[[], None] | None = None,
     ) -> None:
         self.library = library
@@ -109,7 +110,11 @@ class AnalysisManager:
         self._analysis_lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._model_installer = model_installer or download_transcription_model
-        self._ocr_reader = ocr_reader or LocalOcrReader().read_frames
+        local_ocr_reader = LocalOcrReader(
+            models_root_directory=settings.models_root_directory
+        )
+        self._ocr_reader = ocr_reader or local_ocr_reader.read_frames
+        self._formula_reader = formula_reader or local_ocr_reader.read_formulas
         self._on_evidence_ready = on_evidence_ready or (lambda: None)
 
     def create_analysis(
@@ -568,6 +573,7 @@ class AnalysisManager:
                         else None
                     ),
                     self._ocr_reader,
+                    self._formula_reader,
                 )
                 for segment in segments:
                     segment.key_frame_paths = [
@@ -597,7 +603,10 @@ class AnalysisManager:
                 )
                 if has_key_frames:
                     self._add_capability(job_id, AnalysisCapability.KEY_FRAMES)
-                has_ocr_text = any(segment.ocr_text for segment in proposed_segments)
+                has_ocr_text = any(
+                    segment.ocr_text or segment.formula_latex
+                    for segment in proposed_segments
+                )
                 if has_ocr_text:
                     self._add_capability(job_id, AnalysisCapability.OCR)
                 if describer is not None and any(
@@ -901,7 +910,7 @@ class AnalysisManager:
             )
         if any(segment.key_frame_paths for segment in segments):
             capabilities.append(AnalysisCapability.KEY_FRAMES)
-        if any(segment.ocr_text for segment in segments):
+        if any(segment.ocr_text or segment.formula_latex for segment in segments):
             capabilities.append(AnalysisCapability.OCR)
         if any(segment.visual_description for segment in segments):
             capabilities.append(AnalysisCapability.VISUAL)

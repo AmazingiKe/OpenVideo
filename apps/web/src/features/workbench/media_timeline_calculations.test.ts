@@ -249,6 +249,7 @@ describe("media timeline calculations", () => {
         key_frame_paths: [],
         visual_description: null,
         ocr_text: null,
+        formula_latex: [],
         marker_ids: [],
         tags: [],
       },

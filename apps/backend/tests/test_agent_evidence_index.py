@@ -143,6 +143,7 @@ def test_query_rerank_preserves_sources_and_expands_neighbors(tmp_path: Path):
                 transcript_text="讲师解释透视投影",
                 visual_description="画面展示透视投影示意图",
                 ocr_text="板书文字为透视投影公式",
+                formula_latex=[r"\hat{a}=\vec{a}/\|\vec{a}\|"],
             )
         ],
     )
@@ -163,6 +164,17 @@ def test_query_rerank_preserves_sources_and_expands_neighbors(tmp_path: Path):
     }
     assert any(item.start_seconds == 20 for item in evidence)
     assert any(item.retrieval_relation == "neighbor" for item in evidence)
+    formula_evidence = library.search_agent_evidence(
+        asset_ids=[FIRST_ASSET_ID],
+        query="画面公式",
+        start_seconds=None,
+        end_seconds=None,
+        limit=6,
+    )
+    assert any(
+        item.text == r"画面公式：$$\hat{a}=\vec{a}/\|\vec{a}\|$$"
+        for item in formula_evidence
+    )
     library.close()
 
 

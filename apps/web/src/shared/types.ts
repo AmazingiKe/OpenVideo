@@ -412,6 +412,7 @@ export type MediaSegment = {
   key_frame_paths: string[];
   visual_description: string | null;
   ocr_text: string | null;
+  formula_latex: string[];
   marker_ids: string[];
   tags: string[];
 };
