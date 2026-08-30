@@ -432,10 +432,24 @@ class SummaryIllustrationManager:
             )
             phase_started = monotonic()
             decision = await self._validate_frames(job, slot, evidence, qualified)
+            audit_decision = None
+            vision_calls = 1
+            if (
+                decision.confidence == SummaryIllustrationConfidence.HIGH
+                and decision.selected_index is not None
+            ):
+                selected = qualified[decision.selected_index - 1]
+                audit_decision = await self._audit_selected_frame(
+                    job,
+                    slot,
+                    evidence,
+                    selected,
+                )
+                vision_calls += 1
             self._record_metrics(
                 job_id,
                 vision_ms=_elapsed_ms(phase_started),
-                vision_calls=1,
+                vision_calls=vision_calls,
             )
         if (
             decision.confidence != SummaryIllustrationConfidence.HIGH
@@ -446,6 +460,22 @@ class SummaryIllustrationManager:
                 slot_id,
                 f"视觉验证为{_confidence_label(decision.confidence)}置信度：{decision.reason}",
                 confidence=decision.confidence,
+            )
+            return
+        if (
+            audit_decision is not None
+            and (
+                audit_decision.confidence != SummaryIllustrationConfidence.HIGH
+                or audit_decision.selected_index is None
+            )
+        ):
+            self._skip_slot(
+                job_id,
+                slot_id,
+                "最终画面复核未通过："
+                f"{_confidence_label(audit_decision.confidence)}置信度，"
+                f"{audit_decision.reason}",
+                confidence=audit_decision.confidence,
             )
             return
         selected = qualified[decision.selected_index - 1]
@@ -578,11 +608,14 @@ class SummaryIllustrationManager:
         if model is None or IMAGE_INPUT_MODALITY not in model.input_modalities:
             raise SummaryIllustrationError("视觉模型不可用")
         prompt = (
-            "判断哪些候选画面能直接、清晰地证明笔记内容。只返回 JSON："
+            "判断哪些候选画面能直接、清晰地证明笔记内容。图片顺序与候选时间顺序一致。"
+            "必须逐项核对画面内可见文字、人物、产品、作品和场景；上下文或字幕不能替代"
+            "像素证据。若图注中的命名实体或关键视觉主张未出现，或画面文字与其冲突，"
+            "必须返回 medium/low 且 selected_index 为 null。只返回 JSON："
             '{"selected_index":1,"confidence":"high|medium|low",'
             '"reason":"..."}。若没有合适画面，selected_index 返回 null。'
             "只有主体清楚、不是过渡帧、与证据和图片说明明确一致时才可给 high；"
-            "任何歧义都必须给 medium 或 low。\n\n"
+            "任何歧义都必须给 medium 或 low。reason 必须引用画面中实际可见的依据或冲突。\n\n"
             f"笔记位置：{' > '.join(slot.heading_path) or '正文'}\n"
             f"笔记原文：{slot.target_excerpt}\n"
             f"图片说明：{slot.caption}\n"
@@ -602,6 +635,41 @@ class SummaryIllustrationManager:
             frames
         ):
             raise SummaryIllustrationError("视觉模型选择了不存在的候选画面")
+        return decision
+
+    async def _audit_selected_frame(
+        self,
+        job: SummaryIllustrationJob,
+        slot: SummaryIllustrationSlot,
+        evidence: IndexedEvidenceDocument,
+        frame: QualifiedFrame,
+    ) -> VisionFrameDecision:
+        """高置信度图片独立复核一次，避免上下文诱导模型忽略画面冲突。"""
+        model = self.settings.ai_model(job.vision_model_id or "")
+        if model is None or IMAGE_INPUT_MODALITY not in model.input_modalities:
+            raise SummaryIllustrationError("视觉模型不可用")
+        prompt = (
+            "这是自动插图前的最终画面复核，只有一张图片。先只看像素中实际可见的"
+            "标题、文字、对象和场景，再逐项对照图片说明。字幕仅用于定位，不能证明"
+            "图片内容。若说明点名的作品、产品、人物、图表或概念未在画面中明确出现，"
+            "或可见文字与说明冲突，必须返回 low/medium 和 null；不得根据课程上下文"
+            "猜测。例如说明是 HoloLens/AR，而画面写着 Oculus/Virtual Reality，必须"
+            "拒绝。仅当所有关键视觉主张都能由当前图片直接确认时，返回 high 和 1。"
+            "只返回 JSON："
+            '{"selected_index":1,"confidence":"high|medium|low",'
+            '"reason":"引用可见证据或冲突"}。\n\n'
+            f"笔记原文：{slot.target_excerpt}\n"
+            f"图片说明：{slot.caption}\n"
+            f"定位字幕：{evidence.text}\n"
+            f"候选时间：{frame.seconds}"
+        )
+        try:
+            content = await LiteLlmVision(model).describe_async([frame.path], prompt)
+            decision = VisionFrameDecision.model_validate_json(_json_content(content))
+        except (VisionDescriptionError, ValidationError, ValueError) as error:
+            raise SummaryIllustrationError(f"最终画面复核无效：{error}") from error
+        if decision.selected_index not in {None, 1}:
+            raise SummaryIllustrationError("最终画面复核选择了不存在的候选画面")
         return decision
 
     def _vision_model_id(self) -> str | None:

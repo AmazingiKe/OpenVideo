@@ -43,7 +43,7 @@ def test_first_summary_inserts_only_vision_verified_frame(tmp_path: Path, monkey
     assert job["stage"] == "complete"
     assert job["inserted_count"] == 1, json.dumps(job, ensure_ascii=False)
     assert job["skipped_count"] == 0
-    assert job["metrics"]["vision_calls"] == 1
+    assert job["metrics"]["vision_calls"] == 2
     assert job["metrics"]["total_ms"] > 0
     assert "![关键操作界面](assets/media-" in documents[0]["markdown"]
     assert len(media) == 1
@@ -70,6 +70,24 @@ def test_medium_confidence_keeps_text_and_records_skip(tmp_path: Path, monkeypat
     assert job["skipped_count"] == 1
     assert job["slots"][0]["confidence"] == "medium"
     assert "![" not in documents[0]["markdown"]
+
+
+def test_final_frame_audit_rejects_named_entity_conflict(tmp_path: Path, monkeypatch):
+    install_generation_mocks(monkeypatch)
+    _install_illustration_mocks(
+        monkeypatch,
+        confidence="high",
+        audit_confidence="low",
+    )
+    with create_client(tmp_path) as client:
+        _enable_vision_model(client)
+        result = _generate(client)
+        job = _wait_for_job(client, result["illustration_job"]["job_id"])
+
+    assert job["inserted_count"] == 0
+    assert job["skipped_count"] == 1
+    assert job["metrics"]["vision_calls"] == 2
+    assert "最终画面复核未通过" in job["slots"][0]["message"]
 
 
 def test_missing_vision_model_finishes_without_blocking_summary(
@@ -170,7 +188,12 @@ def _wait_for_job(client: TestClient, job_id: str) -> dict[str, object]:
     raise AssertionError("配图任务未在测试时限内完成")
 
 
-def _install_illustration_mocks(monkeypatch, *, confidence: str) -> None:
+def _install_illustration_mocks(
+    monkeypatch,
+    *,
+    confidence: str,
+    audit_confidence: str | None = None,
+) -> None:
     def plan(_model, messages, *_args, **_kwargs):
         match = re.search(
             r"<最终文档树>\n(.*?)\n</最终文档树>",
@@ -214,14 +237,21 @@ def _install_illustration_mocks(monkeypatch, *, confidence: str) -> None:
             for path, seconds in zip(paths, time_points, strict=True)
         ]
 
-    async def describe(_self, _paths, _prompt):
+    async def describe(_self, _paths, prompt):
+        is_audit = "最终画面复核" in prompt
+        resolved_confidence = audit_confidence if is_audit else confidence
+        resolved_confidence = resolved_confidence or confidence
         return json.dumps(
             {
-                "selected_index": 2 if confidence == "high" else None,
-                "confidence": confidence,
+                "selected_index": (
+                    1 if is_audit and resolved_confidence == "high"
+                    else 2 if resolved_confidence == "high"
+                    else None
+                ),
+                "confidence": resolved_confidence,
                 "reason": "画面与操作步骤明确一致"
-                if confidence == "high"
-                else "主体不够明确",
+                if resolved_confidence == "high"
+                else "可见实体与图片说明冲突",
             },
             ensure_ascii=False,
         )
