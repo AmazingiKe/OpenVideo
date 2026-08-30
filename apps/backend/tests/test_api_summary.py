@@ -500,6 +500,7 @@ def test_generation_ignores_unused_document_fields(tmp_path: Path, monkeypatch):
                 {"documents": [{"key": "root", "title": "总结", "parent_key": None}]},
                 ensure_ascii=False,
             )
+        assert "不得用常识补全" in messages[0]["content"]
         match = re.search(r"<允许路径表>\n(.*?)\n</允许路径表>", messages[1]["content"])
         assert match is not None
         path = json.loads(match.group(1))[0]["relative_path"]
