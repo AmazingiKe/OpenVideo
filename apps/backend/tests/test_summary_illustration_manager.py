@@ -16,6 +16,7 @@ from openvideo.core.summary_models import (
     SummaryIllustrationStage,
 )
 from openvideo.tools.frame_quality import QualifiedFrame
+from openvideo.tools.llm import LlmCompletionError
 from test_api_summary import (
     ASSET_ID,
     MODEL_ID,
@@ -100,6 +101,24 @@ def test_missing_vision_model_finishes_without_blocking_summary(
 
     assert job["stage"] == "complete"
     assert job["message"] == "未配置可用的视觉模型，已保留纯文本总结"
+
+
+def test_model_that_cannot_read_pixels_keeps_text_summary(tmp_path: Path, monkeypatch):
+    install_generation_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "openvideo.summary_illustration_manager.probe_image_input",
+        lambda *_args: (_ for _ in ()).throw(
+            LlmCompletionError("未能读取测试图片中的颜色")
+        ),
+    )
+    with create_client(tmp_path) as client:
+        _enable_vision_model(client)
+        result = _generate(client)
+        job = _wait_for_job(client, result["illustration_job"]["job_id"])
+
+    assert job["stage"] == "complete"
+    assert job["inserted_count"] == 0
+    assert "未通过画面读取验证" in job["message"]
 
 
 def test_evidence_retrieval_ignores_overwide_analysis_window(
@@ -194,6 +213,11 @@ def _install_illustration_mocks(
     confidence: str,
     audit_confidence: str | None = None,
 ) -> None:
+    monkeypatch.setattr(
+        "openvideo.summary_illustration_manager.probe_image_input",
+        lambda *_args: None,
+    )
+
     def plan(_model, messages, *_args, **_kwargs):
         match = re.search(
             r"<最终文档树>\n(.*?)\n</最终文档树>",

@@ -117,3 +117,43 @@ def test_completion_does_not_retry_permanent_provider_failure(monkeypatch):
         )
 
     assert attempts == 1
+
+
+def test_image_probe_requires_pixel_semantics(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def completion(**request):
+        captured.update(request)
+        message = SimpleNamespace(content="LEFT_RED_RIGHT_BLUE")
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    monkeypatch.setattr(llm.litellm, "completion", completion)
+
+    llm.probe_image_input(
+        AiModelConfiguration(
+            model_id=MODEL_ID,
+            name="视觉模型",
+            litellm_model="openai/vision-model",
+        ),
+        timeout_seconds=30,
+    )
+
+    content = captured["messages"][0]["content"]
+    assert content[1]["image_url"]["url"] == llm.VISION_PROBE_DATA_URL
+    assert captured["max_tokens"] == 24
+
+
+def test_image_probe_rejects_model_that_ignores_pixels(monkeypatch):
+    def completion(**_request):
+        message = SimpleNamespace(content="No image provided")
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    monkeypatch.setattr(llm.litellm, "completion", completion)
+    model = AiModelConfiguration(
+        model_id=MODEL_ID,
+        name="伪视觉模型",
+        litellm_model="openai/text-model",
+    )
+
+    with pytest.raises(llm.LlmCompletionError, match="未能读取测试图片"):
+        llm.probe_image_input(model, timeout_seconds=30)

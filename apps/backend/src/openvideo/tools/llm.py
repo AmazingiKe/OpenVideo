@@ -32,9 +32,17 @@ class LlmContextLengthError(LlmCompletionError):
 
 VISION_PROBE_DATA_URL = (
     "data:image/png;base64,"
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
-    "AScY42YAAAAASUVORK5CYII="
+    "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAAOUlEQVR42u3PgQkAMAgE"
+    "sdf9d26nUBByCxypl9kqs4fO8QAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2++LxAj88Ph5k"
+    "AAAAAElFTkSuQmCC"
 )
+VISION_PROBE_PROMPT = (
+    "The image is split into equal left and right solid-color blocks. Identify the "
+    "actual colors from the pixels. Reply with exactly "
+    "LEFT_<COLOR>_RIGHT_<COLOR>, using only RED, GREEN, BLUE, YELLOW, MAGENTA, "
+    "CYAN, BLACK, or WHITE."
+)
+VISION_PROBE_EXPECTED_RESPONSE = "LEFT_RED_RIGHT_BLUE"
 
 
 def complete_text(
@@ -167,15 +175,15 @@ def probe_image_input(
     model: AiModelConfiguration,
     timeout_seconds: int,
 ) -> None:
-    """发送最小内嵌图片，验证声明的视觉输入可被供应商协议接受。"""
+    """用未知答案的双色图验证模型确实读取像素，而不是只接受请求格式。"""
 
-    complete_text(
+    response = complete_text(
         model,
         [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Reply only with OK."},
+                    {"type": "text", "text": VISION_PROBE_PROMPT},
                     {
                         "type": "image_url",
                         "image_url": {"url": VISION_PROBE_DATA_URL},
@@ -184,7 +192,10 @@ def probe_image_input(
             }
         ],
         timeout_seconds=timeout_seconds,
-        max_tokens=8,
+        max_tokens=24,
         disable_thinking=True,
         priority=ModelRequestPriority.FOREGROUND,
     )
+    normalized = response.strip().upper().strip("` .")
+    if normalized != VISION_PROBE_EXPECTED_RESPONSE:
+        raise LlmCompletionError("模型接受了请求，但未能读取测试图片中的颜色")

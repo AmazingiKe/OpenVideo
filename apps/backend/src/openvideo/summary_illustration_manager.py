@@ -41,7 +41,7 @@ from openvideo.settings import Settings
 from openvideo.summary_manager import SummaryManager
 from openvideo.tools.frame_quality import QualifiedFrame, filter_candidate_frames
 from openvideo.tools.frames import extract_frames
-from openvideo.tools.llm import LlmCompletionError, complete_text
+from openvideo.tools.llm import LlmCompletionError, complete_text, probe_image_input
 from openvideo.tools.scenes import refine_scene_candidates
 from openvideo.tools.vision import LiteLlmVision, VisionDescriptionError
 from openvideo.visual_index_service import VisualIndexService
@@ -49,6 +49,7 @@ from openvideo.visual_index_service import VisualIndexService
 
 ILLUSTRATION_PLAN_TIMEOUT_SECONDS = 120
 ILLUSTRATION_PLAN_MAX_TOKENS = 2_500
+VISION_MODEL_PROBE_TIMEOUT_SECONDS = 30
 EVIDENCE_LIMIT = 12
 EVIDENCE_WINDOW_PADDING_SECONDS = 4
 MINIMUM_EVIDENCE_WINDOW_SECONDS = 6
@@ -109,6 +110,9 @@ class SummaryIllustrationManager:
         self.visual_index_service = visual_index_service
         self._jobs: dict[str, SummaryIllustrationJob] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._vision_probe_errors: dict[
+            tuple[str, str, str, str, str], str | None
+        ] = {}
         self._lock = RLock()
 
     def create(
@@ -188,6 +192,18 @@ class SummaryIllustrationManager:
                     stage=SummaryIllustrationStage.COMPLETE,
                     progress_percent=100,
                     message="未配置可用的视觉模型，已保留纯文本总结",
+                )
+                return
+            vision_error = await asyncio.to_thread(
+                self._vision_model_error,
+                job.vision_model_id,
+            )
+            if vision_error is not None:
+                self._update(
+                    job_id,
+                    stage=SummaryIllustrationStage.COMPLETE,
+                    progress_percent=100,
+                    message=f"视觉模型未通过画面读取验证，已保留纯文本总结：{vision_error}",
                 )
                 return
             if not job.slots:
@@ -687,6 +703,31 @@ class SummaryIllustrationManager:
             self.settings.online_ai_models,
             profiles,
         )
+
+    def _vision_model_error(self, model_id: str) -> str | None:
+        model = self.settings.ai_model(model_id)
+        if model is None or IMAGE_INPUT_MODALITY not in model.input_modalities:
+            return "视觉模型不可用"
+        api_key_digest = hashlib.sha256((model.api_key or "").encode()).hexdigest()
+        cache_key = (
+            model.model_id,
+            model.litellm_model,
+            model.api_base or "",
+            model.api_version or "",
+            api_key_digest,
+        )
+        with self._lock:
+            if cache_key in self._vision_probe_errors:
+                return self._vision_probe_errors[cache_key]
+        try:
+            probe_image_input(model, VISION_MODEL_PROBE_TIMEOUT_SECONDS)
+        except LlmCompletionError as error:
+            probe_error = str(error)
+        else:
+            probe_error = None
+        with self._lock:
+            self._vision_probe_errors[cache_key] = probe_error
+        return probe_error
 
     def _skip_slot(
         self,
