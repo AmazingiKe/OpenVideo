@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, within } from "storybook/test";
+import { expect, fireEvent, within } from "storybook/test";
 
 import { Player } from "./Player";
 
@@ -38,6 +38,43 @@ export const Default: Story = {
     const canvas = within(canvasElement);
     expect(await canvas.findByRole("button", { name: "播放" })).toBeVisible();
     expect(await canvas.findByRole("button", { name: "设置" })).toBeVisible();
+  },
+};
+
+export const ScrubSubtitlePreview: Story = {
+  args: {
+    subtitles: [
+      {
+        start_seconds: 0,
+        end_seconds: 5,
+        text: "开场字幕",
+        emotion: null,
+        audio_events: [],
+      },
+      {
+        start_seconds: 5,
+        end_seconds: 12,
+        text: "拖动预览字幕",
+        emotion: null,
+        audio_events: [],
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const player = canvas.getByLabelText("OpenVideo 播放器");
+    expect(await canvas.findByText("开场字幕")).toBeVisible();
+
+    fireEvent(
+      player,
+      new CustomEvent("media-seeking-request", {
+        bubbles: true,
+        composed: true,
+        detail: 8,
+      }),
+    );
+
+    expect(canvas.getByText("拖动预览字幕")).toBeVisible();
   },
 };
 

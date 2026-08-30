@@ -157,6 +157,12 @@ function timeline_props(): TimelineEditor {
   return timeline_mock.current_props;
 }
 
+function transformed_playhead_x(playhead: HTMLElement) {
+  const match = /^translate3d\(([-\d.]+)px,/.exec(playhead.style.transform);
+  if (!match) throw new Error("Missing playback head transform");
+  return Number(match[1]);
+}
+
 function action_by_kind(kind: MockTimelineAction["data"]["kind"]) {
   for (const row of timeline_props().editorData) {
     const action = row.actions.find(
@@ -219,6 +225,7 @@ function install_animation_frame_mock() {
 function render_timeline(options?: {
   added_marker?: MediaMarker;
   candidate_markers?: MediaMarker[];
+  current_time?: number;
   duration_seconds?: number;
   is_paused?: boolean;
   playback_rate?: number;
@@ -236,6 +243,7 @@ function render_timeline(options?: {
   let replace_markers: (markers: MediaMarker[]) => void = () => undefined;
   let replace_asset_id: (asset_id: string) => void = () => undefined;
   let change_is_paused: (is_paused: boolean) => void = () => undefined;
+  let change_current_time: (current_time: number) => void = () => undefined;
   let refresh_parent: () => void = () => undefined;
   const callbacks = {
     scrub_to: vi.fn(),
@@ -290,16 +298,20 @@ function render_timeline(options?: {
     const [selected_transcript_indices, set_selected_transcript_indices] =
       useState<number[]>([]);
     const [is_paused, set_is_paused] = useState(options?.is_paused ?? true);
+    const [current_time, set_current_time] = useState(
+      options?.current_time ?? 30.023,
+    );
     const [, set_refresh_revision] = useState(0);
     replace_markers = set_markers;
     replace_asset_id = set_asset_id;
     change_is_paused = set_is_paused;
+    change_current_time = set_current_time;
     refresh_parent = () => set_refresh_revision((current) => current + 1);
     return (
       <MediaTimeline
         asset_id={asset_id}
         duration_seconds={options?.duration_seconds ?? 120}
-        current_time={30.023}
+        current_time={current_time}
         is_paused={is_paused}
         playback_rate={options?.playback_rate ?? 1}
         read_playback_time={options?.read_playback_time}
@@ -350,6 +362,7 @@ function render_timeline(options?: {
     replace_markers,
     replace_asset_id,
     change_is_paused,
+    change_current_time,
     refresh_parent,
     result,
   };
@@ -872,15 +885,16 @@ describe("MediaTimeline", () => {
     timeline_mock.set_time.mockClear();
 
     animation_frames.run_next_frame(116);
-    expect(playhead.style.transform).toBe("translate3d(2419.2px, 0, 0)");
+    expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(2_403.2);
+    expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
     expect(timeline_mock.set_time).not.toHaveBeenCalled();
     expect(animation_frames.frames.size).toBe(1);
 
     animation_frames.run_next_frame(132);
-    expect(playhead.style.transform).toBe("translate3d(2419.2px, 0, 0)");
+    expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
     playback_time = 30.087;
     animation_frames.run_next_frame(148);
-    expect(playhead.style.transform).toBe("translate3d(2422.96px, 0, 0)");
+    expect(transformed_playhead_x(playhead)).toBeCloseTo(19.76);
     const pending_frame = [...animation_frames.frames.keys()][0];
 
     result.unmount();
@@ -902,7 +916,7 @@ describe("MediaTimeline", () => {
     if (!playhead) throw new Error("Missing playback head");
 
     animation_frames.run_next_frame(116);
-    expect(playhead.style.transform).toBe("translate3d(2420.4px, 0, 0)");
+    expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
 
     clock_time = 116;
     act(() => change_is_paused(true));
@@ -911,7 +925,42 @@ describe("MediaTimeline", () => {
     clock_time = 10_116;
     act(() => change_is_paused(false));
     animation_frames.run_next_frame(10_132);
-    expect(playhead.style.transform).toBe("translate3d(2422.96px, 0, 0)");
+    expect(transformed_playhead_x(playhead)).toBeCloseTo(18.56);
+  });
+
+  it("moves the editor viewport when the player seeks outside the visible page", () => {
+    const { change_current_time, result } = render_timeline({
+      current_time: 0,
+    });
+    const playhead = result.container.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    );
+    if (!playhead) throw new Error("Missing playback head");
+    timeline_mock.set_scroll_left.mockClear();
+
+    act(() => change_current_time(20));
+
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(1_600);
+    expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
+  });
+
+  it("pages playback to the left when it reaches the right viewport edge", () => {
+    const animation_frames = install_animation_frame_mock();
+    const { result } = render_timeline({
+      current_time: 0,
+      is_paused: false,
+      read_playback_time: () => 13,
+    });
+    const playhead = result.container.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    );
+    if (!playhead) throw new Error("Missing playback head");
+    timeline_mock.set_scroll_left.mockClear();
+
+    animation_frames.run_next_frame();
+
+    expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(1_040);
+    expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
   });
 
   it("scrubs across the full ruler and commits the aligned time on release", () => {

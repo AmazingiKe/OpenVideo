@@ -128,6 +128,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const {
     video_ref: scrub_video_ref,
     is_visible: is_scrub_preview_visible,
+    preview_time,
     fallback_seek_request,
     preview_to: request_scrub_preview,
     begin_seek_commit,
@@ -156,19 +157,27 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     [request_scrub_preview],
   );
 
+  const prepare_seek_commit = useCallback(
+    (seconds: number) => {
+      const bounded_time = Math.max(0, seconds);
+      current_time_value_ref.current = bounded_time;
+      pending_seek_ref.current = {
+        time_seconds: bounded_time,
+        requested_at: performance.now(),
+      };
+      on_time_change_ref.current?.(bounded_time);
+      begin_seek_commit();
+      return bounded_time;
+    },
+    [begin_seek_commit],
+  );
+
   useImperativeHandle(
     ref,
     () => ({
       seek_to: (seconds: number) => {
-        const bounded_time = Math.max(0, seconds);
-        current_time_value_ref.current = bounded_time;
-        pending_seek_ref.current = {
-          time_seconds: bounded_time,
-          requested_at: performance.now(),
-        };
-        on_time_change_ref.current?.(bounded_time);
+        const bounded_time = prepare_seek_commit(seconds);
         seek_fn_ref.current?.(bounded_time);
-        begin_seek_commit();
       },
       preview_to,
       current_time: () => {
@@ -188,7 +197,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       set_playback_rate: (rate: number) =>
         set_playback_rate_fn_ref.current?.(rate),
     }),
-    [begin_seek_commit, is_preview_active, preview_to],
+    [is_preview_active, prepare_seek_commit, preview_to],
   );
 
   const on_player_ready = useCallback((instance: PlayerController | null) => {
@@ -244,10 +253,16 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         className="openvideo_player"
         src={{ src, type: "video/mp4" }}
         ariaLabel="OpenVideo 播放器"
+        onMediaSeekingRequest={preview_to}
+        onMediaSeekRequest={prepare_seek_commit}
         onSeeked={confirm_seek}
       >
         <MediaProvider />
-        <SubtitleOverlay segments={subtitles} evidence_range={evidence_range} />
+        <SubtitleOverlay
+          segments={subtitles}
+          evidence_range={evidence_range}
+          preview_time={preview_time}
+        />
         <PlyrLayout
           icons={plyrLayoutIcons}
           translations={PLAYER_TRANSLATIONS}
@@ -285,12 +300,17 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 function SubtitleOverlay({
   segments,
   evidence_range,
+  preview_time,
 }: {
   segments: TranscriptSegment[];
   evidence_range: AgentEvidenceRange | null;
+  preview_time: number | null;
 }) {
   const { currentTime } = useMediaStore();
-  const active_segment = active_subtitle_segment(segments, currentTime);
+  const active_segment = active_subtitle_segment(
+    segments,
+    preview_time ?? currentTime,
+  );
   if (!active_segment) return null;
   const text = active_segment.text.trim();
   if (!text) return null;

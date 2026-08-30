@@ -210,6 +210,40 @@ export function calculate_zoom_viewport({
   };
 }
 
+export function calculate_playhead_follow_scroll_left({
+  time,
+  viewport,
+  viewport_width,
+  scale_count,
+}: {
+  time: number;
+  viewport: TimelineZoomViewport;
+  viewport_width: number;
+  scale_count: number;
+}): number | null {
+  const bounded_viewport_width = Math.max(0, viewport_width);
+  const playhead_x =
+    TIMELINE_START_LEFT +
+    time * viewport.zoom_pixels_per_second -
+    viewport.scroll_left;
+  const playhead_is_visible =
+    playhead_x >= TIMELINE_START_LEFT && playhead_x < bounded_viewport_width;
+  if (playhead_is_visible) return null;
+
+  const content_width =
+    Math.max(0, scale_count) * viewport.zoom_pixels_per_second +
+    TIMELINE_START_LEFT;
+  const maximum_scroll_left = Math.max(
+    0,
+    content_width - bounded_viewport_width,
+  );
+  const requested_scroll_left = Math.max(
+    0,
+    time * viewport.zoom_pixels_per_second,
+  );
+  return Math.min(maximum_scroll_left, requested_scroll_left);
+}
+
 export function normalize_wheel_delta(
   delta: number,
   delta_mode: number,

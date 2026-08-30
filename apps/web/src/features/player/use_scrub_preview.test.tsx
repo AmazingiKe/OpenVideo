@@ -45,6 +45,7 @@ describe("use_scrub_preview", () => {
     });
 
     expect(result.current.fallback_seek_request).toEqual({ seconds: 0 });
+    expect(result.current.preview_time).toBe(0);
     expect(result.current.is_active()).toBe(true);
     expect(result.current.is_visible).toBe(false);
   });
@@ -68,6 +69,7 @@ describe("use_scrub_preview", () => {
       run_frame();
     });
     expect(video.currentTime).toBe(8);
+    expect(result.current.preview_time).toBe(8);
     expect(result.current.is_visible).toBe(false);
 
     act(() => result.current.on_seeked());
@@ -79,6 +81,7 @@ describe("use_scrub_preview", () => {
     });
     expect(result.current.is_visible).toBe(false);
     expect(result.current.is_active()).toBe(false);
+    expect(result.current.preview_time).toBeNull();
 
     act(() => result.current.preview_to(9));
     expect(result.current.is_visible).toBe(false);

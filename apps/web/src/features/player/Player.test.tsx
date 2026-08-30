@@ -20,15 +20,31 @@ const media = vi.hoisted(() => ({
     paused: true,
     playbackRate: 1,
   },
+  events: {
+    seeking_request: null as ((seconds: number) => void) | null,
+    seek_request: null as ((seconds: number) => void) | null,
+    seeked: null as (() => void) | null,
+  },
 }));
 
 vi.mock("@vidstack/react", () => ({
   MediaPlayer: ({
     children,
     ariaLabel,
-  }: PropsWithChildren<{ ariaLabel: string }>) => (
-    <section aria-label={ariaLabel}>{children}</section>
-  ),
+    onMediaSeekingRequest,
+    onMediaSeekRequest,
+    onSeeked,
+  }: PropsWithChildren<{
+    ariaLabel: string;
+    onMediaSeekingRequest?: (seconds: number) => void;
+    onMediaSeekRequest?: (seconds: number) => void;
+    onSeeked?: () => void;
+  }>) => {
+    media.events.seeking_request = onMediaSeekingRequest ?? null;
+    media.events.seek_request = onMediaSeekRequest ?? null;
+    media.events.seeked = onSeeked ?? null;
+    return <section aria-label={ariaLabel}>{children}</section>;
+  },
   MediaProvider: () => <div data-testid="media-provider" />,
   useMediaPlayer: () => media.player,
   useMediaRemote: () => media.remote,
@@ -49,6 +65,9 @@ beforeEach(() => {
   media.store.currentTime = 12;
   media.store.paused = true;
   media.store.playbackRate = 1;
+  media.events.seeking_request = null;
+  media.events.seek_request = null;
+  media.events.seeked = null;
 });
 
 describe("Player", () => {
@@ -148,5 +167,43 @@ describe("Player", () => {
     expect(screen.getByLabelText("视频字幕，答案证据")).toHaveTextContent(
       "证据字幕",
     );
+  });
+
+  it("previews the dragged player time and subtitle before seek release", () => {
+    const on_time_change = vi.fn();
+    render(
+      <Player
+        src="/video.mp4"
+        on_time_change={on_time_change}
+        subtitles={[
+          {
+            start_seconds: 10,
+            end_seconds: 14,
+            text: "当前字幕",
+            emotion: null,
+            audio_events: [],
+          },
+          {
+            start_seconds: 15,
+            end_seconds: 18,
+            text: "拖动预览字幕",
+            emotion: null,
+            audio_events: [],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
+    act(() => media.events.seeking_request?.(16));
+
+    expect(screen.getByLabelText("视频字幕")).toHaveTextContent("拖动预览字幕");
+    expect(on_time_change).toHaveBeenLastCalledWith(16);
+
+    act(() => {
+      media.events.seek_request?.(16);
+      media.events.seeked?.();
+    });
+    expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
   });
 });

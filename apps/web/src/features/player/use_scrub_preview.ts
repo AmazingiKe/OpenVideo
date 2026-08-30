@@ -20,6 +20,7 @@ export function use_scrub_preview({
   const hide_timeout_ref = useRef<number | null>(null);
   const [is_previewing, set_is_previewing] = useState(false);
   const [is_ready, set_is_ready] = useState(false);
+  const [preview_time, set_preview_time] = useState<number | null>(null);
   const [fallback_seek_request, set_fallback_seek_request] = useState<{
     seconds: number;
   } | null>(null);
@@ -29,6 +30,7 @@ export function use_scrub_preview({
     active_ref.current = false;
     set_is_previewing(false);
     set_is_ready(false);
+    set_preview_time(null);
     if (hide_timeout_ref.current !== null) {
       window.clearTimeout(hide_timeout_ref.current);
       hide_timeout_ref.current = null;
@@ -71,6 +73,7 @@ export function use_scrub_preview({
       commit_pending_ref.current = false;
       active_ref.current = true;
       set_is_previewing(true);
+      set_preview_time(bounded_time);
       if (hide_timeout_ref.current !== null) {
         window.clearTimeout(hide_timeout_ref.current);
         hide_timeout_ref.current = null;
@@ -137,6 +140,7 @@ export function use_scrub_preview({
   return {
     video_ref,
     is_visible: is_previewing && is_ready,
+    preview_time,
     fallback_seek_request,
     preview_to,
     begin_seek_commit,

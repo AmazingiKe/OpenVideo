@@ -11,6 +11,7 @@ import {
 import {
   DEFAULT_ZOOM_PIXELS_PER_SECOND,
   TIMELINE_START_LEFT,
+  calculate_playhead_follow_scroll_left,
   calculate_zoom_viewport,
   consume_timeline_wheel_zoom_frame,
   create_timeline_render_window,
@@ -81,6 +82,7 @@ export function use_media_timeline_viewport({
     frame_time: performance.now(),
   });
   const playhead_time_ref = useRef(bounded_time);
+  const previous_bounded_time_ref = useRef(bounded_time);
   const playback_metrics_ref = useRef({ duration, playback_rate });
   const playback_time_reader_ref = useRef(read_playback_time);
   const pending_wheel_events_ref = useRef<TimelineWheelZoomEvent[]>([]);
@@ -140,8 +142,34 @@ export function use_media_timeline_viewport({
   }, []);
 
   const set_playhead_time = useCallback(
-    (time: number) => {
+    (time: number, follow_viewport = false) => {
       playhead_time_ref.current = time;
+      const wheel_frame_is_pending =
+        pending_wheel_frame_ref.current !== null ||
+        pending_wheel_events_ref.current.length > 0;
+      if (follow_viewport && !wheel_frame_is_pending) {
+        const current_viewport = viewport_ref.current;
+        const next_scroll_left = calculate_playhead_follow_scroll_left({
+          time,
+          viewport: current_viewport,
+          viewport_width: render_metrics_ref.current.canvas_width,
+          scale_count: Math.ceil(render_metrics_ref.current.duration),
+        });
+        if (
+          next_scroll_left !== null &&
+          scroll_positions_differ(
+            current_viewport.scroll_left,
+            next_scroll_left,
+          )
+        ) {
+          const next_viewport = {
+            ...current_viewport,
+            scroll_left: next_scroll_left,
+          };
+          viewport_ref.current = next_viewport;
+          set_viewport(next_viewport);
+        }
+      }
       position_playhead(time);
     },
     [position_playhead],
@@ -206,7 +234,10 @@ export function use_media_timeline_viewport({
       media_time: bounded_time,
       frame_time: performance.now(),
     };
-    set_playhead_time(bounded_time);
+    const should_follow_viewport =
+      bounded_time !== previous_bounded_time_ref.current;
+    previous_bounded_time_ref.current = bounded_time;
+    set_playhead_time(bounded_time, should_follow_viewport);
   }, [bounded_time, duration, set_playhead_time]);
 
   useLayoutEffect(() => {
@@ -277,7 +308,7 @@ export function use_media_timeline_viewport({
         typeof reported_time === "number" && Number.isFinite(reported_time)
           ? Math.min(metrics.duration, Math.max(0, reported_time))
           : fallback_time;
-      set_playhead_time(playback_time);
+      set_playhead_time(playback_time, true);
       if (playback_time >= metrics.duration) {
         playhead_frame_ref.current = null;
         return;

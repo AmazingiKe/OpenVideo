@@ -12,6 +12,7 @@ import {
   MINIMUM_ZOOM_PIXELS_PER_SECOND,
   TIMELINE_TRACK_IDS,
   build_timeline_rows,
+  calculate_playhead_follow_scroll_left,
   calculate_zoom_viewport,
   consume_timeline_wheel_zoom_frame,
   create_timeline_render_window,
@@ -67,6 +68,35 @@ describe("media timeline calculations", () => {
     });
 
     expect(result.scroll_left).toBe(0);
+  });
+
+  it("pages an offscreen playhead to the timeline start and clamps the end", () => {
+    const viewport = { zoom_pixels_per_second: 80, scroll_left: 0 };
+
+    expect(
+      calculate_playhead_follow_scroll_left({
+        time: 5,
+        viewport,
+        viewport_width: 1_024,
+        scale_count: 120,
+      }),
+    ).toBeNull();
+    expect(
+      calculate_playhead_follow_scroll_left({
+        time: 20,
+        viewport,
+        viewport_width: 1_024,
+        scale_count: 120,
+      }),
+    ).toBe(1_600);
+    expect(
+      calculate_playhead_follow_scroll_left({
+        time: 120,
+        viewport,
+        viewport_width: 1_024,
+        scale_count: 120,
+      }),
+    ).toBe(8_592);
   });
 
   it("normalizes pixel, line, page and invalid wheel deltas", () => {
