@@ -288,8 +288,9 @@ class SummaryManager:
                 plan_messages,
                 SummaryPlan,
                 SUMMARY_PLAN_MAX_TOKENS,
-                lambda result: _validate_plan_budget(result, request.detail),
+                lambda _result: None,
             )
+            plan = _limit_summary_plan(plan, request.detail)
         except (LlmCompletionError, ValidationError, ValueError) as error:
             raise SummaryError(f"总结文档规划无效：{error}") from error
 
@@ -1400,9 +1401,31 @@ def _complete_summary_json(
     raise AssertionError("总结 JSON 重试必须返回或抛出异常")
 
 
-def _validate_plan_budget(plan: SummaryPlan, detail: SummaryDetail) -> None:
-    if len(plan.documents) > SUMMARY_DOCUMENT_LIMITS[detail]:
-        raise ValueError("总结规划超过当前详细程度的文档数量上限")
+def _limit_summary_plan(plan: SummaryPlan, detail: SummaryDetail) -> SummaryPlan:
+    limit = SUMMARY_DOCUMENT_LIMITS[detail]
+    if len(plan.documents) <= limit:
+        return plan
+    documents_by_key = {document.key: document for document in plan.documents}
+    depths: dict[str, int] = {}
+
+    def depth(document: SummaryPlanDocument) -> int:
+        if document.key in depths:
+            return depths[document.key]
+        parent = (
+            documents_by_key[document.parent_key]
+            if document.parent_key is not None
+            else None
+        )
+        resolved_depth = 0 if parent is None else depth(parent) + 1
+        depths[document.key] = resolved_depth
+        return resolved_depth
+
+    positions = {document.key: index for index, document in enumerate(plan.documents)}
+    selected = sorted(
+        plan.documents,
+        key=lambda document: (depth(document), positions[document.key]),
+    )[:limit]
+    return SummaryPlan(documents=selected)
 
 
 def _validate_body_contract(

@@ -439,6 +439,58 @@ def test_generation_retries_truncated_body_with_shorter_contract(
     assert response.json()["documents"][0]["markdown"] == "# 完整总结\n"
 
 
+def test_generation_prunes_oversized_plan_for_concise_summary(
+    tmp_path: Path,
+    monkeypatch,
+):
+    plan_calls = 0
+
+    def complete(_model, messages, *_args, **_kwargs):
+        nonlocal plan_calls
+        if "规划" in messages[0]["content"]:
+            plan_calls += 1
+            return json.dumps(
+                {
+                    "documents": [
+                        {"key": "root", "title": "概览", "parent_key": None},
+                        {"key": "first", "title": "核心", "parent_key": "root"},
+                        {"key": "second", "title": "补充", "parent_key": "root"},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        match = re.search(r"<允许路径表>\n(.*?)\n</允许路径表>", messages[1]["content"])
+        assert match is not None
+        paths = json.loads(match.group(1))
+        return json.dumps(
+            {
+                "documents": [
+                    {"relative_path": item["relative_path"], "markdown": "# 笔记"}
+                    for item in paths
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete)
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={
+                "ai_model_id": MODEL_ID,
+                "preset_id": "knowledge_notes",
+                "detail": "concise",
+            },
+        )
+
+    assert response.status_code == 201, response.text
+    assert plan_calls == 1
+    assert [item["title"] for item in response.json()["documents"]] == [
+        "概览",
+        "核心",
+    ]
+
+
 def test_generation_sanitizes_unallocated_markdown_links(
     tmp_path: Path,
     monkeypatch,
