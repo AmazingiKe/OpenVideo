@@ -48,9 +48,12 @@ export function ModelDownloadAction({
   const start_download_ref = useRef(start_download);
   const poll_download_ref = useRef(poll_download);
   const on_change_ref = useRef(on_change);
-  start_download_ref.current = start_download;
-  poll_download_ref.current = poll_download;
-  on_change_ref.current = on_change;
+
+  useEffect(() => {
+    start_download_ref.current = start_download;
+    poll_download_ref.current = poll_download;
+    on_change_ref.current = on_change;
+  }, [start_download, poll_download, on_change]);
 
   useEffect(() => {
     set_job(external_job);
