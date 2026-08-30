@@ -19,3 +19,4 @@
 | [0004](./0004-evidence-first-unified-agent.md) | 采用证据优先的统一视频助手与分层多模态检索 | 已接受 |
 | [0005](./0005-agent-runtime-governance.md) | 采用确定性权限与可恢复的 Agent 运行治理 | 已接受 |
 | [0006](./0006-agent-interaction-and-observability.md) | 采用渐进披露的 Agent 交互与分阶段可观测性 | 已接受 |
+| [0007](./0007-progressive-summary-illustration.md) | 采用渐进式首次总结配图与分层画面选择 | 已接受 |
