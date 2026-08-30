@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { Topbar } from "@/app/Topbar";
 import { GlobalAssistantProvider } from "@/app/global_assistant";
@@ -14,6 +14,11 @@ function render_topbar() {
     </MemoryRouter>,
   );
 }
+
+afterEach(() => {
+  document.documentElement.classList.remove("dark");
+  document.documentElement.removeAttribute("data-color-scheme-source");
+});
 
 describe("Topbar", () => {
   it("marks the current workspace link", () => {
@@ -60,5 +65,21 @@ describe("Topbar", () => {
     expect(
       screen.getByRole("button", { name: "打开全局助手" }),
     ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("switches between light and dark color schemes", () => {
+    render_topbar();
+
+    const dark_mode_button = screen.getByRole("button", {
+      name: "切换到深色模式",
+    });
+    expect(dark_mode_button).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(dark_mode_button);
+
+    expect(document.documentElement).toHaveClass("dark");
+    expect(
+      screen.getByRole("button", { name: "切换到浅色模式" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 });

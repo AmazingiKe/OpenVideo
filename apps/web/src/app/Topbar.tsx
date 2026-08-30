@@ -5,7 +5,9 @@ import {
   FileText,
   Flag,
   Library,
+  Moon,
   Settings,
+  Sun,
 } from "lucide-react";
 import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
@@ -15,7 +17,9 @@ import { TaskCenter } from "@/app/TaskCenter";
 import { use_global_assistant_controls } from "@/app/global_assistant";
 import { use_optional_task_manager } from "@/app/task_manager";
 import { Button } from "@/components/ui/button";
+import { toggle_color_scheme } from "@/color_scheme";
 import { cn } from "@/lib/utils";
+import { use_color_scheme } from "@/use_color_scheme";
 
 const IDLE_PRELOAD_TIMEOUT_MS = 2_000;
 
@@ -33,8 +37,13 @@ const WORKSPACE_ICONS = {
 
 export function Topbar() {
   const task_manager = use_optional_task_manager();
+  const color_scheme = use_color_scheme();
   const { assistant_open, set_assistant_open } =
     use_global_assistant_controls();
+  const dark_mode_is_active = color_scheme === "dark";
+  const color_scheme_action_label = dark_mode_is_active
+    ? "切换到浅色模式"
+    : "切换到深色模式";
 
   useEffect(() => {
     const preload_routes = () => {
@@ -92,6 +101,21 @@ export function Topbar() {
         })}
       </nav>
       <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-2 justify-self-end md:col-start-3">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={color_scheme_action_label}
+          title={color_scheme_action_label}
+          aria-pressed={dark_mode_is_active}
+          onClick={() => toggle_color_scheme()}
+        >
+          {dark_mode_is_active ? (
+            <Sun aria-hidden="true" />
+          ) : (
+            <Moon aria-hidden="true" />
+          )}
+        </Button>
         <Button
           type="button"
           variant="ghost"

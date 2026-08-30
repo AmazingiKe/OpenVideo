@@ -216,6 +216,16 @@ export const FullThreeTracks: Story = {
   },
 };
 
+export const Dark: Story = {
+  decorators: [
+    (StoryComponent) => (
+      <div className="dark bg-background text-foreground">
+        <StoryComponent />
+      </div>
+    ),
+  ],
+};
+
 export const SelectedPointMarker: Story = {
   args: {
     initial_markers: [POINT_MARKER],

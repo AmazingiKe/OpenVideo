@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 
 import { format_time } from "@/shared/format";
+import { use_color_scheme } from "@/use_color_scheme";
 
 const RULER_HEIGHT_PIXELS = 32;
 const RULER_MAJOR_TICK_HEIGHT_PIXELS = 8;
@@ -39,6 +40,7 @@ export function TimelineRulerCanvas({
 }: TimelineRulerCanvasProps) {
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const major_interval_ref = useRef<number | null>(null);
+  const color_scheme = use_color_scheme();
 
   useLayoutEffect(() => {
     const canvas = canvas_ref.current;
@@ -106,6 +108,7 @@ export function TimelineRulerCanvas({
     }
   }, [
     canvas_width,
+    color_scheme,
     duration_seconds,
     scroll_left,
     start_left,
