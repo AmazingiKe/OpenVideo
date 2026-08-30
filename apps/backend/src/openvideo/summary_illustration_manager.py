@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import tempfile
 from threading import RLock
+from time import monotonic
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -195,7 +196,12 @@ class SummaryIllustrationManager:
                     progress_percent=4,
                     message="正在判断哪些内容最需要画面",
                 )
+                phase_started = monotonic()
                 plan = await asyncio.to_thread(self._plan, job)
+                self._record_metrics(
+                    job_id,
+                    planning_ms=_elapsed_ms(phase_started),
+                )
                 slots = [
                     SummaryIllustrationSlot(
                         slot_id=f"illustration-slot-{uuid7().hex}",
@@ -334,7 +340,12 @@ class SummaryIllustrationManager:
             stage=SummaryIllustrationStage.RETRIEVING,
             message="正在定位关键画面",
         )
+        phase_started = monotonic()
         evidence = await asyncio.to_thread(self._retrieve_evidence, job, slot)
+        self._record_metrics(
+            job_id,
+            retrieval_ms=_elapsed_ms(phase_started),
+        )
         if evidence is None:
             visual_index_state = (
                 self.visual_index_service.status().state
@@ -370,6 +381,7 @@ class SummaryIllustrationManager:
             stage=SummaryIllustrationStage.EXTRACTING,
             message="正在细分候选画面",
         )
+        phase_started = monotonic()
         candidate_times = await asyncio.to_thread(
             refine_scene_candidates,
             playback,
@@ -395,6 +407,10 @@ class SummaryIllustrationManager:
                 paths,
                 candidate_times,
             )
+            self._record_metrics(
+                job_id,
+                frame_processing_ms=_elapsed_ms(phase_started),
+            )
             if not qualified:
                 self._skip_slot(job_id, slot_id, "候选画面均为黑屏、模糊或重复帧")
                 return
@@ -413,7 +429,13 @@ class SummaryIllustrationManager:
                 stage=SummaryIllustrationStage.VALIDATING,
                 message="正在验证候选画面",
             )
+            phase_started = monotonic()
             decision = await self._validate_frames(job, slot, evidence, qualified)
+            self._record_metrics(
+                job_id,
+                vision_ms=_elapsed_ms(phase_started),
+                vision_calls=1,
+            )
         if (
             decision.confidence != SummaryIllustrationConfidence.HIGH
             or decision.selected_index is None
@@ -623,12 +645,48 @@ class SummaryIllustrationManager:
     def _update(self, job_id: str, **updates: object) -> SummaryIllustrationJob:
         with self._lock:
             job = self._jobs[job_id]
+            now = datetime.now(UTC)
+            metrics = updates.get("metrics", job.metrics)
+            stage = updates.get("stage", job.stage)
+            if stage in TERMINAL_SUMMARY_ILLUSTRATION_STAGES:
+                metrics = metrics.model_copy(
+                    update={
+                        "total_ms": max(
+                            metrics.total_ms,
+                            round((now - job.created_at).total_seconds() * 1_000),
+                        )
+                    }
+                )
             updated = job.model_copy(
-                update={**updates, "updated_at": datetime.now(UTC)},
+                update={**updates, "metrics": metrics, "updated_at": now},
             )
             self._jobs[job_id] = updated
         self.library.save_summary_illustration_job(updated)
         return updated.model_copy(deep=True)
+
+    def _record_metrics(
+        self,
+        job_id: str,
+        *,
+        planning_ms: int = 0,
+        retrieval_ms: int = 0,
+        frame_processing_ms: int = 0,
+        vision_ms: int = 0,
+        vision_calls: int = 0,
+    ) -> None:
+        job = self._require_job(job_id)
+        metrics = job.metrics.model_copy(
+            update={
+                "planning_ms": job.metrics.planning_ms + planning_ms,
+                "retrieval_ms": job.metrics.retrieval_ms + retrieval_ms,
+                "frame_processing_ms": (
+                    job.metrics.frame_processing_ms + frame_processing_ms
+                ),
+                "vision_ms": job.metrics.vision_ms + vision_ms,
+                "vision_calls": job.metrics.vision_calls + vision_calls,
+            }
+        )
+        self._update(job_id, metrics=metrics)
 
     def _require_job(self, job_id: str) -> SummaryIllustrationJob:
         with self._lock:
@@ -704,3 +762,7 @@ def _confidence_label(confidence: SummaryIllustrationConfidence) -> str:
         SummaryIllustrationConfidence.MEDIUM: "中",
         SummaryIllustrationConfidence.LOW: "低",
     }[confidence]
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, round((monotonic() - started_at) * 1_000))

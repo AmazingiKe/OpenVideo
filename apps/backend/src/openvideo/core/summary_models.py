@@ -151,6 +151,17 @@ class SummaryIllustrationSlot(BaseModel):
     message: str = "等待定位"
 
 
+class SummaryIllustrationMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    planning_ms: int = Field(default=0, ge=0)
+    retrieval_ms: int = Field(default=0, ge=0)
+    frame_processing_ms: int = Field(default=0, ge=0)
+    vision_ms: int = Field(default=0, ge=0)
+    total_ms: int = Field(default=0, ge=0)
+    vision_calls: int = Field(default=0, ge=0)
+
+
 class SummaryIllustrationJob(BaseModel):
     """记录首次总结配图的可恢复进度，正文生成不依赖任务成功。"""
 
@@ -167,6 +178,9 @@ class SummaryIllustrationJob(BaseModel):
     slots: list[SummaryIllustrationSlot] = Field(default_factory=list, max_length=6)
     inserted_count: int = Field(default=0, ge=0, le=6)
     skipped_count: int = Field(default=0, ge=0, le=6)
+    metrics: SummaryIllustrationMetrics = Field(
+        default_factory=SummaryIllustrationMetrics
+    )
     error_message: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

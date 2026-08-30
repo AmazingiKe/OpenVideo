@@ -633,6 +633,14 @@ export type SummaryIllustrationJob = {
   slots: SummaryIllustrationSlot[];
   inserted_count: number;
   skipped_count: number;
+  metrics?: {
+    planning_ms: number;
+    retrieval_ms: number;
+    frame_processing_ms: number;
+    vision_ms: number;
+    total_ms: number;
+    vision_calls: number;
+  };
   error_message: string | null;
   created_at: string;
   updated_at: string;

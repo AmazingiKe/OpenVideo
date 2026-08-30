@@ -37,6 +37,8 @@ def test_first_summary_inserts_only_vision_verified_frame(tmp_path: Path, monkey
     assert job["stage"] == "complete"
     assert job["inserted_count"] == 1, json.dumps(job, ensure_ascii=False)
     assert job["skipped_count"] == 0
+    assert job["metrics"]["vision_calls"] == 1
+    assert job["metrics"]["total_ms"] > 0
     assert "![关键操作界面](assets/media-" in documents[0]["markdown"]
     assert len(media) == 1
     assert media[0].origin == "automatic"

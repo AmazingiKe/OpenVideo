@@ -895,11 +895,12 @@ class LibraryGeneratedStorageMixin:
 
     def save_summary_illustration_job(self, job: SummaryIllustrationJob) -> None:
         self._validate_identifier(job.job_id, "summary-illustration-job")
-        values = job.model_dump(mode="json", exclude={"slots"})
+        values = job.model_dump(mode="json", exclude={"slots", "metrics"})
         values["slots"] = json.dumps(
             [slot.model_dump(mode="json") for slot in job.slots],
             ensure_ascii=False,
         )
+        values["metrics"] = job.metrics.model_dump_json()
         self._upsert_runtime_model("summary_illustration_jobs", values)
 
     def load_summary_illustration_job(
@@ -949,6 +950,7 @@ class LibraryGeneratedStorageMixin:
     ) -> SummaryIllustrationJob:
         values = dict(row)
         values["slots"] = json.loads(values["slots"])
+        values["metrics"] = json.loads(values["metrics"])
         return SummaryIllustrationJob.model_validate(values)
 
     def load_summary_media(

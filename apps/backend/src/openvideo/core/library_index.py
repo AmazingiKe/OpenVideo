@@ -25,7 +25,7 @@ from openvideo.core.summary_files import summary_document_depths
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 21
+DATABASE_VERSION = 22
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -758,7 +758,8 @@ CREATE TABLE summary_illustration_jobs (
     planning_model_id TEXT NOT NULL, vision_model_id TEXT, stage TEXT NOT NULL,
     progress_percent REAL NOT NULL, message TEXT NOT NULL, slots TEXT NOT NULL,
     inserted_count INTEGER NOT NULL, skipped_count INTEGER NOT NULL,
-    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    metrics TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 CREATE TABLE index_states (
     asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
