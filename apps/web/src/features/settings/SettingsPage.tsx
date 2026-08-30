@@ -55,7 +55,7 @@ import type {
   TranscriptionModelDescriptor,
 } from "@/shared/types";
 
-type EditableField = "tools_directory" | "models_directory";
+type EditableField = "tools_directory" | "models_directory" | "download_proxy";
 
 const SETTINGS_SAVE_DELAY_MS = 500;
 
@@ -107,6 +107,7 @@ export function SettingsPage() {
         {
           tools_directory: preferences.tools_directory,
           models_directory: preferences.models_directory,
+          download_proxy: preferences.download_proxy,
           default_transcription: preferences.default_transcription,
           ai_models: preferences.ai_models,
           agent: preferences.agent,
@@ -233,6 +234,11 @@ export function SettingsPage() {
             <FieldGroup>
               <FfmpegDirectoryInput
                 value={preferences.tools_directory ?? ""}
+                preferences={preferences}
+                on_change={update_field}
+              />
+              <DownloadProxyInput
+                value={preferences.download_proxy ?? ""}
                 preferences={preferences}
                 on_change={update_field}
               />
@@ -455,6 +461,38 @@ function ModelDirectoryInput({
       preferences={preferences}
       on_change={on_change}
     />
+  );
+}
+
+function DownloadProxyInput({
+  value,
+  preferences,
+  on_change,
+}: {
+  value: string;
+  preferences: Preferences;
+  on_change: (field: EditableField, value: string) => void;
+}) {
+  const managed = preferences.managed_fields.includes("download_proxy");
+  return (
+    <Field data-disabled={managed}>
+      <FieldLabel htmlFor="download_proxy">
+        海外平台下载代理（可选）
+        {managed ? <Badge variant="secondary">环境变量</Badge> : null}
+      </FieldLabel>
+      <Input
+        id="download_proxy"
+        value={value}
+        onChange={(event) => on_change("download_proxy", event.target.value)}
+        placeholder="例如：http://127.0.0.1:7890"
+        disabled={managed}
+        spellCheck={false}
+      />
+      <FieldDescription>
+        国内平台默认直连；YouTube 等平台无法访问时可填写本机 HTTP 或 SOCKS
+        代理，留空则使用系统网络。
+      </FieldDescription>
+    </Field>
   );
 }
 

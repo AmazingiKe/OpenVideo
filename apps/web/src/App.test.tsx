@@ -132,6 +132,7 @@ describe("App", () => {
     vi.mocked(get_preferences).mockResolvedValue({
       tools_directory: null,
       models_directory: null,
+      download_proxy: null,
       default_transcription: {
         engine: "faster-whisper",
         model: "small",

@@ -140,6 +140,18 @@ def test_download_events_survive_library_reopen(tmp_path: Path):
     reopened.close()
 
 
+def test_download_temporary_directory_is_stable_across_retry_jobs(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+
+    first_directory = library.download_temporary_directory(ASSET_ID)
+    second_directory = library.download_temporary_directory(ASSET_ID)
+
+    assert first_directory == second_directory
+    assert first_directory.name == f"download-{ASSET_ID.replace('-', '')}"
+    assert first_directory.is_relative_to((tmp_path / "temp").resolve())
+    library.close()
+
+
 def test_saves_complete_asset_metadata_and_recovers_ready_asset(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     asset = _asset()

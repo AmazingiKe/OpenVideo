@@ -103,6 +103,7 @@ export type AgentPreferences = {
 export type Preferences = {
   tools_directory: string | null;
   models_directory: string | null;
+  download_proxy: string | null;
   default_transcription: TranscriptionOptions;
   ai_models: AiModelConfiguration[];
   agent: AgentPreferences;

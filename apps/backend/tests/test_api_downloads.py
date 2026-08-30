@@ -16,6 +16,7 @@ from openvideo.download_accounts import (
     DownloadCookieBrowser,
 )
 from openvideo.settings import Settings
+from openvideo.preferences import PreferenceStore
 from openvideo.tools.downloader import (
     DownloadFailure,
     DownloadMetadata,
@@ -121,6 +122,67 @@ def test_probe_preserves_bilibili_part_download_urls(monkeypatch, tmp_path):
     assert response.json()["entries"][0]["url"] == (
         "https://www.bilibili.com/video/BV1X7411F744?p=2"
     )
+
+
+def test_overseas_probe_receives_configured_download_proxy(monkeypatch, tmp_path):
+    received_proxy: list[str | None] = []
+
+    def probe_youtube(
+        _source_url,
+        _platform,
+        _source_video_id,
+        _cookie_source,
+        download_proxy,
+    ) -> PlaylistProbe:
+        received_proxy.append(download_proxy)
+        return PlaylistProbe(
+            is_playlist=False,
+            title=None,
+            entries=[
+                PlaylistEntry(
+                    source_video_id="jNQXAC9IVRw",
+                    url="https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                    title="示例视频",
+                    duration_seconds=19,
+                    uploader="示例作者",
+                )
+            ],
+            truncated=False,
+            total_count=1,
+        )
+
+    monkeypatch.setattr(download_routes, "probe_source", probe_youtube)
+    app = api.create_app(
+        Settings(
+            library_path=tmp_path,
+            download_proxy="http://127.0.0.1:7890",
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/downloads/probe",
+            json={"source_url": "https://www.youtube.com/watch?v=jNQXAC9IVRw"},
+        )
+
+    assert response.status_code == 200
+    assert received_proxy == ["http://127.0.0.1:7890"]
+
+
+def test_download_proxy_can_be_saved_as_a_local_preference(tmp_path):
+    preference_store = PreferenceStore(tmp_path / "preferences.json")
+    settings = Settings(library_path=tmp_path)
+    app = api.create_app(settings, preference_store=preference_store)
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/preferences",
+            json={"download_proxy": "socks5://127.0.0.1:7890"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["download_proxy"] == "socks5://127.0.0.1:7890"
+    assert preference_store.load().download_proxy == "socks5://127.0.0.1:7890"
 
 
 def test_download_folder_assignment_defaults_and_preserves_duplicates(

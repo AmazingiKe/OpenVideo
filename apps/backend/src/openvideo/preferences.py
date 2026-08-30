@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Annotated
+from urllib.parse import urlsplit
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from openvideo.configuration import (
     LEGACY_CONFIG_DIRECTORY,
@@ -16,12 +18,31 @@ from openvideo.core.transcription_models import TranscriptionOptions
 
 
 PREFERENCES_FILE_NAME = "preferences.json"
+DOWNLOAD_PROXY_SCHEMES = {"http", "https", "socks4", "socks5", "socks5h"}
+
+
+def validate_download_proxy(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("下载代理必须是 URL")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    parsed = urlsplit(normalized)
+    if parsed.scheme.casefold() not in DOWNLOAD_PROXY_SCHEMES or not parsed.hostname:
+        raise ValueError("下载代理必须是有效的 HTTP、HTTPS 或 SOCKS 地址")
+    return normalized
+
+
+DownloadProxy = Annotated[str | None, BeforeValidator(validate_download_proxy)]
 
 
 class Preferences(AiModelCollection):
     current_library_path: str | None = None
     tools_directory: str | None = None
     models_directory: str | None = None
+    download_proxy: DownloadProxy = None
     default_transcription: TranscriptionOptions = Field(
         default_factory=TranscriptionOptions
     )

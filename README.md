@@ -113,6 +113,7 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:38471`。
 | `OPENVIDEO_TOOLS_DIRECTORY` | `runtime/tools` | 第三方工具根目录 |
 | `OPENVIDEO_CORS_ORIGINS` | 本机 Vite 来源 | 允许访问 API 的本机 Web 来源，逗号分隔 |
 | `OPENVIDEO_MODELS_DIRECTORY` | `%LOCALAPPDATA%\OpenVideo\models` | 本地转录模型根目录 |
+| `OPENVIDEO_DOWNLOAD_PROXY` | 空 | YouTube 等海外来源的 HTTP、HTTPS 或 SOCKS 下载代理；国内来源保持直连 |
 | `OPENVIDEO_AI_MODELS` | `[]` | LiteLLM 模型配置 JSON 数组；设置后 Web 中的模型配置只读 |
 | `VITE_API_BASE_URL` | 空字符串 | Web 直接访问的 API 根地址；开发模式通常留空使用代理 |
 

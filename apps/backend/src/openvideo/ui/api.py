@@ -41,11 +41,12 @@ from openvideo.core.page_settings import (
     LEGACY_PAGE_SETTINGS_FILE_NAME,
     PageSettingsStore,
 )
-from openvideo.preferences import PreferenceStore
+from openvideo.preferences import DownloadProxy, PreferenceStore
 from openvideo.settings import (
     AGENT_PREFERENCES_FIELD,
     AI_MODELS_FIELD,
     DEFAULT_TRANSCRIPTION_FIELD,
+    DOWNLOAD_PROXY_FIELD,
     MODELS_DIRECTORY_FIELD,
     PROJECT_ROOT,
     TOOLS_DIRECTORY_FIELD,
@@ -100,6 +101,7 @@ class DirectorySelectionResponse(BaseModel):
 class PreferencesPatch(AiModelCollection):
     tools_directory: str | None = None
     models_directory: str | None = None
+    download_proxy: DownloadProxy = None
     default_transcription: TranscriptionOptions | None = None
     agent: AgentPreferences | None = None
 
@@ -107,6 +109,7 @@ class PreferencesPatch(AiModelCollection):
 class PreferencesResponse(AiModelCollection):
     tools_directory: str | None
     models_directory: str | None
+    download_proxy: DownloadProxy
     default_transcription: TranscriptionOptions
     agent: AgentPreferences
     managed_fields: list[str]
@@ -468,6 +471,11 @@ def create_app(
             and MODELS_DIRECTORY_FIELD not in managed_fields
         ):
             resolved_settings.models_directory = request.models_directory
+        if (
+            DOWNLOAD_PROXY_FIELD in provided_fields
+            and DOWNLOAD_PROXY_FIELD not in managed_fields
+        ):
+            resolved_settings.download_proxy = request.download_proxy
         if AI_MODELS_FIELD in provided_fields and AI_MODELS_FIELD not in managed_fields:
             resolved_settings.ai_models = request.ai_models
         if (

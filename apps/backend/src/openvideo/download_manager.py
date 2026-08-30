@@ -34,6 +34,7 @@ from openvideo.tools.thumbnails import (
 
 
 LOGGER = logging.getLogger(__name__)
+MAX_CONCURRENT_DOWNLOADS = 2
 
 
 class DownloadManager:
@@ -55,7 +56,7 @@ class DownloadManager:
         }
         self._active_job_id_by_asset_id: dict[str, str] = {}
         self._lock = RLock()
-        self._download_lock = asyncio.Lock()
+        self._download_slots = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     def create(
@@ -219,7 +220,7 @@ class DownloadManager:
             self._fail(job_id, "找不到下载任务对应的媒体资源")
             return
 
-        async with self._download_lock:
+        async with self._download_slots:
             self._update_job(
                 job_id,
                 DownloadStage.READING_METADATA,
@@ -249,7 +250,10 @@ class DownloadManager:
                         lambda metadata: self._record_metadata(job_id, metadata),
                         video_quality=job.video_quality,
                         cookie_source=cookie_source,
-                        staging_directory=self.library.temporary_directory(job_id),
+                        staging_directory=self.library.download_temporary_directory(
+                            job.asset_id
+                        ),
+                        download_proxy=self.settings.download_proxy,
                     )
                 self._update_job(
                     job_id,

@@ -53,6 +53,7 @@ vi.mock("@/shared/api", () => ({
 const preferences = {
   tools_directory: null,
   models_directory: null,
+  download_proxy: null,
   default_transcription: {
     engine: "faster-whisper" as const,
     model: "small",
@@ -172,6 +173,7 @@ describe("SettingsPage", () => {
         "留空时使用系统用户配置目录中的 OpenVideo/models；不同转录引擎分别使用独立子目录。",
       ),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText(/海外平台下载代理/)).toHaveValue("");
     expect(
       screen.getByRole("heading", { name: "数学公式识别" }),
     ).toBeInTheDocument();
@@ -190,6 +192,22 @@ describe("SettingsPage", () => {
           models_directory: "D:\\Models",
           default_transcription: preferences.default_transcription,
           agent: preferences.agent,
+        }),
+        expect.any(AbortSignal),
+      ),
+    );
+  });
+
+  it("auto-saves the optional overseas download proxy", async () => {
+    render(<SettingsPage />);
+    const download_proxy = await screen.findByLabelText(/海外平台下载代理/);
+    fireEvent.change(download_proxy, {
+      target: { value: "http://127.0.0.1:7890" },
+    });
+    await waitFor(() =>
+      expect(update_preferences).toHaveBeenCalledWith(
+        expect.objectContaining({
+          download_proxy: "http://127.0.0.1:7890",
         }),
         expect.any(AbortSignal),
       ),
