@@ -305,15 +305,13 @@ export type TranscriptionEngine = "faster-whisper" | "qwen3-asr" | "sensevoice";
 export type TranscriptionDevice = "auto" | "cpu" | "cuda";
 export type TranscriptionComputeType = "auto" | "int8" | "float16";
 export type TranscriptionIntegrationStatus = "available" | "adapter_required";
-export type TranscriptionModelInstallationStatus =
+export type ModelInstallationStatus =
   "not_installed" | "downloading" | "installed" | "failed";
-export type TranscriptionModelDownloadStage =
+export type ModelDownloadStage =
   "pending" | "resolving" | "downloading" | "complete" | "failed";
-export type TranscriptionModelDownloadJob = {
+export type ModelDownloadJob = {
   job_id: string;
-  engine: TranscriptionEngine;
-  model: string;
-  stage: TranscriptionModelDownloadStage;
+  stage: ModelDownloadStage;
   progress_percent: number;
   downloaded_bytes: number;
   total_bytes: number | null;
@@ -321,6 +319,10 @@ export type TranscriptionModelDownloadJob = {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+};
+export type TranscriptionModelDownloadJob = ModelDownloadJob & {
+  engine: TranscriptionEngine;
+  model: string;
 };
 export type TranscriptionOptions = {
   engine: TranscriptionEngine;
@@ -340,8 +342,15 @@ export type TranscriptionModelDescriptor = {
   repository: string;
   recommended: boolean;
   integration_status: TranscriptionIntegrationStatus;
-  installation_status: TranscriptionModelInstallationStatus;
+  installation_status: ModelInstallationStatus;
   download_job: TranscriptionModelDownloadJob | null;
+};
+export type FormulaModelState = {
+  name: string;
+  description: string;
+  repositories: string[];
+  installation_status: ModelInstallationStatus;
+  download_job: ModelDownloadJob | null;
 };
 type AnalysisCapability =
   "transcript" | "timeline" | "chapters" | "key_frames" | "ocr" | "visual";

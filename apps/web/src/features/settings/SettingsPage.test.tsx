@@ -9,6 +9,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  get_formula_model,
   get_preferences,
   get_transcription_model_download,
   list_ai_models,
@@ -35,7 +36,10 @@ vi.mock("@/app/library", () => ({
 
 vi.mock("@/shared/api", () => ({
   create_library: vi.fn(),
+  download_formula_model: vi.fn(),
   download_transcription_model: vi.fn(),
+  get_formula_model: vi.fn(),
+  get_formula_model_download: vi.fn(),
   get_preferences: vi.fn(),
   get_transcription_model_download: vi.fn(),
   list_ai_models: vi.fn(),
@@ -72,6 +76,16 @@ const preferences = {
 
 beforeEach(() => {
   vi.mocked(get_preferences).mockResolvedValue(preferences);
+  vi.mocked(get_formula_model).mockResolvedValue({
+    name: "视频公式识别",
+    description: "从关键帧提取结构化公式。",
+    repositories: [
+      "PaddlePaddle/PP-DocLayout_plus-L",
+      "PaddlePaddle/PP-FormulaNet_plus-S",
+    ],
+    installation_status: "not_installed",
+    download_job: null,
+  });
   vi.mocked(list_ai_models).mockResolvedValue([]);
   vi.mocked(list_transcription_models).mockResolvedValue([
     {
@@ -157,6 +171,12 @@ describe("SettingsPage", () => {
       screen.getByText(
         "留空时使用系统用户配置目录中的 OpenVideo/models；不同转录引擎分别使用独立子目录。",
       ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "数学公式识别" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/安装后自动参与关键帧分析，无需额外开关/),
     ).toBeInTheDocument();
   });
 

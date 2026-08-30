@@ -1,31 +1,31 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 
-from huggingface_hub import HfApi, hf_hub_download
-
+from openvideo.core.model_download_models import (
+    ModelDownloadStage,
+    ModelInstallationStatus,
+    ModelResource,
+    TERMINAL_MODEL_DOWNLOAD_STAGES,
+    model_resource_is_installed,
+)
 from openvideo.core.transcription_models import (
-    TERMINAL_TRANSCRIPTION_MODEL_DOWNLOAD_STAGES,
     TRANSCRIPTION_MODEL_CATALOG,
     TranscriptionEngine,
     TranscriptionModelDescriptor,
     TranscriptionModelDownloadJob,
-    TranscriptionModelDownloadStage,
-    TranscriptionModelInstallationStatus,
     TranscriptionModelState,
     find_transcription_model,
 )
 from openvideo.core.identifiers import uuid7
+from openvideo.model_download import ModelDownloadError, download_model_resources
 from openvideo.settings import Settings
 
 
-MODEL_MANIFEST_FILE_NAME = ".openvideo-model.json"
 WHISPER_MODEL_FILE_NAME = "model.bin"
 DOWNLOAD_START_PERCENT = 2
 DOWNLOAD_FINISH_PERCENT = 99
@@ -34,23 +34,6 @@ QWEN_FORCED_ALIGNER_DIRECTORY_NAME = "forced-aligner-0.6b"
 SENSEVOICE_VAD_REPOSITORY = "funasr/fsmn-vad"
 SENSEVOICE_VAD_DIRECTORY_NAME = "fsmn-vad"
 _MODEL_DOWNLOAD_LOCK = RLock()
-
-
-@dataclass(frozen=True)
-class TranscriptionModelResource:
-    """一次转录所需的独立权重仓库及其受管本地目录。"""
-
-    repository: str
-    directory: Path
-
-
-@dataclass(frozen=True)
-class TranscriptionModelResourceFile:
-    """锁定一次仓库解析得到的文件修订，避免下载期间主分支变化。"""
-
-    filename: str
-    file_size: int
-    revision: str
 
 
 class TranscriptionModelDownloadError(RuntimeError):
@@ -79,13 +62,13 @@ class TranscriptionModelManager:
             descriptor,
             self.settings.models_root_directory,
         ):
-            installation_status = TranscriptionModelInstallationStatus.INSTALLED
-        elif job and job.stage not in TERMINAL_TRANSCRIPTION_MODEL_DOWNLOAD_STAGES:
-            installation_status = TranscriptionModelInstallationStatus.DOWNLOADING
-        elif job and job.stage == TranscriptionModelDownloadStage.FAILED:
-            installation_status = TranscriptionModelInstallationStatus.FAILED
+            installation_status = ModelInstallationStatus.INSTALLED
+        elif job and job.stage not in TERMINAL_MODEL_DOWNLOAD_STAGES:
+            installation_status = ModelInstallationStatus.DOWNLOADING
+        elif job and job.stage == ModelDownloadStage.FAILED:
+            installation_status = ModelInstallationStatus.FAILED
         else:
-            installation_status = TranscriptionModelInstallationStatus.NOT_INSTALLED
+            installation_status = ModelInstallationStatus.NOT_INSTALLED
         return TranscriptionModelState(
             **descriptor.model_dump(),
             installation_status=installation_status,
@@ -109,7 +92,7 @@ class TranscriptionModelManager:
             active_job = self._latest_job(engine, model)
             if (
                 active_job
-                and active_job.stage not in TERMINAL_TRANSCRIPTION_MODEL_DOWNLOAD_STAGES
+                and active_job.stage not in TERMINAL_MODEL_DOWNLOAD_STAGES
             ):
                 return active_job
             job = TranscriptionModelDownloadJob(
@@ -146,7 +129,7 @@ class TranscriptionModelManager:
             return
         self._update(
             job_id,
-            stage=TranscriptionModelDownloadStage.RESOLVING,
+            stage=ModelDownloadStage.RESOLVING,
             progress_percent=1,
             message="正在读取官方模型文件",
         )
@@ -166,7 +149,7 @@ class TranscriptionModelManager:
             return
         self._update(
             job_id,
-            stage=TranscriptionModelDownloadStage.COMPLETE,
+            stage=ModelDownloadStage.COMPLETE,
             progress_percent=100,
             message="模型已安装",
             error_message=None,
@@ -192,7 +175,7 @@ class TranscriptionModelManager:
         progress_range = DOWNLOAD_FINISH_PERCENT - DOWNLOAD_START_PERCENT
         self._update(
             job_id,
-            stage=TranscriptionModelDownloadStage.DOWNLOADING,
+            stage=ModelDownloadStage.DOWNLOADING,
             progress_percent=DOWNLOAD_START_PERCENT + downloaded_ratio * progress_range,
             downloaded_bytes=downloaded_bytes,
             total_bytes=total_bytes,
@@ -202,7 +185,7 @@ class TranscriptionModelManager:
     def _fail(self, job_id: str, message: str) -> None:
         self._update(
             job_id,
-            stage=TranscriptionModelDownloadStage.FAILED,
+            stage=ModelDownloadStage.FAILED,
             message="模型下载失败",
             error_message=message,
         )
@@ -266,8 +249,8 @@ def download_transcription_model(
 def transcription_model_resources(
     descriptor: TranscriptionModelDescriptor,
     models_root_directory: Path,
-) -> tuple[TranscriptionModelResource, ...]:
-    main_resource = TranscriptionModelResource(
+) -> tuple[ModelResource, ...]:
+    main_resource = ModelResource(
         repository=descriptor.repository,
         directory=transcription_model_directory(
             models_root_directory,
@@ -276,7 +259,7 @@ def transcription_model_resources(
         ),
     )
     if descriptor.engine == TranscriptionEngine.QWEN3_ASR:
-        companion = TranscriptionModelResource(
+        companion = ModelResource(
             repository=QWEN_FORCED_ALIGNER_REPOSITORY,
             directory=transcription_model_directory(
                 models_root_directory,
@@ -286,7 +269,7 @@ def transcription_model_resources(
         )
         return main_resource, companion
     if descriptor.engine == TranscriptionEngine.SENSEVOICE:
-        companion = TranscriptionModelResource(
+        companion = ModelResource(
             repository=SENSEVOICE_VAD_REPOSITORY,
             directory=transcription_model_directory(
                 models_root_directory,
@@ -299,17 +282,10 @@ def transcription_model_resources(
 
 
 def _resource_is_installed(
-    resource: TranscriptionModelResource,
+    resource: ModelResource,
     engine: TranscriptionEngine,
 ) -> bool:
-    manifest_path = resource.directory / MODEL_MANIFEST_FILE_NAME
-    if manifest_path.is_file():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return False
-        return manifest.get("repository") == resource.repository
-    return (
+    return model_resource_is_installed(resource) or (
         engine == TranscriptionEngine.FASTER_WHISPER
         and (resource.directory / WHISPER_MODEL_FILE_NAME).is_file()
     )
@@ -326,153 +302,10 @@ def _download_transcription_model_resources(
         if not _resource_is_installed(resource, descriptor.engine)
     ]
     try:
-        try:
-            _download_modelscope_resources(resources, progress_callback)
-        except Exception:
-            _download_huggingface_resources(resources, progress_callback)
-    except TranscriptionModelDownloadError:
-        raise
+        download_model_resources(resources, progress_callback)
+    except ModelDownloadError as error:
+        raise TranscriptionModelDownloadError(str(error)) from error
     except Exception as error:
         raise TranscriptionModelDownloadError(
             f"无法从官方 ModelScope 或 Hugging Face 下载 {descriptor.name}：{error}"
         ) from error
-
-
-def _download_modelscope_resources(
-    resources: list[TranscriptionModelResource],
-    progress_callback: Callable[[int, int], None],
-) -> None:
-    resource_files = [
-        (resource, _resolve_modelscope_resource_files(resource))
-        for resource in resources
-    ]
-    total_bytes = sum(
-        file.file_size for _, files in resource_files for file in files
-    )
-    downloaded_bytes = 0
-    progress_callback(downloaded_bytes, total_bytes)
-    for resource, files in resource_files:
-        resource.directory.mkdir(parents=True, exist_ok=True)
-        _modelscope_snapshot_download(
-            model_id=resource.repository,
-            revision="master",
-            local_dir=str(resource.directory),
-        )
-        for file in files:
-            downloaded_file = resource.directory / file.filename
-            if (
-                not downloaded_file.is_file()
-                or downloaded_file.stat().st_size != file.file_size
-            ):
-                raise TranscriptionModelDownloadError(
-                    f"{resource.repository} 官方模型文件校验失败"
-                )
-        downloaded_bytes += sum(file.file_size for file in files)
-        progress_callback(downloaded_bytes, total_bytes)
-        _write_resource_manifest(resource)
-
-
-def _download_huggingface_resources(
-    resources: list[TranscriptionModelResource],
-    progress_callback: Callable[[int, int], None],
-) -> None:
-    resource_files = [
-        (resource, _resolve_resource_files(resource)) for resource in resources
-    ]
-    total_bytes = sum(
-        file.file_size for _, files in resource_files for file in files
-    )
-    downloaded_bytes = 0
-    progress_callback(downloaded_bytes, total_bytes)
-    for resource, files in resource_files:
-        resource.directory.mkdir(parents=True, exist_ok=True)
-        for file in files:
-            hf_hub_download(
-                resource.repository,
-                file.filename,
-                revision=file.revision,
-                local_dir=resource.directory,
-            )
-            downloaded_bytes += file.file_size
-            progress_callback(downloaded_bytes, total_bytes)
-        _write_resource_manifest(resource)
-
-
-def _resolve_modelscope_resource_files(
-    resource: TranscriptionModelResource,
-) -> list[TranscriptionModelResourceFile]:
-    from modelscope.hub.api import HubApi
-
-    raw_files = HubApi().get_model_files(
-        resource.repository,
-        revision="master",
-        recursive=True,
-    )
-    files = [
-        TranscriptionModelResourceFile(
-            filename=str(file["Path"]),
-            file_size=int(file["Size"]),
-            revision="master",
-        )
-        for file in raw_files
-        if int(file.get("Size", 0)) > 0
-    ]
-    if not files:
-        raise TranscriptionModelDownloadError("ModelScope 官方模型文件清单无效")
-    return files
-
-
-def _modelscope_snapshot_download(
-    *,
-    model_id: str,
-    revision: str,
-    local_dir: str,
-) -> str:
-    from modelscope import snapshot_download
-
-    return snapshot_download(
-        model_id=model_id,
-        revision=revision,
-        local_dir=local_dir,
-    )
-
-
-def _resolve_resource_files(
-    resource: TranscriptionModelResource,
-) -> list[TranscriptionModelResourceFile]:
-    resource.directory.mkdir(parents=True, exist_ok=True)
-    model_info = HfApi().model_info(
-        resource.repository,
-        files_metadata=True,
-    )
-    if not model_info.sha:
-        raise TranscriptionModelDownloadError("官方模型文件清单无效")
-    files = [
-        TranscriptionModelResourceFile(
-            filename=file.rfilename,
-            file_size=file.size,
-            revision=model_info.sha,
-        )
-        for file in model_info.siblings
-        if file.size is not None
-    ]
-    if not files or len(files) != len(model_info.siblings):
-        raise TranscriptionModelDownloadError("官方模型文件清单无效")
-    return files
-
-
-def _write_resource_manifest(resource: TranscriptionModelResource) -> None:
-    manifest_path = resource.directory / MODEL_MANIFEST_FILE_NAME
-    temporary_manifest_path = manifest_path.with_suffix(".tmp")
-    temporary_manifest_path.write_text(
-        json.dumps(
-            {
-                "repository": resource.repository,
-                "installed_at": datetime.now(UTC).isoformat(),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    temporary_manifest_path.replace(manifest_path)

@@ -7,6 +7,7 @@ import {
   Info,
   Settings2,
   ShieldCheck,
+  Sigma,
   TriangleAlert,
   Wrench,
 } from "lucide-react";
@@ -37,7 +38,9 @@ import { is_online_ai_model } from "@/shared/online_ai_models";
 import { AgentPreferencesSettings } from "@/features/settings/AgentPreferencesSettings";
 import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
 import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
+import { FormulaRecognitionSettings } from "@/features/settings/FormulaRecognitionSettings";
 import {
+  get_formula_model,
   get_preferences,
   list_ai_models,
   list_transcription_models,
@@ -47,6 +50,7 @@ import {
 } from "@/shared/api";
 import type {
   AiModelSummary,
+  FormulaModelState,
   Preferences,
   TranscriptionModelDescriptor,
 } from "@/shared/types";
@@ -61,6 +65,9 @@ export function SettingsPage() {
   const [transcription_models, set_transcription_models] = useState<
     TranscriptionModelDescriptor[]
   >([]);
+  const [formula_model, set_formula_model] = useState<FormulaModelState | null>(
+    null,
+  );
   const [ai_model_summaries, set_ai_model_summaries] = useState<
     AiModelSummary[]
   >([]);
@@ -73,12 +80,14 @@ export function SettingsPage() {
     Promise.all([
       get_preferences(controller.signal),
       list_transcription_models(controller.signal),
+      get_formula_model(controller.signal),
       list_ai_models(controller.signal),
     ])
-      .then(([loaded_preferences, models, ai_models]) => {
+      .then(([loaded_preferences, models, loaded_formula_model, ai_models]) => {
         set_preferences(loaded_preferences);
         saved_preferences_ref.current = loaded_preferences;
         set_transcription_models(models);
+        set_formula_model(loaded_formula_model);
         set_ai_model_summaries(ai_models);
       })
       .catch((error: unknown) => {
@@ -261,6 +270,18 @@ export function SettingsPage() {
               }
             />
           </SettingsCard>
+          {formula_model ? (
+            <SettingsCard
+              icon={Sigma}
+              title="数学公式识别"
+              description="使用视频关键帧补足音频转录无法表达的数学符号与排版结构。"
+            >
+              <FormulaRecognitionSettings
+                model={formula_model}
+                on_change={set_formula_model}
+              />
+            </SettingsCard>
+          ) : null}
           <SettingsCard
             icon={Bot}
             title="AI 模型"
