@@ -7,6 +7,8 @@ const MARKDOWN = `# 所见即所得编辑
 
 正文包含行内公式 \\(E = mc^2\\)，也支持独立公式：
 
+选择文字后右键可切换 **粗体**、*斜体*、~~删除线~~、\`行内代码\` 与[链接](https://example.com)。
+
 \\[
 A = \\pi r^2
 \\]
@@ -48,6 +50,22 @@ function MarkdownEditorFixture() {
   );
 }
 
+function MarkdownFormattingFixture() {
+  const [markdown, set_markdown] = useState(
+    "选择这段文字后，可以通过右键切换文字与段落样式。",
+  );
+  return (
+    <div className="flex h-[480px] min-w-0 bg-background text-foreground">
+      <MarkdownEditor
+        document_key="storybook-markdown-formatting"
+        markdown={markdown}
+        on_change={set_markdown}
+        on_selection_change={() => undefined}
+      />
+    </div>
+  );
+}
+
 const meta = {
   title: "Summary/MarkdownEditor",
   component: MarkdownEditorFixture,
@@ -58,6 +76,10 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
+
+export const Formatting: Story = {
+  render: () => <MarkdownFormattingFixture />,
+};
 
 export const Dark: Story = {
   decorators: [
