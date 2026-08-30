@@ -9,6 +9,7 @@ import "@vidstack/react/player/styles/base.css";
 import {
   PlyrLayout,
   plyrLayoutIcons,
+  type PlyrLayoutTranslations,
 } from "@vidstack/react/player/layouts/plyr";
 import "@vidstack/react/player/styles/plyr/theme.css";
 import {
@@ -26,17 +27,33 @@ import "./player.css";
 const SEEK_CONFIRMATION_TOLERANCE_SECONDS = 0.5;
 const SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS = 1_500;
 const SCRUB_PREVIEW_SEEK_TOLERANCE_SECONDS = 1 / 120;
+const PLAYER_TRANSLATIONS = {
+  AirPlay: "隔空播放",
+  Captions: "字幕",
+  "Current time": "当前时间",
+  "Disable captions": "关闭字幕",
+  "Enable captions": "开启字幕",
+  "Enter Fullscreen": "进入全屏",
+  "Enter PiP": "进入画中画",
+  "Exit Fullscreen": "退出全屏",
+  "Exit PiP": "退出画中画",
+  Mute: "静音",
+  Normal: "正常",
+  Pause: "暂停",
+  Play: "播放",
+  Seek: "播放进度",
+  Settings: "设置",
+  Speed: "速度",
+  Unmute: "取消静音",
+  Volume: "音量",
+} satisfies Partial<PlyrLayoutTranslations>;
 
 export type PlayerHandle = {
   seek_to: (seconds: number) => void;
   preview_to: (seconds: number) => void;
   current_time: () => number;
   toggle_playback: () => void;
-  set_volume: (volume: number) => void;
-  toggle_muted: () => void;
   set_playback_rate: (rate: number) => void;
-  toggle_picture_in_picture: () => void;
-  toggle_fullscreen: () => void;
 };
 
 type TimelineMarker = {
@@ -51,13 +68,6 @@ type Storyboard = {
   tiles: { start_time: number; x: number; y: number }[];
 };
 
-type PlayerPresentationState = {
-  playback_rate: number;
-  picture_in_picture: boolean;
-  fullscreen: boolean;
-  can_picture_in_picture: boolean;
-};
-
 type PlayerProps = {
   src: string;
   scrub_src?: string | null;
@@ -67,8 +77,7 @@ type PlayerProps = {
   thumbnails?: Storyboard | null;
   on_time_change?: (seconds: number) => void;
   on_pause_change?: (paused: boolean) => void;
-  on_volume_change?: (volume: number, muted: boolean) => void;
-  on_presentation_change?: (state: PlayerPresentationState) => void;
+  on_playback_rate_change?: (rate: number) => void;
 };
 
 export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
@@ -81,21 +90,16 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     thumbnails = null,
     on_time_change,
     on_pause_change,
-    on_volume_change,
-    on_presentation_change,
+    on_playback_rate_change,
   },
   ref,
 ) {
   // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
   const seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
   const toggle_playback_fn_ref = useRef<(() => void) | null>(null);
-  const set_volume_fn_ref = useRef<((volume: number) => void) | null>(null);
-  const toggle_muted_fn_ref = useRef<(() => void) | null>(null);
   const set_playback_rate_fn_ref = useRef<((rate: number) => void) | null>(
     null,
   );
-  const toggle_picture_in_picture_fn_ref = useRef<(() => void) | null>(null);
-  const toggle_fullscreen_fn_ref = useRef<(() => void) | null>(null);
   const current_time_fn_ref = useRef<(() => number) | null>(null);
   const current_time_value_ref = useRef(0);
   const scrub_video_ref = useRef<HTMLVideoElement>(null);
@@ -211,13 +215,8 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         );
       },
       toggle_playback: () => toggle_playback_fn_ref.current?.(),
-      set_volume: (volume: number) => set_volume_fn_ref.current?.(volume),
-      toggle_muted: () => toggle_muted_fn_ref.current?.(),
       set_playback_rate: (rate: number) =>
         set_playback_rate_fn_ref.current?.(rate),
-      toggle_picture_in_picture: () =>
-        toggle_picture_in_picture_fn_ref.current?.(),
-      toggle_fullscreen: () => toggle_fullscreen_fn_ref.current?.(),
     }),
     [finish_preview, schedule_scrub_time],
   );
@@ -240,20 +239,8 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     toggle_playback_fn_ref.current = instance
       ? () => instance.toggle_playback()
       : null;
-    set_volume_fn_ref.current = instance
-      ? (volume) => instance.set_volume(volume)
-      : null;
-    toggle_muted_fn_ref.current = instance
-      ? () => instance.toggle_muted()
-      : null;
     set_playback_rate_fn_ref.current = instance
       ? (rate) => instance.set_playback_rate(rate)
-      : null;
-    toggle_picture_in_picture_fn_ref.current = instance
-      ? () => instance.toggle_picture_in_picture()
-      : null;
-    toggle_fullscreen_fn_ref.current = instance
-      ? () => instance.toggle_fullscreen()
       : null;
   }, []);
 
@@ -289,7 +276,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         <SubtitleOverlay segments={subtitles} evidence_range={evidence_range} />
         <PlyrLayout
           icons={plyrLayoutIcons}
-          controls={[]}
+          translations={PLAYER_TRANSLATIONS}
           markers={plyr_markers}
           thumbnails={plyr_thumbnails}
           clickToPlay
@@ -314,8 +301,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
             on_time_change_ref.current?.(seconds);
           }}
           on_pause_change={on_pause_change}
-          on_volume_change={on_volume_change}
-          on_presentation_change={on_presentation_change}
+          on_playback_rate_change={on_playback_rate_change}
         />
       </MediaPlayer>
       {scrub_src ? (
@@ -419,25 +405,19 @@ type PlayerRef = {
   current_time: () => number;
   seek: (seconds: number) => void;
   toggle_playback: () => void;
-  set_volume: (volume: number) => void;
-  toggle_muted: () => void;
   set_playback_rate: (rate: number) => void;
-  toggle_picture_in_picture: () => void;
-  toggle_fullscreen: () => void;
 };
 
 function PlayerStateBridge({
   on_player_ready,
   on_time_change,
   on_pause_change,
-  on_volume_change,
-  on_presentation_change,
+  on_playback_rate_change,
 }: {
   on_player_ready: (instance: PlayerRef | null) => void;
   on_time_change?: (seconds: number) => void;
   on_pause_change?: (paused: boolean) => void;
-  on_volume_change?: (volume: number, muted: boolean) => void;
-  on_presentation_change?: (state: PlayerPresentationState) => void;
+  on_playback_rate_change?: (rate: number) => void;
 }) {
   const player = useMediaPlayer();
   const remote = useMediaRemote();
@@ -455,14 +435,7 @@ function PlayerStateBridge({
         if (player.paused) void remote.play();
         else void remote.pause();
       },
-      set_volume: (volume: number) => remote.changeVolume(volume),
-      toggle_muted: () => {
-        if (player.muted) remote.unmute();
-        else remote.mute();
-      },
       set_playback_rate: (rate: number) => remote.changePlaybackRate(rate),
-      toggle_picture_in_picture: () => remote.togglePictureInPicture(),
-      toggle_fullscreen: () => remote.toggleFullscreen(),
     });
     return () => on_player_ready(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -481,23 +454,8 @@ function PlayerStateBridge({
   }, [store.paused, on_pause_change]);
 
   useEffect(() => {
-    on_volume_change?.(store.volume, store.muted);
-  }, [store.volume, store.muted, on_volume_change]);
-
-  useEffect(() => {
-    on_presentation_change?.({
-      playback_rate: store.playbackRate,
-      picture_in_picture: store.pictureInPicture,
-      fullscreen: store.fullscreen,
-      can_picture_in_picture: store.canPictureInPicture,
-    });
-  }, [
-    store.playbackRate,
-    store.pictureInPicture,
-    store.fullscreen,
-    store.canPictureInPicture,
-    on_presentation_change,
-  ]);
+    on_playback_rate_change?.(store.playbackRate);
+  }, [store.playbackRate, on_playback_rate_change]);
 
   return null;
 }

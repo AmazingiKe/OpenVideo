@@ -434,8 +434,6 @@ export function MarkersPage() {
       transcript={transcript}
       evidence_range={evidence_range}
       player_ref={player_ref}
-      is_paused={is_paused}
-      playback_rate={playback_rate}
       on_time_change={set_current_time}
       on_pause_change={set_is_paused}
       on_playback_rate_change={set_playback_rate}

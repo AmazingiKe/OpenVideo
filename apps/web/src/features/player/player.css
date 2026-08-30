@@ -79,9 +79,6 @@
   box-shadow: 0 0 0 4px var(--player-evidence-ring);
 }
 
-.openvideo_player .plyr__progress,
-.openvideo_player .plyr__control--overlaid,
-.openvideo_player [data-plyr="play"],
-.openvideo_player .plyr__time {
+.openvideo_player .plyr__control--overlaid {
   display: none !important;
 }
