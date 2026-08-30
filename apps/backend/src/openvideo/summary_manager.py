@@ -51,6 +51,7 @@ from openvideo.core.summary_models import (
     SummaryGenerationResult,
     SummaryMediaArtifact,
     SummaryMediaCreate,
+    SummaryMediaProvenance,
     SummaryMediaType,
     SummaryVersion,
 )
@@ -807,6 +808,7 @@ class SummaryManager:
     def create_media(
         self,
         request: SummaryMediaCreate,
+        provenance: SummaryMediaProvenance | None = None,
     ) -> tuple[SummaryMediaArtifact, SummaryDocument]:
         document = self._require_document(request.document_id)
         if document.revision != request.expected_revision:
@@ -863,6 +865,7 @@ class SummaryManager:
             caption=request.caption,
             start_seconds=request.start_seconds,
             end_seconds=end_seconds,
+            **(provenance.model_dump() if provenance is not None else {}),
         )
         markdown_path = (
             f"assets/{media_id}{suffix}"

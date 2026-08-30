@@ -49,6 +49,7 @@ from openvideo.core.library_files import atomic_write_model
 from openvideo.core.summary_files import load_version_manifest, write_version_manifest
 from openvideo.core.summary_models import (
     SummaryDocument,
+    SummaryIllustrationJob,
     SummaryMediaArtifact,
     SummaryVersion,
 )
@@ -801,6 +802,64 @@ class LibraryGeneratedStorageMixin:
         )
         synchronize_asset(self._db(), self.assets_path, media.asset_id)
 
+    def save_summary_illustration_job(self, job: SummaryIllustrationJob) -> None:
+        self._validate_identifier(job.job_id, "summary-illustration-job")
+        values = job.model_dump(mode="json", exclude={"slots"})
+        values["slots"] = json.dumps(
+            [slot.model_dump(mode="json") for slot in job.slots],
+            ensure_ascii=False,
+        )
+        self._upsert_runtime_model("summary_illustration_jobs", values)
+
+    def load_summary_illustration_job(
+        self, job_id: str
+    ) -> SummaryIllustrationJob | None:
+        self._validate_identifier(job_id, "summary-illustration-job")
+        row = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_illustration_jobs WHERE job_id = ?", (job_id,)
+            )
+            .fetchone()
+        )
+        return self._summary_illustration_job_from_row(row) if row else None
+
+    def load_summary_illustration_jobs(
+        self,
+        *,
+        asset_id: str | None = None,
+        version_id: str | None = None,
+    ) -> list[SummaryIllustrationJob]:
+        clauses: list[str] = []
+        parameters: list[str] = []
+        if asset_id is not None:
+            self._validate_asset_id(asset_id)
+            clauses.append("asset_id = ?")
+            parameters.append(asset_id)
+        if version_id is not None:
+            self._validate_identifier(version_id, "summary-version")
+            clauses.append("version_id = ?")
+            parameters.append(version_id)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = (
+            self._db()
+            .execute(
+                "SELECT * FROM summary_illustration_jobs"
+                f"{where} ORDER BY created_at DESC",
+                tuple(parameters),
+            )
+            .fetchall()
+        )
+        return [self._summary_illustration_job_from_row(row) for row in rows]
+
+    @staticmethod
+    def _summary_illustration_job_from_row(
+        row: sqlite3.Row,
+    ) -> SummaryIllustrationJob:
+        values = dict(row)
+        values["slots"] = json.loads(values["slots"])
+        return SummaryIllustrationJob.model_validate(values)
+
     def load_summary_media(
         self,
         asset_id: str,
@@ -820,4 +879,14 @@ class LibraryGeneratedStorageMixin:
             )
             .fetchall()
         )
-        return [SummaryMediaArtifact.model_validate(dict(row)) for row in rows]
+        media: list[SummaryMediaArtifact] = []
+        for row in rows:
+            values = dict(row)
+            for field_name in (
+                "target_heading_path",
+                "source_types",
+                "candidate_times",
+            ):
+                values[field_name] = json.loads(values[field_name])
+            media.append(SummaryMediaArtifact.model_validate(values))
+        return media

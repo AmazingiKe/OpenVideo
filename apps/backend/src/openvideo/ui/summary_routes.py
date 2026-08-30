@@ -14,6 +14,7 @@ from openvideo.core.summary_models import (
     SummaryExportResult,
     SummaryGenerationRequest,
     SummaryGenerationResult,
+    SummaryIllustrationJob,
     SummaryMediaArtifact,
     SummaryMediaCreate,
     SummaryPreset,
@@ -26,6 +27,10 @@ from openvideo.summary_manager import (
     SummaryManager,
     SummaryNotFoundError,
     SummaryRevisionConflictError,
+)
+from openvideo.summary_illustration_manager import (
+    SummaryIllustrationError,
+    SummaryIllustrationManager,
 )
 from openvideo.ui.event_stream import sse_event
 
@@ -45,6 +50,7 @@ class SummaryVersionSelectRequest(BaseModel):
 def register_summary_routes(
     app: FastAPI,
     summary_manager: Callable[[], SummaryManager],
+    illustration_manager: Callable[[], SummaryIllustrationManager],
 ) -> None:
     @app.get("/api/summary-presets", response_model=list[SummaryPreset])
     def list_summary_presets() -> list[SummaryPreset]:
@@ -132,18 +138,51 @@ def register_summary_routes(
         response_model=SummaryGenerationResult,
         status_code=status.HTTP_201_CREATED,
     )
-    def generate_summary_documents(
+    async def generate_summary_documents(
         asset_id: str,
         request: SummaryGenerationRequest,
     ) -> SummaryGenerationResult:
         try:
-            return summary_manager().generate(asset_id, request)
+            result = await asyncio.to_thread(
+                summary_manager().generate,
+                asset_id,
+                request,
+            )
+            try:
+                job = illustration_manager().create(
+                    asset_id,
+                    result.version.version_id,
+                    request.ai_model_id,
+                )
+                illustration_manager().start(job.job_id)
+                return result.model_copy(update={"illustration_job": job})
+            except SummaryIllustrationError:
+                return result
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except SummaryCapacityError as error:
             raise HTTPException(status_code=409, detail=error.detail) from error
         except SummaryError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get(
+        "/api/summary-illustration-jobs/{job_id}",
+        response_model=SummaryIllustrationJob,
+    )
+    def get_summary_illustration_job(job_id: str) -> SummaryIllustrationJob:
+        job = illustration_manager().get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="配图任务不存在")
+        return job
+
+    @app.get(
+        "/api/summary-versions/{version_id}/illustration-job",
+        response_model=SummaryIllustrationJob | None,
+    )
+    def get_version_illustration_job(
+        version_id: str,
+    ) -> SummaryIllustrationJob | None:
+        return illustration_manager().latest_for_version(version_id)
 
     @app.post(
         "/api/summary-documents/{parent_document_id}/children",

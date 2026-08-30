@@ -25,7 +25,7 @@ from openvideo.core.summary_files import summary_document_depths
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 20
+DATABASE_VERSION = 21
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -331,7 +331,12 @@ def replace_asset_projection(
         "DELETE FROM summary_media WHERE asset_id = ?", (asset.asset_id,)
     )
     for media in bundle.summary_media:
-        _insert_model(connection, "summary_media", media.model_dump(mode="json"))
+        media_values = media.model_dump(mode="json")
+        for field_name in ("target_heading_path", "source_types", "candidate_times"):
+            media_values[field_name] = json.dumps(
+                media_values[field_name], ensure_ascii=False
+            )
+        _insert_model(connection, "summary_media", media_values)
     connection.execute(
         "INSERT INTO index_states(asset_id, content_digest, indexed_at) VALUES (?, ?, ?) "
         "ON CONFLICT(asset_id) DO UPDATE SET "
@@ -712,7 +717,19 @@ CREATE TABLE summary_media (
     version_id TEXT NOT NULL REFERENCES summary_versions(version_id) ON DELETE CASCADE,
     document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
     media_type TEXT NOT NULL, relative_path TEXT NOT NULL, caption TEXT NOT NULL,
-    start_seconds REAL NOT NULL, end_seconds REAL, created_at TEXT NOT NULL
+    start_seconds REAL NOT NULL, end_seconds REAL, origin TEXT NOT NULL,
+    target_heading_path TEXT NOT NULL, source_excerpt TEXT, source_types TEXT NOT NULL,
+    candidate_times TEXT NOT NULL, vision_model_id TEXT,
+    validation_confidence TEXT, validation_summary TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE summary_illustration_jobs (
+    job_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES summary_versions(version_id) ON DELETE CASCADE,
+    planning_model_id TEXT NOT NULL, vision_model_id TEXT, stage TEXT NOT NULL,
+    progress_percent REAL NOT NULL, message TEXT NOT NULL, slots TEXT NOT NULL,
+    inserted_count INTEGER NOT NULL, skipped_count INTEGER NOT NULL,
+    error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE index_states (
     asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
@@ -735,6 +752,7 @@ CREATE INDEX download_events_job_created_index ON download_events(job_id, create
 CREATE UNIQUE INDEX summary_documents_root_version_index ON summary_documents(version_id) WHERE parent_document_id IS NULL;
 CREATE INDEX summary_versions_asset_created_index ON summary_versions(asset_id, created_at DESC);
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);
+CREATE INDEX summary_illustration_jobs_version_created_index ON summary_illustration_jobs(version_id, created_at DESC);
 CREATE INDEX agent_sessions_updated_index ON agent_sessions(updated_at DESC);
 CREATE INDEX agent_sessions_asset_agent_index ON agent_sessions(asset_id, agent_id, updated_at DESC);
 CREATE UNIQUE INDEX agent_permission_grants_scope_index ON agent_permission_grants(session_id, capability, resource_scope, resource_id, scope);

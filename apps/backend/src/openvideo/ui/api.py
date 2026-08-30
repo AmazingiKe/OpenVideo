@@ -18,6 +18,7 @@ from openvideo.analysis_manager import AnalysisManager
 from openvideo.download_manager import DownloadManager
 from openvideo.event_analysis_manager import EventAnalysisManager
 from openvideo.summary_manager import SummaryManager
+from openvideo.summary_illustration_manager import SummaryIllustrationManager
 from openvideo.core.ai_models import (
     AiModelCollection,
     AiModelConfiguration,
@@ -116,8 +117,6 @@ class PreferencesResponse(AiModelCollection):
     library_path_managed: bool
 
 
-
-
 def create_app(
     settings: Settings | None = None,
     preference_store: PreferenceStore | None = None,
@@ -138,6 +137,7 @@ def create_app(
     event_analysis_manager: EventAnalysisManager | None = None
     agent_service: AgentService | None = None
     summary_manager: SummaryManager | None = None
+    summary_illustration_manager: SummaryIllustrationManager | None = None
     resolved_capability_resolver = capability_resolver or CapabilityResolver()
     transcription_model_manager = TranscriptionModelManager(resolved_settings)
     formula_model_manager = FormulaModelManager(resolved_settings)
@@ -158,6 +158,7 @@ def create_app(
             event_analysis_manager, \
             agent_service, \
             summary_manager, \
+            summary_illustration_manager, \
             page_settings_store
         library = opened_library
         analysis_manager = AnalysisManager(
@@ -175,6 +176,13 @@ def create_app(
         )
         event_analysis_manager = EventAnalysisManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
+        summary_illustration_manager = SummaryIllustrationManager(
+            opened_library,
+            resolved_settings,
+            summary_manager,
+            resolved_capability_resolver,
+            retrieval_models,
+        )
         agent_service = AgentService(
             opened_library,
             resolved_settings,
@@ -191,12 +199,14 @@ def create_app(
         if automatic_initialization:
             analysis_manager.initialize_ready_assets()
         event_analysis_manager.restore()
+        summary_illustration_manager.restore()
         app.state.library = opened_library
         app.state.download_manager = manager
         app.state.analysis_manager = analysis_manager
         app.state.event_analysis_manager = event_analysis_manager
         app.state.agent_service = agent_service
         app.state.summary_manager = summary_manager
+        app.state.summary_illustration_manager = summary_illustration_manager
         app.state.page_settings_store = page_settings_store
 
     def require_library() -> MediaLibrary:
@@ -451,14 +461,10 @@ def create_app(
         )
         candidate_agent = (
             request.agent
-            if AGENT_PREFERENCES_FIELD in provided_fields
-            and request.agent is not None
+            if AGENT_PREFERENCES_FIELD in provided_fields and request.agent is not None
             else resolved_settings.agent
         )
-        if (
-            AI_MODELS_FIELD in provided_fields
-            and AI_MODELS_FIELD not in managed_fields
-        ):
+        if AI_MODELS_FIELD in provided_fields and AI_MODELS_FIELD not in managed_fields:
             _validate_online_ai_models(candidate_models)
         _validate_agent_model_roles(candidate_agent, candidate_models)
         if (
@@ -554,7 +560,6 @@ def create_app(
             raise HTTPException(status_code=404, detail="公式模型下载任务不存在")
         return job
 
-
     register_page_settings_routes(app, require_page_settings_store)
     register_download_account_routes(app, account_store, account_login_manager)
     register_download_routes(app, lambda: library, lambda: manager, account_store)
@@ -573,7 +578,11 @@ def create_app(
     )
 
     register_ai_routes(app, resolved_settings, resolved_capability_resolver)
-    register_summary_routes(app, lambda: summary_manager)
+    register_summary_routes(
+        app,
+        lambda: summary_manager,
+        lambda: summary_illustration_manager,
+    )
     register_agent_routes(
         app,
         lambda: agent_service,
@@ -630,8 +639,6 @@ def _ensure_switch_allowed(
         _library_error(
             409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库"
         )
-
-
 
 
 def _preferences_response(settings: Settings) -> PreferencesResponse:

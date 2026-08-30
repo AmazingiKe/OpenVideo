@@ -3,7 +3,9 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from openvideo.core.agent_evidence_models import AgentEvidenceSource
 
 
 class SummaryDetail(StrEnum):
@@ -70,6 +72,7 @@ class SummaryGenerationResult(BaseModel):
     version: SummaryVersion
     documents: list[SummaryDocument]
     context_capacity_unknown: bool = False
+    illustration_job: "SummaryIllustrationJob | None" = None
 
 
 class SummaryDocumentCreate(BaseModel):
@@ -94,6 +97,81 @@ class SummaryMediaType(StrEnum):
     GIF = "gif"
 
 
+class SummaryMediaOrigin(StrEnum):
+    MANUAL = "manual"
+    AUTOMATIC = "automatic"
+
+
+class SummaryIllustrationConfidence(StrEnum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class SummaryIllustrationStage(StrEnum):
+    PENDING = "pending"
+    PLANNING = "planning"
+    RETRIEVING = "retrieving"
+    EXTRACTING = "extracting"
+    VALIDATING = "validating"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
+TERMINAL_SUMMARY_ILLUSTRATION_STAGES = {
+    SummaryIllustrationStage.COMPLETE,
+    SummaryIllustrationStage.FAILED,
+}
+
+
+class SummaryIllustrationSlotStatus(StrEnum):
+    PENDING = "pending"
+    LOCATING = "locating"
+    VALIDATING = "validating"
+    INSERTED = "inserted"
+    SKIPPED = "skipped"
+
+
+class SummaryIllustrationSlot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slot_id: str
+    document_id: str
+    heading_path: list[str] = Field(default_factory=list, max_length=12)
+    target_excerpt: str = Field(min_length=1, max_length=500)
+    retrieval_query: str = Field(min_length=1, max_length=500)
+    caption: str = Field(min_length=1, max_length=500)
+    status: SummaryIllustrationSlotStatus = SummaryIllustrationSlotStatus.PENDING
+    candidate_times: list[float] = Field(default_factory=list, max_length=7)
+    selected_time: float | None = Field(default=None, ge=0)
+    confidence: SummaryIllustrationConfidence | None = None
+    source_excerpt: str | None = Field(default=None, max_length=2_000)
+    source_types: list[AgentEvidenceSource] = Field(default_factory=list)
+    media_id: str | None = None
+    message: str = "等待定位"
+
+
+class SummaryIllustrationJob(BaseModel):
+    """记录首次总结配图的可恢复进度，正文生成不依赖任务成功。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    asset_id: str
+    version_id: str
+    planning_model_id: str
+    vision_model_id: str | None = None
+    stage: SummaryIllustrationStage = SummaryIllustrationStage.PENDING
+    progress_percent: float = Field(default=0, ge=0, le=100)
+    message: str = "正在准备配图"
+    slots: list[SummaryIllustrationSlot] = Field(default_factory=list, max_length=6)
+    inserted_count: int = Field(default=0, ge=0, le=6)
+    skipped_count: int = Field(default=0, ge=0, le=6)
+    error_message: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class SummaryMediaCreate(BaseModel):
     document_id: str
     expected_revision: int = Field(ge=1)
@@ -102,6 +180,21 @@ class SummaryMediaCreate(BaseModel):
     end_seconds: float | None = Field(default=None, ge=0)
     insert_after: str | None = None
     caption: str = Field(min_length=1, max_length=500)
+
+
+class SummaryMediaProvenance(BaseModel):
+    """保存自动选图的证据链，使插图决策可解释并可离线评估。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    origin: SummaryMediaOrigin = SummaryMediaOrigin.AUTOMATIC
+    target_heading_path: list[str] = Field(default_factory=list, max_length=12)
+    source_excerpt: str | None = Field(default=None, max_length=2_000)
+    source_types: list[AgentEvidenceSource] = Field(default_factory=list)
+    candidate_times: list[float] = Field(default_factory=list, max_length=7)
+    vision_model_id: str | None = None
+    validation_confidence: SummaryIllustrationConfidence | None = None
+    validation_summary: str | None = Field(default=None, max_length=2_000)
 
 
 class SummaryMediaArtifact(BaseModel):
@@ -114,6 +207,14 @@ class SummaryMediaArtifact(BaseModel):
     caption: str
     start_seconds: float
     end_seconds: float | None = None
+    origin: SummaryMediaOrigin = SummaryMediaOrigin.MANUAL
+    target_heading_path: list[str] = Field(default_factory=list)
+    source_excerpt: str | None = None
+    source_types: list[AgentEvidenceSource] = Field(default_factory=list)
+    candidate_times: list[float] = Field(default_factory=list)
+    vision_model_id: str | None = None
+    validation_confidence: SummaryIllustrationConfidence | None = None
+    validation_summary: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -124,3 +225,6 @@ class SummaryExportResult(BaseModel):
     file_name: str
     size_bytes: int = Field(ge=0)
     exported_at: datetime
+
+
+SummaryGenerationResult.model_rebuild()
