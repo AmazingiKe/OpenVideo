@@ -33,14 +33,18 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     library_path = tmp_path / "library"
     library_path.mkdir()
     library = MediaLibrary.initialize_directory(library_path)
+    course_folder = library.create_folder("现代计算机图形学")
     asset_directory = library.asset_directory(ASSET_ID)
     asset_directory.mkdir(parents=True, exist_ok=True)
     (asset_directory / "playback.mp4").write_bytes(b"video")
     library.save(
         MediaAsset(
             asset_id=ASSET_ID,
+            folder_id=course_folder.folder_id,
             source_url="https://www.bilibili.com/video/BV1xx411c7mD",
             source_platform=SourcePlatform.BILIBILI,
+            title="GAMES101 第一讲",
+            author_name="闫令琪",
             status=MediaAssetStatus.READY,
             playback_path="playback.mp4",
             duration_seconds=20,
@@ -62,10 +66,17 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         (model_directory / "model.bin").write_bytes(b"model")
         report_progress(100, 100)
 
+    transcription_contexts: list[str] = []
+
+    def create_test_transcriber(options, models_root_directory, **kwargs):
+        del options, models_root_directory
+        transcription_contexts.append(kwargs["context"])
+        return object()
+
     monkeypatch.setattr(
         analysis_manager_module,
         "create_transcriber",
-        lambda options, models_root_directory, **_kwargs: object(),
+        create_test_transcriber,
     )
     monkeypatch.setattr(
         analysis_manager_module,
@@ -151,6 +162,9 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     assert completed is not None
     assert completed.operation == AnalysisOperation.INITIALIZATION
     assert completed.stage == AnalysisStage.COMPLETE
+    assert transcription_contexts == [
+        "GAMES101 第一讲；现代计算机图形学；闫令琪"
+    ]
     assert completed.strategy.depth == AnalysisDepth.DEEP
     assert {
         AnalysisCapability.TRANSCRIPT,

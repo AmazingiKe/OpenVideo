@@ -20,7 +20,7 @@ from openvideo.core.analysis_models import (
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaAssetStatus, MediaSegment
+from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaSegment
 from openvideo.core.transcription_models import (
     Transcript,
     TranscriptionMetadata,
@@ -56,6 +56,7 @@ TRANSCRIPTION_PROGRESS_START_PERCENT = 10
 TRANSCRIPTION_PROGRESS_END_PERCENT = 65
 TRANSCRIPTION_SAVE_PROGRESS_PERCENT = 66
 TRANSCRIPTION_LATEST_TEXT_MAX_CHARACTERS = 56
+TRANSCRIPTION_CONTEXT_MAX_CHARACTERS = 400
 SECONDS_PER_MINUTE = 60
 
 
@@ -497,6 +498,7 @@ class AnalysisManager:
                                 job_id,
                                 progress,
                             ),
+                            self._transcription_context(asset),
                         ),
                     )
                     transcript = transcription_result.transcript
@@ -683,12 +685,30 @@ class AnalysisManager:
         self,
         options: TranscriptionOptions,
         progress_reporter: Callable[[TranscriptionProgress], None],
+        context: str,
     ) -> Transcriber:
         return create_transcriber(
             options,
             self.settings.models_root_directory,
             progress_reporter=progress_reporter,
+            context=context,
         )
+
+    def _transcription_context(self, asset: MediaAsset) -> str:
+        candidates = [asset.title, asset.author_name]
+        if asset.folder_id is not None:
+            folder = self.library.get_folder(asset.folder_id)
+            candidates.insert(1, folder.name)
+        normalized_parts: list[str] = []
+        known_parts: set[str] = set()
+        for candidate in candidates:
+            normalized = " ".join((candidate or "").split())
+            normalized_key = normalized.casefold()
+            if not normalized or normalized_key in known_parts:
+                continue
+            normalized_parts.append(normalized)
+            known_parts.add(normalized_key)
+        return "；".join(normalized_parts)[:TRANSCRIPTION_CONTEXT_MAX_CHARACTERS]
 
     def _validate_and_sort_segments(
         self,

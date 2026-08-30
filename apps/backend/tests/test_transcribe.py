@@ -534,9 +534,11 @@ def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
         "openvideo.tools.transcribe._load_qwen_audio_chunks",
         lambda _: iter(chunks),
     )
+    received_contexts: list[str] = []
 
     class FakeModel:
-        def transcribe(self, **_):
+        def transcribe(self, **kwargs):
+            received_contexts.append(kwargs["context"])
             return [
                 SimpleNamespace(
                     language="Chinese",
@@ -566,6 +568,7 @@ def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
         "cuda",
         "float16",
         progress_reporter=progress_updates.append,
+        context="GAMES101 现代计算机图形学",
     )
     transcriber._model = FakeModel()
 
@@ -577,6 +580,10 @@ def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
     assert progress_updates[-1].completed_seconds == 2
     assert progress_updates[-1].segment_count == 2
     assert progress_updates[-1].latest_text == "一句。"
+    assert received_contexts == [
+        "GAMES101 现代计算机图形学",
+        "GAMES101 现代计算机图形学",
+    ]
 
 
 def test_qwen_aggregates_by_punctuation_and_maximum_duration():

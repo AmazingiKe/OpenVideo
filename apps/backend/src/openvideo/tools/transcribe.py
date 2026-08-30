@@ -338,6 +338,7 @@ class FasterWhisperTranscriber:
         device: str = "cpu",
         compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE,
         progress_reporter: TranscriptionProgressReporter | None = None,
+        context: str = "",
     ) -> None:
         self.model_size = model_size
         self.model_root_directory = model_root_directory
@@ -345,6 +346,7 @@ class FasterWhisperTranscriber:
         self.device = device
         self.compute_type = compute_type
         self.progress_reporter = progress_reporter
+        self.context = context
         self._model = None
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
@@ -377,6 +379,7 @@ class FasterWhisperTranscriber:
             str(audio_path),
             language=self.language,
             vad_filter=True,
+            initial_prompt=self.context or None,
         )
         total_seconds = (
             float(info.duration) if self.progress_reporter is not None else 0.0
@@ -445,6 +448,7 @@ class Qwen3AsrTranscriber:
         device: str,
         compute_type: str,
         progress_reporter: TranscriptionProgressReporter | None = None,
+        context: str = "",
     ) -> None:
         self.model = model
         self.models_root_directory = models_root_directory
@@ -452,6 +456,7 @@ class Qwen3AsrTranscriber:
         self.device = device
         self.compute_type = compute_type
         self.progress_reporter = progress_reporter
+        self.context = context
         self._model = None
         self._torch = None
 
@@ -559,6 +564,7 @@ class Qwen3AsrTranscriber:
         self._model.max_new_tokens = _qwen_generation_token_budget(duration_seconds)
         results = self._model.transcribe(
             audio=(chunk.samples, chunk.sample_rate),
+            context=self.context,
             language=self.language,
             return_time_stamps=True,
         )
@@ -773,6 +779,7 @@ def create_transcriber(
     *,
     automatic_fallback: bool = True,
     progress_reporter: TranscriptionProgressReporter | None = None,
+    context: str = "",
 ) -> Transcriber:
     """根据持久化任务选项路由 ASR；未接入的引擎会返回明确状态。"""
     require_transcription_adapter(options)
@@ -789,6 +796,7 @@ def create_transcriber(
             device=options.device.value,
             compute_type=compute_type,
             progress_reporter=progress_reporter,
+            context=context,
         )
     if options.engine == TranscriptionEngine.QWEN3_ASR:
         primary = Qwen3AsrTranscriber(
@@ -798,12 +806,14 @@ def create_transcriber(
             device=options.device.value,
             compute_type=options.compute_type.value,
             progress_reporter=progress_reporter,
+            context=context,
         )
         fallback = (
             _qwen_fallback_transcriber(
                 models_root_directory,
                 options.language,
                 progress_reporter,
+                context,
             )
             if automatic_fallback
             else None
@@ -826,6 +836,7 @@ def _qwen_fallback_transcriber(
     models_root_directory: Path,
     language: str | None,
     progress_reporter: TranscriptionProgressReporter | None,
+    context: str,
 ) -> Transcriber | None:
     sensevoice_descriptor = find_transcription_model(
         TranscriptionEngine.SENSEVOICE,
@@ -869,6 +880,7 @@ def _qwen_fallback_transcriber(
             device=AUTOMATIC_DEVICE,
             compute_type=AUTOMATIC_COMPUTE_TYPE,
             progress_reporter=progress_reporter,
+            context=context,
         )
     return None
 
