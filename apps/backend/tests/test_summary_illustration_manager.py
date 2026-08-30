@@ -6,9 +6,15 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 
+from openvideo.core.agent_evidence_index import IndexedEvidenceDocument
+from openvideo.core.agent_evidence_models import AgentEvidenceSource
 from openvideo.core.agent_governance_models import AgentPreferences
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, TEXT_INPUT_MODALITY
-from openvideo.core.summary_models import SummaryIllustrationStage
+from openvideo.core.summary_models import (
+    SummaryIllustrationJob,
+    SummaryIllustrationSlot,
+    SummaryIllustrationStage,
+)
 from openvideo.tools.frame_quality import QualifiedFrame
 from test_api_summary import (
     ASSET_ID,
@@ -76,6 +82,52 @@ def test_missing_vision_model_finishes_without_blocking_summary(
 
     assert job["stage"] == "complete"
     assert job["message"] == "未配置可用的视觉模型，已保留纯文本总结"
+
+
+def test_evidence_retrieval_ignores_overwide_analysis_window(
+    tmp_path: Path, monkeypatch
+):
+    with create_client(tmp_path) as client:
+        manager = client.app.state.summary_illustration_manager
+        broad = _evidence(
+            "broad",
+            AgentEvidenceSource.ANALYSIS,
+            start_seconds=0,
+            end_seconds=900,
+            relevance_score=0.99,
+        )
+        precise = _evidence(
+            "precise",
+            AgentEvidenceSource.TRANSCRIPT,
+            start_seconds=48,
+            end_seconds=54,
+            relevance_score=0.75,
+        )
+        monkeypatch.setattr(
+            manager.library,
+            "search_agent_evidence",
+            lambda **_kwargs: [broad, precise],
+        )
+        monkeypatch.setattr(manager.library, "load_markers", lambda _asset_id: [])
+
+        result = manager._retrieve_evidence(
+            SummaryIllustrationJob(
+                job_id="summary-illustration-job-test",
+                asset_id=ASSET_ID,
+                version_id="summary-version-test",
+                planning_model_id=MODEL_ID,
+            ),
+            SummaryIllustrationSlot(
+                slot_id="illustration-slot-test",
+                document_id="document-test",
+                target_excerpt="需要准确定位的课程知识点",
+                retrieval_query="课程知识点",
+                caption="课程知识点画面",
+            ),
+        )
+
+    assert result is not None
+    assert result.document_id == "precise"
 
 
 def _enable_vision_model(client: TestClient) -> None:
@@ -211,3 +263,26 @@ def _draw_frame(path: Path, offset: int) -> None:
     draw.rectangle((12, 62, 110 + offset, 165), fill="gray")
     draw.rectangle((122 + offset, 62, 300, 165), fill="orange")
     image.save(path)
+
+
+def _evidence(
+    document_id: str,
+    source_type: AgentEvidenceSource,
+    *,
+    start_seconds: float,
+    end_seconds: float,
+    relevance_score: float,
+) -> IndexedEvidenceDocument:
+    return IndexedEvidenceDocument(
+        document_id=document_id,
+        asset_id=ASSET_ID,
+        source_type=source_type,
+        source_version="source-version",
+        source_position=0,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        title="证据",
+        text="证据正文",
+        relevance_score=relevance_score,
+        match_reasons=(),
+    )

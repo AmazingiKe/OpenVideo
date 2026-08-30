@@ -10,10 +10,12 @@ import shutil
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from typing import Callable, TypeVar
 
 import litellm
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.event_analysis_models import EventAnalysisStatus
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
@@ -73,7 +75,23 @@ SUMMARY_OUTPUT_TOKENS = {
     SummaryDetail.STANDARD: 8_000,
     SummaryDetail.DETAILED: 12_000,
 }
+SUMMARY_DOCUMENT_LIMITS = {
+    SummaryDetail.CONCISE: 2,
+    SummaryDetail.STANDARD: 5,
+    SummaryDetail.DETAILED: 8,
+}
+SUMMARY_MARKDOWN_CHARACTER_LIMITS = {
+    SummaryDetail.CONCISE: 1_200,
+    SummaryDetail.STANDARD: 3_500,
+    SummaryDetail.DETAILED: 7_000,
+}
+SUMMARY_JSON_RETRY_INSTRUCTION = (
+    "\n\n上一轮响应未通过完整性或 JSON 校验。请重新生成一次，严格遵守文档数量、"
+    "总长度、允许路径和 JSON 结构；优先压缩措辞，必须返回完整闭合的 JSON。"
+)
 EXPORT_FILE_NAME_TIME_FORMAT = "%Y%m%d-%H%M%S-%f"
+
+SummaryModelT = TypeVar("SummaryModelT", bound=BaseModel)
 
 
 class SummaryError(RuntimeError):
@@ -265,14 +283,13 @@ class SummaryManager:
             SUMMARY_PLAN_MAX_TOKENS,
         )
         try:
-            plan_content = complete_text(
+            plan = _complete_summary_json(
                 model,
                 plan_messages,
-                SUMMARY_AGENT_TIMEOUT_SECONDS,
+                SummaryPlan,
                 SUMMARY_PLAN_MAX_TOKENS,
-                True,
+                lambda result: _validate_plan_budget(result, request.detail),
             )
-            plan = SummaryPlan.model_validate_json(_strip_code_fence(plan_content))
         except (LlmCompletionError, ValidationError, ValueError) as error:
             raise SummaryError(f"总结文档规划无效：{error}") from error
 
@@ -298,25 +315,26 @@ class SummaryManager:
             or capacity_unknown
         )
         try:
-            body_content = complete_text(
+            body = _complete_summary_json(
                 model,
                 body_messages,
-                SUMMARY_AGENT_TIMEOUT_SECONDS,
+                SummaryBody,
                 output_tokens,
-                True,
+                lambda result: _validate_body_contract(
+                    result,
+                    set(allowed_paths),
+                ),
             )
-            body = SummaryBody.model_validate_json(_strip_code_fence(body_content))
         except (LlmCompletionError, ValidationError, ValueError) as error:
             raise SummaryError(f"总结正文输出无效：{error}") from error
-        generated_paths = [document.relative_path for document in body.documents]
-        if len(generated_paths) != len(set(generated_paths)) or set(
-            generated_paths
-        ) != set(allowed_paths):
-            raise SummaryError("总结正文只能写入后端预分配的完整路径表")
         markdown_by_path = {
-            document.relative_path: document.markdown for document in body.documents
+            document.relative_path: _sanitize_markdown_links(
+                document.markdown,
+                document.relative_path,
+                set(allowed_paths),
+            )
+            for document in body.documents
         }
-        _validate_markdown_links(markdown_by_path, set(allowed_paths))
         documents = [
             self._prepare_document(
                 document.model_copy(
@@ -1297,6 +1315,7 @@ def _body_messages(
                 '{"documents":[{"relative_path":"index.md",'
                 '"markdown":"..."}]}。不得返回或构造路径表以外的路径。'
                 "文档之间只能使用路径表中的相对路径建立链接。"
+                "不要生成图片、截图链接或图片占位符，配图由独立任务处理。"
             ),
         },
         {
@@ -1323,6 +1342,9 @@ def _generation_control(
         f"视频标题：{asset_title}\n\n{context}\n\n<总结角色>\n{preset_prompt}"
         f"\n</总结角色>\n\n<本次用户补充要求>\n{request.user_input or '无'}"
         f"\n</本次用户补充要求>\n\n详细程度：{request.detail.value}"
+        f"\n文档数量上限：{SUMMARY_DOCUMENT_LIMITS[request.detail]}"
+        f"\n全部 Markdown 总字符数上限："
+        f"{SUMMARY_MARKDOWN_CHARACTER_LIMITS[request.detail]}"
         f"\n输出语言：{request.output_language}"
     )
 
@@ -1343,31 +1365,94 @@ def _strip_code_fence(content: str) -> str:
     return stripped
 
 
-MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)")
+def _complete_summary_json(
+    model: AiModelConfiguration,
+    messages: list[dict[str, str]],
+    response_model: type[SummaryModelT],
+    max_tokens: int,
+    validate: Callable[[SummaryModelT], None],
+) -> SummaryModelT:
+    """结构输出失败时自动缩短重试，避免把供应商截断转嫁给用户。"""
+
+    retry_messages = messages
+    for attempt in range(2):
+        content = complete_text(
+            model,
+            retry_messages,
+            SUMMARY_AGENT_TIMEOUT_SECONDS,
+            max_tokens,
+            True,
+        )
+        try:
+            result = response_model.model_validate_json(_strip_code_fence(content))
+            validate(result)
+            return result
+        except (ValidationError, ValueError):
+            if attempt == 1:
+                raise
+            retry_messages = [
+                *messages[:-1],
+                {
+                    **messages[-1],
+                    "content": messages[-1]["content"] + SUMMARY_JSON_RETRY_INSTRUCTION,
+                },
+            ]
+    raise AssertionError("总结 JSON 重试必须返回或抛出异常")
+
+
+def _validate_plan_budget(plan: SummaryPlan, detail: SummaryDetail) -> None:
+    if len(plan.documents) > SUMMARY_DOCUMENT_LIMITS[detail]:
+        raise ValueError("总结规划超过当前详细程度的文档数量上限")
+
+
+def _validate_body_contract(
+    body: SummaryBody,
+    allowed_paths: set[str],
+) -> None:
+    generated_paths = [document.relative_path for document in body.documents]
+    if (
+        len(generated_paths) != len(set(generated_paths))
+        or set(generated_paths) != allowed_paths
+    ):
+        raise ValueError("总结正文必须覆盖后端预分配的完整路径表")
+
+
+MARKDOWN_LINK_PATTERN = re.compile(
+    r"(?P<image>!)?\[(?P<label>[^\]]*)\]"
+    r"\((?P<destination>[^)\s]+)(?:\s+[^)]*)?\)"
+)
 EXTERNAL_LINK_SCHEMES = ("http://", "https://", "mailto:")
 
 
-def _validate_markdown_links(
-    markdown_by_path: dict[str, str],
+def _sanitize_markdown_links(
+    markdown: str,
+    source_path: str,
     allowed_paths: set[str],
-) -> None:
-    """模型只能链接本版本预分配文档，避免链接逃逸或悬空文件。"""
-    for source_path, markdown in markdown_by_path.items():
-        source_directory = PurePosixPath(source_path).parent.as_posix()
-        for match in MARKDOWN_LINK_PATTERN.finditer(markdown):
-            destination = match.group(1).strip("<>")
-            if destination.startswith("#") or destination.lower().startswith(
-                EXTERNAL_LINK_SCHEMES
-            ):
-                continue
-            path_without_fragment = destination.split("#", 1)[0].split("?", 1)[0]
-            if not path_without_fragment:
-                continue
-            combined = posixpath.normpath(
-                posixpath.join(source_directory, path_without_fragment)
-            )
-            if combined.startswith("../") or combined not in allowed_paths:
-                raise SummaryError("总结正文包含未预分配或越界的相对链接")
+) -> str:
+    """越界或悬空链接降为可读文本，避免一次瑕疵使整份总结失败。"""
+
+    source_directory = PurePosixPath(source_path).parent.as_posix()
+
+    def replace_invalid_link(match: re.Match[str]) -> str:
+        destination = match.group("destination").strip("<>")
+        if destination.startswith("#") or destination.lower().startswith(
+            EXTERNAL_LINK_SCHEMES
+        ):
+            return match.group(0)
+        path_without_fragment = destination.split("#", 1)[0].split("?", 1)[0]
+        if not path_without_fragment:
+            return match.group(0)
+        combined = posixpath.normpath(
+            posixpath.join(source_directory, path_without_fragment)
+        )
+        if not combined.startswith("../") and combined in allowed_paths:
+            return match.group(0)
+        label = match.group("label").strip()
+        if match.group("image"):
+            return f"图片：{label}" if label else "图片"
+        return label
+
+    return MARKDOWN_LINK_PATTERN.sub(replace_invalid_link, markdown)
 
 
 def _insert_markdown(markdown: str, insert_after: str | None, content: str) -> str:

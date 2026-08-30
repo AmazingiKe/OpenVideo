@@ -377,6 +377,10 @@ def test_generation_rejects_paths_outside_preallocated_whitelist(
                 {"documents": [{"relative_path": "../escape.md", "markdown": "越界"}]},
                 ensure_ascii=False,
             ),
+            json.dumps(
+                {"documents": [{"relative_path": "../escape.md", "markdown": "越界"}]},
+                ensure_ascii=False,
+            ),
         )
     )
     monkeypatch.setattr(
@@ -397,7 +401,45 @@ def test_generation_rejects_paths_outside_preallocated_whitelist(
     assert not (tmp_path / "assets" / ASSET_ID / "summary" / "escape.md").exists()
 
 
-def test_generation_rejects_unallocated_markdown_links(
+def test_generation_retries_truncated_body_with_shorter_contract(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+    body_attempts = 0
+
+    def complete(_model, messages, *_args, **_kwargs):
+        nonlocal body_attempts
+        if "规划" in messages[0]["content"]:
+            return json.dumps(
+                {"documents": [{"key": "root", "title": "总结", "parent_key": None}]},
+                ensure_ascii=False,
+            )
+        body_attempts += 1
+        if body_attempts == 1:
+            return '{"documents":[{"relative_path":"index.md","markdown":"未闭合'
+        assert "上一轮响应未通过" in messages[1]["content"]
+        match = re.search(r"<允许路径表>\n(.*?)\n</允许路径表>", messages[1]["content"])
+        assert match is not None
+        path = json.loads(match.group(1))[0]["relative_path"]
+        return json.dumps(
+            {"documents": [{"relative_path": path, "markdown": "# 完整总结\n"}]},
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete)
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={"ai_model_id": MODEL_ID, "preset_id": "knowledge_notes"},
+        )
+
+    assert response.status_code == 201, response.text
+    assert body_attempts == 2
+    assert response.json()["documents"][0]["markdown"] == "# 完整总结\n"
+
+
+def test_generation_sanitizes_unallocated_markdown_links(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -415,7 +457,14 @@ def test_generation_rejects_unallocated_markdown_links(
         return json.dumps(
             {
                 "documents": [
-                    {"relative_path": path, "markdown": "[越界](../outside.md)"}
+                    {
+                        "relative_path": path,
+                        "markdown": (
+                            "[越界](../outside.md)\n"
+                            "[外链](https://example.com)\n"
+                            "![坏图](../bad.png)"
+                        ),
+                    }
                 ]
             },
             ensure_ascii=False,
@@ -428,8 +477,11 @@ def test_generation_rejects_unallocated_markdown_links(
             json={"ai_model_id": MODEL_ID, "preset_id": "knowledge_notes"},
         )
 
-    assert response.status_code == 409
-    assert "相对链接" in response.json()["detail"]
+    assert response.status_code == 201, response.text
+    assert response.json()["documents"][0]["markdown"] == (
+        "越界\n[外链](https://example.com)\n图片：坏图\n"
+    )
+    assert not (tmp_path / "assets" / ASSET_ID / "summary" / "outside.md").exists()
 
 
 def test_legacy_single_summary_migrates_once(tmp_path: Path):

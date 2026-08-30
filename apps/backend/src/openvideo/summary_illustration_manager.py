@@ -52,6 +52,7 @@ ILLUSTRATION_PLAN_MAX_TOKENS = 2_500
 EVIDENCE_LIMIT = 12
 EVIDENCE_WINDOW_PADDING_SECONDS = 4
 MINIMUM_EVIDENCE_WINDOW_SECONDS = 6
+MAXIMUM_DIRECT_EVIDENCE_WINDOW_SECONDS = 120
 FORMAL_MARKER_SCORE_PER_LEVEL = 0.04
 DETAIL_SLOT_LIMITS = {
     SummaryDetail.CONCISE: 2,
@@ -519,8 +520,11 @@ class SummaryIllustrationManager:
             reranker=reranker,
         )
         markers = self.library.load_markers(job.asset_id)
+        precise_evidence = [
+            item for item in evidence if _is_temporally_precise(item)
+        ]
         ranked = sorted(
-            evidence,
+            precise_evidence,
             key=lambda item: (
                 -(
                     item.relevance_score
@@ -735,6 +739,12 @@ def _visual_source_bonus(source_type: AgentEvidenceSource) -> float:
     if source_type == AgentEvidenceSource.ANALYSIS:
         return 0.04
     return 0
+
+
+def _is_temporally_precise(evidence: IndexedEvidenceDocument) -> bool:
+    """过宽文本无法证明具体画面，应转入视觉索引而不是扫描长视频。"""
+    duration_seconds = evidence.end_seconds - evidence.start_seconds
+    return 0 <= duration_seconds <= MAXIMUM_DIRECT_EVIDENCE_WINDOW_SECONDS
 
 
 def _evidence_window(

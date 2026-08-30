@@ -40,7 +40,7 @@ def refine_scene_candidates(
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None = None,
 ) -> list[float]:
-    """在相关证据窗口内逐级降低阈值，优先返回真实画面变化附近的帧。"""
+    """在证据窗口内用关键帧快速细分，避免为配图重复解码全部帧。"""
 
     if end_seconds <= start_seconds:
         return []
@@ -95,6 +95,7 @@ def _scan_scene_boundaries(
         "-hide_banner",
     ]
     if start_seconds is not None:
+        command.extend(("-skip_frame", "nokey"))
         command.extend(("-ss", str(start_seconds)))
     command.extend(
         [
@@ -126,8 +127,12 @@ def _scan_scene_boundaries(
         return []
     if result.returncode != 0:
         return []
+    points = [float(match) for match in PTS_TIME_PATTERN.findall(result.stderr)]
+    if start_seconds is not None and end_seconds is not None:
+        duration_seconds = end_seconds - start_seconds
+        points = [point for point in points if 0 <= point <= duration_seconds]
     offset = start_seconds or 0.0
-    return [offset + float(match) for match in PTS_TIME_PATTERN.findall(result.stderr)]
+    return [offset + point for point in points]
 
 
 def _deduplicate_times(times: list[float], duration: float) -> list[float]:

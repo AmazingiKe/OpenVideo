@@ -64,6 +64,8 @@ def test_scene_refinement_lowers_threshold_until_enough_boundaries(
     assert len(candidates) == 5
     assert all(10 < seconds < 30 for seconds in candidates)
     assert len(commands) == 2
+    assert all("-skip_frame" in command for command in commands)
+    assert all("nokey" in command for command in commands)
     assert all("0.16" not in command[command.index("-vf") + 1] for command in commands)
 
 
