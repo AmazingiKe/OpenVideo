@@ -3,6 +3,7 @@ import type {
   SummaryDocument,
   SummaryExportResult,
   SummaryGenerationResult,
+  SummaryIllustrationJob,
   SummaryPreset,
   SummaryVersion,
 } from "../types";
@@ -93,6 +94,26 @@ export function generate_summary_documents(
       body: JSON.stringify(options),
       signal,
     },
+  );
+}
+
+export function get_summary_illustration_job(
+  job_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryIllustrationJob> {
+  return request_json(
+    `/api/summary-illustration-jobs/${encodeURIComponent(job_id)}`,
+    { signal },
+  );
+}
+
+export function get_version_summary_illustration_job(
+  version_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryIllustrationJob | null> {
+  return request_json(
+    `/api/summary-versions/${encodeURIComponent(version_id)}/illustration-job`,
+    { signal },
   );
 }
 

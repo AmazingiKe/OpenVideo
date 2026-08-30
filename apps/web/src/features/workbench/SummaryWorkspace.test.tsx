@@ -288,6 +288,7 @@ describe("SummaryWorkspace", () => {
       version: SUMMARY_VERSION,
       documents: [DOCUMENT],
       context_capacity_unknown: false,
+      illustration_job: null,
     });
 
     render(
@@ -319,6 +320,7 @@ describe("SummaryWorkspace", () => {
       version: SUMMARY_VERSION,
       documents: [DOCUMENT],
       context_capacity_unknown: true,
+      illustration_job: null,
     });
 
     render(

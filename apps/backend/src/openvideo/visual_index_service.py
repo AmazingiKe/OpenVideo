@@ -227,7 +227,13 @@ class VisualIndexService:
             if self._task is not None and not self._task.done():
                 return self.status()
             self._loop = asyncio.get_running_loop()
-            self._task = asyncio.create_task(self._build(asset_id))
+            current = self.status()
+            self._task = asyncio.create_task(
+                self._load_only()
+                if current.state == VisualIndexState.READY
+                and current.indexed_frames > 0
+                else self._build(asset_id)
+            )
         return self.status()
 
     def unload(self) -> VisualIndexStatus:
@@ -341,6 +347,32 @@ class VisualIndexService:
                 progress_percent=100,
                 message="视觉索引准备失败",
                 error_message=str(error) or "视觉索引准备失败",
+            )
+
+    async def _load_only(self) -> None:
+        current = self.status()
+        try:
+            self._save_status(
+                state=VisualIndexState.LOADING,
+                progress_percent=96,
+                message="正在按需加载视觉模型",
+                error_message=None,
+            )
+            await asyncio.to_thread(self.encoder.prepare)
+            self._save_status(
+                state=VisualIndexState.READY,
+                progress_percent=100,
+                message=f"视觉索引已就绪，共 {current.indexed_frames} 帧",
+            )
+            self._schedule_unload()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._save_status(
+                state=VisualIndexState.ERROR,
+                progress_percent=100,
+                message="视觉模型加载失败",
+                error_message=str(error) or "视觉模型加载失败",
             )
 
     def _frame_references(

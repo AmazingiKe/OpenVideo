@@ -32,6 +32,7 @@ import {
 import type {
   AgentArtifact,
   SummaryDocument,
+  SummaryIllustrationJob,
   SummaryVersion,
 } from "@/shared/types";
 import {
@@ -41,6 +42,7 @@ import {
   type SaveStatus,
 } from "./SummaryWorkspacePanels";
 import { SummaryDocumentNavigation } from "./SummaryDocumentNavigation";
+import { SummaryIllustrationProgress } from "./SummaryIllustrationProgress";
 
 type SummaryEditorLayoutProps = {
   compact_layout: boolean;
@@ -53,6 +55,7 @@ type SummaryEditorLayoutProps = {
   export_pending: boolean;
   export_relative_path: string | null;
   generation_notice: string | null;
+  illustration_job: SummaryIllustrationJob | null;
   move_document: (
     document_id: string,
     parent_document_id: string,
@@ -100,6 +103,7 @@ export function SummaryEditorLayout({
   export_pending,
   export_relative_path,
   generation_notice,
+  illustration_job,
   move_document,
   new_document_open,
   new_document_title,
@@ -289,6 +293,9 @@ export function SummaryEditorLayout({
             <AlertDescription>{generation_notice}</AlertDescription>
           </Alert>
         </div>
+      ) : null}
+      {illustration_job ? (
+        <SummaryIllustrationProgress job={illustration_job} />
       ) : null}
       <div className="min-h-0 flex-1">
         {compact_layout ? (

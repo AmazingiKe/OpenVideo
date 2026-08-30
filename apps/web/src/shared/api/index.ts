@@ -9,3 +9,4 @@ export * from "./markers";
 export * from "./media";
 export * from "./settings";
 export * from "./summary";
+export * from "./visual_index";

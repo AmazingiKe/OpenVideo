@@ -594,6 +594,61 @@ export type SummaryGenerationResult = {
   version: SummaryVersion;
   documents: SummaryDocument[];
   context_capacity_unknown: boolean;
+  illustration_job: SummaryIllustrationJob | null;
+};
+export type SummaryIllustrationConfidence = "high" | "medium" | "low";
+export type SummaryIllustrationStage =
+  | "pending"
+  | "planning"
+  | "retrieving"
+  | "extracting"
+  | "validating"
+  | "complete"
+  | "failed";
+export type SummaryIllustrationSlot = {
+  slot_id: string;
+  document_id: string;
+  heading_path: string[];
+  target_excerpt: string;
+  retrieval_query: string;
+  caption: string;
+  status: "pending" | "locating" | "validating" | "inserted" | "skipped";
+  candidate_times: number[];
+  selected_time: number | null;
+  confidence: SummaryIllustrationConfidence | null;
+  source_excerpt: string | null;
+  source_types: ("transcript" | "analysis" | "visual" | "ocr")[];
+  media_id: string | null;
+  message: string;
+};
+export type SummaryIllustrationJob = {
+  job_id: string;
+  asset_id: string;
+  version_id: string;
+  planning_model_id: string;
+  vision_model_id: string | null;
+  stage: SummaryIllustrationStage;
+  progress_percent: number;
+  message: string;
+  slots: SummaryIllustrationSlot[];
+  inserted_count: number;
+  skipped_count: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export type VisualIndexStatus = {
+  state:
+    "not_prepared" | "downloading" | "loading" | "indexing" | "ready" | "error";
+  progress_percent: number;
+  message: string;
+  model_name: string;
+  model_revision: string;
+  indexed_frames: number;
+  total_frames: number;
+  model_loaded: boolean;
+  error_message: string | null;
+  updated_at: string;
 };
 export type AgentSession = {
   session_id: string;

@@ -12,6 +12,7 @@ import {
   get_formula_model,
   get_preferences,
   get_transcription_model_download,
+  get_visual_index_status,
   list_ai_models,
   list_transcription_models,
   test_ai_model,
@@ -42,6 +43,9 @@ vi.mock("@/shared/api", () => ({
   get_formula_model_download: vi.fn(),
   get_preferences: vi.fn(),
   get_transcription_model_download: vi.fn(),
+  get_visual_index_status: vi.fn(),
+  prepare_visual_index: vi.fn(),
+  unload_visual_index: vi.fn(),
   list_ai_models: vi.fn(),
   list_transcription_models: vi.fn(),
   open_library: vi.fn(),
@@ -77,6 +81,18 @@ const preferences = {
 
 beforeEach(() => {
   vi.mocked(get_preferences).mockResolvedValue(preferences);
+  vi.mocked(get_visual_index_status).mockResolvedValue({
+    state: "not_prepared",
+    progress_percent: 0,
+    message: "视觉索引尚未准备",
+    model_name: "google/siglip2-base-patch16-224",
+    model_revision: "997aaec",
+    indexed_frames: 0,
+    total_frames: 0,
+    model_loaded: false,
+    error_message: null,
+    updated_at: "2026-08-31T10:00:00Z",
+  });
   vi.mocked(get_formula_model).mockResolvedValue({
     name: "视频公式识别",
     description: "从关键帧提取结构化公式。",

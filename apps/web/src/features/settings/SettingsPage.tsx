@@ -6,6 +6,7 @@ import {
   FolderOpen,
   Info,
   Settings2,
+  ScanSearch,
   ShieldCheck,
   Sigma,
   TriangleAlert,
@@ -39,6 +40,7 @@ import { AgentPreferencesSettings } from "@/features/settings/AgentPreferencesSe
 import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
 import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
 import { FormulaRecognitionSettings } from "@/features/settings/FormulaRecognitionSettings";
+import { VisualIndexSettings } from "@/features/settings/VisualIndexSettings";
 import {
   get_formula_model,
   get_preferences,
@@ -288,6 +290,13 @@ export function SettingsPage() {
               />
             </SettingsCard>
           ) : null}
+          <SettingsCard
+            icon={ScanSearch}
+            title="视觉检索"
+            description="为需要画面语义检索的 Agent 与自动配图准备本地索引。"
+          >
+            <VisualIndexSettings />
+          </SettingsCard>
           <SettingsCard
             icon={Bot}
             title="AI 模型"

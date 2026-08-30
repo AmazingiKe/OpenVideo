@@ -18,6 +18,8 @@ import {
   delete_summary_document,
   duplicate_summary_document,
   generate_summary_documents,
+  get_summary_illustration_job,
+  get_version_summary_illustration_job,
   list_summary_documents,
   list_summary_presets,
   move_summary_document,
@@ -39,6 +41,7 @@ import type {
   MediaSegment,
   SummaryDetail,
   SummaryDocument,
+  SummaryIllustrationJob,
   SummaryPreset,
   SummaryVersion,
   Transcript,
@@ -53,6 +56,8 @@ import {
 import { SummaryEditorLayout } from "./SummaryEditorLayout";
 
 const AUTO_SAVE_DELAY_MS = 1_000;
+const ILLUSTRATION_POLL_DELAY_MS = 750;
+const TERMINAL_ILLUSTRATION_STAGES = new Set(["complete", "failed"]);
 
 type SummaryWorkspaceProps = {
   selected_asset: MediaAsset | null;
@@ -111,6 +116,8 @@ export function SummaryWorkspace({
   const [generation_notice, set_generation_notice] = useState<string | null>(
     null,
   );
+  const [illustration_job, set_illustration_job] =
+    useState<SummaryIllustrationJob | null>(null);
   const [generation_model_id, set_generation_model_id] = useState<
     string | null
   >(null);
@@ -321,6 +328,7 @@ export function SummaryWorkspace({
   useEffect(() => {
     active_asset_id_ref.current = selected_asset_id;
     set_generation_notice(null);
+    set_illustration_job(null);
     set_export_relative_path(null);
     set_export_pending(false);
     set_generation_open(false);
@@ -348,6 +356,53 @@ export function SummaryWorkspace({
           )?.document_id ?? null),
     );
   }, [project_query.data]);
+
+  useEffect(() => {
+    if (!current_version_id) {
+      set_illustration_job(null);
+      return;
+    }
+    const controller = new AbortController();
+    void get_version_summary_illustration_job(
+      current_version_id,
+      controller.signal,
+    )
+      .then((job) => set_illustration_job(job))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [current_version_id]);
+
+  useEffect(() => {
+    if (
+      !illustration_job ||
+      TERMINAL_ILLUSTRATION_STAGES.has(illustration_job.stage)
+    )
+      return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      void get_summary_illustration_job(
+        illustration_job.job_id,
+        controller.signal,
+      )
+        .then(async (job) => {
+          set_illustration_job(job);
+          if (
+            TERMINAL_ILLUSTRATION_STAGES.has(job.stage) &&
+            active_asset_id_ref.current === job.asset_id &&
+            !dirty_ref.current
+          ) {
+            set_documents(
+              await list_summary_documents(job.asset_id, job.version_id),
+            );
+          }
+        })
+        .catch(() => undefined);
+    }, ILLUSTRATION_POLL_DELAY_MS);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [illustration_job]);
 
   useEffect(() => {
     project_state_ref.current = {
@@ -449,6 +504,7 @@ export function SummaryWorkspace({
       set_documents(generated);
       set_versions((current) => [result.version, ...current]);
       set_current_version_id(result.version.version_id);
+      set_illustration_job(result.illustration_job);
       set_generation_open(false);
       set_generation_notice(
         result.context_capacity_unknown
@@ -692,6 +748,7 @@ export function SummaryWorkspace({
         export_pending={export_pending}
         export_relative_path={export_relative_path}
         generation_notice={generation_notice}
+        illustration_job={illustration_job}
         move_document={(document_id, parent_document_id, position) =>
           void move_document(document_id, parent_document_id, position)
         }
