@@ -23,7 +23,7 @@ import { use_markers_page_settings } from "@/features/markers/use_markers_page_s
 import { MarkerLibraryPanel } from "@/features/markers/MarkerLibraryPanel";
 import { evidence_range_for_asset } from "@/features/markers/evidence_navigation";
 import { type PlayerHandle } from "@/features/player/Player";
-import { use_asset_markers } from "@/features/player/use_asset_markers";
+import { use_asset_markers } from "@/features/markers/use_asset_markers";
 import {
   TranscriptionToolbarTools,
   type TranscriptCorrectionScope,

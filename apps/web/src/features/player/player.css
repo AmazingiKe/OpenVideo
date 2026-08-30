@@ -78,7 +78,3 @@
   outline-offset: 2px;
   box-shadow: 0 0 0 4px var(--player-evidence-ring);
 }
-
-.openvideo_player .plyr__control--overlaid {
-  display: none !important;
-}

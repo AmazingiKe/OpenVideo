@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { active_subtitle_text, subtitle_is_evidence } from "./Player";
+import {
+  active_subtitle_segment,
+  subtitle_is_evidence,
+} from "./subtitle_rules";
 
-describe("active_subtitle_text", () => {
+describe("subtitle_rules", () => {
   const segments = [
     {
       start_seconds: 1,
@@ -21,14 +24,20 @@ describe("active_subtitle_text", () => {
   ];
 
   it("shows the transcript segment that covers the current playback time", () => {
-    expect(active_subtitle_text(segments, 1)).toBe("第一段字幕");
-    expect(active_subtitle_text(segments, 2.5)).toBe("第一段字幕");
-    expect(active_subtitle_text(segments, 3)).toBe("第二段字幕");
+    expect(active_subtitle_segment(segments, 1)?.text.trim()).toBe(
+      "第一段字幕",
+    );
+    expect(active_subtitle_segment(segments, 2.5)?.text.trim()).toBe(
+      "第一段字幕",
+    );
+    expect(active_subtitle_segment(segments, 3)?.text.trim()).toBe(
+      "第二段字幕",
+    );
   });
 
   it("hides subtitles outside transcript segments", () => {
-    expect(active_subtitle_text(segments, 0.5)).toBeNull();
-    expect(active_subtitle_text(segments, 5)).toBeNull();
+    expect(active_subtitle_segment(segments, 0.5)).toBeNull();
+    expect(active_subtitle_segment(segments, 5)).toBeNull();
   });
 
   it("marks only subtitles overlapping the clicked evidence range", () => {
