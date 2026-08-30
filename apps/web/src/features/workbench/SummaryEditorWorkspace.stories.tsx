@@ -217,6 +217,7 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
 const meta = {
   title: "Summary/Workspace",
   component: SummaryWorkspace,
+  parameters: { layout: "fullscreen" },
   // Milkdown builder 的开发态 ESM 与 Vitest 浏览器不兼容，生产 Storybook 构建仍覆盖该场景。
   tags: ["!test"],
   args: {
@@ -232,8 +233,14 @@ const meta = {
     };
   },
   decorators: [
-    (StoryComponent) => (
-      <div className="h-[760px] min-w-0 overflow-hidden bg-background text-foreground">
+    (StoryComponent, context) => (
+      <div
+        className={
+          context.parameters.shortViewport
+            ? "h-[480px] min-w-0 overflow-hidden bg-background text-foreground"
+            : "h-[760px] min-w-0 overflow-hidden bg-background text-foreground"
+        }
+      >
         <StoryComponent />
       </div>
     ),
@@ -263,4 +270,8 @@ export const Narrow: Story = {
       </div>
     ),
   ],
+};
+
+export const ShortViewport: Story = {
+  parameters: { shortViewport: true },
 };

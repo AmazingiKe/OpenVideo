@@ -914,23 +914,32 @@ export function MediaTimeline({
       <div className="media_timeline_editor_shell">
         <aside className="media_timeline_track_labels" aria-label="时间线轨道">
           <div className="media_timeline_track_labels_header">轨道</div>
-          {track_presentations.map((track) => {
-            const TrackIcon = track.icon;
-            return (
-              <div
-                key={track.id}
-                className="media_timeline_track_label"
-                aria-label={`${track.name}，${track.state}`}
-              >
-                <TrackIcon aria-hidden="true" />
-                <span>{track.name}</span>
-                <small>{track.state}</small>
-                {track.state === "只读" ? (
-                  <LockKeyhole aria-hidden="true" />
-                ) : null}
-              </div>
-            );
-          })}
+          <div className="media_timeline_track_labels_viewport">
+            <div
+              className="media_timeline_track_labels_body"
+              style={{
+                transform: `translate3d(0, -${viewport.scroll_top}px, 0)`,
+              }}
+            >
+              {track_presentations.map((track) => {
+                const TrackIcon = track.icon;
+                return (
+                  <div
+                    key={track.id}
+                    className="media_timeline_track_label"
+                    aria-label={`${track.name}，${track.state}`}
+                  >
+                    <TrackIcon aria-hidden="true" />
+                    <span>{track.name}</span>
+                    <small>{track.state}</small>
+                    {track.state === "只读" ? (
+                      <LockKeyhole aria-hidden="true" />
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </aside>
         <ContextMenu>
           <ContextMenuTrigger asChild>

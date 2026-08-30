@@ -35,6 +35,13 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { FloatingError } from "@/components/FloatingError";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
@@ -69,6 +76,10 @@ const PANEL_TOGGLE_TRANSITION_MS = 280;
 const LIBRARY_PANEL_MIN_WIDTH_PX = 320;
 const LIBRARY_PANEL_MAX_WIDTH_PERCENT = 40;
 const VIDEO_PANEL_MIN_WIDTH_PX = 400;
+const PREVIEW_PANEL_MIN_HEIGHT_PX = 144;
+const TIMELINE_PANEL_DEFAULT_HEIGHT_PX = 264;
+const TIMELINE_PANEL_MIN_HEIGHT_PX = 176;
+const TIMELINE_PANEL_MAX_HEIGHT_PERCENT = 65;
 
 export function MarkersPage() {
   const navigate = useNavigate();
@@ -98,6 +109,7 @@ export function MarkersPage() {
   const [transcript_correction_scope, set_transcript_correction_scope] =
     useState<TranscriptCorrectionScope>("all");
   const [page_error, set_page_error] = useState<string | null>(null);
+  const [library_sheet_open, set_library_sheet_open] = useState(false);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
   const [agent_context_attachments, set_agent_context_attachments] = useState<
@@ -151,6 +163,10 @@ export function MarkersPage() {
       mounted_ref.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!is_compact_layout) set_library_sheet_open(false);
+  }, [is_compact_layout]);
 
   useEffect(() => {
     set_current_time(0);
@@ -397,6 +413,7 @@ export function MarkersPage() {
   }
 
   function open_library_video(asset_id: string) {
+    set_library_sheet_open(false);
     set_left_panel_collapsed(true);
     navigate(marker_asset_path(asset_id));
   }
@@ -420,10 +437,21 @@ export function MarkersPage() {
   const library_panel = (
     <MarkerLibraryPanel
       collapsed={settings.left_panel_collapsed}
-      compact={is_compact_layout}
       current_video_id={selected_asset_id}
       initial_folder_id={selected_asset ? selected_asset.folder_id : undefined}
       on_collapsed_change={set_left_panel_collapsed}
+      on_open_video={(asset) => open_library_video(asset.asset_id)}
+    />
+  );
+  const compact_library_launcher = (
+    <MarkerLibraryPanel
+      collapsed
+      compact
+      current_video_id={selected_asset_id}
+      initial_folder_id={selected_asset ? selected_asset.folder_id : undefined}
+      on_collapsed_change={(collapsed) => {
+        if (!collapsed) set_library_sheet_open(true);
+      }}
       on_open_video={(asset) => open_library_video(asset.asset_id)}
     />
   );
@@ -545,60 +573,115 @@ export function MarkersPage() {
             <Spinner />
             正在恢复工作台布局
           </div>
-        ) : is_compact_layout ? (
-          <div className="flex h-full min-h-0 flex-col overflow-auto [&>[data-slot=video-workspace]]:min-h-120 [&>[data-slot=video-workspace]]:shrink-0 max-[600px]:[&>[data-slot=video-workspace]]:min-h-96">
-            {library_panel}
-            {video_workspace}
-            <div className="h-60 shrink-0 min-[821px]:h-66">{timeline}</div>
-          </div>
         ) : (
           <section
             className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
             aria-label="标记工作区"
           >
-            <div className="min-h-0 flex-1">
-              <ResizablePanelGroup
-                id="markers-workspace"
-                orientation="horizontal"
-                onLayoutChanged={(layout, metadata) => {
-                  if (metadata.isUserInteraction) save_library_layout(layout);
-                }}
+            <ResizablePanelGroup id="markers-workspace" orientation="vertical">
+              <ResizablePanel
+                id="markers-preview"
+                minSize={`${PREVIEW_PANEL_MIN_HEIGHT_PX}px`}
+                className="min-h-0 overflow-hidden"
               >
-                <ResizablePanel
-                  id="left-panel"
-                  panelRef={left_panel_ref}
-                  defaultSize={
-                    settings.left_panel_collapsed
-                      ? `${PANEL_RAIL_WIDTH_PX}px`
-                      : `${settings.left_panel_size_percent}%`
-                  }
-                  minSize={`${LIBRARY_PANEL_MIN_WIDTH_PX}px`}
-                  maxSize={`${LIBRARY_PANEL_MAX_WIDTH_PERCENT}%`}
-                  collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
-                  collapsible
-                  onResize={(size) => {
-                    const collapsed = size.inPixels <= PANEL_RAIL_WIDTH_PX + 1;
-                    if (collapsed !== settings.left_panel_collapsed) {
-                      update_settings({ left_panel_collapsed: collapsed });
-                    }
-                  }}
-                >
-                  {library_panel}
-                </ResizablePanel>
-                <ResizableHandle
-                  className="hover:bg-primary"
-                  withHandle
-                  aria-label="调整视频库宽度"
-                />
-                <ResizablePanel
-                  id="video-player"
-                  minSize={`${VIDEO_PANEL_MIN_WIDTH_PX}px`}
-                >
-                  {video_workspace}
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            </div>
-            <div className="h-66 shrink-0">{timeline}</div>
+                {is_compact_layout ? (
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                    {compact_library_launcher}
+                    <div className="min-h-0 flex-1">{video_workspace}</div>
+                    <Sheet
+                      open={library_sheet_open}
+                      onOpenChange={set_library_sheet_open}
+                    >
+                      <SheetContent
+                        side="left"
+                        className="w-[min(92vw,24rem)] gap-0 p-0"
+                        showCloseButton={false}
+                      >
+                        <SheetHeader className="sr-only">
+                          <SheetTitle>视频库</SheetTitle>
+                          <SheetDescription>
+                            选择一个视频并在标记工作区中打开
+                          </SheetDescription>
+                        </SheetHeader>
+                        <MarkerLibraryPanel
+                          compact
+                          current_video_id={selected_asset_id}
+                          initial_folder_id={
+                            selected_asset
+                              ? selected_asset.folder_id
+                              : undefined
+                          }
+                          on_collapsed_change={(collapsed) => {
+                            if (collapsed) set_library_sheet_open(false);
+                          }}
+                          on_open_video={(asset) =>
+                            open_library_video(asset.asset_id)
+                          }
+                        />
+                      </SheetContent>
+                    </Sheet>
+                  </div>
+                ) : (
+                  <ResizablePanelGroup
+                    id="markers-library-workspace"
+                    orientation="horizontal"
+                    onLayoutChanged={(layout, metadata) => {
+                      if (metadata.isUserInteraction)
+                        save_library_layout(layout);
+                    }}
+                  >
+                    <ResizablePanel
+                      id="left-panel"
+                      panelRef={left_panel_ref}
+                      defaultSize={
+                        settings.left_panel_collapsed
+                          ? `${PANEL_RAIL_WIDTH_PX}px`
+                          : `${settings.left_panel_size_percent}%`
+                      }
+                      minSize={`${LIBRARY_PANEL_MIN_WIDTH_PX}px`}
+                      maxSize={`${LIBRARY_PANEL_MAX_WIDTH_PERCENT}%`}
+                      collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
+                      collapsible
+                      onResize={(size) => {
+                        const collapsed =
+                          size.inPixels <= PANEL_RAIL_WIDTH_PX + 1;
+                        if (collapsed !== settings.left_panel_collapsed) {
+                          update_settings({ left_panel_collapsed: collapsed });
+                        }
+                      }}
+                    >
+                      {library_panel}
+                    </ResizablePanel>
+                    <ResizableHandle
+                      className="hover:bg-primary"
+                      withHandle
+                      aria-label="调整视频库宽度"
+                    />
+                    <ResizablePanel
+                      id="video-player"
+                      minSize={`${VIDEO_PANEL_MIN_WIDTH_PX}px`}
+                    >
+                      {video_workspace}
+                    </ResizablePanel>
+                  </ResizablePanelGroup>
+                )}
+              </ResizablePanel>
+              <ResizableHandle
+                className="hover:bg-primary"
+                withHandle
+                aria-label="调整时间线高度"
+              />
+              <ResizablePanel
+                id="markers-timeline"
+                defaultSize={`${TIMELINE_PANEL_DEFAULT_HEIGHT_PX}px`}
+                minSize={`${TIMELINE_PANEL_MIN_HEIGHT_PX}px`}
+                maxSize={`${TIMELINE_PANEL_MAX_HEIGHT_PERCENT}%`}
+                groupResizeBehavior="preserve-pixel-size"
+                className="min-h-0 overflow-hidden"
+              >
+                {timeline}
+              </ResizablePanel>
+            </ResizablePanelGroup>
           </section>
         )}
       </div>

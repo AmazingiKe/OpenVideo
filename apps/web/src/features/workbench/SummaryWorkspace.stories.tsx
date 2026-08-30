@@ -46,6 +46,7 @@ const TRANSCRIPT: Transcript = {
 const meta = {
   title: "Summary/Generation",
   component: SummaryGeneration,
+  parameters: { layout: "fullscreen" },
   // Milkdown builder 的开发态 ESM 与 Vitest 浏览器不兼容，生产 Storybook 构建仍覆盖该场景。
   tags: ["!test"],
   args: {
@@ -76,8 +77,14 @@ const meta = {
     on_generate: () => undefined,
   },
   decorators: [
-    (StoryComponent) => (
-      <div className="h-[720px] max-w-[900px] bg-background text-foreground">
+    (StoryComponent, context) => (
+      <div
+        className={
+          context.parameters.shortViewport
+            ? "h-[480px] max-w-[900px] overflow-y-auto bg-background text-foreground"
+            : "h-[720px] max-w-[900px] overflow-y-auto bg-background text-foreground"
+        }
+      >
         <StoryComponent />
       </div>
     ),
@@ -105,6 +112,10 @@ export const Narrow: Story = {
       </div>
     ),
   ],
+};
+
+export const ShortViewport: Story = {
+  parameters: { shortViewport: true },
 };
 
 export const Dark: Story = {

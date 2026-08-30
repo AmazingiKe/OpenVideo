@@ -815,24 +815,29 @@ function SummaryWorkspaceInitialState({
     );
   }
   return (
-    <SummaryGeneration
-      asset={selected_asset}
-      transcript={transcript}
-      models={models}
-      presets={presets}
-      model_id={model_id}
-      on_model_change={on_model_change}
-      detail={detail}
-      on_detail_change={on_detail_change}
-      preset_id={preset_id}
-      on_preset_change={on_preset_change}
-      user_input={user_input}
-      on_user_input_change={on_user_input_change}
-      output_language={output_language}
-      on_output_language_change={on_output_language_change}
-      is_generating={is_generating}
-      on_generate={on_generate}
-    />
+    <div
+      className="h-full min-h-0 overflow-y-auto"
+      data-slot="summary-generation-scroll-area"
+    >
+      <SummaryGeneration
+        asset={selected_asset}
+        transcript={transcript}
+        models={models}
+        presets={presets}
+        model_id={model_id}
+        on_model_change={on_model_change}
+        detail={detail}
+        on_detail_change={on_detail_change}
+        preset_id={preset_id}
+        on_preset_change={on_preset_change}
+        user_input={user_input}
+        on_user_input_change={on_user_input_change}
+        output_language={output_language}
+        on_output_language_change={on_output_language_change}
+        is_generating={is_generating}
+        on_generate={on_generate}
+      />
+    </div>
   );
 }
 

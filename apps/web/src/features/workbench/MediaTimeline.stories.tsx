@@ -4,6 +4,8 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
+  EventAnalysis,
+  FocusSelection,
   MediaMarker,
   MediaMarkerUpdate,
   MediaSegment,
@@ -97,6 +99,57 @@ const ANALYSIS_SEGMENTS: MediaSegment[] = [
     tags: ["推导"],
   },
 ];
+const FOCUS_SELECTION: FocusSelection = {
+  selection_id: "focus-selection-019d3f8a2b1c70008000000000000001",
+  asset_id: ASSET_ID,
+  in_seconds: 8,
+  out_seconds: 36,
+  revision: 1,
+  updated_at: "2026-08-30T00:00:00Z",
+};
+const EVENT_ANALYSIS_BASE = {
+  asset_id: ASSET_ID,
+  conclusion: "这一段建立了分析结论。",
+  key_points: [],
+  evidence: [],
+  preset_id: "course_notes",
+  preset_version: 1,
+  depth: "balanced" as const,
+  user_input: null,
+  ai_model_id: "model-019d3f8a2b1c70008000000000000001",
+  source_summary: {
+    transcript_digest: "transcript",
+    target_digest: "target",
+    timeline_digest: "timeline",
+  },
+  status: "valid" as const,
+  created_at: "2026-08-30T00:00:00Z",
+  updated_at: "2026-08-30T00:00:00Z",
+};
+const EVENT_ANALYSES: EventAnalysis[] = [
+  {
+    ...EVENT_ANALYSIS_BASE,
+    event_analysis_id: "event-analysis-019d3f8a2b1c70008000000000000001",
+    target: {
+      source: "marker",
+      marker_id: POINT_MARKER.marker_id,
+      start_seconds: 10,
+      end_seconds: 30,
+    },
+    title: "概念分析",
+  },
+  {
+    ...EVENT_ANALYSIS_BASE,
+    event_analysis_id: "event-analysis-019d3f8a2b1c70008000000000000002",
+    target: {
+      source: "focus_selection",
+      selection_id: FOCUS_SELECTION.selection_id,
+      start_seconds: 18,
+      end_seconds: 38,
+    },
+    title: "重叠范围分析",
+  },
+];
 
 type TimelineStoryProps = {
   duration_seconds: number;
@@ -105,6 +158,8 @@ type TimelineStoryProps = {
   candidate_markers: MediaMarker[];
   transcript_segments: TranscriptSegment[];
   analysis_segments: MediaSegment[];
+  event_analyses: EventAnalysis[];
+  focus_selection: FocusSelection | null;
   marker_error: string | null;
 };
 
@@ -115,6 +170,8 @@ function TimelineStory({
   candidate_markers,
   transcript_segments,
   analysis_segments,
+  event_analyses,
+  focus_selection,
   marker_error,
 }: TimelineStoryProps) {
   const [current_time, set_current_time] = useState(initial_time);
@@ -153,6 +210,8 @@ function TimelineStory({
           segments: transcript_segments,
         }}
         segments={analysis_segments}
+        event_analyses={event_analyses}
+        focus_selection={focus_selection}
         markers={markers}
         candidate_markers={candidate_markers}
         selected_marker_ids={selected_marker_ids}
@@ -193,6 +252,8 @@ const meta = {
     candidate_markers: [],
     transcript_segments: TRANSCRIPT_SEGMENTS,
     analysis_segments: ANALYSIS_SEGMENTS,
+    event_analyses: [],
+    focus_selection: null,
     marker_error: null,
   },
 } satisfies Meta<typeof TimelineStory>;
@@ -220,6 +281,37 @@ export const FullThreeTracks: Story = {
     const timeline_bounds = timeline?.getBoundingClientRect();
     expect(timeline_bounds?.right).toBeCloseTo(frame_bounds.right);
     expect(timeline_bounds?.bottom).toBeCloseTo(frame_bounds.bottom);
+  },
+};
+
+export const DynamicAnalysisTracks: Story = {
+  args: {
+    event_analyses: EVENT_ANALYSES,
+    focus_selection: FOCUS_SELECTION,
+  },
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    expect(story.getByLabelText("事件分析，只读")).toBeVisible();
+    expect(story.getByLabelText("事件分析 2，只读")).toBeVisible();
+
+    const timeline_canvas = story.getByLabelText(/时间线画布/);
+    const timeline_grids = timeline_canvas.querySelectorAll<HTMLElement>(
+      ".ReactVirtualized__Grid",
+    );
+    const editor_grid = timeline_grids.item(timeline_grids.length - 1);
+    const track_labels = canvasElement.querySelector<HTMLElement>(
+      ".media_timeline_track_labels_body",
+    );
+    expect(editor_grid).not.toBeNull();
+    expect(track_labels).not.toBeNull();
+
+    editor_grid.scrollTop = 48;
+    editor_grid.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await waitFor(() =>
+      expect(track_labels?.style.transform).toBe(
+        "translate3d(0px, -48px, 0px)",
+      ),
+    );
   },
 };
 

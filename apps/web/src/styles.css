@@ -937,6 +937,18 @@
   letter-spacing: 0.08em;
 }
 
+.media_timeline_track_labels_viewport {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.media_timeline_track_labels_body {
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+
 .media_timeline_track_label {
   display: grid;
   height: 48px;

@@ -350,6 +350,9 @@ describe("App", () => {
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(
+      screen.getByRole("separator", { name: "调整时间线高度" }),
+    ).toBeInTheDocument();
+    expect(
       await screen.findByRole("button", { name: "转录" }, { timeout: 5_000 }),
     ).toBeInTheDocument();
     expect(
@@ -384,6 +387,52 @@ describe("App", () => {
       "aria-current",
       "page",
     );
+  }, 10_000);
+
+  it("opens the video library as a sheet without pushing the compact timeline below the viewport", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn((query: string) => ({
+        matches: query.startsWith("(max-width:"),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
+    vi.mocked(list_assets).mockResolvedValue([
+      create_asset({
+        status: "ready",
+        title: "紧凑布局视频",
+        playback_url: "/stream/compact",
+      }),
+    ]);
+    vi.mocked(get_markers).mockResolvedValue([]);
+    vi.mocked(get_segments).mockResolvedValue([]);
+    vi.mocked(get_transcript).mockResolvedValue({
+      asset_id: ASSET_ID,
+      language: "zh",
+      created_at: "2026-01-01T00:00:00Z",
+      segments: [],
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "标记" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "紧凑布局视频" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("main")).toHaveClass("overflow-hidden");
+    expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
+    expect(
+      screen.getByRole("separator", { name: "调整时间线高度" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开视频库" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "视频库" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开视频库" }));
+
+    const library_sheet = await screen.findByRole("dialog", { name: "视频库" });
+    expect(within(library_sheet).getByLabelText("视频库浏览器")).toBeVisible();
+    expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
   }, 10_000);
 
   it("clears the previous list when a new link parse starts", async () => {

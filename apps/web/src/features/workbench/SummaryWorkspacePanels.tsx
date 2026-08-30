@@ -118,8 +118,8 @@ export function SummaryGeneration({
   return (
     <div
       className={cn(
-        "mx-auto flex w-full max-w-3xl items-center",
-        compact ? "" : "h-full px-4 py-8",
+        "mx-auto flex w-full max-w-3xl",
+        compact ? "" : "min-h-full items-start px-4 py-8",
       )}
     >
       <Card className="w-full">

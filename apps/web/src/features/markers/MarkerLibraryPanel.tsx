@@ -3,7 +3,6 @@ import { Library, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LibraryBrowser } from "@/features/library/LibraryBrowser";
 import { CollapsiblePanelRail } from "@/features/workbench/CollapsiblePanelRail";
-import { cn } from "@/lib/utils";
 import type { MediaAsset } from "@/shared/types";
 
 type MarkerLibraryPanelProps = {
@@ -64,10 +63,7 @@ export function MarkerLibraryPanel({
 
   return (
     <aside
-      className={cn(
-        "min-h-0 min-w-0 overflow-hidden bg-card",
-        compact ? "h-[32rem] shrink-0 border-b" : "h-full",
-      )}
+      className="h-full min-h-0 min-w-0 overflow-hidden bg-card"
       aria-label="视频库"
       data-slot="marker-library-panel"
       data-collapsed="false"

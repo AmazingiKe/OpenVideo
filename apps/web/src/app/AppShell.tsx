@@ -3,15 +3,21 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Topbar } from "@/app/Topbar";
 import { GlobalAssistantLayout } from "@/app/global_assistant";
 import { use_library_state } from "@/app/library";
-import { MARKERS_ROUTE_PATH, workspace_route } from "@/app/workspace_routes";
+import {
+  MARKERS_ROUTE_PATH,
+  SUMMARY_ROUTE_PATH,
+  workspace_route,
+} from "@/app/workspace_routes";
 import { LibraryIndexIssuesAlert } from "@/features/library/LibraryIndexIssuesAlert";
 import { cn } from "@/lib/utils";
 
 export function AppShell() {
   const location = useLocation();
   const { library } = use_library_state();
-  const is_markers_page =
-    workspace_route(location.pathname)?.path === MARKERS_ROUTE_PATH;
+  const active_workspace_path = workspace_route(location.pathname)?.path;
+  const uses_fixed_workspace_layout =
+    active_workspace_path === MARKERS_ROUTE_PATH ||
+    active_workspace_path === SUMMARY_ROUTE_PATH;
 
   return (
     <div className="grid h-full grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background">
@@ -25,8 +31,8 @@ export function AppShell() {
           ) : null}
           <main
             className={cn(
-              "min-h-0",
-              is_markers_page
+              "row-start-2 min-h-0",
+              uses_fixed_workspace_layout
                 ? "overflow-hidden"
                 : "overflow-auto bg-surface-subtle",
             )}

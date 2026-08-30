@@ -77,7 +77,7 @@ export function VideoWorkspace({
       </header>
       <div className="workspace_stage flex min-h-0 flex-1">
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-player-canvas">
-          <div className="min-h-56 flex-1 bg-player-canvas p-5 pb-2 max-[600px]:p-2 max-[600px]:pb-1">
+          <div className="min-h-0 flex-1 bg-player-canvas p-5 pb-2 max-[600px]:p-2 max-[600px]:pb-1">
             <Player
               key={asset.asset_id}
               ref={player_ref}

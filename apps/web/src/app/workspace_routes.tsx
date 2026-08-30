@@ -4,6 +4,7 @@ type PageModule = Promise<{ default: ComponentType }>;
 export type WorkspacePath = "/downloads" | "/library" | "/markers" | "/summary";
 
 export const MARKERS_ROUTE_PATH: WorkspacePath = "/markers";
+export const SUMMARY_ROUTE_PATH: WorkspacePath = "/summary";
 
 type WorkspaceRoute = {
   label: string;
@@ -59,7 +60,7 @@ export const WORKSPACE_ROUTES: WorkspaceRoute[] = [
   },
   {
     label: "解析",
-    path: "/summary",
+    path: SUMMARY_ROUTE_PATH,
     component: lazy(load_summary_page),
     load_component: load_summary_page,
     preserve_state_when_hidden: true,
