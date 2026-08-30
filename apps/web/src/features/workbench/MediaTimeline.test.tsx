@@ -1351,11 +1351,15 @@ describe("MediaTimeline", () => {
     });
     timeline_mock.set_scroll_left.mockClear();
 
-    fireEvent.wheel(host, {
+    const zoom_out_event = new WheelEvent("wheel", {
       altKey: true,
+      bubbles: true,
+      cancelable: true,
       clientX: 700,
       deltaY: 1_000,
     });
+    fireEvent(host, zoom_out_event);
+    expect(zoom_out_event.defaultPrevented).toBe(true);
     animation_frames.run_next_frame();
 
     expect(timeline_props().scaleWidth).toBe(64);
@@ -1519,7 +1523,8 @@ describe("MediaTimeline", () => {
       (event) => event.type === "render" && event.value === zoom,
     );
     expect(zoom_scroll_index).toBeGreaterThanOrEqual(0);
-    expect(zoom_render_index).toBeGreaterThan(zoom_scroll_index);
+    expect(zoom_render_index).toBeGreaterThanOrEqual(0);
+    expect(zoom_scroll_index).toBeGreaterThan(zoom_render_index);
     expect(
       Math.abs(pointer_time_after - second_pointer_time),
     ).toBeLessThanOrEqual(0.01);

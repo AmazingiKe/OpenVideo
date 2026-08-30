@@ -326,7 +326,6 @@ export function MediaTimeline({
     timeline_ref,
     viewport,
     zoom_to,
-    zoom_with_alt,
   } = use_media_timeline_viewport({
     asset_id,
     bounded_time,
@@ -938,7 +937,6 @@ export function MediaTimeline({
             <div
               ref={timeline_host_ref}
               className="media_timeline_canvas"
-              onWheelCapture={zoom_with_alt}
               onPointerDownCapture={start_marquee}
               aria-label="时间线画布；双击标记轨道空白处添加标记，Enter 编辑片段，Shift+F10 打开菜单"
             >

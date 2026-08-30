@@ -1,6 +1,5 @@
 import type { TimelineState } from "@xzdarcy/react-timeline-editor";
 import {
-  type WheelEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -27,6 +26,7 @@ import {
 const ALT_WHEEL_ZOOM_SENSITIVITY = -0.001;
 const WHEEL_ZOOM_IDLE_MILLISECONDS = 100;
 const DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS = 1024;
+const SCROLL_SYNC_EPSILON_PIXELS = 0.5;
 const VIRTUALIZED_GRID_SELECTOR = ".ReactVirtualized__Grid";
 const VIRTUALIZED_GRID_ROLE_SELECTOR = '[role="row"], [role="gridcell"]';
 
@@ -58,6 +58,10 @@ function normalize_virtualized_timeline_accessibility(root: Element) {
     ? [root]
     : [...root.querySelectorAll(VIRTUALIZED_GRID_ROLE_SELECTOR)];
   for (const element of role_elements) element.removeAttribute("role");
+}
+
+function scroll_positions_differ(first: number, second: number) {
+  return Math.abs(first - second) > SCROLL_SYNC_EPSILON_PIXELS;
 }
 
 export function use_media_timeline_viewport({
@@ -301,13 +305,26 @@ export function use_media_timeline_viewport({
 
   useLayoutEffect(() => {
     viewport_ref.current = viewport;
-    if (synchronized_scroll_ref.current.scroll_left !== viewport.scroll_left) {
-      timeline_ref.current?.setScrollLeft(viewport.scroll_left);
+    const timeline = timeline_ref.current;
+    if (
+      timeline &&
+      scroll_positions_differ(
+        synchronized_scroll_ref.current.scroll_left,
+        viewport.scroll_left,
+      )
+    ) {
       synchronized_scroll_ref.current.scroll_left = viewport.scroll_left;
+      timeline.setScrollLeft(viewport.scroll_left);
     }
-    if (synchronized_scroll_ref.current.scroll_top !== viewport.scroll_top) {
-      timeline_ref.current?.setScrollTop(viewport.scroll_top);
+    if (
+      timeline &&
+      scroll_positions_differ(
+        synchronized_scroll_ref.current.scroll_top,
+        viewport.scroll_top,
+      )
+    ) {
       synchronized_scroll_ref.current.scroll_top = viewport.scroll_top;
+      timeline.setScrollTop(viewport.scroll_top);
     }
     position_playhead(playhead_time_ref.current);
   }, [position_playhead, viewport]);
@@ -364,15 +381,6 @@ export function use_media_timeline_viewport({
       }
       const committed_viewport = { ...current, ...next_viewport };
       viewport_ref.current = committed_viewport;
-      const timeline = timeline_ref.current;
-      if (
-        timeline &&
-        synchronized_scroll_ref.current.scroll_left !==
-          next_viewport.scroll_left
-      ) {
-        timeline.setScrollLeft(next_viewport.scroll_left);
-        synchronized_scroll_ref.current.scroll_left = next_viewport.scroll_left;
-      }
       set_viewport(committed_viewport);
     },
     [],
@@ -403,77 +411,94 @@ export function use_media_timeline_viewport({
     ],
   );
 
-  function settle_render_window_after_wheel() {
-    if (pending_wheel_idle_ref.current !== null) {
-      window.clearTimeout(pending_wheel_idle_ref.current);
+  useEffect(() => {
+    const timeline_host = timeline_host_ref.current;
+    if (!timeline_host) return;
+    const timeline_element = timeline_host;
+
+    function settle_render_window_after_wheel() {
+      if (pending_wheel_idle_ref.current !== null) {
+        window.clearTimeout(pending_wheel_idle_ref.current);
+      }
+      pending_wheel_idle_ref.current = window.setTimeout(() => {
+        pending_wheel_idle_ref.current = null;
+        if (
+          pending_wheel_frame_ref.current !== null ||
+          pending_wheel_events_ref.current.length > 0
+        ) {
+          return;
+        }
+        const settled_window = create_timeline_render_window({
+          viewport: viewport_ref.current,
+          canvas_width: render_metrics_ref.current.canvas_width,
+          duration: render_metrics_ref.current.duration,
+        });
+        set_render_window((current) =>
+          timeline_render_windows_equal(current, settled_window)
+            ? current
+            : settled_window,
+        );
+      }, WHEEL_ZOOM_IDLE_MILLISECONDS);
     }
-    pending_wheel_idle_ref.current = window.setTimeout(() => {
-      pending_wheel_idle_ref.current = null;
-      if (
-        pending_wheel_frame_ref.current !== null ||
-        pending_wheel_events_ref.current.length > 0
-      ) {
+
+    function flush_pending_wheel_zoom() {
+      pending_wheel_frame_ref.current = null;
+      const scale_count = Math.ceil(render_metrics_ref.current.duration);
+      const frame_result = consume_timeline_wheel_zoom_frame({
+        viewport: viewport_ref.current,
+        events: pending_wheel_events_ref.current,
+        scale_count,
+      });
+      pending_wheel_events_ref.current = frame_result.remaining_events;
+      commit_zoom_viewport(frame_result.viewport);
+      if (pending_wheel_events_ref.current.length > 0) {
+        pending_wheel_frame_ref.current = window.requestAnimationFrame(
+          flush_pending_wheel_zoom,
+        );
         return;
       }
-      const settled_window = create_timeline_render_window({
-        viewport: viewport_ref.current,
-        canvas_width: render_metrics_ref.current.canvas_width,
-        duration: render_metrics_ref.current.duration,
-      });
-      set_render_window((current) =>
-        timeline_render_windows_equal(current, settled_window)
-          ? current
-          : settled_window,
-      );
-    }, WHEEL_ZOOM_IDLE_MILLISECONDS);
-  }
+      settle_render_window_after_wheel();
+    }
 
-  function flush_pending_wheel_zoom() {
-    pending_wheel_frame_ref.current = null;
-    const scale_count = Math.ceil(render_metrics_ref.current.duration);
-    const frame_result = consume_timeline_wheel_zoom_frame({
-      viewport: viewport_ref.current,
-      events: pending_wheel_events_ref.current,
-      scale_count,
-    });
-    pending_wheel_events_ref.current = frame_result.remaining_events;
-    commit_zoom_viewport(frame_result.viewport);
-    if (pending_wheel_events_ref.current.length > 0) {
+    function zoom_with_alt(event: globalThis.WheelEvent) {
+      if (!event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      commit_pending_scroll();
+      const bounds = timeline_element.getBoundingClientRect();
+      const viewport_width =
+        bounds.width > 0
+          ? bounds.width
+          : render_metrics_ref.current.canvas_width;
+      const page_height =
+        bounds.height > 0 ? bounds.height : window.innerHeight;
+      const normalized_delta = normalize_wheel_delta(
+        event.deltaY,
+        event.deltaMode,
+        page_height,
+      );
+      pending_wheel_events_ref.current.push({
+        logarithmic_delta: normalized_delta * ALT_WHEEL_ZOOM_SENSITIVITY,
+        anchor_x: event.clientX - bounds.left,
+        viewport_width,
+      });
+      if (pending_wheel_idle_ref.current !== null) {
+        window.clearTimeout(pending_wheel_idle_ref.current);
+        pending_wheel_idle_ref.current = null;
+      }
+      if (pending_wheel_frame_ref.current !== null) return;
       pending_wheel_frame_ref.current = window.requestAnimationFrame(
         flush_pending_wheel_zoom,
       );
-      return;
     }
-    settle_render_window_after_wheel();
-  }
 
-  function zoom_with_alt(event: WheelEvent<HTMLDivElement>) {
-    if (!event.altKey) return;
-    event.preventDefault();
-    event.stopPropagation();
-    commit_pending_scroll();
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const viewport_width = bounds.width > 0 ? bounds.width : canvas_width;
-    const page_height = bounds.height > 0 ? bounds.height : window.innerHeight;
-    const normalized_delta = normalize_wheel_delta(
-      event.deltaY,
-      event.deltaMode,
-      page_height,
-    );
-    pending_wheel_events_ref.current.push({
-      logarithmic_delta: normalized_delta * ALT_WHEEL_ZOOM_SENSITIVITY,
-      anchor_x: event.clientX - bounds.left,
-      viewport_width,
+    timeline_element.addEventListener("wheel", zoom_with_alt, {
+      capture: true,
+      passive: false,
     });
-    if (pending_wheel_idle_ref.current !== null) {
-      window.clearTimeout(pending_wheel_idle_ref.current);
-      pending_wheel_idle_ref.current = null;
-    }
-    if (pending_wheel_frame_ref.current !== null) return;
-    pending_wheel_frame_ref.current = window.requestAnimationFrame(
-      flush_pending_wheel_zoom,
-    );
-  }
+    return () =>
+      timeline_element.removeEventListener("wheel", zoom_with_alt, true);
+  }, [commit_pending_scroll, commit_zoom_viewport]);
 
   function handle_timeline_scroll(position: TimelineScrollPosition) {
     synchronized_scroll_ref.current = {
@@ -504,6 +529,5 @@ export function use_media_timeline_viewport({
     timeline_ref,
     viewport,
     zoom_to,
-    zoom_with_alt,
   };
 }

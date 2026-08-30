@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
@@ -10,8 +10,15 @@ import type {
   TranscriptSegment,
 } from "@/shared/types";
 import { MediaTimeline } from "./MediaTimeline";
+import {
+  DEFAULT_ZOOM_PIXELS_PER_SECOND,
+  MINIMUM_ZOOM_PIXELS_PER_SECOND,
+} from "./media_timeline_calculations";
 
 const ASSET_ID = "019d3f8a-2b1c-7000-8000-000000000001";
+const ZOOM_OUT_TO_MINIMUM_WHEEL_DELTA =
+  Math.log(DEFAULT_ZOOM_PIXELS_PER_SECOND / MINIMUM_ZOOM_PIXELS_PER_SECOND) *
+  1_000;
 const POINT_MARKER: MediaMarker = {
   marker_id: "marker-019d3f8a2b1c70008000000000000001",
   asset_id: ASSET_ID,
@@ -213,6 +220,66 @@ export const FullThreeTracks: Story = {
     const timeline_bounds = timeline?.getBoundingClientRect();
     expect(timeline_bounds?.right).toBeCloseTo(frame_bounds.right);
     expect(timeline_bounds?.bottom).toBeCloseTo(frame_bounds.bottom);
+  },
+};
+
+export const ZoomBelowDefault: Story = {
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    const timeline_canvas = story.getByLabelText(/时间线画布/);
+    const timeline_grids = timeline_canvas.querySelectorAll<HTMLElement>(
+      ".ReactVirtualized__Grid",
+    );
+    const editor_grid = timeline_grids.item(timeline_grids.length - 1);
+    expect(editor_grid).not.toBeNull();
+
+    editor_grid.scrollLeft = editor_grid.scrollWidth;
+    editor_grid.dispatchEvent(new Event("scroll", { bubbles: true }));
+    const runtime_errors: string[] = [];
+    const record_runtime_error = (event: ErrorEvent) => {
+      runtime_errors.push(event.message);
+    };
+    window.addEventListener("error", record_runtime_error);
+
+    try {
+      const bounds = timeline_canvas.getBoundingClientRect();
+      const wheel_event = new WheelEvent("wheel", {
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+        clientX: bounds.right - 24,
+        deltaY: ZOOM_OUT_TO_MINIMUM_WHEEL_DELTA,
+      });
+      editor_grid.dispatchEvent(wheel_event);
+
+      await waitFor(() => {
+        expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
+          `${MINIMUM_ZOOM_PIXELS_PER_SECOND} px/s`,
+        );
+      });
+      expect(wheel_event.defaultPrevented).toBe(true);
+
+      await userEvent.click(
+        story.getByRole("button", { name: "重置时间线缩放" }),
+      );
+      await waitFor(() => {
+        expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
+          `${DEFAULT_ZOOM_PIXELS_PER_SECOND} px/s`,
+        );
+      });
+      editor_grid.scrollLeft = editor_grid.scrollWidth;
+      editor_grid.dispatchEvent(new Event("scroll", { bubbles: true }));
+      story.getByRole("slider", { name: "时间线缩放比例" }).focus();
+      await userEvent.keyboard("{Home}");
+      await waitFor(() => {
+        expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
+          `${MINIMUM_ZOOM_PIXELS_PER_SECOND} px/s`,
+        );
+      });
+      expect(runtime_errors).toEqual([]);
+    } finally {
+      window.removeEventListener("error", record_runtime_error);
+    }
   },
 };
 
