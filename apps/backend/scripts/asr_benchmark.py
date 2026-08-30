@@ -791,6 +791,7 @@ def build_report(output_path: Path) -> None:
     _append_download_report(lines, output_path)
     _append_robustness_report(lines, output_path)
     _append_formula_report(lines, output_path)
+    _append_decision_report(lines, metrics)
     if failures:
         lines.extend(["", "## 失败", ""])
         for result in failures:
@@ -910,6 +911,102 @@ def _append_formula_report(lines: list[str], output_path: Path) -> None:
             "- 结构化 LaTeX："
             f"{formula_result['structured_latex_count']}/{formula_result['expected_formula_count']}；"
             "当前普通 OCR 仅返回纯文本，向量箭头、范数、根号和分式均有丢失。",
+        ]
+    )
+
+
+def _append_decision_report(
+    lines: list[str], metrics: list[dict[str, object]]
+) -> None:
+    qwen_results = [
+        result
+        for result in metrics
+        if result["model"] == "qwen3-asr:qwen3-asr-1.7b"
+        and result["scope"] == "qwen-ready"
+        and result["status"] == SUCCESS_STATUS
+    ]
+    sensevoice_results = [
+        result
+        for result in metrics
+        if result["model"] == "sensevoice:sensevoice-small"
+        and result["scope"] == "short-reference"
+        and result["status"] == SUCCESS_STATUS
+    ]
+    large_v3_results = [
+        result
+        for result in metrics
+        if result["model"] == "faster-whisper:large-v3"
+        and result["scope"] == "short-reference"
+        and result["status"] == SUCCESS_STATUS
+    ]
+    turbo_results = [
+        result
+        for result in metrics
+        if result["model"] == "faster-whisper:large-v3-turbo"
+        and result["scope"] == "short-reference"
+        and result["status"] == SUCCESS_STATUS
+    ]
+    if not qwen_results:
+        return
+
+    lines.extend(
+        [
+            "",
+            "## 结论与优化顺序",
+            "",
+            "- **发布判断：当前 Qwen 长视频不通过。** "
+            f"{len(qwen_results)}/23 集进程成功，但平均时间覆盖仅 "
+            f"{_average_metric(qwen_results, 'timeline_coverage_ratio')}，最大连续空缺 "
+            f"{_maximum_metric(qwen_results, 'max_timeline_gap_seconds')} 秒；这是静默数据损失。",
+            "- **直接原因：** OpenVideo 每块固定 240 秒且只允许 256 个新 token；"
+            "Qwen 官方长音频示例使用 4096，并明确要求长音频提高该值。",
+            "- **P0：先修 Qwen 分块与质量门。** 用 VAD 在静音处切成约 20–30 秒语音块，"
+            "保留小重叠并强制对齐；token 预算随语音长度增长。语音区覆盖率低于 98%、"
+            "非静音空缺超过 3 秒或生成触顶时，自动缩小块重试，再失败则回退。",
+            "- **P0：自动回退，不让用户逐条确认。** 当前代理参考中 SenseVoice Small 的 "
+            f"CER={_average_metric(sensevoice_results, 'proxy_cer')}、覆盖="
+            f"{_average_metric(sensevoice_results, 'timeline_coverage_ratio')}、RTF="
+            f"{_average_metric(sensevoice_results, 'realtime_factor')}；可作为 Qwen 质量门失败后的"
+            "首选回退。Faster-Whisper large-v3 用作高准确复核，large-v3-turbo 用作速度回退。",
+            "- **P1：稳定句渐进展示。** 每块完成即原子保存，按语义句重分段并逐句显示；"
+            "界面展示已处理音频时长、剩余块、当前阶段和可恢复状态。",
+            "- **P1：专业词自动校准。** 从标题、课程上下文、幻灯片 OCR 和用户词表构建"
+            "全局术语表，只自动改高置信候选，保留修改记录与一键撤销，不要求逐条批准。",
+            "- **P1：公式使用视觉专用链路。** 通过场景变化抽取板书/幻灯片帧，公式检测后"
+            "使用 PP-FormulaNet 或 UniMERNet 输出 LaTeX，并与口述文本和时间段共同保存。",
+            "- **P1：下载双源与真实阶段。** 国内优先 ModelScope，国外优先 Hugging Face，"
+            "按健康度自动切换并复用分块缓存；下载、校验、预览分别显示进度，校验完成前"
+            "不得显示 100%。",
+            "- **P1：启动前依赖体检。** 在创建任务前验证 CUDA、cuBLAS、显存、磁盘空间"
+            "和模型校验和，失败时给出可执行修复，不进入长任务后才报错。",
+            "",
+            "### 当前备选基线（公开 AI 字幕代理参考）",
+            "",
+            "| 用途 | 模型 | 代理 CER | 时间覆盖 | RTF |",
+            "|---|---|---:|---:|---:|",
+            "| 临时自动回退 | SenseVoice Small | "
+            f"{_average_metric(sensevoice_results, 'proxy_cer')} | "
+            f"{_average_metric(sensevoice_results, 'timeline_coverage_ratio')} | "
+            f"{_average_metric(sensevoice_results, 'realtime_factor')} |",
+            "| 高准确复核 | Faster-Whisper large-v3 | "
+            f"{_average_metric(large_v3_results, 'proxy_cer')} | "
+            f"{_average_metric(large_v3_results, 'timeline_coverage_ratio')} | "
+            f"{_average_metric(large_v3_results, 'realtime_factor')} |",
+            "| 速度回退 | Faster-Whisper large-v3-turbo | "
+            f"{_average_metric(turbo_results, 'proxy_cer')} | "
+            f"{_average_metric(turbo_results, 'timeline_coverage_ratio')} | "
+            f"{_average_metric(turbo_results, 'realtime_factor')} |",
+            "",
+            "### 现代方案依据",
+            "",
+            "- [Qwen3-ASR 官方示例](https://github.com/QwenLM/Qwen3-ASR/blob/main/README.md)："
+            "长音频提高生成 token 上限，并提供强制对齐。",
+            "- [WhisperX 论文](https://arxiv.org/abs/2303.00747)：VAD Cut & Merge、批处理和"
+            "强制音素对齐用于长音频准确时间轴。",
+            "- [PaddleOCR 公式识别](https://www.paddleocr.ai/main/en/version3.x/"
+            "pipeline_usage/formula_recognition.html)：PP-FormulaNet/UniMERNet 输出 LaTeX。",
+            "- [Hugging Face Xet 官方文档](https://huggingface.co/docs/hub/xet/"
+            "using-xet-storage)：分块缓存与自适应并发用于大模型下载。",
         ]
     )
 
