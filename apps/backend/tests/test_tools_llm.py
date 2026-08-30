@@ -1,7 +1,10 @@
 import asyncio
+import base64
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.tools import llm
@@ -121,13 +124,23 @@ def test_completion_does_not_retry_permanent_provider_failure(monkeypatch):
 
 def test_image_probe_requires_pixel_semantics(monkeypatch):
     captured: dict[str, object] = {}
+    challenges = [
+        ("data:image/png;base64,first", "LEFT_RED_CENTER_GREEN_RIGHT_BLUE"),
+        ("data:image/png;base64,second", "LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA"),
+    ]
 
     def completion(**request):
         captured.update(request)
-        message = SimpleNamespace(content="LEFT_RED_RIGHT_BLUE")
+        message = SimpleNamespace(
+            content=(
+                "A=LEFT_RED_CENTER_GREEN_RIGHT_BLUE\n"
+                "B=LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA"
+            )
+        )
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
+    monkeypatch.setattr(llm, "_vision_probe_challenges", lambda: challenges)
 
     llm.probe_image_input(
         AiModelConfiguration(
@@ -139,8 +152,9 @@ def test_image_probe_requires_pixel_semantics(monkeypatch):
     )
 
     content = captured["messages"][0]["content"]
-    assert content[1]["image_url"]["url"] == llm.VISION_PROBE_DATA_URL
-    assert captured["max_tokens"] == 24
+    assert content[2]["image_url"]["url"] == challenges[0][0]
+    assert content[4]["image_url"]["url"] == challenges[1][0]
+    assert captured["max_tokens"] == llm.VISION_PROBE_MAX_TOKENS
 
 
 def test_image_probe_rejects_model_that_ignores_pixels(monkeypatch):
@@ -157,3 +171,23 @@ def test_image_probe_rejects_model_that_ignores_pixels(monkeypatch):
 
     with pytest.raises(llm.LlmCompletionError, match="未能读取测试图片"):
         llm.probe_image_input(model, timeout_seconds=30)
+
+
+def test_image_probe_png_contains_requested_color_stripes():
+    data_url = llm._vision_probe_data_url(
+        (
+            llm.VISION_PROBE_COLORS["RED"],
+            llm.VISION_PROBE_COLORS["GREEN"],
+            llm.VISION_PROBE_COLORS["BLUE"],
+        )
+    )
+    encoded = data_url.split(",", 1)[1]
+    image = Image.open(BytesIO(base64.b64decode(encoded)))
+
+    assert image.size == (
+        llm.VISION_PROBE_IMAGE_WIDTH,
+        llm.VISION_PROBE_IMAGE_HEIGHT,
+    )
+    assert image.getpixel((12, 16)) == llm.VISION_PROBE_COLORS["RED"]
+    assert image.getpixel((36, 16)) == llm.VISION_PROBE_COLORS["GREEN"]
+    assert image.getpixel((60, 16)) == llm.VISION_PROBE_COLORS["BLUE"]

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import secrets
+import struct
+import zlib
 
 import litellm
 
@@ -30,19 +34,30 @@ class LlmContextLengthError(LlmCompletionError):
     """输入超过模型上下文时保留可恢复语义，供 Agent 请求用户决策。"""
 
 
-VISION_PROBE_DATA_URL = (
-    "data:image/png;base64,"
-    "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAAOUlEQVR42u3PgQkAMAgE"
-    "sdf9d26nUBByCxypl9kqs4fO8QAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2++LxAj88Ph5k"
-    "AAAAAElFTkSuQmCC"
-)
+VISION_PROBE_COLORS = {
+    "RED": (255, 0, 0),
+    "GREEN": (0, 180, 0),
+    "BLUE": (0, 0, 255),
+    "YELLOW": (255, 220, 0),
+    "MAGENTA": (255, 0, 255),
+    "CYAN": (0, 220, 220),
+}
+VISION_PROBE_IMAGE_WIDTH = 72
+VISION_PROBE_IMAGE_HEIGHT = 32
+VISION_PROBE_STRIPE_COUNT = 3
+VISION_PROBE_STRIPE_WIDTH = VISION_PROBE_IMAGE_WIDTH // VISION_PROBE_STRIPE_COUNT
+VISION_PROBE_MAX_TOKENS = 64
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+PNG_BIT_DEPTH = 8
+PNG_COLOR_TYPE_RGB = 2
 VISION_PROBE_PROMPT = (
-    "The image is split into equal left and right solid-color blocks. Identify the "
-    "actual colors from the pixels. Reply with exactly "
-    "LEFT_<COLOR>_RIGHT_<COLOR>, using only RED, GREEN, BLUE, YELLOW, MAGENTA, "
-    "CYAN, BLACK, or WHITE."
+    "Two images labeled A and B each contain three equal solid-color vertical "
+    "stripes. Read the actual pixels. Reply with exactly two lines in this format: "
+    "A=LEFT_<COLOR>_CENTER_<COLOR>_RIGHT_<COLOR> and "
+    "B=LEFT_<COLOR>_CENTER_<COLOR>_RIGHT_<COLOR>. Use only RED, GREEN, BLUE, "
+    "YELLOW, MAGENTA, or CYAN."
 )
-VISION_PROBE_EXPECTED_RESPONSE = "LEFT_RED_RIGHT_BLUE"
+VISION_PROBE_LABELS = ("A", "B")
 
 
 def complete_text(
@@ -175,27 +190,95 @@ def probe_image_input(
     model: AiModelConfiguration,
     timeout_seconds: int,
 ) -> None:
-    """用未知答案的双色图验证模型确实读取像素，而不是只接受请求格式。"""
+    """用两张随机三色图验证模型确实读取像素，而不是只接受请求格式。"""
 
+    challenges = _vision_probe_challenges()
+    content: list[dict[str, object]] = [
+        {"type": "text", "text": VISION_PROBE_PROMPT}
+    ]
+    for label, (data_url, _) in zip(VISION_PROBE_LABELS, challenges, strict=True):
+        content.extend(
+            (
+                {"type": "text", "text": f"Image {label}"},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            )
+        )
     response = complete_text(
         model,
         [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": VISION_PROBE_PROMPT},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": VISION_PROBE_DATA_URL},
-                    },
-                ],
+                "content": content,
             }
         ],
         timeout_seconds=timeout_seconds,
-        max_tokens=24,
+        max_tokens=VISION_PROBE_MAX_TOKENS,
         disable_thinking=True,
         priority=ModelRequestPriority.FOREGROUND,
     )
-    normalized = response.strip().upper().strip("` .")
-    if normalized != VISION_PROBE_EXPECTED_RESPONSE:
+    expected_lines = [
+        f"{label}={answer}"
+        for label, (_, answer) in zip(VISION_PROBE_LABELS, challenges, strict=True)
+    ]
+    normalized_lines = [
+        line.strip().upper().strip("` .")
+        for line in response.strip().splitlines()
+        if line.strip()
+    ]
+    if normalized_lines != expected_lines:
         raise LlmCompletionError("模型接受了请求，但未能读取测试图片中的颜色")
+
+
+def _vision_probe_challenges() -> list[tuple[str, str]]:
+    random_source = secrets.SystemRandom()
+    color_names = tuple(VISION_PROBE_COLORS)
+    challenges = []
+    for _ in VISION_PROBE_LABELS:
+        selected_names = random_source.sample(color_names, 3)
+        selected_colors = tuple(VISION_PROBE_COLORS[name] for name in selected_names)
+        data_url = _vision_probe_data_url(selected_colors)
+        answer = (
+            f"LEFT_{selected_names[0]}_CENTER_{selected_names[1]}_"
+            f"RIGHT_{selected_names[2]}"
+        )
+        challenges.append((data_url, answer))
+    return challenges
+
+
+def _vision_probe_data_url(
+    colors: tuple[tuple[int, int, int], ...],
+) -> str:
+    if len(colors) != VISION_PROBE_STRIPE_COUNT:
+        raise ValueError("视觉探针必须包含三个颜色条")
+    row = b"\x00" + b"".join(
+        bytes(color) * VISION_PROBE_STRIPE_WIDTH for color in colors
+    )
+    pixels = row * VISION_PROBE_IMAGE_HEIGHT
+    header = struct.pack(
+        ">IIBBBBB",
+        VISION_PROBE_IMAGE_WIDTH,
+        VISION_PROBE_IMAGE_HEIGHT,
+        PNG_BIT_DEPTH,
+        PNG_COLOR_TYPE_RGB,
+        0,
+        0,
+        0,
+    )
+    png = (
+        PNG_SIGNATURE
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", zlib.compress(pixels))
+        + _png_chunk(b"IEND", b"")
+    )
+    encoded = base64.b64encode(png).decode()
+    return f"data:image/png;base64,{encoded}"
+
+
+def _png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
+    checksum = zlib.crc32(chunk_type + payload) & 0xFFFFFFFF
+    return (
+        struct.pack(">I", len(payload))
+        + chunk_type
+        + payload
+        + struct.pack(">I", checksum)
+    )
