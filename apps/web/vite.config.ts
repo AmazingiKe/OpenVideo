@@ -22,7 +22,14 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ["@milkdown/kit/core"],
+    include: [
+      "@milkdown/kit/component/link-tooltip",
+      "@milkdown/kit/core",
+      "@milkdown/kit/preset/commonmark",
+      "@milkdown/kit/preset/gfm",
+      "@milkdown/kit/prose/commands",
+      "@milkdown/kit/prose/schema-list",
+    ],
   },
   server: {
     host: "127.0.0.1",

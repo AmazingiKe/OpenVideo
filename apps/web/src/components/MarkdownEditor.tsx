@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CrepeBuilder } from "@milkdown/crepe/builder";
 import { blockEdit } from "@milkdown/crepe/feature/block-edit";
 import { codeMirror } from "@milkdown/crepe/feature/code-mirror";
@@ -8,13 +8,53 @@ import { linkTooltip } from "@milkdown/crepe/feature/link-tooltip";
 import { placeholder } from "@milkdown/crepe/feature/placeholder";
 import { table } from "@milkdown/crepe/feature/table";
 import { toolbar } from "@milkdown/crepe/feature/toolbar";
-import { editorViewOptionsCtx } from "@milkdown/kit/core";
-import { Plugin } from "@milkdown/kit/prose/state";
+import { toggleLinkCommand } from "@milkdown/kit/component/link-tooltip";
+import type { Ctx } from "@milkdown/kit/ctx";
+import {
+  commandsCtx,
+  editorViewCtx,
+  editorViewOptionsCtx,
+  schemaCtx,
+} from "@milkdown/kit/core";
+import { lift } from "@milkdown/kit/prose/commands";
+import { liftListItem } from "@milkdown/kit/prose/schema-list";
+import { Plugin, Selection, TextSelection } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
+import {
+  blockquoteSchema,
+  bulletListSchema,
+  codeBlockSchema,
+  emphasisSchema,
+  headingSchema,
+  inlineCodeSchema,
+  isMarkSelectedCommand,
+  isNodeSelectedCommand,
+  linkSchema,
+  listItemSchema,
+  orderedListSchema,
+  paragraphSchema,
+  setBlockTypeCommand,
+  strongSchema,
+  toggleEmphasisCommand,
+  toggleInlineCodeCommand,
+  toggleStrongCommand,
+  wrapInBlockTypeCommand,
+} from "@milkdown/kit/preset/commonmark";
+import {
+  strikethroughSchema,
+  toggleStrikethroughCommand,
+} from "@milkdown/kit/preset/gfm";
 import { $prose, replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
 import "@milkdown/crepe/theme/common/style.css";
 
+import {
+  EMPTY_MARKDOWN_FORMATTING_STATE,
+  MarkdownEditorContextMenu,
+  type MarkdownBlockStyle,
+  type MarkdownFormattingState,
+  type MarkdownInlineStyle,
+} from "./MarkdownEditorContextMenu";
 import { normalize_math_delimiters } from "./markdown_document";
 
 export type MarkdownSelection = {
@@ -61,6 +101,9 @@ function MarkdownEditorInner({
   const controlled_markdown_ref = useRef(normalized_markdown);
   const editor_markdown_ref = useRef(normalized_markdown);
   const root_ref = useRef<HTMLDivElement>(null);
+  const [has_format_selection, set_has_format_selection] = useState(false);
+  const [formatting_state, set_formatting_state] =
+    useState<MarkdownFormattingState>(EMPTY_MARKDOWN_FORMATTING_STATE);
 
   useEffect(() => {
     change_ref.current = on_change;
@@ -80,10 +123,52 @@ function MarkdownEditorInner({
         root,
         defaultValue: normalized_markdown,
       })
-        .addFeature(blockEdit)
-        .addFeature(toolbar)
-        .addFeature(linkTooltip)
-        .addFeature(imageBlock)
+        .addFeature(blockEdit, {
+          textGroup: {
+            label: "文本",
+            text: { label: "正文" },
+            h1: { label: "一级标题" },
+            h2: { label: "二级标题" },
+            h3: { label: "三级标题" },
+            h4: { label: "四级标题" },
+            h5: { label: "五级标题" },
+            h6: { label: "六级标题" },
+            quote: { label: "引用" },
+            divider: { label: "分隔线" },
+          },
+          listGroup: {
+            label: "列表",
+            bulletList: { label: "项目列表" },
+            orderedList: { label: "编号列表" },
+            taskList: { label: "任务列表" },
+          },
+          advancedGroup: {
+            label: "插入",
+            image: { label: "图片" },
+            codeBlock: { label: "代码块" },
+            table: { label: "表格" },
+            math: { label: "公式块" },
+          },
+        })
+        .addFeature(toolbar, {
+          boldLabel: "粗体",
+          italicLabel: "斜体",
+          strikethroughLabel: "删除线",
+          codeLabel: "行内代码",
+          latexLabel: "行内公式",
+          linkLabel: "链接",
+        })
+        .addFeature(linkTooltip, {
+          inputPlaceholder: "粘贴链接…",
+        })
+        .addFeature(imageBlock, {
+          inlineUploadButton: "上传",
+          inlineUploadPlaceholderText: "或粘贴图片链接",
+          blockUploadButton: "上传图片",
+          blockConfirmButton: "确认",
+          blockCaptionPlaceholderText: "填写图片说明",
+          blockUploadPlaceholderText: "或粘贴图片链接",
+        })
         .addFeature(table)
         .addFeature(codeMirror, {
           copyText: "复制代码",
@@ -119,16 +204,22 @@ function MarkdownEditorInner({
               change_ref.current(next_markdown);
           },
         );
-        listener.selectionUpdated((_context, selection) => {
+        listener.selectionUpdated((context, selection) => {
           if (selection.empty) {
+            set_has_format_selection(false);
             selection_ref.current(null);
             return;
           }
           const content = selection.content().content;
+          const selected_text = content.textBetween(0, content.size, "\n");
+          const has_selected_text = selected_text.trim().length > 0;
+          set_has_format_selection(has_selected_text);
+          if (has_selected_text)
+            set_formatting_state(read_formatting_state(context));
           selection_ref.current({
             start: selection.from,
             end: selection.to,
-            text: content.textBetween(0, content.size, "\n"),
+            text: selected_text,
           });
         });
       });
@@ -197,14 +288,271 @@ function MarkdownEditorInner({
     on_target_heading_reached?.();
   }, [loading, on_target_heading_reached, target_heading_id]);
 
+  const refresh_formatting_state = () => {
+    const editor = get();
+    if (!editor) return;
+    editor.action((context) => {
+      set_formatting_state(read_formatting_state(context));
+    });
+  };
+
+  const apply_inline_style = (style: MarkdownInlineStyle) => {
+    const editor = get();
+    if (!editor) return;
+    editor.action((context) => {
+      run_inline_style(context, style);
+      set_formatting_state(read_formatting_state(context));
+    });
+  };
+
+  const apply_block_style = (style: MarkdownBlockStyle) => {
+    const editor = get();
+    if (!editor) return;
+    editor.action((context) => {
+      run_block_style(context, style);
+      set_formatting_state(read_formatting_state(context));
+    });
+  };
+
   return (
-    <div
-      ref={root_ref}
-      className="summary-milkdown min-h-0 flex-1 overflow-y-auto"
-      aria-busy={loading}
+    <MarkdownEditorContextMenu
+      enabled={!readonly && !loading && has_format_selection}
+      formatting_state={formatting_state}
+      on_inline_style={apply_inline_style}
+      on_block_style={apply_block_style}
+      on_open_change={(open) => {
+        if (open) refresh_formatting_state();
+      }}
     >
-      <Milkdown />
-    </div>
+      <div
+        ref={root_ref}
+        className="summary-milkdown min-h-0 flex-1 overflow-y-auto"
+        aria-busy={loading}
+      >
+        <Milkdown />
+      </div>
+    </MarkdownEditorContextMenu>
+  );
+}
+
+const MATH_INLINE_NODE_NAME = "math_inline";
+const TOGGLE_LATEX_COMMAND_NAME = "ToggleLatex";
+const MAX_WRAPPER_LIFT_DEPTH = 8;
+
+function read_formatting_state(context: Ctx): MarkdownFormattingState {
+  const commands = context.get(commandsCtx);
+  const schema = context.get(schemaCtx);
+  const math_inline = schema.nodes[MATH_INLINE_NODE_NAME];
+  return {
+    block_style: selected_block_style(context),
+    bold: commands.call(isMarkSelectedCommand.key, strongSchema.type(context)),
+    italic: commands.call(
+      isMarkSelectedCommand.key,
+      emphasisSchema.type(context),
+    ),
+    strikethrough: commands.call(
+      isMarkSelectedCommand.key,
+      strikethroughSchema.type(context),
+    ),
+    inline_code: commands.call(
+      isMarkSelectedCommand.key,
+      inlineCodeSchema.type(context),
+    ),
+    inline_math: math_inline
+      ? commands.call(isNodeSelectedCommand.key, math_inline)
+      : false,
+    link: commands.call(isMarkSelectedCommand.key, linkSchema.type(context)),
+  };
+}
+
+function selected_block_style(context: Ctx): MarkdownBlockStyle {
+  const view = context.get(editorViewCtx);
+  const { $from } = view.state.selection;
+  const heading = headingSchema.type(context);
+  const code_block = codeBlockSchema.type(context);
+  const blockquote = blockquoteSchema.type(context);
+  const bullet_list = bulletListSchema.type(context);
+  const ordered_list = orderedListSchema.type(context);
+  const list_item = listItemSchema.type(context);
+  let task_list = false;
+  let quote = false;
+
+  for (let depth = $from.depth; depth >= 0; depth -= 1) {
+    const node = $from.node(depth);
+    if (node.type === list_item && node.attrs.checked !== null)
+      task_list = true;
+    if (node.type === ordered_list) return "ordered-list";
+    if (node.type === bullet_list)
+      return task_list ? "task-list" : "bullet-list";
+    if (node.type === blockquote) quote = true;
+  }
+
+  if ($from.depth === 0) {
+    const first_selected_node =
+      view.state.doc.nodeAt(view.state.selection.from) ??
+      view.state.doc.firstChild;
+    if (first_selected_node?.type === ordered_list) return "ordered-list";
+    if (first_selected_node?.type === bullet_list) {
+      const first_list_item = first_selected_node.firstChild;
+      return first_list_item?.attrs.checked !== null
+        ? "task-list"
+        : "bullet-list";
+    }
+    if (first_selected_node?.type === blockquote) return "quote";
+    if (first_selected_node?.type === heading) {
+      const level = Number(first_selected_node.attrs.level);
+      if (level === 1) return "heading-1";
+      if (level === 2) return "heading-2";
+      if (level === 3) return "heading-3";
+    }
+    if (first_selected_node?.type === code_block) return "code-block";
+  }
+
+  if (quote) return "quote";
+  if ($from.parent.type === heading) {
+    const level = Number($from.parent.attrs.level);
+    if (level === 1) return "heading-1";
+    if (level === 2) return "heading-2";
+    if (level === 3) return "heading-3";
+  }
+  if ($from.parent.type === code_block) return "code-block";
+  return "paragraph";
+}
+
+function run_inline_style(context: Ctx, style: MarkdownInlineStyle) {
+  const commands = context.get(commandsCtx);
+  switch (style) {
+    case "bold":
+      commands.call(toggleStrongCommand.key);
+      return;
+    case "italic":
+      commands.call(toggleEmphasisCommand.key);
+      return;
+    case "strikethrough":
+      commands.call(toggleStrikethroughCommand.key);
+      return;
+    case "inline-code":
+      commands.call(toggleInlineCodeCommand.key);
+      return;
+    case "inline-math":
+      commands.call(TOGGLE_LATEX_COMMAND_NAME);
+      return;
+    case "link":
+      commands.call(toggleLinkCommand.key);
+  }
+}
+
+function run_block_style(context: Ctx, style: MarkdownBlockStyle) {
+  select_nonempty_document_content(context);
+  lift_selected_wrappers(context);
+  const commands = context.get(commandsCtx);
+  switch (style) {
+    case "paragraph":
+      commands.call(setBlockTypeCommand.key, {
+        nodeType: paragraphSchema.type(context),
+      });
+      return;
+    case "heading-1":
+    case "heading-2":
+    case "heading-3":
+      commands.call(setBlockTypeCommand.key, {
+        nodeType: headingSchema.type(context),
+        attrs: { level: Number(style.at(-1)) },
+      });
+      return;
+    case "quote":
+      commands.call(wrapInBlockTypeCommand.key, {
+        nodeType: blockquoteSchema.type(context),
+      });
+      return;
+    case "bullet-list":
+      commands.call(wrapInBlockTypeCommand.key, {
+        nodeType: bulletListSchema.type(context),
+      });
+      return;
+    case "ordered-list":
+      commands.call(wrapInBlockTypeCommand.key, {
+        nodeType: orderedListSchema.type(context),
+      });
+      return;
+    case "task-list":
+      commands.call(wrapInBlockTypeCommand.key, {
+        nodeType: listItemSchema.type(context),
+        attrs: { checked: false },
+      });
+      return;
+    case "code-block":
+      commands.call(setBlockTypeCommand.key, {
+        nodeType: codeBlockSchema.type(context),
+      });
+  }
+}
+
+function select_nonempty_document_content(context: Ctx) {
+  const view = context.get(editorViewCtx);
+  const { doc, selection } = view.state;
+  if (selection.$from.depth !== 0) return;
+
+  let first_block_start: number | null = null;
+  let last_block_end: number | null = null;
+  doc.forEach((node, offset) => {
+    if (!node.textContent.trim()) return;
+    first_block_start ??= offset;
+    last_block_end = offset + node.nodeSize;
+  });
+  if (first_block_start === null || last_block_end === null) return;
+
+  const start = Selection.findFrom(doc.resolve(first_block_start), 1, true);
+  const end = Selection.findFrom(doc.resolve(last_block_end), -1, true);
+  if (!start || !end) return;
+  view.dispatch(
+    view.state.tr.setSelection(TextSelection.create(doc, start.from, end.to)),
+  );
+}
+
+function lift_selected_wrappers(context: Ctx) {
+  select_wrapped_block_content(context);
+  const commands = context.get(commandsCtx);
+  const list_item = listItemSchema.type(context);
+  for (let depth = 0; depth < MAX_WRAPPER_LIFT_DEPTH; depth += 1) {
+    const style = selected_block_style(context);
+    if (
+      style === "bullet-list" ||
+      style === "ordered-list" ||
+      style === "task-list"
+    ) {
+      if (!commands.inline(liftListItem(list_item))) return;
+      continue;
+    }
+    if (style === "quote") {
+      if (!commands.inline(lift)) return;
+      continue;
+    }
+    return;
+  }
+}
+
+function select_wrapped_block_content(context: Ctx) {
+  const view = context.get(editorViewCtx);
+  const { doc, selection } = view.state;
+  if (selection.$from.depth !== 0) return;
+  const first_selected_node = doc.nodeAt(selection.from) ?? doc.firstChild;
+  if (!first_selected_node) return;
+  const is_list =
+    first_selected_node.type === bulletListSchema.type(context) ||
+    first_selected_node.type === orderedListSchema.type(context);
+  const is_quote = first_selected_node.type === blockquoteSchema.type(context);
+  if (!is_list && !is_quote) return;
+
+  const block_end = Math.min(
+    selection.from + first_selected_node.nodeSize,
+    doc.content.size,
+  );
+  const start = Selection.findFrom(doc.resolve(selection.from), 1, true);
+  const end = Selection.findFrom(doc.resolve(block_end), -1, true);
+  if (!start || !end) return;
+  view.dispatch(
+    view.state.tr.setSelection(TextSelection.create(doc, start.from, end.to)),
   );
 }
 
