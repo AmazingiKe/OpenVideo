@@ -65,7 +65,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     monkeypatch.setattr(
         analysis_manager_module,
         "create_transcriber",
-        lambda options, models_root_directory: object(),
+        lambda options, models_root_directory, **_kwargs: object(),
     )
     monkeypatch.setattr(
         analysis_manager_module,

@@ -40,6 +40,7 @@ from openvideo.tools.ocr import LocalOcrReader
 from openvideo.tools.transcribe import (
     Transcriber,
     TranscriptionFailure,
+    TranscriptionProgress,
     create_transcriber,
     require_transcription_adapter,
     transcribe_media,
@@ -51,6 +52,11 @@ TranscriptionModelInstaller = Callable[
     [TranscriptionModelDescriptor, Path, Callable[[int, int], None]],
     None,
 ]
+TRANSCRIPTION_PROGRESS_START_PERCENT = 10
+TRANSCRIPTION_PROGRESS_END_PERCENT = 65
+TRANSCRIPTION_SAVE_PROGRESS_PERCENT = 66
+TRANSCRIPTION_LATEST_TEXT_MAX_CHARACTERS = 56
+SECONDS_PER_MINUTE = 60
 
 
 def _segments_overlap(first: MediaSegment, second: MediaSegment) -> bool:
@@ -65,6 +71,12 @@ def _segment_digest(segments: list[MediaSegment]) -> str:
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
+
+
+def _transcription_duration_label(seconds: float) -> str:
+    whole_seconds = max(round(seconds), 0)
+    minutes, remaining_seconds = divmod(whole_seconds, SECONDS_PER_MINUTE)
+    return f"{minutes:02d}:{remaining_seconds:02d}"
 
 
 class AnalysisError(RuntimeError):
@@ -479,14 +491,20 @@ class AnalysisManager:
                         work_directory,
                         self.settings.ffmpeg_path,
                         self.settings.ffmpeg_bin_dir,
-                        self._transcriber(transcription_options),
+                        self._transcriber(
+                            transcription_options,
+                            lambda progress: self._report_transcription_progress(
+                                job_id,
+                                progress,
+                            ),
+                        ),
                     )
                     transcript = transcription_result.transcript
                     self._update_job(
                         job_id,
                         AnalysisStage.TRANSCRIBING,
-                        60,
-                        "正在将音频转写为文字",
+                        TRANSCRIPTION_SAVE_PROGRESS_PERCENT,
+                        "正在保存完整转录",
                     )
                     self.library.save_transcript(transcript)
                     self._on_evidence_ready()
@@ -661,8 +679,16 @@ class AnalysisManager:
             raise AnalysisPrerequisiteError("分析任务使用的 AI 模型已被删除")
         return LiteLlmVision(model)
 
-    def _transcriber(self, options: TranscriptionOptions) -> Transcriber:
-        return create_transcriber(options, self.settings.models_root_directory)
+    def _transcriber(
+        self,
+        options: TranscriptionOptions,
+        progress_reporter: Callable[[TranscriptionProgress], None],
+    ) -> Transcriber:
+        return create_transcriber(
+            options,
+            self.settings.models_root_directory,
+            progress_reporter=progress_reporter,
+        )
 
     def _validate_and_sort_segments(
         self,
@@ -805,6 +831,40 @@ class AnalysisManager:
             AnalysisStage.PREPARING_TRANSCRIPTION_MODEL,
             1 + ratio * 3,
             f"正在准备本地转录模型：{model_name}",
+        )
+
+    def _report_transcription_progress(
+        self,
+        job_id: str,
+        progress: TranscriptionProgress,
+    ) -> None:
+        total_seconds = max(progress.total_seconds, 0)
+        completed_seconds = min(max(progress.completed_seconds, 0), total_seconds)
+        ratio = completed_seconds / total_seconds if total_seconds else 0
+        progress_percent = TRANSCRIPTION_PROGRESS_START_PERCENT + ratio * (
+            TRANSCRIPTION_PROGRESS_END_PERCENT - TRANSCRIPTION_PROGRESS_START_PERCENT
+        )
+        total_label = _transcription_duration_label(total_seconds)
+        if completed_seconds == 0:
+            message = f"正在加载转录模型 · 音频 {total_label}"
+        else:
+            completed_label = _transcription_duration_label(completed_seconds)
+            message = (
+                f"已转写 {completed_label} / {total_label} · "
+                f"{progress.segment_count} 段"
+            )
+        latest_text = (progress.latest_text or "").strip()
+        if latest_text:
+            if len(latest_text) > TRANSCRIPTION_LATEST_TEXT_MAX_CHARACTERS:
+                latest_text = (
+                    latest_text[:TRANSCRIPTION_LATEST_TEXT_MAX_CHARACTERS] + "…"
+                )
+            message = f"{message} · 最新：{latest_text}"
+        self._update_job(
+            job_id,
+            AnalysisStage.TRANSCRIBING,
+            progress_percent,
+            message,
         )
 
     @staticmethod

@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -153,6 +154,19 @@ class AudioExtractionResult:
 class TranscriptionResult:
     transcript: Transcript
     output_source: str
+
+
+@dataclass(frozen=True)
+class TranscriptionProgress:
+    """描述已稳定完成的音频范围，供长任务展示真实进度和最新文字。"""
+
+    completed_seconds: float
+    total_seconds: float
+    segment_count: int
+    latest_text: str | None = None
+
+
+TranscriptionProgressReporter = Callable[[TranscriptionProgress], None]
 
 
 class Transcriber(Protocol):
@@ -323,12 +337,14 @@ class FasterWhisperTranscriber:
         language: str | None = DEFAULT_WHISPER_LANGUAGE,
         device: str = "cpu",
         compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE,
+        progress_reporter: TranscriptionProgressReporter | None = None,
     ) -> None:
         self.model_size = model_size
         self.model_root_directory = model_root_directory
         self.language = language
         self.device = device
         self.compute_type = compute_type
+        self.progress_reporter = progress_reporter
         self._model = None
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
@@ -362,15 +378,31 @@ class FasterWhisperTranscriber:
             language=self.language,
             vad_filter=True,
         )
-        transcript_segments = [
-            TranscriptSegment(
+        total_seconds = (
+            float(info.duration) if self.progress_reporter is not None else 0.0
+        )
+        if self.progress_reporter is not None:
+            self.progress_reporter(TranscriptionProgress(0, total_seconds, 0))
+        transcript_segments: list[TranscriptSegment] = []
+        for segment in segments:
+            text = segment.text.strip()
+            if not text:
+                continue
+            transcript_segment = TranscriptSegment(
                 start_seconds=segment.start,
                 end_seconds=segment.end,
-                text=segment.text.strip(),
+                text=text,
             )
-            for segment in segments
-            if segment.text.strip()
-        ]
+            transcript_segments.append(transcript_segment)
+            if self.progress_reporter is not None:
+                self.progress_reporter(
+                    TranscriptionProgress(
+                        completed_seconds=min(segment.end, total_seconds),
+                        total_seconds=total_seconds,
+                        segment_count=len(transcript_segments),
+                        latest_text=transcript_segment.text,
+                    )
+                )
         return Transcript(
             asset_id=asset_id,
             language=info.language,
@@ -412,17 +444,23 @@ class Qwen3AsrTranscriber:
         language: str | None,
         device: str,
         compute_type: str,
+        progress_reporter: TranscriptionProgressReporter | None = None,
     ) -> None:
         self.model = model
         self.models_root_directory = models_root_directory
         self.language = _qwen_language_name(language)
         self.device = device
         self.compute_type = compute_type
+        self.progress_reporter = progress_reporter
         self._model = None
         self._torch = None
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
         try:
+            total_seconds = 0.0
+            if self.progress_reporter is not None:
+                total_seconds = _wav_duration_seconds(audio_path)
+                self.progress_reporter(TranscriptionProgress(0, total_seconds, 0))
             if self._model is None:
                 self._model = self._load_model()
             timed_items: list[TimedText] = []
@@ -434,6 +472,23 @@ class Qwen3AsrTranscriber:
                 )
                 timed_items.extend(chunk_items)
                 detected_languages.extend(language_codes)
+                if self.progress_reporter is not None:
+                    preview_items = _deduplicate_qwen_items(timed_items)
+                    preview_language = _merge_language_codes(detected_languages)
+                    preview_segments = _aggregate_qwen_segments(
+                        preview_items,
+                        preview_language,
+                    )
+                    self.progress_reporter(
+                        TranscriptionProgress(
+                            completed_seconds=min(chunk.end_seconds, total_seconds),
+                            total_seconds=total_seconds,
+                            segment_count=len(preview_segments),
+                            latest_text=(
+                                preview_segments[-1].text if preview_segments else None
+                            ),
+                        )
+                    )
             timed_items = _deduplicate_qwen_items(timed_items)
             if not timed_items:
                 raise TranscriptionFailure("Qwen3-ASR 没有识别到可用的带时间戳文本")
@@ -590,16 +645,22 @@ class SenseVoiceTranscriber:
         models_root_directory: Path,
         language: str | None,
         device: str,
+        progress_reporter: TranscriptionProgressReporter | None = None,
     ) -> None:
         self.model = model
         self.models_root_directory = models_root_directory
         self.language = language or AUTOMATIC_LANGUAGE
         self.device = device
+        self.progress_reporter = progress_reporter
         self._model = None
         self._torch = None
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
         try:
+            total_seconds = 0.0
+            if self.progress_reporter is not None:
+                total_seconds = _wav_duration_seconds(audio_path)
+                self.progress_reporter(TranscriptionProgress(0, total_seconds, 0))
             if self._model is None:
                 self._model = self._load_model()
             results = self._model.generate(
@@ -612,7 +673,21 @@ class SenseVoiceTranscriber:
                 merge_length_s=SENSEVOICE_MERGE_LENGTH_SECONDS,
                 sentence_timestamp=True,
             )
-            return _sensevoice_transcript(results, asset_id)
+            transcript = _sensevoice_transcript(results, asset_id)
+            if self.progress_reporter is not None:
+                self.progress_reporter(
+                    TranscriptionProgress(
+                        completed_seconds=total_seconds,
+                        total_seconds=total_seconds,
+                        segment_count=len(transcript.segments),
+                        latest_text=(
+                            transcript.segments[-1].text
+                            if transcript.segments
+                            else None
+                        ),
+                    )
+                )
+            return transcript
         except TranscriptionFailure:
             raise
         except Exception as error:
@@ -697,6 +772,7 @@ def create_transcriber(
     models_root_directory: Path,
     *,
     automatic_fallback: bool = True,
+    progress_reporter: TranscriptionProgressReporter | None = None,
 ) -> Transcriber:
     """根据持久化任务选项路由 ASR；未接入的引擎会返回明确状态。"""
     require_transcription_adapter(options)
@@ -712,6 +788,7 @@ def create_transcriber(
             language=options.language,
             device=options.device.value,
             compute_type=compute_type,
+            progress_reporter=progress_reporter,
         )
     if options.engine == TranscriptionEngine.QWEN3_ASR:
         primary = Qwen3AsrTranscriber(
@@ -720,11 +797,13 @@ def create_transcriber(
             language=options.language,
             device=options.device.value,
             compute_type=options.compute_type.value,
+            progress_reporter=progress_reporter,
         )
         fallback = (
             _qwen_fallback_transcriber(
                 models_root_directory,
                 options.language,
+                progress_reporter,
             )
             if automatic_fallback
             else None
@@ -738,6 +817,7 @@ def create_transcriber(
             models_root_directory=models_root_directory,
             language=options.language,
             device=options.device.value,
+            progress_reporter=progress_reporter,
         )
     raise TranscriptionFailure(f"不支持的转录引擎：{options.engine.value}")
 
@@ -745,6 +825,7 @@ def create_transcriber(
 def _qwen_fallback_transcriber(
     models_root_directory: Path,
     language: str | None,
+    progress_reporter: TranscriptionProgressReporter | None,
 ) -> Transcriber | None:
     sensevoice_descriptor = find_transcription_model(
         TranscriptionEngine.SENSEVOICE,
@@ -768,6 +849,7 @@ def _qwen_fallback_transcriber(
             models_root_directory=models_root_directory,
             language=language,
             device=AUTOMATIC_DEVICE,
+            progress_reporter=progress_reporter,
         )
 
     whisper_descriptor = find_transcription_model(
@@ -786,6 +868,7 @@ def _qwen_fallback_transcriber(
             language=language,
             device=AUTOMATIC_DEVICE,
             compute_type=AUTOMATIC_COMPUTE_TYPE,
+            progress_reporter=progress_reporter,
         )
     return None
 
@@ -847,6 +930,17 @@ def _qwen_result_language_codes(language: str) -> list[str]:
 
 def _merge_language_codes(language_codes: list[str]) -> str:
     return ",".join(dict.fromkeys(language_codes))
+
+
+def _wav_duration_seconds(audio_path: Path) -> float:
+    try:
+        with wave.open(str(audio_path), "rb") as audio:
+            sample_rate = audio.getframerate()
+            if sample_rate <= 0:
+                raise TranscriptionFailure("提取后的 WAV 音频采样率无效")
+            return audio.getnframes() / sample_rate
+    except (OSError, wave.Error) as error:
+        raise TranscriptionFailure("无法读取提取后的 WAV 音频时长") from error
 
 
 def _load_qwen_audio_chunks(audio_path: Path):

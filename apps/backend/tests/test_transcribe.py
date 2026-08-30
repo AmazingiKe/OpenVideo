@@ -558,18 +558,25 @@ def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
                 )
             ]
 
+    progress_updates = []
     transcriber = Qwen3AsrTranscriber(
         "qwen3-asr-0.6b",
         tmp_path,
         "zh",
         "cuda",
         "float16",
+        progress_reporter=progress_updates.append,
     )
     transcriber._model = FakeModel()
 
     transcript = transcriber.transcribe(audio_path, TRANSCRIPT_ASSET_ID)
 
     assert [segment.start_seconds for segment in transcript.segments] == [0.5, 240.5]
+    assert progress_updates[0].completed_seconds == 0
+    assert progress_updates[0].total_seconds == 2
+    assert progress_updates[-1].completed_seconds == 2
+    assert progress_updates[-1].segment_count == 2
+    assert progress_updates[-1].latest_text == "一句。"
 
 
 def test_qwen_aggregates_by_punctuation_and_maximum_duration():

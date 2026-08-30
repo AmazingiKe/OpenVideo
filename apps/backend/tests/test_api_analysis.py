@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from threading import Event
 from time import monotonic, sleep
 
 from fastapi.testclient import TestClient
@@ -24,7 +25,7 @@ from openvideo.core.media_models import (
     SourcePlatform,
 )
 from openvideo.settings import Settings
-from openvideo.tools.transcribe import TranscriptionResult
+from openvideo.tools.transcribe import TranscriptionProgress, TranscriptionResult
 from openvideo.ui.api import create_app
 
 import openvideo.analysis_manager as analysis_manager_module
@@ -242,6 +243,52 @@ def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
     assert response.status_code == 202
     assert response.json()["operation"] == "transcription"
     assert response.json()["job_id"].startswith("job-")
+
+
+def test_transcription_reports_real_audio_progress_and_latest_text(
+    tmp_path: Path,
+    monkeypatch,
+):
+    progress_reported = Event()
+    finish_transcription = Event()
+
+    def transcribe_with_progress(*args, **_kwargs):
+        transcriber = args[-1]
+        transcriber.progress_reporter(
+            TranscriptionProgress(
+                completed_seconds=30,
+                total_seconds=60,
+                segment_count=3,
+                latest_text="这是刚完成的一句字幕",
+            )
+        )
+        progress_reported.set()
+        finish_transcription.wait(timeout=5)
+        return TranscriptionResult(
+            transcript=Transcript(asset_id=ASSET_ID),
+            output_source="faster-whisper",
+        )
+
+    monkeypatch.setattr(
+        analysis_manager_module,
+        "transcribe_media",
+        transcribe_with_progress,
+    )
+    with create_client(tmp_path) as client:
+        model_directory = tmp_path / "models" / "faster-whisper" / "small"
+        model_directory.mkdir(parents=True)
+        (model_directory / "model.bin").write_bytes(b"model")
+        created = client.post(f"/api/media/assets/{ASSET_ID}/transcribe").json()
+        try:
+            assert progress_reported.wait(timeout=5)
+            running = client.get(f"/api/analysis/{created['job_id']}").json()
+            assert running["stage"] == "transcribing"
+            assert running["progress_percent"] == 37.5
+            assert running["message"] == (
+                "已转写 00:30 / 01:00 · 3 段 · 最新：这是刚完成的一句字幕"
+            )
+        finally:
+            finish_transcription.set()
 
 
 def test_transcription_can_replace_existing_result_multiple_times(
