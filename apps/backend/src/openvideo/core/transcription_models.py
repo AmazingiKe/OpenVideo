@@ -5,6 +5,11 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from openvideo.core.model_download_models import (
+    ModelDownloadJob,
+    ModelInstallationStatus,
+)
+
 
 class TranscriptionEngine(StrEnum):
     FASTER_WHISPER = "faster-whisper"
@@ -62,27 +67,6 @@ class TranscriptionIntegrationStatus(StrEnum):
     ADAPTER_REQUIRED = "adapter_required"
 
 
-class TranscriptionModelInstallationStatus(StrEnum):
-    NOT_INSTALLED = "not_installed"
-    DOWNLOADING = "downloading"
-    INSTALLED = "installed"
-    FAILED = "failed"
-
-
-class TranscriptionModelDownloadStage(StrEnum):
-    PENDING = "pending"
-    RESOLVING = "resolving"
-    DOWNLOADING = "downloading"
-    COMPLETE = "complete"
-    FAILED = "failed"
-
-
-TERMINAL_TRANSCRIPTION_MODEL_DOWNLOAD_STAGES = {
-    TranscriptionModelDownloadStage.COMPLETE,
-    TranscriptionModelDownloadStage.FAILED,
-}
-
-
 class TranscriptionModelDescriptor(BaseModel):
     engine: TranscriptionEngine
     model: str
@@ -96,22 +80,13 @@ class TranscriptionModelDescriptor(BaseModel):
     integration_status: TranscriptionIntegrationStatus
 
 
-class TranscriptionModelDownloadJob(BaseModel):
-    job_id: str
+class TranscriptionModelDownloadJob(ModelDownloadJob):
     engine: TranscriptionEngine
     model: str
-    stage: TranscriptionModelDownloadStage = TranscriptionModelDownloadStage.PENDING
-    progress_percent: float = 0
-    downloaded_bytes: int = 0
-    total_bytes: int | None = None
-    message: str = "等待下载"
-    error_message: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class TranscriptionModelState(TranscriptionModelDescriptor):
-    installation_status: TranscriptionModelInstallationStatus
+    installation_status: ModelInstallationStatus
     download_job: TranscriptionModelDownloadJob | None = None
 
 

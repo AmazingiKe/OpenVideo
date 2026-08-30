@@ -7,6 +7,7 @@ import {
   Info,
   Settings2,
   ShieldCheck,
+  Sigma,
   TriangleAlert,
   Wrench,
 } from "lucide-react";
@@ -37,7 +38,9 @@ import { is_online_ai_model } from "@/shared/online_ai_models";
 import { AgentPreferencesSettings } from "@/features/settings/AgentPreferencesSettings";
 import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
 import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
+import { FormulaRecognitionSettings } from "@/features/settings/FormulaRecognitionSettings";
 import {
+  get_formula_model,
   get_preferences,
   list_ai_models,
   list_transcription_models,
@@ -47,11 +50,12 @@ import {
 } from "@/shared/api";
 import type {
   AiModelSummary,
+  FormulaModelState,
   Preferences,
   TranscriptionModelDescriptor,
 } from "@/shared/types";
 
-type EditableField = "tools_directory" | "models_directory";
+type EditableField = "tools_directory" | "models_directory" | "download_proxy";
 
 const SETTINGS_SAVE_DELAY_MS = 500;
 
@@ -61,6 +65,9 @@ export function SettingsPage() {
   const [transcription_models, set_transcription_models] = useState<
     TranscriptionModelDescriptor[]
   >([]);
+  const [formula_model, set_formula_model] = useState<FormulaModelState | null>(
+    null,
+  );
   const [ai_model_summaries, set_ai_model_summaries] = useState<
     AiModelSummary[]
   >([]);
@@ -73,12 +80,14 @@ export function SettingsPage() {
     Promise.all([
       get_preferences(controller.signal),
       list_transcription_models(controller.signal),
+      get_formula_model(controller.signal),
       list_ai_models(controller.signal),
     ])
-      .then(([loaded_preferences, models, ai_models]) => {
+      .then(([loaded_preferences, models, loaded_formula_model, ai_models]) => {
         set_preferences(loaded_preferences);
         saved_preferences_ref.current = loaded_preferences;
         set_transcription_models(models);
+        set_formula_model(loaded_formula_model);
         set_ai_model_summaries(ai_models);
       })
       .catch((error: unknown) => {
@@ -98,6 +107,7 @@ export function SettingsPage() {
         {
           tools_directory: preferences.tools_directory,
           models_directory: preferences.models_directory,
+          download_proxy: preferences.download_proxy,
           default_transcription: preferences.default_transcription,
           ai_models: preferences.ai_models,
           agent: preferences.agent,
@@ -227,6 +237,11 @@ export function SettingsPage() {
                 preferences={preferences}
                 on_change={update_field}
               />
+              <DownloadProxyInput
+                value={preferences.download_proxy ?? ""}
+                preferences={preferences}
+                on_change={update_field}
+              />
             </FieldGroup>
           </SettingsCard>
           <SettingsCard
@@ -261,6 +276,18 @@ export function SettingsPage() {
               }
             />
           </SettingsCard>
+          {formula_model ? (
+            <SettingsCard
+              icon={Sigma}
+              title="数学公式识别"
+              description="使用视频关键帧补足音频转录无法表达的数学符号与排版结构。"
+            >
+              <FormulaRecognitionSettings
+                model={formula_model}
+                on_change={set_formula_model}
+              />
+            </SettingsCard>
+          ) : null}
           <SettingsCard
             icon={Bot}
             title="AI 模型"
@@ -434,6 +461,38 @@ function ModelDirectoryInput({
       preferences={preferences}
       on_change={on_change}
     />
+  );
+}
+
+function DownloadProxyInput({
+  value,
+  preferences,
+  on_change,
+}: {
+  value: string;
+  preferences: Preferences;
+  on_change: (field: EditableField, value: string) => void;
+}) {
+  const managed = preferences.managed_fields.includes("download_proxy");
+  return (
+    <Field data-disabled={managed}>
+      <FieldLabel htmlFor="download_proxy">
+        海外平台下载代理（可选）
+        {managed ? <Badge variant="secondary">环境变量</Badge> : null}
+      </FieldLabel>
+      <Input
+        id="download_proxy"
+        value={value}
+        onChange={(event) => on_change("download_proxy", event.target.value)}
+        placeholder="例如：http://127.0.0.1:7890"
+        disabled={managed}
+        spellCheck={false}
+      />
+      <FieldDescription>
+        国内平台默认直连；YouTube 等平台无法访问时可填写本机 HTTP 或 SOCKS
+        代理，留空则使用系统网络。
+      </FieldDescription>
+    </Field>
   );
 }
 

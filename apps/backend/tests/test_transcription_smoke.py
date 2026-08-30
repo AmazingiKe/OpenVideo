@@ -57,7 +57,11 @@ SMOKE_OPTIONS = _smoke_options()
     ids=[f"{options.engine.value}-{options.model}" for options in SMOKE_OPTIONS],
 )
 def test_local_model_transcribes_chinese_wav(options: TranscriptionOptions):
-    transcriber = create_transcriber(options, Path(SMOKE_MODELS_DIRECTORY))
+    transcriber = create_transcriber(
+        options,
+        Path(SMOKE_MODELS_DIRECTORY),
+        automatic_fallback=False,
+    )
     try:
         transcript = transcriber.transcribe(Path(SMOKE_WAV_PATH), "smoke-asset")
     finally:

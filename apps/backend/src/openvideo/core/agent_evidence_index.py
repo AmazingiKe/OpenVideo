@@ -797,6 +797,20 @@ def _source_documents(
                     value.strip(),
                 )
             )
+        for formula_position, formula in enumerate(segment.formula_latex):
+            if not formula.strip():
+                continue
+            documents.append(
+                (
+                    f"segment:{segment.segment_id}:formula_latex:{formula_position}",
+                    AgentEvidenceSource.OCR,
+                    position,
+                    segment.start_seconds,
+                    segment.end_seconds,
+                    None,
+                    f"画面公式：$${formula.strip()}$$",
+                )
+            )
     return documents
 
 

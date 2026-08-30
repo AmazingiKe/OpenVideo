@@ -145,9 +145,11 @@ def test_local_pipeline_attaches_ocr_to_extracted_keyframes(monkeypatch, tmp_pat
         AnalysisStrategy(depth=AnalysisDepth.DEEP),
         lambda stage, progress, message: stages.append(stage),
         ocr_reader=read_ocr,
+        formula_reader=lambda _: [r"\hat{a}=\vec{a}/\|\vec{a}\|"],
     )
 
     assert segments[0].ocr_text == "画面公式"
+    assert segments[0].formula_latex == [r"\hat{a}=\vec{a}/\|\vec{a}\|"]
     assert segments[0].visual_description is None
     assert read_frames == [frame_path]
     assert "reading_frame_text" in stages

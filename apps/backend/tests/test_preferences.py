@@ -75,13 +75,28 @@ def test_environment_values_override_saved_preferences(monkeypatch, tmp_path: Pa
     store = PreferenceStore(tmp_path / "preferences.json")
     store.save(Preferences(models_directory="saved-models"))
     monkeypatch.setenv("OPENVIDEO_MODELS_DIRECTORY", str(tmp_path / "models"))
+    monkeypatch.setenv("OPENVIDEO_DOWNLOAD_PROXY", "socks5://127.0.0.1:7890")
     monkeypatch.setenv("OPENVIDEO_AI_MODELS", f"[{MODEL.model_dump_json()}]")
 
     settings = load_settings(store)
 
     assert settings.models_directory == str(tmp_path / "models")
+    assert settings.download_proxy == "socks5://127.0.0.1:7890"
     assert settings.ai_models == [MODEL]
-    assert settings.managed_fields == {"models_directory", "ai_models"}
+    assert settings.managed_fields == {
+        "models_directory",
+        "download_proxy",
+        "ai_models",
+    }
+
+
+def test_download_proxy_is_normalized_and_validated():
+    assert Preferences(download_proxy="  http://127.0.0.1:7890  ").download_proxy == (
+        "http://127.0.0.1:7890"
+    )
+
+    with pytest.raises(ValidationError, match="HTTP、HTTPS 或 SOCKS"):
+        Preferences(download_proxy="127.0.0.1:7890")
 
 
 def test_default_tools_use_runtime_and_models_use_user_configuration():

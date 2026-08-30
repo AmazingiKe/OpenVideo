@@ -10,13 +10,14 @@ from openvideo.configuration import OPENVIDEO_CONFIG_DIRECTORY
 from openvideo.core.agent_governance_models import AgentPreferences
 from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration, is_online_api_model
 from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
-from openvideo.preferences import PreferenceStore, Preferences
+from openvideo.preferences import DownloadProxy, PreferenceStore, Preferences
 
 
 DEFAULT_CORS_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
 AI_MODELS_FIELD = "ai_models"
 MODELS_DIRECTORY_FIELD = "models_directory"
 TOOLS_DIRECTORY_FIELD = "tools_directory"
+DOWNLOAD_PROXY_FIELD = "download_proxy"
 DEFAULT_TRANSCRIPTION_FIELD = "default_transcription"
 AGENT_PREFERENCES_FIELD = "agent"
 SETTING_ENVIRONMENTS = {
@@ -24,6 +25,7 @@ SETTING_ENVIRONMENTS = {
     "ffprobe_path": "OPENVIDEO_FFPROBE_PATH",
     TOOLS_DIRECTORY_FIELD: "OPENVIDEO_TOOLS_DIRECTORY",
     MODELS_DIRECTORY_FIELD: "OPENVIDEO_MODELS_DIRECTORY",
+    DOWNLOAD_PROXY_FIELD: "OPENVIDEO_DOWNLOAD_PROXY",
 }
 AI_MODELS_ENVIRONMENT = "OPENVIDEO_AI_MODELS"
 
@@ -40,6 +42,7 @@ class Settings(AiModelCollection):
     tools_directory: str | None = None
     cors_origins: list[str] = Field(default_factory=lambda: list(DEFAULT_CORS_ORIGINS))
     models_directory: str | None = None
+    download_proxy: DownloadProxy = None
     default_transcription: TranscriptionOptions = Field(
         default_factory=TranscriptionOptions
     )

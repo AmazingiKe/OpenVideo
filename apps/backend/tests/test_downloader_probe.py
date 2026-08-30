@@ -1,4 +1,5 @@
 import httpx
+import pytest
 
 from openvideo.core.download_models import DownloadQuality
 from openvideo.core.media_models import SourcePlatform
@@ -18,7 +19,18 @@ def test_download_format_applies_selected_maximum_height():
     )
 
     assert "bestvideo[vcodec^=avc1][height<=1080]" in selected_format
-    assert selected_format.endswith("best[height<=1080]")
+    assert "bestvideo[vcodec^=avc1][width<=1080]" in selected_format
+    assert selected_format.endswith("best[width<=1080]")
+
+
+def test_download_format_supports_portrait_short_edge_quality():
+    selected_format = download_format(
+        SourcePlatform.BILIBILI,
+        DownloadQuality.SD_480,
+    )
+
+    assert "bestvideo[vcodec^=avc1][height<=480]" in selected_format
+    assert "bestvideo[vcodec^=avc1][width<=480]" in selected_format
 
 
 def test_best_download_format_has_no_height_limit():
@@ -121,6 +133,35 @@ def test_playlist_payload_recovers_bilibili_part_ids_from_flat_urls():
 def test_reports_fresh_cookie_requirement_as_an_expired_login():
     message = _friendly_failure("ERROR: [Douyin] video: Fresh cookies are needed")
     assert message == "保存的登录状态已失效，请重新登录"
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "message"),
+    [
+        (
+            "OSError: [Errno 28] No space left on device",
+            "磁盘空间不足，已保留下载进度；释放空间后可继续下载",
+        ),
+        (
+            "HTTP Error 429: Too Many Requests",
+            "平台请求过于频繁，已保留下载进度；稍后可继续下载",
+        ),
+        (
+            "Connection reset by peer",
+            "网络连接中断，已保留下载进度；网络恢复后可继续下载",
+        ),
+        (
+            "This video is not available in your country",
+            "视频受地区限制，请配置可访问该平台的下载代理",
+        ),
+        (
+            "Postprocessing: ffmpeg exited with code 1",
+            "视频音频合并失败，请检查 FFmpeg 是否可用",
+        ),
+    ],
+)
+def test_reports_actionable_download_failures(diagnostic: str, message: str):
+    assert _friendly_failure(diagnostic) == message
 
 
 def test_bilibili_ugc_season_probe_returns_all_episodes(monkeypatch):

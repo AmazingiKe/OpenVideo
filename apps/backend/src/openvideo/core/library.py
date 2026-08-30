@@ -553,6 +553,19 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
+    def download_temporary_directory(self, asset_id: str) -> Path:
+        """下载重试会创建新任务，因此用素材标识稳定复用尚未完成的网络分片。"""
+        self._validate_asset_id(asset_id)
+        temporary_root = (self.library_path / "temp").resolve()
+        directory_name = f"download-{asset_id.replace('-', '')}"
+        directory = (temporary_root / directory_name).resolve()
+        if not directory.is_relative_to(temporary_root):
+            raise ValueError("下载临时目录超出资料库")
+        if directory.exists() and directory.is_symlink():
+            raise ValueError("下载临时目录不能是符号链接")
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
     def resolve_asset_file(
         self, asset: MediaAsset, relative_path: str | None
     ) -> Path | None:

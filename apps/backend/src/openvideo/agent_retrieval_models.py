@@ -13,10 +13,10 @@ from threading import RLock
 from huggingface_hub import snapshot_download as huggingface_snapshot_download
 
 from openvideo.configuration import OPENVIDEO_CONFIG_DIRECTORY
+from openvideo.core.model_download_models import MODEL_MANIFEST_FILE_NAME
 
 
 RETRIEVAL_MODELS_DIRECTORY_NAME = "retrieval-models"
-MODEL_MANIFEST_FILE_NAME = ".openvideo-model.json"
 MODEL_WEIGHT_FILE_NAME = "model.safetensors"
 EMBEDDING_MODEL_REPOSITORY = "Qwen/Qwen3-Embedding-0.6B"
 EMBEDDING_MODEL_REVISION = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"

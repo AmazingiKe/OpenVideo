@@ -73,6 +73,8 @@ def register_download_routes(
         except UnsupportedSourceError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         probe_target = match.playlist_url or match.normalized_url
+        manager = get_manager()
+        download_proxy = manager.settings.download_proxy if manager else None
         try:
             with account_store.cookie_file(match.platform) as cookie_source:
                 probe = await asyncio.to_thread(
@@ -81,6 +83,7 @@ def register_download_routes(
                     match.platform,
                     match.source_video_id,
                     cookie_source,
+                    download_proxy,
                 )
                 if cookie_source is not None:
                     account_store.mark_available(match.platform)

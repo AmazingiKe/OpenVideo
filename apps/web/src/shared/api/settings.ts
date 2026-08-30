@@ -2,7 +2,9 @@ import type {
   AiModelConfiguration,
   AiModelSummary,
   AiModelTestResult,
+  FormulaModelState,
   MarkersPageSettings,
+  ModelDownloadJob,
   Preferences,
   TranscriptionModelDescriptor,
   TranscriptionModelDownloadJob,
@@ -36,6 +38,31 @@ export function get_transcription_model_download(
 ): Promise<TranscriptionModelDownloadJob> {
   return request_json(
     `/api/transcription/model-downloads/${encodeURIComponent(job_id)}`,
+    { signal },
+  );
+}
+
+export function get_formula_model(
+  signal?: AbortSignal,
+): Promise<FormulaModelState> {
+  return request_json("/api/formula-recognition/model", { signal });
+}
+
+export function download_formula_model(
+  signal?: AbortSignal,
+): Promise<ModelDownloadJob> {
+  return request_json("/api/formula-recognition/model/downloads", {
+    method: "POST",
+    signal,
+  });
+}
+
+export function get_formula_model_download(
+  job_id: string,
+  signal?: AbortSignal,
+): Promise<ModelDownloadJob> {
+  return request_json(
+    `/api/formula-recognition/model-downloads/${encodeURIComponent(job_id)}`,
     { signal },
   );
 }

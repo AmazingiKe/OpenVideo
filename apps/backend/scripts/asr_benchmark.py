@@ -177,6 +177,7 @@ def main() -> None:
             arguments.models,
             arguments.model,
             arguments.scope,
+            arguments.episode,
         )
     elif arguments.command == "import-references":
         import_external_references(arguments.output, arguments.source)
@@ -214,6 +215,7 @@ def _parse_arguments() -> argparse.Namespace:
         choices=("representative", "short-reference", "qwen-ready"),
         default="representative",
     )
+    run_parser.add_argument("--episode", action="append", type=int)
 
     references_parser = subparsers.add_parser("import-references")
     references_parser.add_argument("--output", type=Path, required=True)
@@ -710,6 +712,7 @@ def run_benchmark(
     models_path: Path,
     model_key: str,
     scope: str,
+    episodes: list[int] | None = None,
 ) -> None:
     engine, model = _parse_model_key(model_key)
     descriptor = find_transcription_model(engine, model)
@@ -726,8 +729,17 @@ def run_benchmark(
         cases = [_short_reference_case(library_path, output_path)]
     else:
         cases = _qwen_ready_cases(library_path, output_path)
+    if episodes:
+        selected_episodes = set(episodes)
+        cases = [case for case in cases if case.episode in selected_episodes]
+        if not cases:
+            raise RuntimeError("所选范围没有匹配的集数")
     options = _transcription_options(engine, model)
-    transcriber = create_transcriber(options, models_path)
+    transcriber = create_transcriber(
+        options,
+        models_path,
+        automatic_fallback=False,
+    )
     try:
         for case in cases:
             _run_case(transcriber, output_path, model_key, scope, case)
@@ -1140,8 +1152,10 @@ def _run_case(
         / f"{case.case_id}.json"
     )
     if result_path.is_file():
-        print(f"RUN_SKIP {model_key} {case.case_id}", flush=True)
-        return
+        existing_result = _read_json(result_path)
+        if existing_result.get("status") == SUCCESS_STATUS:
+            print(f"RUN_SKIP {model_key} {case.case_id}", flush=True)
+            return
     result_path.parent.mkdir(parents=True, exist_ok=True)
     transcript_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"RUN_START {model_key} {case.case_id}", flush=True)

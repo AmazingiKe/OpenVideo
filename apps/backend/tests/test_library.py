@@ -140,6 +140,18 @@ def test_download_events_survive_library_reopen(tmp_path: Path):
     reopened.close()
 
 
+def test_download_temporary_directory_is_stable_across_retry_jobs(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+
+    first_directory = library.download_temporary_directory(ASSET_ID)
+    second_directory = library.download_temporary_directory(ASSET_ID)
+
+    assert first_directory == second_directory
+    assert first_directory.name == f"download-{ASSET_ID.replace('-', '')}"
+    assert first_directory.is_relative_to((tmp_path / "temp").resolve())
+    library.close()
+
+
 def test_saves_complete_asset_metadata_and_recovers_ready_asset(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     asset = _asset()
@@ -188,6 +200,7 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
                 start_seconds=0,
                 end_seconds=3,
                 title="第一段",
+                formula_latex=[r"\hat{a}=\vec{a}/\|\vec{a}\|"],
                 marker_ids=[MARKER_ID],
                 tags=["章节"],
             )
@@ -203,6 +216,9 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     assert rebuilt.get(ASSET_ID).title == "测试视频"
     assert rebuilt.load_transcript(ASSET_ID).segments[0].text == "正文"
     assert rebuilt.load_segments(ASSET_ID)[0].marker_ids == [MARKER_ID]
+    assert rebuilt.load_segments(ASSET_ID)[0].formula_latex == [
+        r"\hat{a}=\vec{a}/\|\vec{a}\|"
+    ]
     assert rebuilt.load_markers(ASSET_ID)[0].end_seconds == 4
     assert rebuilt.load_markers(ASSET_ID)[0].importance == 4
     assert rebuilt.load_summary_document(DOCUMENT_ID).markdown == "# 用户总结\n"

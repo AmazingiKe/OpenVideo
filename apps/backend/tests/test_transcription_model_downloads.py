@@ -6,16 +6,18 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from openvideo.core.model_download_models import (
+    MODEL_MANIFEST_FILE_NAME,
+    ModelResource,
+)
 from openvideo.core.transcription_models import TranscriptionEngine, find_transcription_model
+from openvideo.model_download import _resolve_huggingface_resource_files
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
 from openvideo.transcription_model_manager import (
-    MODEL_MANIFEST_FILE_NAME,
     QWEN_FORCED_ALIGNER_REPOSITORY,
     SENSEVOICE_VAD_REPOSITORY,
     TranscriptionModelDownloadError,
-    TranscriptionModelResource,
-    _resolve_resource_files,
     download_transcription_model,
     is_transcription_model_installed,
     transcription_model_directory,
@@ -141,21 +143,25 @@ def test_sensevoice_download_only_fetches_missing_vad(
             )
         ]
 
-    def download(repository: str, *_args, **_kwargs):
+    def download(repository: str, filename: str, *_args, **kwargs):
         downloaded_repositories.append(repository)
+        output_path = Path(kwargs["local_dir"]) / filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"m" * 100)
 
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager._download_modelscope_resources",
+        "openvideo.model_download._resolve_modelscope_resource_files",
         reject_modelscope,
     )
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager._resolve_resource_files",
+        "openvideo.model_download._resolve_huggingface_resource_files",
         resolve,
     )
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager.hf_hub_download",
+        "openvideo.model_download.hf_hub_download",
         download,
     )
+    monkeypatch.setenv("OPENVIDEO_MODEL_SOURCE", "huggingface")
     progress: list[tuple[int, int]] = []
 
     download_transcription_model(
@@ -201,12 +207,12 @@ def test_resolves_repository_file_metadata_with_locked_huggingface_api(
             )
 
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager.HfApi",
+        "openvideo.model_download.HfApi",
         FakeApi,
     )
 
-    files = _resolve_resource_files(
-        TranscriptionModelResource(
+    files = _resolve_huggingface_resource_files(
+        ModelResource(
             repository=SENSEVOICE_VAD_REPOSITORY,
             directory=tmp_path / "fsmn-vad",
         )
@@ -239,17 +245,21 @@ def test_download_progress_combines_main_and_companion_resources(
         ]
 
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager._download_modelscope_resources",
+        "openvideo.model_download._resolve_modelscope_resource_files",
         reject_modelscope,
     )
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager._resolve_resource_files",
+        "openvideo.model_download._resolve_huggingface_resource_files",
         resolve,
     )
-    monkeypatch.setattr(
-        "openvideo.transcription_model_manager.hf_hub_download",
-        lambda *_args, **_kwargs: None,
-    )
+    def download(_repository: str, filename: str, *_args, **kwargs):
+        file_size = 100 if _repository == descriptor.repository else 200
+        output_path = Path(kwargs["local_dir"]) / filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"m" * file_size)
+
+    monkeypatch.setattr("openvideo.model_download.hf_hub_download", download)
+    monkeypatch.setenv("OPENVIDEO_MODEL_SOURCE", "huggingface")
     progress: list[tuple[int, int]] = []
 
     download_transcription_model(
@@ -286,22 +296,26 @@ def test_failed_companion_download_resumes_without_refetching_main_manifest(
             )
         ]
 
-    def download(repository: str, *_args, **_kwargs):
+    def download(repository: str, filename: str, *_args, **kwargs):
         if repository == QWEN_FORCED_ALIGNER_REPOSITORY and fail_companion:
             raise RuntimeError("连接中断")
+        output_path = Path(kwargs["local_dir"]) / filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"m" * 100)
 
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager._download_modelscope_resources",
+        "openvideo.model_download._resolve_modelscope_resource_files",
         reject_modelscope,
     )
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager._resolve_resource_files",
+        "openvideo.model_download._resolve_huggingface_resource_files",
         resolve,
     )
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager.hf_hub_download",
+        "openvideo.model_download.hf_hub_download",
         download,
     )
+    monkeypatch.setenv("OPENVIDEO_MODEL_SOURCE", "huggingface")
 
     with pytest.raises(TranscriptionModelDownloadError, match="连接中断"):
         download_transcription_model(descriptor, tmp_path, lambda *_: None)
@@ -317,7 +331,7 @@ def test_failed_companion_download_resumes_without_refetching_main_manifest(
     assert is_transcription_model_installed(descriptor, tmp_path) is True
 
 
-def test_modelscope_is_the_primary_official_model_source(
+def test_modelscope_can_be_selected_as_the_official_model_source(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -329,7 +343,7 @@ def test_modelscope_is_the_primary_official_model_source(
     downloads = []
 
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager._resolve_modelscope_resource_files",
+        "openvideo.model_download._resolve_modelscope_resource_files",
         lambda resource: [
             SimpleNamespace(
                 file_size=5,
@@ -344,13 +358,10 @@ def test_modelscope_is_the_primary_official_model_source(
         (Path(local_dir) / "model.bin").write_bytes(b"model")
 
     monkeypatch.setattr(
-        "openvideo.transcription_model_manager._modelscope_snapshot_download",
+        "openvideo.model_download._modelscope_snapshot_download",
         download,
     )
-    monkeypatch.setattr(
-        "openvideo.transcription_model_manager._download_huggingface_resources",
-        lambda *args: pytest.fail("ModelScope 成功时不应访问备用源"),
-    )
+    monkeypatch.setenv("OPENVIDEO_MODEL_SOURCE", "modelscope")
     progress = []
 
     download_transcription_model(

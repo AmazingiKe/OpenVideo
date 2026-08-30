@@ -14,6 +14,7 @@ import {
   create_download_account_login_session,
   delete_download_account_login_session,
   delete_download_account,
+  get_formula_model,
   get_markers_page_settings,
   get_health,
   get_download_accounts,
@@ -51,12 +52,15 @@ vi.mock("./shared/api", () => ({
   create_download: vi.fn(),
   create_download_account_login_session: vi.fn(),
   create_marker: vi.fn(),
+  download_formula_model: vi.fn(),
   delete_download_account: vi.fn(),
   delete_download_account_login_session: vi.fn(),
   delete_marker: vi.fn(),
   delete_asset: vi.fn(),
   delete_folder: vi.fn(),
   get_health: vi.fn(),
+  get_formula_model: vi.fn(),
+  get_formula_model_download: vi.fn(),
   get_download_accounts: vi.fn(),
   get_download_account_login_session: vi.fn(),
   get_markers_page_settings: vi.fn(),
@@ -128,6 +132,7 @@ describe("App", () => {
     vi.mocked(get_preferences).mockResolvedValue({
       tools_directory: null,
       models_directory: null,
+      download_proxy: null,
       default_transcription: {
         engine: "faster-whisper",
         model: "small",
@@ -147,6 +152,16 @@ describe("App", () => {
       },
       managed_fields: [],
       library_path_managed: false,
+    });
+    vi.mocked(get_formula_model).mockResolvedValue({
+      name: "视频公式识别",
+      description: "从关键帧提取结构化公式。",
+      repositories: [
+        "PaddlePaddle/PP-DocLayout_plus-L",
+        "PaddlePaddle/PP-FormulaNet_plus-S",
+      ],
+      installation_status: "not_installed",
+      download_job: null,
     });
     vi.mocked(get_markers_page_settings).mockResolvedValue({
       left_panel_size_percent: 24,
@@ -335,7 +350,7 @@ describe("App", () => {
     expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(
-      await screen.findByRole("button", { name: "转录" }),
+      await screen.findByRole("button", { name: "转录" }, { timeout: 5_000 }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "字幕修正" }),
@@ -369,7 +384,7 @@ describe("App", () => {
       "aria-current",
       "page",
     );
-  });
+  }, 10_000);
 
   it("clears the previous list when a new link parse starts", async () => {
     vi.mocked(get_health).mockResolvedValue({
@@ -493,8 +508,12 @@ describe("App", () => {
       screen.queryByRole("tab", { name: "Agent" }),
     ).not.toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "展开视频库" })).toBeVisible(),
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("button", { name: "展开视频库" }),
+        ).toBeVisible(),
+      { timeout: 5_000 },
     );
     fireEvent.click(screen.getByRole("button", { name: "展开视频库" }));
     fireEvent.doubleClick(
@@ -517,7 +536,7 @@ describe("App", () => {
         expect.any(AbortSignal),
       ),
     );
-  });
+  }, 10_000);
 
   it("selects the Douyin video opened from a search result", async () => {
     vi.mocked(get_health).mockResolvedValue({

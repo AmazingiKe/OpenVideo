@@ -25,7 +25,7 @@ from openvideo.core.summary_files import summary_document_depths
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 19
+DATABASE_VERSION = 20
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -204,8 +204,8 @@ def replace_asset_projection(
         connection.execute(
             "INSERT INTO timeline_segments "
             "(segment_id, asset_id, position, start_seconds, end_seconds, title, "
-            "detailed_summary, transcript_text, speaker_name, visual_description, ocr_text) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "detailed_summary, transcript_text, speaker_name, visual_description, ocr_text, "
+            "formula_latex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 segment.segment_id,
                 segment.asset_id,
@@ -218,6 +218,7 @@ def replace_asset_projection(
                 segment.speaker_name,
                 segment.visual_description,
                 segment.ocr_text,
+                json.dumps(segment.formula_latex, ensure_ascii=False),
             ),
         )
         connection.executemany(
@@ -606,7 +607,8 @@ CREATE TABLE timeline_segments (
     segment_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     position INTEGER NOT NULL, start_seconds REAL NOT NULL, end_seconds REAL NOT NULL,
     title TEXT NOT NULL, detailed_summary TEXT, transcript_text TEXT, speaker_name TEXT,
-    visual_description TEXT, ocr_text TEXT, UNIQUE(asset_id, position)
+    visual_description TEXT, ocr_text TEXT, formula_latex TEXT NOT NULL DEFAULT '[]',
+    UNIQUE(asset_id, position)
 );
 CREATE TABLE markers (
     marker_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,

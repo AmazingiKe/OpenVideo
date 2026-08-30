@@ -32,6 +32,7 @@ TITLE_MAX_CHARACTERS = 32
 VISUAL_ONLY_CHAPTER_SECONDS = 120
 AnalysisProgress = Callable[[AnalysisStage, float, str], None]
 OcrReader = Callable[[Sequence[Path]], str | None]
+FormulaReader = Callable[[Sequence[Path]], list[str]]
 
 
 def build_segments(
@@ -47,6 +48,7 @@ def build_segments(
     progress_callback: AnalysisProgress,
     chapter_model: AiModelConfiguration | None = None,
     ocr_reader: OcrReader | None = None,
+    formula_reader: FormulaReader | None = None,
 ) -> list[MediaSegment]:
     """基础音频分析始终产出事件，视觉能力缺失或局部失败不会丢失文本结果。"""
     scene_boundaries = detect_scene_boundaries(
@@ -87,6 +89,7 @@ def build_segments(
                 strategy,
                 scene_boundaries,
                 ocr_reader,
+                formula_reader,
                 lambda: progress_callback(
                     AnalysisStage.READING_FRAME_TEXT,
                     75 + progress_span * (index + 0.4),
@@ -112,6 +115,7 @@ def _build_segment(
     strategy: AnalysisStrategy,
     scene_boundaries: Sequence[float],
     ocr_reader: OcrReader | None,
+    formula_reader: FormulaReader | None,
     on_reading_frame_text: Callable[[], None],
     on_describing_visuals: Callable[[], None],
 ) -> MediaSegment:
@@ -130,6 +134,9 @@ def _build_segment(
     if ocr_reader is not None and frames:
         on_reading_frame_text()
     ocr_text = ocr_reader(frames) if ocr_reader is not None and frames else None
+    formula_latex = (
+        formula_reader(frames) if formula_reader is not None and frames else []
+    )
     if describer is not None and frames:
         on_describing_visuals()
     visual_description = _describe_event(moment, frames, describer, strategy)
@@ -147,6 +154,7 @@ def _build_segment(
         ],
         visual_description=visual_description,
         ocr_text=ocr_text,
+        formula_latex=formula_latex,
         marker_ids=list(moment.marker_ids),
     )
 

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -23,10 +24,19 @@ from openvideo.tools.sources.bilibili import (
 
 OUTPUT_PREFIX = "openvideo-output:"
 PROGRESS_PREFIX = "openvideo-progress:"
+PROGRESS_SEPARATOR = "|"
+TRANSFER_DIRECTORY_PREFIX = "transfer-"
 PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
 COMMAND_TIMEOUT_SECONDS = 60 * 60 * 6
 MAX_DIAGNOSTIC_LINES = 30
 PLAYLIST_PROBE_LIMIT = 100
+DOWNLOAD_PROGRESS_CEILING = 96
+CONCURRENT_FRAGMENT_COUNT = 4
+SOCKET_TIMEOUT_SECONDS = 30
+DOWNLOAD_RETRY_COUNT = 10
+FRAGMENT_RETRY_COUNT = 20
+FILE_ACCESS_RETRY_COUNT = 3
+RETRY_SLEEP_EXPRESSION = "exp=1:20"
 BILIBILI_VIEW_API_URL = "https://api.bilibili.com/x/web-interface/view"
 BILIBILI_VIEW_TIMEOUT_SECONDS = 20
 READING_METADATA_MESSAGE = "正在读取视频信息"
@@ -39,7 +49,37 @@ BILIBILI_VIEW_HEADERS = {
     "Referer": "https://www.bilibili.com/",
 }
 
-_QUALITY_HEIGHTS = {
+AUTHENTICATION_ERROR_MARKERS = (
+    "fresh cookies",
+    "cookies are needed",
+    "login required",
+    "please log in",
+    "sign in to confirm",
+)
+RATE_LIMIT_ERROR_MARKERS = ("http error 429", "too many requests", "rate limit")
+NETWORK_ERROR_MARKERS = (
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection aborted",
+    "network is unreachable",
+    "temporary failure in name resolution",
+    "remote end closed connection",
+    "broken pipe",
+)
+DISK_SPACE_ERROR_MARKERS = ("no space left on device", "disk full", "errno 28")
+GEO_RESTRICTION_ERROR_MARKERS = (
+    "not available in your country",
+    "geo restricted",
+    "geo-restricted",
+)
+UNAVAILABLE_ERROR_MARKERS = (
+    "video unavailable",
+    "this video has been removed",
+    "this video is unavailable",
+)
+
+_QUALITY_SHORT_EDGES = {
     DownloadQuality.UHD_2160: 2160,
     DownloadQuality.QHD_1440: 1440,
     DownloadQuality.FULL_HD_1080: 1080,
@@ -91,6 +131,13 @@ class PlaylistProbe:
     total_count: int
 
 
+@dataclass(frozen=True)
+class DownloadProgress:
+    percent: float
+    speed: str | None
+    eta: str | None
+
+
 ProgressCallback = Callable[[float, str], None]
 StageCallback = Callable[[str], None]
 MetadataCallback = Callable[[DownloadMetadata], None]
@@ -114,27 +161,33 @@ def download_video(
     video_quality: DownloadQuality = DownloadQuality.BEST,
     cookie_source: Path | None = None,
     staging_directory: Path | None = None,
+    download_proxy: str | None = None,
 ) -> DownloadedMedia:
-    """下载先进入隔离目录，只有工具成功退出并验证文件后才发布给播放器。
-
-    cookie_source 为登录下载预留：本版所有平台均为公开免登录，调用方恒传 None。
-    """
+    """同一来源和清晰度复用隔离目录，使网络故障后的新任务能续传旧分片。"""
     if not yt_dlp_available():
         raise DownloadFailure("未安装 yt-dlp，请先执行 uv sync")
     ffmpeg_path = resolve_tool(configured_ffmpeg_path, "ffmpeg", project_bin_dir)
     if not ffmpeg_path:
         raise DownloadFailure("未找到 ffmpeg，请安装后加入 PATH 或配置 OPENVIDEO_FFMPEG_PATH")
 
-    staging_directory = staging_directory or asset_directory / ".staging"
-    if staging_directory.exists():
-        shutil.rmtree(staging_directory)
-    staging_directory.mkdir(parents=True)
+    staging_root = staging_directory or asset_directory / ".staging"
+    transfer_directory = _transfer_directory(
+        staging_root,
+        source_url,
+        platform,
+        video_quality,
+    )
 
     on_stage(READING_METADATA_MESSAGE)
-    metadata = read_download_metadata(source_url, platform, cookie_source)
+    metadata = read_download_metadata(
+        source_url,
+        platform,
+        cookie_source,
+        download_proxy,
+    )
     on_metadata(metadata)
     on_stage(DOWNLOADING_MEDIA_MESSAGE)
-    temporary_template = staging_directory / "download.%(ext)s"
+    temporary_template = transfer_directory / "download.%(ext)s"
     command = [
         sys.executable,
         "-m",
@@ -144,10 +197,11 @@ def download_video(
         "--no-playlist",
         "--no-warnings",
         *_platform_arguments(platform),
-        "--retries",
-        "10",
-        "--fragment-retries",
-        "10",
+        *_network_arguments(platform_download_proxy(platform, download_proxy)),
+        "--concurrent-fragments",
+        str(CONCURRENT_FRAGMENT_COUNT),
+        "--continue",
+        "--part",
         "--ffmpeg-location",
         ffmpeg_path,
         "--format",
@@ -158,7 +212,11 @@ def download_video(
         "--convert-thumbnails",
         "jpg",
         "--progress-template",
-        f"download:{PROGRESS_PREFIX}%(progress._percent_str)s",
+        (
+            f"download:{PROGRESS_PREFIX}%(progress._percent_str)s"
+            f"{PROGRESS_SEPARATOR}%(progress._speed_str)s"
+            f"{PROGRESS_SEPARATOR}%(progress._eta_str)s"
+        ),
         "--print",
         f"after_move:{OUTPUT_PREFIX}%(filepath)s",
         "--output",
@@ -166,10 +224,10 @@ def download_video(
         *_cookie_arguments(cookie_source),
         source_url,
     ]
-    output_file = _run_download(command, staging_directory, on_progress)
+    output_file = _run_download(command, transfer_directory, on_progress)
     published_file = _publish_file(output_file, asset_directory)
-    thumbnail_file = _publish_thumbnail(staging_directory, asset_directory)
-    shutil.rmtree(staging_directory, ignore_errors=True)
+    thumbnail_file = _publish_thumbnail(transfer_directory, asset_directory)
+    _remove_completed_transfer(transfer_directory, staging_root)
     return DownloadedMedia(
         metadata=metadata,
         playback_file=published_file,
@@ -181,6 +239,7 @@ def read_download_metadata(
     source_url: str,
     platform: SourcePlatform,
     cookie_source: Path | None = None,
+    download_proxy: str | None = None,
 ) -> DownloadMetadata:
     command = [
         sys.executable,
@@ -191,6 +250,7 @@ def read_download_metadata(
         "--skip-download",
         "--dump-single-json",
         *_platform_arguments(platform),
+        *_network_arguments(platform_download_proxy(platform, download_proxy)),
         *_cookie_arguments(cookie_source),
         source_url,
     ]
@@ -226,13 +286,14 @@ def probe_source(
     platform: SourcePlatform,
     source_video_id: str | None,
     cookie_source: Path | None = None,
+    download_proxy: str | None = None,
 ) -> PlaylistProbe:
     """先补全平台独有的合集信息，再回退到 yt-dlp 的通用列表探测。"""
     if platform == SourcePlatform.BILIBILI and source_video_id:
         collection_probe = probe_bilibili_collection(source_video_id)
         if collection_probe is not None:
             return collection_probe
-    return probe_playlist(source_url, cookie_source)
+    return probe_playlist(source_url, platform, cookie_source, download_proxy)
 
 
 def probe_bilibili_collection(source_video_id: str) -> PlaylistProbe | None:
@@ -318,18 +379,40 @@ def download_format(
     platform: SourcePlatform,
     video_quality: DownloadQuality,
 ) -> str:
-    """按目标高度选择不高于该清晰度的最佳可播放格式。"""
+    """清晰度按画面短边匹配，避免竖屏 480P 被高度过滤器错误排除。"""
 
-    maximum_height = _QUALITY_HEIGHTS.get(video_quality)
-    height_filter = f"[height<={maximum_height}]" if maximum_height else ""
-    if platform == SourcePlatform.DOUYIN:
-        return f"best[ext=mp4]{height_filter}/best{height_filter}"
-    return (
-        f"bestvideo[vcodec^=avc1]{height_filter}+bestaudio[acodec^=mp4a]/"
-        f"bestvideo[vcodec^=avc1]{height_filter}+bestaudio/"
-        f"bestvideo[ext=mp4]{height_filter}+bestaudio[ext=m4a]/"
-        f"best[ext=mp4]{height_filter}/best{height_filter}"
+    maximum_short_edge = _QUALITY_SHORT_EDGES.get(video_quality)
+    dimension_filters = (
+        [
+            f"[height<={maximum_short_edge}]",
+            f"[width<={maximum_short_edge}]",
+        ]
+        if maximum_short_edge
+        else [""]
     )
+    if platform == SourcePlatform.DOUYIN:
+        formats = [
+            candidate
+            for dimension_filter in dimension_filters
+            for candidate in (
+                f"best[ext=mp4]{dimension_filter}",
+                f"best{dimension_filter}",
+            )
+        ]
+        return "/".join(formats)
+    formats = [
+        candidate
+        for dimension_filter in dimension_filters
+        for candidate in (
+            f"bestvideo[vcodec^=avc1]{dimension_filter}"
+            "+bestaudio[acodec^=mp4a]",
+            f"bestvideo[vcodec^=avc1]{dimension_filter}+bestaudio",
+            f"bestvideo[ext=mp4]{dimension_filter}+bestaudio[ext=m4a]",
+            f"best[ext=mp4]{dimension_filter}",
+            f"best{dimension_filter}",
+        )
+    ]
+    return "/".join(formats)
 
 
 def _bilibili_page_entries(data: dict, bvid: str) -> list[PlaylistEntry]:
@@ -359,7 +442,12 @@ def _bilibili_page_entries(data: dict, bvid: str) -> list[PlaylistEntry]:
     return entries
 
 
-def probe_playlist(source_url: str, cookie_source: Path | None = None) -> PlaylistProbe:
+def probe_playlist(
+    source_url: str,
+    platform: SourcePlatform,
+    cookie_source: Path | None = None,
+    download_proxy: str | None = None,
+) -> PlaylistProbe:
     """快速探测地址是单视频还是播放列表；播放列表只拉浅层条目，不触发下载。"""
     command = [
         sys.executable,
@@ -371,6 +459,8 @@ def probe_playlist(source_url: str, cookie_source: Path | None = None) -> Playli
         "--dump-single-json",
         "--playlist-end",
         str(PLAYLIST_PROBE_LIMIT),
+        *_platform_arguments(platform),
+        *_network_arguments(platform_download_proxy(platform, download_proxy)),
         *_cookie_arguments(cookie_source),
         source_url,
     ]
@@ -451,6 +541,74 @@ def _cookie_arguments(cookie_source: Path | None) -> list[str]:
     return ["--cookies", str(cookie_source)]
 
 
+def _network_arguments(download_proxy: str | None) -> list[str]:
+    arguments = [
+        "--socket-timeout",
+        str(SOCKET_TIMEOUT_SECONDS),
+        "--retries",
+        str(DOWNLOAD_RETRY_COUNT),
+        "--fragment-retries",
+        str(FRAGMENT_RETRY_COUNT),
+        "--file-access-retries",
+        str(FILE_ACCESS_RETRY_COUNT),
+        "--retry-sleep",
+        f"http:{RETRY_SLEEP_EXPRESSION}",
+        "--retry-sleep",
+        f"fragment:{RETRY_SLEEP_EXPRESSION}",
+    ]
+    if download_proxy is not None:
+        arguments.extend(["--proxy", download_proxy])
+    return arguments
+
+
+def platform_download_proxy(
+    platform: SourcePlatform,
+    configured_proxy: str | None,
+) -> str | None:
+    """国内来源保持直连，海外来源才使用用户配置的独立网络出口。"""
+    return configured_proxy if platform == SourcePlatform.YOUTUBE else ""
+
+
+def _transfer_directory(
+    staging_root: Path,
+    source_url: str,
+    platform: SourcePlatform,
+    video_quality: DownloadQuality,
+) -> Path:
+    if staging_root.exists() and staging_root.is_symlink():
+        raise DownloadFailure("下载临时目录不能是符号链接")
+    resolved_root = staging_root.resolve()
+    resolved_root.mkdir(parents=True, exist_ok=True)
+    transfer_key = "\n".join((source_url, platform.value, video_quality.value))
+    transfer_digest = hashlib.sha256(transfer_key.encode("utf-8")).hexdigest()[:32]
+    transfer_directory = (
+        resolved_root / f"{TRANSFER_DIRECTORY_PREFIX}{transfer_digest}"
+    ).resolve()
+    if not transfer_directory.is_relative_to(resolved_root):
+        raise DownloadFailure("下载临时目录超出允许范围")
+    if transfer_directory.exists() and transfer_directory.is_symlink():
+        raise DownloadFailure("下载分片目录不能是符号链接")
+    transfer_directory.mkdir(parents=True, exist_ok=True)
+    return transfer_directory
+
+
+def _remove_completed_transfer(transfer_directory: Path, staging_root: Path) -> None:
+    if staging_root.is_symlink() or transfer_directory.is_symlink():
+        raise DownloadFailure("拒绝清理符号链接形式的下载临时目录")
+    resolved_root = staging_root.resolve()
+    resolved_transfer = transfer_directory.resolve()
+    if (
+        resolved_transfer.parent != resolved_root
+        or not resolved_transfer.name.startswith(TRANSFER_DIRECTORY_PREFIX)
+    ):
+        raise DownloadFailure("拒绝清理下载临时目录之外的文件")
+    shutil.rmtree(resolved_transfer)
+    try:
+        resolved_root.rmdir()
+    except OSError:
+        pass
+
+
 def _run_download(
     command: list[str],
     staging_directory: Path,
@@ -473,9 +631,12 @@ def _run_download(
         if not line:
             continue
         if line.startswith(PROGRESS_PREFIX):
-            percent = parse_progress_percent(line)
-            if percent is not None:
-                on_progress(percent, "正在下载视频")
+            progress = parse_download_progress(line)
+            if progress is not None:
+                on_progress(
+                    min(progress.percent, DOWNLOAD_PROGRESS_CEILING),
+                    download_progress_message(progress),
+                )
             continue
         if line.startswith(OUTPUT_PREFIX):
             output_file = Path(line.removeprefix(OUTPUT_PREFIX).strip())
@@ -491,7 +652,11 @@ def _run_download(
         raise DownloadFailure(_friendly_failure("\n".join(diagnostics)))
     if output_file is None:
         raise DownloadFailure("下载已结束，但没有找到生成的视频文件")
-    resolved_output = output_file.resolve()
+    resolved_output = (
+        output_file.resolve()
+        if output_file.is_absolute()
+        else (staging_directory / output_file).resolve()
+    )
     resolved_staging = staging_directory.resolve()
     if not resolved_output.is_relative_to(resolved_staging):
         raise DownloadFailure("下载工具返回了资源目录外的文件")
@@ -500,17 +665,40 @@ def _run_download(
     return resolved_output
 
 
-def parse_progress_percent(line: str) -> float | None:
-    """从 yt-dlp 进度行提取百分比，未知格式或异常值返回 None。"""
+def parse_download_progress(line: str) -> DownloadProgress | None:
+    """解析 yt-dlp 的稳定前缀输出；速度和剩余时间缺失时仍保留百分比。"""
     if not line.startswith(PROGRESS_PREFIX):
         return None
-    percent_match = PERCENT_PATTERN.search(line.removeprefix(PROGRESS_PREFIX))
+    fields = line.removeprefix(PROGRESS_PREFIX).split(PROGRESS_SEPARATOR)
+    percent_match = PERCENT_PATTERN.search(fields[0])
     if not percent_match:
         return None
     try:
-        return min(float(percent_match.group(1)), 100)
+        percent = min(float(percent_match.group(1)), 100)
     except ValueError:
         return None
+    speed = _progress_field(fields, 1)
+    eta = _progress_field(fields, 2)
+    return DownloadProgress(percent=percent, speed=speed, eta=eta)
+
+
+def download_progress_message(progress: DownloadProgress) -> str:
+    details = ["正在下载视频"]
+    if progress.speed:
+        details.append(progress.speed)
+    if progress.eta:
+        details.append(f"剩余 {progress.eta}")
+    return " · ".join(details)
+
+
+def _progress_field(fields: list[str], index: int) -> str | None:
+    if index >= len(fields):
+        return None
+    value = fields[index].strip()
+    normalized = value.casefold()
+    if normalized in {"", "na", "n/a"} or normalized.startswith("unknown"):
+        return None
+    return value
 
 
 def _publish_file(output_file: Path, asset_directory: Path) -> Path:
@@ -541,14 +729,30 @@ def _publish_thumbnail(staging_directory: Path, asset_directory: Path) -> Path |
 
 def _friendly_failure(diagnostic: str) -> str:
     lowered = diagnostic.casefold()
-    if "fresh cookies" in lowered:
-        return "保存的登录状态已失效，请重新登录"
-    if "login" in lowered or "cookie" in lowered:
+    if any(marker in lowered for marker in DISK_SPACE_ERROR_MARKERS):
+        return "磁盘空间不足，已保留下载进度；释放空间后可继续下载"
+    if any(marker in lowered for marker in AUTHENTICATION_ERROR_MARKERS):
         return "保存的登录状态已失效，请重新登录"
     if "unsupported url" in lowered:
         return "yt-dlp 无法识别该视频地址"
+    if "requested format is not available" in lowered:
+        return "当前清晰度没有可下载格式，请改用“最佳”或其他清晰度"
+    if any(marker in lowered for marker in UNAVAILABLE_ERROR_MARKERS):
+        return "视频已删除或当前不可用"
     if "private" in lowered or "permission" in lowered:
         return "该视频不可公开访问"
+    if any(marker in lowered for marker in GEO_RESTRICTION_ERROR_MARKERS):
+        return "视频受地区限制，请配置可访问该平台的下载代理"
+    if any(marker in lowered for marker in RATE_LIMIT_ERROR_MARKERS):
+        return "平台请求过于频繁，已保留下载进度；稍后可继续下载"
+    if "http error 403" in lowered or "forbidden" in lowered:
+        return "平台拒绝了下载请求，请检查登录状态、链接有效期或网络出口"
+    if any(marker in lowered for marker in NETWORK_ERROR_MARKERS):
+        return "网络连接中断，已保留下载进度；网络恢复后可继续下载"
+    if "certificate verify failed" in lowered or "certificate error" in lowered:
+        return "网络证书校验失败，请检查代理或系统时间"
+    if "ffmpeg" in lowered or "postprocessing" in lowered:
+        return "视频音频合并失败，请检查 FFmpeg 是否可用"
     return "视频下载失败，请确认地址有效且网络可以访问对应平台"
 
 

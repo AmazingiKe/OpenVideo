@@ -20,7 +20,7 @@ from openvideo.core.analysis_models import (
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaAssetStatus, MediaSegment
+from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaSegment
 from openvideo.core.transcription_models import (
     Transcript,
     TranscriptionMetadata,
@@ -35,11 +35,12 @@ from openvideo.transcription_model_manager import (
     is_transcription_model_installed,
     require_transcription_model_installed,
 )
-from openvideo.tools.analysis_pipeline import OcrReader, build_segments
+from openvideo.tools.analysis_pipeline import FormulaReader, OcrReader, build_segments
 from openvideo.tools.ocr import LocalOcrReader
 from openvideo.tools.transcribe import (
     Transcriber,
     TranscriptionFailure,
+    TranscriptionProgress,
     create_transcriber,
     require_transcription_adapter,
     transcribe_media,
@@ -51,6 +52,12 @@ TranscriptionModelInstaller = Callable[
     [TranscriptionModelDescriptor, Path, Callable[[int, int], None]],
     None,
 ]
+TRANSCRIPTION_PROGRESS_START_PERCENT = 10
+TRANSCRIPTION_PROGRESS_END_PERCENT = 65
+TRANSCRIPTION_SAVE_PROGRESS_PERCENT = 66
+TRANSCRIPTION_LATEST_TEXT_MAX_CHARACTERS = 56
+TRANSCRIPTION_CONTEXT_MAX_CHARACTERS = 400
+SECONDS_PER_MINUTE = 60
 
 
 def _segments_overlap(first: MediaSegment, second: MediaSegment) -> bool:
@@ -65,6 +72,12 @@ def _segment_digest(segments: list[MediaSegment]) -> str:
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
+
+
+def _transcription_duration_label(seconds: float) -> str:
+    whole_seconds = max(round(seconds), 0)
+    minutes, remaining_seconds = divmod(whole_seconds, SECONDS_PER_MINUTE)
+    return f"{minutes:02d}:{remaining_seconds:02d}"
 
 
 class AnalysisError(RuntimeError):
@@ -85,6 +98,7 @@ class AnalysisManager:
         *,
         model_installer: TranscriptionModelInstaller | None = None,
         ocr_reader: OcrReader | None = None,
+        formula_reader: FormulaReader | None = None,
         on_evidence_ready: Callable[[], None] | None = None,
     ) -> None:
         self.library = library
@@ -96,7 +110,11 @@ class AnalysisManager:
         self._analysis_lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._model_installer = model_installer or download_transcription_model
-        self._ocr_reader = ocr_reader or LocalOcrReader().read_frames
+        local_ocr_reader = LocalOcrReader(
+            models_root_directory=settings.models_root_directory
+        )
+        self._ocr_reader = ocr_reader or local_ocr_reader.read_frames
+        self._formula_reader = formula_reader or local_ocr_reader.read_formulas
         self._on_evidence_ready = on_evidence_ready or (lambda: None)
 
     def create_analysis(
@@ -479,14 +497,21 @@ class AnalysisManager:
                         work_directory,
                         self.settings.ffmpeg_path,
                         self.settings.ffmpeg_bin_dir,
-                        self._transcriber(transcription_options),
+                        self._transcriber(
+                            transcription_options,
+                            lambda progress: self._report_transcription_progress(
+                                job_id,
+                                progress,
+                            ),
+                            self._transcription_context(asset),
+                        ),
                     )
                     transcript = transcription_result.transcript
                     self._update_job(
                         job_id,
                         AnalysisStage.TRANSCRIBING,
-                        60,
-                        "正在将音频转写为文字",
+                        TRANSCRIPTION_SAVE_PROGRESS_PERCENT,
+                        "正在保存完整转录",
                     )
                     self.library.save_transcript(transcript)
                     self._on_evidence_ready()
@@ -548,6 +573,7 @@ class AnalysisManager:
                         else None
                     ),
                     self._ocr_reader,
+                    self._formula_reader,
                 )
                 for segment in segments:
                     segment.key_frame_paths = [
@@ -577,7 +603,10 @@ class AnalysisManager:
                 )
                 if has_key_frames:
                     self._add_capability(job_id, AnalysisCapability.KEY_FRAMES)
-                has_ocr_text = any(segment.ocr_text for segment in proposed_segments)
+                has_ocr_text = any(
+                    segment.ocr_text or segment.formula_latex
+                    for segment in proposed_segments
+                )
                 if has_ocr_text:
                     self._add_capability(job_id, AnalysisCapability.OCR)
                 if describer is not None and any(
@@ -661,8 +690,34 @@ class AnalysisManager:
             raise AnalysisPrerequisiteError("分析任务使用的 AI 模型已被删除")
         return LiteLlmVision(model)
 
-    def _transcriber(self, options: TranscriptionOptions) -> Transcriber:
-        return create_transcriber(options, self.settings.models_root_directory)
+    def _transcriber(
+        self,
+        options: TranscriptionOptions,
+        progress_reporter: Callable[[TranscriptionProgress], None],
+        context: str,
+    ) -> Transcriber:
+        return create_transcriber(
+            options,
+            self.settings.models_root_directory,
+            progress_reporter=progress_reporter,
+            context=context,
+        )
+
+    def _transcription_context(self, asset: MediaAsset) -> str:
+        candidates = [asset.title, asset.author_name]
+        if asset.folder_id is not None:
+            folder = self.library.get_folder(asset.folder_id)
+            candidates.insert(1, folder.name)
+        normalized_parts: list[str] = []
+        known_parts: set[str] = set()
+        for candidate in candidates:
+            normalized = " ".join((candidate or "").split())
+            normalized_key = normalized.casefold()
+            if not normalized or normalized_key in known_parts:
+                continue
+            normalized_parts.append(normalized)
+            known_parts.add(normalized_key)
+        return "；".join(normalized_parts)[:TRANSCRIPTION_CONTEXT_MAX_CHARACTERS]
 
     def _validate_and_sort_segments(
         self,
@@ -807,6 +862,40 @@ class AnalysisManager:
             f"正在准备本地转录模型：{model_name}",
         )
 
+    def _report_transcription_progress(
+        self,
+        job_id: str,
+        progress: TranscriptionProgress,
+    ) -> None:
+        total_seconds = max(progress.total_seconds, 0)
+        completed_seconds = min(max(progress.completed_seconds, 0), total_seconds)
+        ratio = completed_seconds / total_seconds if total_seconds else 0
+        progress_percent = TRANSCRIPTION_PROGRESS_START_PERCENT + ratio * (
+            TRANSCRIPTION_PROGRESS_END_PERCENT - TRANSCRIPTION_PROGRESS_START_PERCENT
+        )
+        total_label = _transcription_duration_label(total_seconds)
+        if completed_seconds == 0:
+            message = f"正在加载转录模型 · 音频 {total_label}"
+        else:
+            completed_label = _transcription_duration_label(completed_seconds)
+            message = (
+                f"已转写 {completed_label} / {total_label} · "
+                f"{progress.segment_count} 段"
+            )
+        latest_text = (progress.latest_text or "").strip()
+        if latest_text:
+            if len(latest_text) > TRANSCRIPTION_LATEST_TEXT_MAX_CHARACTERS:
+                latest_text = (
+                    latest_text[:TRANSCRIPTION_LATEST_TEXT_MAX_CHARACTERS] + "…"
+                )
+            message = f"{message} · 最新：{latest_text}"
+        self._update_job(
+            job_id,
+            AnalysisStage.TRANSCRIBING,
+            progress_percent,
+            message,
+        )
+
     @staticmethod
     def _existing_capabilities(
         transcript: Transcript | None,
@@ -821,7 +910,7 @@ class AnalysisManager:
             )
         if any(segment.key_frame_paths for segment in segments):
             capabilities.append(AnalysisCapability.KEY_FRAMES)
-        if any(segment.ocr_text for segment in segments):
+        if any(segment.ocr_text or segment.formula_latex for segment in segments):
             capabilities.append(AnalysisCapability.OCR)
         if any(segment.visual_description for segment in segments):
             capabilities.append(AnalysisCapability.VISUAL)

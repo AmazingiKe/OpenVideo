@@ -7,8 +7,11 @@ import {
   create_download_account_login_session,
   delete_download_account_login_session,
   delete_download_account,
+  download_formula_model,
   download_transcription_model,
   get_download_accounts,
+  get_formula_model,
+  get_formula_model_download,
   get_download_account_login_session,
   get_transcription_model_download,
   get_markers_page_settings,
@@ -73,6 +76,36 @@ describe("api client", () => {
     await get_transcription_model_download(job.job_id);
     expect(fetch_mock).toHaveBeenLastCalledWith(
       `/api/transcription/model-downloads/${job.job_id}`,
+      { signal: undefined },
+    );
+  });
+
+  it("loads and downloads the formula recognition capability", async () => {
+    const response = { job_id: "formula-model-download-1", stage: "pending" };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(response), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await get_formula_model();
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/formula-recognition/model",
+      { signal: undefined },
+    );
+
+    await download_formula_model();
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/formula-recognition/model/downloads",
+      { method: "POST", signal: undefined },
+    );
+
+    await get_formula_model_download(response.job_id);
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      `/api/formula-recognition/model-downloads/${response.job_id}`,
       { signal: undefined },
     );
   });

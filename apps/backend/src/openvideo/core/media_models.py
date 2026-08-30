@@ -164,6 +164,7 @@ class MediaSegment(BaseModel):
     key_frame_paths: list[str] = Field(default_factory=list)
     visual_description: str | None = None
     ocr_text: str | None = None
+    formula_latex: list[str] = Field(default_factory=list)
     marker_ids: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
 

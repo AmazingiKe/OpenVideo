@@ -23,6 +23,8 @@ from openvideo.core.ai_models import (
     AiModelConfiguration,
     online_api_configuration_error,
 )
+from openvideo.core.formula_models import FormulaModelState
+from openvideo.core.model_download_models import ModelDownloadJob
 from openvideo.core.transcription_models import (
     TranscriptionEngine,
     TranscriptionModelDownloadJob,
@@ -39,11 +41,12 @@ from openvideo.core.page_settings import (
     LEGACY_PAGE_SETTINGS_FILE_NAME,
     PageSettingsStore,
 )
-from openvideo.preferences import PreferenceStore
+from openvideo.preferences import DownloadProxy, PreferenceStore
 from openvideo.settings import (
     AGENT_PREFERENCES_FIELD,
     AI_MODELS_FIELD,
     DEFAULT_TRANSCRIPTION_FIELD,
+    DOWNLOAD_PROXY_FIELD,
     MODELS_DIRECTORY_FIELD,
     PROJECT_ROOT,
     TOOLS_DIRECTORY_FIELD,
@@ -57,6 +60,10 @@ from openvideo.download_accounts import (
 )
 from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.llm.request_scheduler import configure_model_request_limit
+from openvideo.formula_model_manager import (
+    FormulaModelDownloadError,
+    FormulaModelManager,
+)
 from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
     TranscriptionModelManager,
@@ -94,6 +101,7 @@ class DirectorySelectionResponse(BaseModel):
 class PreferencesPatch(AiModelCollection):
     tools_directory: str | None = None
     models_directory: str | None = None
+    download_proxy: DownloadProxy = None
     default_transcription: TranscriptionOptions | None = None
     agent: AgentPreferences | None = None
 
@@ -101,6 +109,7 @@ class PreferencesPatch(AiModelCollection):
 class PreferencesResponse(AiModelCollection):
     tools_directory: str | None
     models_directory: str | None
+    download_proxy: DownloadProxy
     default_transcription: TranscriptionOptions
     agent: AgentPreferences
     managed_fields: list[str]
@@ -131,6 +140,7 @@ def create_app(
     summary_manager: SummaryManager | None = None
     resolved_capability_resolver = capability_resolver or CapabilityResolver()
     transcription_model_manager = TranscriptionModelManager(resolved_settings)
+    formula_model_manager = FormulaModelManager(resolved_settings)
     page_settings_store: PageSettingsStore | None = None
     pick_directory = directory_picker or select_directory
     directory_picker_lock = asyncio.Lock()
@@ -233,6 +243,8 @@ def create_app(
             yield
         finally:
             await account_login_manager.close()
+            await transcription_model_manager.close()
+            await formula_model_manager.close()
             if analysis_manager:
                 await analysis_manager.close()
             if agent_service:
@@ -250,6 +262,7 @@ def create_app(
     app.state.agent_service = agent_service
     app.state.summary_manager = summary_manager
     app.state.transcription_model_manager = transcription_model_manager
+    app.state.formula_model_manager = formula_model_manager
     app.state.page_settings_store = page_settings_store
     app.state.settings = resolved_settings
     app.state.download_account_store = account_store
@@ -458,6 +471,11 @@ def create_app(
             and MODELS_DIRECTORY_FIELD not in managed_fields
         ):
             resolved_settings.models_directory = request.models_directory
+        if (
+            DOWNLOAD_PROXY_FIELD in provided_fields
+            and DOWNLOAD_PROXY_FIELD not in managed_fields
+        ):
+            resolved_settings.download_proxy = request.download_proxy
         if AI_MODELS_FIELD in provided_fields and AI_MODELS_FIELD not in managed_fields:
             resolved_settings.ai_models = request.ai_models
         if (
@@ -504,6 +522,36 @@ def create_app(
         job = transcription_model_manager.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="模型下载任务不存在")
+        return job
+
+    @app.get(
+        "/api/formula-recognition/model",
+        response_model=FormulaModelState,
+    )
+    def get_formula_model() -> FormulaModelState:
+        return formula_model_manager.state()
+
+    @app.post(
+        "/api/formula-recognition/model/downloads",
+        response_model=ModelDownloadJob,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def download_formula_model() -> ModelDownloadJob:
+        try:
+            job = formula_model_manager.create_download()
+            formula_model_manager.start(job.job_id)
+        except FormulaModelDownloadError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return job
+
+    @app.get(
+        "/api/formula-recognition/model-downloads/{job_id}",
+        response_model=ModelDownloadJob,
+    )
+    def get_formula_model_download(job_id: str) -> ModelDownloadJob:
+        job = formula_model_manager.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="公式模型下载任务不存在")
         return job
 
 
