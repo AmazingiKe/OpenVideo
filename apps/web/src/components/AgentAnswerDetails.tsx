@@ -192,7 +192,6 @@ export function AgentIndexStatusDisclosure({
 }: {
   status: AgentIndexStatus;
 }) {
-  const progress = index_progress(status);
   return (
     <Accordion type="single" collapsible>
       <AccordionItem value="index-status">
@@ -212,41 +211,51 @@ export function AgentIndexStatusDisclosure({
           </Badge>
         </AccordionTrigger>
         <AccordionContent>
-          <div className="flex flex-col gap-3 text-sm">
-            {progress !== null ? (
-              <Progress
-                value={progress}
-                aria-label={`索引覆盖 ${Math.round(progress)}%`}
-              />
-            ) : null}
-            {status.total_documents > 0 ? (
-              <p className="text-muted-foreground">
-                当前阶段 {status.processed_documents} / {status.total_documents}{" "}
-                条
-              </p>
-            ) : null}
-            <p className="text-muted-foreground">
-              已收录 {status.indexed_documents} 条证据
-              {status.duration_seconds !== null
-                ? `，时间覆盖 ${format_time(status.covered_seconds)} / ${format_time(status.duration_seconds)}`
-                : ""}
-            </p>
-            {status.available_capabilities?.length ? (
-              <div className="flex flex-wrap gap-2">
-                {status.available_capabilities.map((capability) => (
-                  <Badge key={capability} variant="secondary">
-                    {capability}
-                  </Badge>
-                ))}
-              </div>
-            ) : null}
-            {status.error_message ? (
-              <p className="text-destructive">{status.error_message}</p>
-            ) : null}
-          </div>
+          <AgentIndexStatusDetails status={status} />
         </AccordionContent>
       </AccordionItem>
     </Accordion>
+  );
+}
+
+export function AgentIndexStatusDetails({
+  status,
+}: {
+  status: AgentIndexStatus;
+}) {
+  const progress = index_progress(status);
+  return (
+    <div className="flex flex-col gap-3 text-sm">
+      {progress !== null ? (
+        <Progress
+          value={progress}
+          aria-label={`索引覆盖 ${Math.round(progress)}%`}
+        />
+      ) : null}
+      {status.total_documents > 0 ? (
+        <p className="text-muted-foreground">
+          当前阶段 {status.processed_documents} / {status.total_documents} 条
+        </p>
+      ) : null}
+      <p className="text-muted-foreground">
+        已收录 {status.indexed_documents} 条证据
+        {status.duration_seconds !== null
+          ? `，时间覆盖 ${format_time(status.covered_seconds)} / ${format_time(status.duration_seconds)}`
+          : ""}
+      </p>
+      {status.available_capabilities?.length ? (
+        <div className="flex flex-wrap gap-2">
+          {status.available_capabilities.map((capability) => (
+            <Badge key={capability} variant="secondary">
+              {capability}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+      {status.error_message ? (
+        <p className="text-destructive">{status.error_message}</p>
+      ) : null}
+    </div>
   );
 }
 

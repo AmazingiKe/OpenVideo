@@ -1,4 +1,10 @@
-import { Bot, History, ShieldCheck } from "lucide-react";
+import {
+  Bot,
+  Database,
+  History,
+  MessageCirclePlus,
+  ShieldCheck,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { use_optional_task_manager } from "@/app/task_manager";
@@ -37,6 +43,14 @@ import {
 } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -44,6 +58,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type {
   AgentArtifact,
@@ -56,7 +71,7 @@ import type {
 } from "@/shared/types";
 import {
   AgentAnswerEvidence,
-  AgentIndexStatusDisclosure,
+  AgentIndexStatusDetails,
   AgentRunMetricsDisclosure,
 } from "./AgentAnswerDetails";
 import {
@@ -162,6 +177,7 @@ export function AgentPanel({
     set_thinking_mode,
     scope_key,
     scope_pinned,
+    start_new_conversation,
     state,
     stream_text,
     submit,
@@ -239,11 +255,31 @@ export function AgentPanel({
                 "正在读取助手配置"}
             </CardDescription>
           </div>
-          {active_run ? (
-            <AgentRunBadge stage={active_run.stage} />
-          ) : (
-            <Badge variant="outline">未开始</Badge>
-          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {active_run ? (
+              <AgentRunBadge stage={active_run.stage} />
+            ) : (
+              <Badge variant="outline">未开始</Badge>
+            )}
+            {visible_index_status ? (
+              <AgentIndexStatusControl status={visible_index_status} />
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="新建对话"
+              title={pending ? "任务运行中，暂时无法新建对话" : "新建对话"}
+              disabled={pending || restoring}
+              onClick={() => {
+                start_new_conversation();
+                set_dismissed_attachment_ids(new Set());
+                set_dropped_attachments([]);
+              }}
+            >
+              <MessageCirclePlus />
+            </Button>
+          </div>
         </div>
         <div
           className={cn(
@@ -320,11 +356,6 @@ export function AgentPanel({
               tabIndex={0}
             >
               <MessageScrollerContent className="gap-4 p-4">
-                {visible_index_status ? (
-                  <MessageScrollerItem messageId="index-status">
-                    <AgentIndexStatusDisclosure status={visible_index_status} />
-                  </MessageScrollerItem>
-                ) : null}
                 {restoring ? (
                   <MessageScrollerItem messageId="restoring-session">
                     <Marker>
@@ -578,5 +609,39 @@ export function AgentPanel({
         )}
       </CardFooter>
     </Card>
+  );
+}
+
+function AgentIndexStatusControl({ status }: { status: AgentIndexStatus }) {
+  const indexing =
+    status.state === "initializing" || status.state === "partial";
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`索引状态：${status.stage_label}`}
+          aria-invalid={status.state === "failed" || undefined}
+          title="查看索引状态"
+        >
+          {indexing ? <Spinner /> : <Database />}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="end"
+        sideOffset={8}
+        aria-label="索引状态"
+      >
+        <PopoverHeader>
+          <PopoverTitle>索引状态</PopoverTitle>
+          <PopoverDescription>{status.stage_label}</PopoverDescription>
+        </PopoverHeader>
+        <AgentIndexStatusDetails status={status} />
+      </PopoverContent>
+    </Popover>
   );
 }

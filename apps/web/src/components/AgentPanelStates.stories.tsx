@@ -1,11 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, within } from "storybook/test";
+import { expect, waitFor, within } from "storybook/test";
 
 import { AgentPanel } from "./AgentPanel";
 import type {
   AgentDefinitionAvailability,
   AgentEvent,
   AgentEvidenceBundle,
+  AgentIndexStatus,
   AgentRun,
   AgentSession,
   AgentSessionState,
@@ -19,6 +20,22 @@ const SECONDARY_MODEL_ID = "model-019c012345677abc8123456789abcdee";
 const SESSION_ID = "session-019c012345677abc8123456789abcdef";
 const RUN_ID = "run-019c012345677abc8123456789abcdef";
 const CREATED_AT = "2026-08-29T10:00:00Z";
+
+const INDEX_STATUS: AgentIndexStatus = {
+  index_task_id: "index-task-019c012345677abc8123456789abcdef",
+  asset_id: ASSET_ID,
+  state: "partial",
+  stage: "tokenizing",
+  stage_label: "正在解析检索文本",
+  processed_documents: 246,
+  total_documents: 720,
+  indexed_documents: 720,
+  covered_seconds: 2_460,
+  duration_seconds: 7_200,
+  available_capabilities: ["字幕检索", "关键词检索"],
+  error_message: null,
+  updated_at: CREATED_AT,
+};
 
 const MODEL: AiModelSummary = {
   model_id: MODEL_ID,
@@ -167,17 +184,43 @@ export const Failure: Story = {
 };
 
 export const LowConfidence: Story = {
-  beforeEach: () => install_agent_fetch("low-confidence"),
-  decorators: [
-    (Story) => (
-      <div className="dark w-full bg-background text-foreground">
-        <Story />
-      </div>
-    ),
-  ],
+  beforeEach: () => install_dark_agent_story("low-confidence"),
   play: async ({ canvas }) => {
     await expect(await canvas.findByText("暂定结论")).toBeVisible();
     await expect(canvas.getByText("发现 1 组证据冲突")).toBeVisible();
+  },
+};
+
+export const CompactHeaderControls: Story = {
+  args: { index_status: INDEX_STATUS },
+  beforeEach: () => install_dark_agent_story("low-confidence"),
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    await expect(await canvas.findByText("暂定结论")).toBeVisible();
+    const index_control = canvas.getByRole("button", {
+      name: "索引状态：正在解析检索文本",
+    });
+    await expect(
+      canvas.getByRole("button", { name: "新建对话" }),
+    ).toBeVisible();
+    await userEvent.click(index_control);
+    const page = within(canvasElement.ownerDocument.body);
+    const popover = await page.findByRole("dialog", { name: "索引状态" });
+    await waitFor(async () => {
+      await expect(within(popover).getByText("正在解析检索文本")).toBeVisible();
+      await expect(
+        within(popover).getByRole("progressbar", { name: "索引覆盖 34%" }),
+      ).toBeVisible();
+    });
+  },
+};
+
+export const NewConversation: Story = {
+  beforeEach: () => install_dark_agent_story("low-confidence"),
+  play: async ({ canvas, userEvent }) => {
+    await expect(await canvas.findByText("暂定结论")).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "新建对话" }));
+    await expect(canvas.getByText("尚未创建会话")).toBeVisible();
+    await expect(canvas.queryByText("暂定结论")).toBeNull();
   },
 };
 
@@ -206,6 +249,15 @@ function install_agent_fetch(state: AgentStoryState) {
   window.fetch = (input, init) => agent_fetch(state, input, init);
   return () => {
     window.fetch = original_fetch;
+  };
+}
+
+function install_dark_agent_story(state: AgentStoryState) {
+  const restore_fetch = install_agent_fetch(state);
+  document.documentElement.classList.add("dark");
+  return () => {
+    restore_fetch();
+    document.documentElement.classList.remove("dark");
   };
 }
 

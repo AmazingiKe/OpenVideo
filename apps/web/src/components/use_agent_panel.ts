@@ -199,6 +199,19 @@ export function use_agent_panel({
     }
   }
 
+  function start_new_conversation() {
+    connection_ref.current?.abort();
+    run_sequence_ref.current.clear();
+    set_state(null);
+    set_active_run(null);
+    set_stream_text("");
+    set_connection_message(null);
+    set_error(null);
+    set_draft("");
+    set_last_content("");
+    set_preparing_attachments(false);
+  }
+
   async function submit(
     content_override?: string,
     context_attachment_drafts: AgentContextAttachmentDraft[] = [],
@@ -394,6 +407,7 @@ export function use_agent_panel({
     set_thinking_mode,
     scope_key,
     scope_pinned,
+    start_new_conversation,
     state,
     stream_text,
     submit,
