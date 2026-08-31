@@ -354,7 +354,8 @@ class AgentService:
             )
         )
         if not self.library.load_agent_events(session_id):
-            requested_title = request.content.strip().splitlines()[0]
+            request_lines = request.content.strip().splitlines()
+            requested_title = request_lines[0] if request_lines else ""
             self.library.save_agent_session(
                 session.model_copy(
                     update={

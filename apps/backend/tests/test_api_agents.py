@@ -178,6 +178,31 @@ def test_definitions_and_sessions_use_only_unified_routes(tmp_path: Path):
         assert client.get("/api/agent-jobs/obsolete").status_code == 404
 
 
+def test_empty_task_content_uses_the_agent_title(tmp_path: Path, monkeypatch):
+    async def complete_task(*_args, **_kwargs):
+        return AgentExecutionResult(content="字幕任务已完成")
+
+    monkeypatch.setattr(AgnoAgentExecutor, "run", complete_task)
+    with create_client(tmp_path) as client:
+        session = client.post(
+            "/api/agent-sessions",
+            json={"agent_id": "transcript_correction", "asset_id": ASSET_ID},
+        ).json()
+
+        response = client.post(
+            f"/api/agent-sessions/{session['session_id']}/runs",
+            json={
+                "request_key": f"request-{uuid7().hex}",
+                "ai_model_id": MODEL_ID,
+                "content": "",
+            },
+        )
+        state = client.get(f"/api/agent-sessions/{session['session_id']}").json()
+
+    assert response.status_code == 202
+    assert state["session"]["title"] == "字幕处理"
+
+
 @pytest.mark.asyncio
 async def test_transcript_task_uses_the_configured_custom_instruction(monkeypatch):
     transcript = Transcript(
