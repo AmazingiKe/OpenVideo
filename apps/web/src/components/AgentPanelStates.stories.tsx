@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect } from "storybook/test";
+import { expect, within } from "storybook/test";
 
 import { AgentPanel } from "./AgentPanel";
 import type {
@@ -15,6 +15,7 @@ import { unknown_model_profile } from "@/shared/types";
 
 const ASSET_ID = "019c0123-4567-7abc-8123-456789abcdef";
 const MODEL_ID = "model-019c012345677abc8123456789abcdef";
+const SECONDARY_MODEL_ID = "model-019c012345677abc8123456789abcdee";
 const SESSION_ID = "session-019c012345677abc8123456789abcdef";
 const RUN_ID = "run-019c012345677abc8123456789abcdef";
 const CREATED_AT = "2026-08-29T10:00:00Z";
@@ -40,6 +41,14 @@ const MODEL: AiModelSummary = {
   profile: unknown_model_profile("openai", "story-model"),
 };
 
+const SECONDARY_MODEL: AiModelSummary = {
+  ...MODEL,
+  model_id: SECONDARY_MODEL_ID,
+  name: "备用工具模型",
+  litellm_model: "anthropic/story-model",
+  profile: unknown_model_profile("anthropic", "story-model"),
+};
+
 const DEFINITION: AgentDefinitionAvailability = {
   definition: {
     agent_id: "marker",
@@ -62,8 +71,8 @@ const DEFINITION: AgentDefinitionAvailability = {
     input_mode: "message",
   },
   available: true,
-  compatible_model_ids: [MODEL_ID],
-  capability_model_ids: { tools: [MODEL_ID] },
+  compatible_model_ids: [MODEL_ID, SECONDARY_MODEL_ID],
+  capability_model_ids: { tools: [MODEL_ID, SECONDARY_MODEL_ID] },
   unavailable_reason: null,
 };
 
@@ -83,7 +92,7 @@ const meta = {
   args: {
     agent_id: "marker",
     asset_id: ASSET_ID,
-    models: [MODEL],
+    models: [MODEL, SECONDARY_MODEL],
     title: "视频助手",
     context_label: "当前视频 · 透视投影课程",
     className: "h-[640px] w-full",
@@ -117,11 +126,19 @@ export const Loading: Story = {
 
 export const Empty: Story = {
   beforeEach: () => install_agent_fetch("empty"),
-  play: async ({ canvas }) => {
+  play: async ({ canvas, canvasElement, userEvent }) => {
     await expect(await canvas.findByText("尚未创建会话")).toBeVisible();
     await expect(
       canvas.getByRole("textbox", { name: "助手指令" }),
     ).toBeEnabled();
+    const model_select = canvas.getByRole("combobox", { name: "执行模型" });
+    await expect(model_select).toHaveTextContent("在线工具模型");
+    await userEvent.click(model_select);
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(
+      await page.findByRole("option", { name: /备用工具模型/ }),
+    );
+    await expect(model_select).toHaveTextContent("备用工具模型");
   },
 };
 

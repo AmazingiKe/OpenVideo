@@ -337,6 +337,8 @@ export function MarkersPage() {
       ? undefined
       : "询问视频内容，或直接描述希望创建的标记…",
     panel_size_percent: settings.agent_panel_size_percent,
+    on_panel_size_percent_change: (agent_panel_size_percent: number) =>
+      update_settings({ agent_panel_size_percent }),
     on_seek: seek_agent_evidence,
     current_time,
     on_artifact_change: handle_assistant_artifact,

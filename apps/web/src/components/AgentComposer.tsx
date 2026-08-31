@@ -4,14 +4,19 @@ import {
   Pin,
   Plus,
   ShieldCheck,
-  Sparkles,
   Square,
+  Zap,
 } from "lucide-react";
 import { useId, useState, type DragEvent, type FormEvent } from "react";
 
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
 import { Button } from "@/components/ui/button";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import {
   Popover,
   PopoverContent,
@@ -21,27 +26,60 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
+import { Slider } from "@/components/ui/slider";
+import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
-import type { AgentRetrievalScope, AgentThinkingMode } from "@/shared/types";
+import type {
+  AgentPermissionMode,
+  AgentRetrievalScope,
+  AgentThinkingMode,
+} from "@/shared/types";
 import {
   AGENT_CONTEXT_ATTACHMENT_MIME,
   read_context_attachment_drag_data,
   type AgentContextAttachmentDraft,
 } from "./agent_context";
 
-const THINKING_MODE_LABELS: Record<AgentThinkingMode, string> = {
-  auto: "自动模式",
-  fast: "快速模式",
-  complex: "复杂思考",
-};
+const THINKING_MODE_OPTIONS = [
+  { value: "fast", label: "低" },
+  { value: "auto", label: "自动" },
+  { value: "complex", label: "高" },
+] as const satisfies ReadonlyArray<{
+  value: AgentThinkingMode;
+  label: string;
+}>;
 
-const RETRIEVAL_SCOPE_LABELS: Record<AgentRetrievalScope, string> = {
-  current_asset: "当前视频",
-  library: "资料库",
-};
+const RETRIEVAL_SCOPE_OPTIONS = [
+  { value: "current_asset", label: "当前视频" },
+  { value: "library", label: "资料库" },
+] as const satisfies ReadonlyArray<{
+  value: AgentRetrievalScope;
+  label: string;
+}>;
+
+const PERMISSION_MODE_OPTIONS = [
+  {
+    value: "request_approval",
+    label: "始终询问",
+    description: "写入、删除或外部工具操作都会先请求批准。",
+  },
+  {
+    value: "smart_approval",
+    label: "仅风险询问",
+    description: "正常读取直接执行，只在检测到风险操作时询问。",
+  },
+  {
+    value: "full_access",
+    label: "完全访问",
+    description: "已启用的工具不再逐次询问，请仅在可信环境中使用。",
+  },
+] as const satisfies ReadonlyArray<{
+  value: AgentPermissionMode;
+  label: string;
+  description: string;
+}>;
 
 export function AgentComposer({
   value,
@@ -52,6 +90,7 @@ export function AgentComposer({
   pending = false,
   preparing_attachments = false,
   placeholder = "描述希望如何处理当前内容…",
+  selected_model_name = "当前模型",
   thinking_mode,
   on_thinking_mode_change,
   thinking_modes_enabled,
@@ -60,6 +99,10 @@ export function AgentComposer({
   library_scope_enabled,
   scope_pinned,
   on_scope_pinned_change,
+  permission_mode = "smart_approval",
+  on_permission_mode_change,
+  permission_mode_saving = false,
+  permission_mode_error = null,
   attachments,
   on_remove_attachment,
   on_attachment_drop,
@@ -72,6 +115,7 @@ export function AgentComposer({
   pending?: boolean;
   preparing_attachments?: boolean;
   placeholder?: string;
+  selected_model_name?: string;
   thinking_mode: AgentThinkingMode;
   on_thinking_mode_change: (mode: AgentThinkingMode) => void;
   thinking_modes_enabled: boolean;
@@ -80,6 +124,10 @@ export function AgentComposer({
   library_scope_enabled: boolean;
   scope_pinned: boolean;
   on_scope_pinned_change: (pinned: boolean) => void;
+  permission_mode?: AgentPermissionMode;
+  on_permission_mode_change?: (permission_mode: AgentPermissionMode) => void;
+  permission_mode_saving?: boolean;
+  permission_mode_error?: string | null;
   attachments: AgentContextAttachmentDraft[];
   on_remove_attachment: (draft_id: string) => void;
   on_attachment_drop?: (attachment: AgentContextAttachmentDraft) => void;
@@ -178,11 +226,16 @@ export function AgentComposer({
                 library_scope_enabled={library_scope_enabled}
                 scope_pinned={scope_pinned}
                 on_scope_pinned_change={on_scope_pinned_change}
+                permission_mode={permission_mode}
+                on_permission_mode_change={on_permission_mode_change}
+                permission_mode_saving={permission_mode_saving}
+                permission_mode_error={permission_mode_error}
               />
             </div>
             <div className="flex min-w-0 items-center justify-end gap-1">
               <ThinkingModeControl
                 control_id={control_id}
+                selected_model_name={selected_model_name}
                 thinking_mode={thinking_mode}
                 on_thinking_mode_change={on_thinking_mode_change}
                 thinking_modes_enabled={thinking_modes_enabled}
@@ -265,6 +318,10 @@ function RetrievalScopeControl({
   library_scope_enabled,
   scope_pinned,
   on_scope_pinned_change,
+  permission_mode,
+  on_permission_mode_change,
+  permission_mode_saving,
+  permission_mode_error,
 }: {
   control_id: string;
   retrieval_scope: AgentRetrievalScope;
@@ -272,19 +329,31 @@ function RetrievalScopeControl({
   library_scope_enabled: boolean;
   scope_pinned: boolean;
   on_scope_pinned_change: (pinned: boolean) => void;
+  permission_mode: AgentPermissionMode;
+  on_permission_mode_change?: (permission_mode: AgentPermissionMode) => void;
+  permission_mode_saving: boolean;
+  permission_mode_error: string | null;
 }) {
-  const label = RETRIEVAL_SCOPE_LABELS[retrieval_scope];
+  const selected_index = RETRIEVAL_SCOPE_OPTIONS.findIndex(
+    (option) => option.value === retrieval_scope,
+  );
+  const selected_option = RETRIEVAL_SCOPE_OPTIONS[selected_index];
+  const selected_permission_index = PERMISSION_MODE_OPTIONS.findIndex(
+    (option) => option.value === permission_mode,
+  );
+  const selected_permission_option =
+    PERMISSION_MODE_OPTIONS[selected_permission_index];
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button
           type="button"
-          variant="ghost"
+          variant="secondary"
           size="sm"
-          aria-label={`检索范围：${label}`}
+          className="rounded-full"
+          aria-label={`检索范围：${selected_option.label}`}
         >
-          <ShieldCheck data-icon="inline-start" />
-          <span className="truncate">{label}</span>
+          <span>检索范围</span>
           <ChevronDown data-icon="inline-end" />
         </Button>
       </PopoverTrigger>
@@ -292,45 +361,68 @@ function RetrievalScopeControl({
         side="top"
         align="start"
         sideOffset={8}
-        aria-label="检索范围"
+        className="w-72 gap-4 rounded-3xl p-4"
+        aria-label="检索与权限"
       >
         <PopoverHeader>
-          <PopoverTitle>检索范围</PopoverTitle>
+          <PopoverTitle className="sr-only">检索与权限</PopoverTitle>
+          <div className="flex min-w-0 items-center gap-2">
+            <ShieldCheck
+              className="size-4 shrink-0 text-primary"
+              aria-hidden="true"
+            />
+            <span className="font-medium">检索与权限</span>
+          </div>
           <PopoverDescription>
             {library_scope_enabled
-              ? "选择助手可以检索的内容范围。"
-              : "跨资料库检索尚未接通，仅支持当前视频。"}
+              ? "控制助手可以检索的内容范围与执行操作的授权方式。"
+              : "资料库检索尚未接通；仍可调整操作授权方式。"}
           </PopoverDescription>
         </PopoverHeader>
-        <Field>
-          <FieldLabel className="sr-only" id={`${control_id}-retrieval-scope`}>
-            检索范围
-          </FieldLabel>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            spacing={1}
-            value={retrieval_scope}
-            className="w-full"
-            onValueChange={(value) => {
-              if (is_retrieval_scope(value)) {
-                on_retrieval_scope_change(value);
-              }
+        <Field className="gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <FieldLabel htmlFor={`${control_id}-retrieval-scope`}>
+              检索范围
+            </FieldLabel>
+            <span className="text-sm text-primary" aria-live="polite">
+              {selected_option.label}
+            </span>
+          </div>
+          <Slider
+            id={`${control_id}-retrieval-scope`}
+            min={0}
+            max={RETRIEVAL_SCOPE_OPTIONS.length - 1}
+            step={1}
+            variant="strength"
+            value={[selected_index]}
+            onValueChange={([next_index]) => {
+              const next_option = RETRIEVAL_SCOPE_OPTIONS[next_index];
+              if (next_option) on_retrieval_scope_change(next_option.value);
             }}
-            aria-labelledby={`${control_id}-retrieval-scope`}
+            disabled={!library_scope_enabled}
+            aria-label="检索范围"
+            aria-valuetext={selected_option.label}
+            aria-describedby={
+              library_scope_enabled
+                ? undefined
+                : `${control_id}-retrieval-scope-unavailable`
+            }
+          />
+          <div
+            className="grid grid-cols-2 text-xs text-muted-foreground"
+            aria-hidden="true"
           >
-            <ToggleGroupItem className="flex-1" value="current_asset">
-              当前视频
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              className="flex-1"
-              value="library"
-              disabled={!library_scope_enabled}
-            >
-              资料库
-            </ToggleGroupItem>
-          </ToggleGroup>
+            {RETRIEVAL_SCOPE_OPTIONS.map((option, index) => (
+              <span
+                key={option.value}
+                className={cn(
+                  index === RETRIEVAL_SCOPE_OPTIONS.length - 1 && "text-right",
+                )}
+              >
+                {option.label}
+              </span>
+            ))}
+          </div>
         </Field>
         <Field className="flex-row items-center justify-between gap-2">
           <FieldLabel htmlFor={`${control_id}-scope-pinned`}>
@@ -347,6 +439,67 @@ function RetrievalScopeControl({
             <Pin />
           </Toggle>
         </Field>
+        {!library_scope_enabled ? (
+          <PopoverDescription id={`${control_id}-retrieval-scope-unavailable`}>
+            启用资料库检索后即可调整检索范围。
+          </PopoverDescription>
+        ) : null}
+        <Separator />
+        <Field className="gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <FieldLabel htmlFor={`${control_id}-permission-mode`}>
+              权限控制
+            </FieldLabel>
+            <span className="text-sm text-primary" aria-live="polite">
+              {selected_permission_option.label}
+            </span>
+          </div>
+          <Slider
+            id={`${control_id}-permission-mode`}
+            min={0}
+            max={PERMISSION_MODE_OPTIONS.length - 1}
+            step={1}
+            variant="strength"
+            value={[selected_permission_index]}
+            onValueChange={([next_index]) => {
+              const next_option = PERMISSION_MODE_OPTIONS[next_index];
+              if (next_option) on_permission_mode_change?.(next_option.value);
+            }}
+            disabled={!on_permission_mode_change || permission_mode_saving}
+            aria-label="权限控制"
+            aria-valuetext={selected_permission_option.label}
+            aria-describedby={`${control_id}-permission-mode-description`}
+          />
+          <div
+            className="grid grid-cols-3 text-xs text-muted-foreground"
+            aria-hidden="true"
+          >
+            {PERMISSION_MODE_OPTIONS.map((option, index) => (
+              <span
+                key={option.value}
+                className={cn(
+                  index === 1 && "text-center",
+                  index === PERMISSION_MODE_OPTIONS.length - 1 && "text-right",
+                )}
+              >
+                {option.label}
+              </span>
+            ))}
+          </div>
+          <FieldDescription
+            id={`${control_id}-permission-mode-description`}
+            className={cn(
+              permission_mode === "full_access" && "text-destructive",
+            )}
+          >
+            {selected_permission_option.description}
+          </FieldDescription>
+        </Field>
+        {permission_mode_error ? (
+          <PopoverDescription className="text-destructive" role="alert">
+            {permission_mode_error}
+          </PopoverDescription>
+        ) : null}
       </PopoverContent>
     </Popover>
   );
@@ -354,27 +507,32 @@ function RetrievalScopeControl({
 
 function ThinkingModeControl({
   control_id,
+  selected_model_name,
   thinking_mode,
   on_thinking_mode_change,
   thinking_modes_enabled,
 }: {
   control_id: string;
+  selected_model_name: string;
   thinking_mode: AgentThinkingMode;
   on_thinking_mode_change: (mode: AgentThinkingMode) => void;
   thinking_modes_enabled: boolean;
 }) {
-  const label = THINKING_MODE_LABELS[thinking_mode];
+  const selected_index = THINKING_MODE_OPTIONS.findIndex(
+    (option) => option.value === thinking_mode,
+  );
+  const selected_option = THINKING_MODE_OPTIONS[selected_index];
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button
           type="button"
-          variant="ghost"
+          variant="secondary"
           size="sm"
-          aria-label={`思考模式：${label}`}
+          className="rounded-full"
+          aria-label={`思考强度：${selected_option.label}`}
         >
-          <Sparkles data-icon="inline-start" />
-          <span className="truncate">{label}</span>
+          <span>选择强度</span>
           <ChevronDown data-icon="inline-end" />
         </Button>
       </PopoverTrigger>
@@ -382,60 +540,65 @@ function ThinkingModeControl({
         side="top"
         align="end"
         sideOffset={8}
-        aria-label="思考模式"
+        className="w-72 gap-4 rounded-3xl p-4"
+        aria-label="思考强度"
       >
         <PopoverHeader>
-          <PopoverTitle>思考模式</PopoverTitle>
-          <PopoverDescription>
-            {thinking_modes_enabled
-              ? "选择此次消息的模型路由方式。"
-              : "模型角色路由尚未接通，仅支持自动模式。"}
-          </PopoverDescription>
+          <PopoverTitle className="sr-only">思考强度</PopoverTitle>
+          <div className="flex min-w-0 items-center gap-2">
+            <Zap className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            <span className="truncate font-medium">{selected_model_name}</span>
+            <span className="ml-auto shrink-0 text-primary" aria-live="polite">
+              {selected_option.label}
+            </span>
+          </div>
         </PopoverHeader>
-        <Field>
+        <Field className="gap-2">
           <FieldLabel className="sr-only" id={`${control_id}-thinking-mode`}>
-            思考模式
+            思考强度
           </FieldLabel>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            spacing={1}
-            value={thinking_mode}
-            className="w-full"
-            onValueChange={(value) => {
-              if (is_thinking_mode(value)) on_thinking_mode_change(value);
+          <Slider
+            min={0}
+            max={THINKING_MODE_OPTIONS.length - 1}
+            step={1}
+            variant="strength"
+            value={[selected_index]}
+            onValueChange={([next_index]) => {
+              const next_option = THINKING_MODE_OPTIONS[next_index];
+              if (next_option) on_thinking_mode_change(next_option.value);
             }}
-            aria-labelledby={`${control_id}-thinking-mode`}
+            disabled={!thinking_modes_enabled}
+            aria-label="思考强度"
+            aria-valuetext={selected_option.label}
+            aria-describedby={
+              thinking_modes_enabled
+                ? undefined
+                : `${control_id}-thinking-mode-unavailable`
+            }
+          />
+          <div
+            className="grid grid-cols-3 text-xs text-muted-foreground"
+            aria-hidden="true"
           >
-            <ToggleGroupItem className="flex-1" value="auto">
-              自动
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              className="flex-1"
-              value="fast"
-              disabled={!thinking_modes_enabled}
-            >
-              快速
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              className="flex-1"
-              value="complex"
-              disabled={!thinking_modes_enabled}
-            >
-              复杂思考
-            </ToggleGroupItem>
-          </ToggleGroup>
+            {THINKING_MODE_OPTIONS.map((option, index) => (
+              <span
+                key={option.value}
+                className={cn(
+                  index === 1 && "text-center",
+                  index === THINKING_MODE_OPTIONS.length - 1 && "text-right",
+                )}
+              >
+                {option.label}
+              </span>
+            ))}
+          </div>
         </Field>
+        {!thinking_modes_enabled ? (
+          <PopoverDescription id={`${control_id}-thinking-mode-unavailable`}>
+            模型角色路由尚未接通，仅支持自动模式。
+          </PopoverDescription>
+        ) : null}
       </PopoverContent>
     </Popover>
   );
-}
-
-function is_thinking_mode(value: string): value is AgentThinkingMode {
-  return value === "auto" || value === "fast" || value === "complex";
-}
-
-function is_retrieval_scope(value: string): value is AgentRetrievalScope {
-  return value === "current_asset" || value === "library";
 }

@@ -59,22 +59,32 @@ describe("AgentComposer", () => {
     );
 
     const thinking_mode_trigger = screen.getByRole("button", {
-      name: "思考模式：自动模式",
+      name: "思考强度：自动",
     });
     fireEvent.click(thinking_mode_trigger);
-    expect(screen.getByRole("radio", { name: "复杂思考" })).toBeDisabled();
+    const thinking_mode_slider = screen.getByRole("slider", {
+      name: "思考强度",
+    });
+    expect(thinking_mode_slider).toHaveAttribute("data-disabled");
+    expect(thinking_mode_slider).toHaveAttribute("aria-valuetext", "自动");
     expect(
       screen.getByText("模型角色路由尚未接通，仅支持自动模式。"),
-    ).toBeVisible();
-    fireEvent.click(thinking_mode_trigger);
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "检索范围：当前视频" }));
-    expect(screen.getByRole("radio", { name: "资料库" })).toBeDisabled();
+    const retrieval_scope_slider = screen.getByRole("slider", {
+      name: "检索范围",
+    });
+    expect(retrieval_scope_slider).toHaveAttribute("data-disabled");
+    expect(retrieval_scope_slider).toHaveAttribute(
+      "aria-valuetext",
+      "当前视频",
+    );
     expect(
       screen.getByRole("button", { name: "将资料库范围固定到当前对话" }),
     ).toBeDisabled();
     expect(
-      screen.getByText("跨资料库检索尚未接通，仅支持当前视频。"),
+      screen.getByText("资料库检索尚未接通；仍可调整操作授权方式。"),
     ).toBeVisible();
   });
 
@@ -104,10 +114,76 @@ describe("AgentComposer", () => {
     expect(
       screen.getByRole("button", { name: "检索范围：资料库" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "思考模式：复杂思考" }),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "思考强度：高" })).toBeVisible();
     expect(screen.getByRole("button", { name: "发送指令" })).toBeEnabled();
+  });
+
+  it("changes thinking mode along a horizontal slider", () => {
+    const on_thinking_mode_change = vi.fn();
+    render(
+      <AgentComposer
+        value="问题"
+        on_change={vi.fn()}
+        on_submit={vi.fn()}
+        thinking_mode="auto"
+        on_thinking_mode_change={on_thinking_mode_change}
+        thinking_modes_enabled
+        retrieval_scope="current_asset"
+        on_retrieval_scope_change={vi.fn()}
+        library_scope_enabled
+        scope_pinned={false}
+        on_scope_pinned_change={vi.fn()}
+        attachments={[]}
+        on_remove_attachment={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "思考强度：自动" }));
+    fireEvent.keyDown(screen.getByRole("slider", { name: "思考强度" }), {
+      key: "ArrowRight",
+    });
+    expect(on_thinking_mode_change).toHaveBeenCalledWith("complex");
+  });
+
+  it("adjusts retrieval permission and conversation persistence in one popover", () => {
+    const on_retrieval_scope_change = vi.fn();
+    const on_scope_pinned_change = vi.fn();
+    const on_permission_mode_change = vi.fn();
+    render(
+      <AgentComposer
+        value="问题"
+        on_change={vi.fn()}
+        on_submit={vi.fn()}
+        thinking_mode="auto"
+        on_thinking_mode_change={vi.fn()}
+        thinking_modes_enabled
+        retrieval_scope="library"
+        on_retrieval_scope_change={on_retrieval_scope_change}
+        library_scope_enabled
+        scope_pinned={false}
+        on_scope_pinned_change={on_scope_pinned_change}
+        permission_mode="smart_approval"
+        on_permission_mode_change={on_permission_mode_change}
+        attachments={[]}
+        on_remove_attachment={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "检索范围：资料库" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "将资料库范围固定到当前对话" }),
+    );
+    expect(on_scope_pinned_change).toHaveBeenCalledWith(true);
+
+    fireEvent.keyDown(screen.getByRole("slider", { name: "检索范围" }), {
+      key: "ArrowLeft",
+    });
+    expect(on_retrieval_scope_change).toHaveBeenCalledWith("current_asset");
+
+    fireEvent.keyDown(screen.getByRole("slider", { name: "权限控制" }), {
+      key: "ArrowRight",
+    });
+    expect(on_permission_mode_change).toHaveBeenCalledWith("full_access");
   });
 
   it("shows a copy target and accepts a dragged context attachment", () => {

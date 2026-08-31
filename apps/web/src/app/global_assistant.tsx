@@ -21,14 +21,22 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import {
   use_agent_preferences,
   use_ai_models,
 } from "@/features/workbench/use_processing_resources";
-import { cn } from "@/lib/utils";
 import type { AgentArtifact, AgentEvidenceReference } from "@/shared/types";
 
 const COMPACT_ASSISTANT_QUERY = "(max-width: 1199px)";
 const DEFAULT_PANEL_SIZE_PERCENT = 30;
+const ASSISTANT_PANEL_MIN_WIDTH_PX = 352;
+const ASSISTANT_PANEL_MAX_WIDTH_PX = 576;
+const WORKSPACE_PANEL_MIN_WIDTH_PX = 480;
+const ASSISTANT_PANEL_ID = "global-assistant-panel";
 
 export type GlobalAssistantBinding = {
   agent_id: string;
@@ -39,6 +47,7 @@ export type GlobalAssistantBinding = {
   context_attachments?: AgentContextAttachmentDraft[];
   placeholder?: string;
   panel_size_percent?: number;
+  on_panel_size_percent_change?: (size_percent: number) => void;
   on_seek?: (
     seconds: number,
     end_seconds?: number | null,
@@ -157,7 +166,12 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
   const assistant = require_global_assistant_layout();
   const { selected_asset, selected_asset_id } = use_asset_catalog();
   const { models } = use_ai_models();
-  const { agent_preferences } = use_agent_preferences();
+  const {
+    agent_preferences,
+    error: agent_preferences_error,
+    permission_mode_saving,
+    set_permission_mode,
+  } = use_agent_preferences();
   const compact = use_compact_assistant_layout();
   const workspace_path =
     workspace_route(location.pathname)?.path ?? location.pathname;
@@ -185,6 +199,12 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
       default_thinking_mode={agent_preferences?.default_thinking_mode}
       thinking_modes_enabled
       library_scope_enabled
+      permission_mode={agent_preferences?.permission_mode}
+      on_permission_mode_change={
+        agent_preferences ? set_permission_mode : undefined
+      }
+      permission_mode_saving={permission_mode_saving}
+      permission_mode_error={agent_preferences_error}
       title="OpenVideo 助手"
       context_label={binding.context_label}
       placeholder={binding.placeholder}
@@ -193,27 +213,46 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
       on_artifact_change={binding.on_artifact_change}
     />
   );
-  const layout_style = docked
-    ? {
-        gridTemplateColumns: `minmax(0, 1fr) clamp(22rem, ${panel_size_percent}%, 36rem)`,
-      }
-    : undefined;
 
   return (
     <div
-      className={cn(
-        "grid min-h-0 flex-1 overflow-hidden",
-        !docked && "grid-cols-1",
-      )}
-      style={layout_style}
+      className="min-h-0 flex-1 overflow-hidden"
       data-slot="global-assistant-layout"
     >
-      <div className="min-h-0 min-w-0 overflow-hidden">{children}</div>
       {docked ? (
-        <aside className="min-h-0 border-l bg-card" aria-label="全局助手">
-          {assistant_panel}
-        </aside>
-      ) : null}
+        <ResizablePanelGroup
+          orientation="horizontal"
+          onLayoutChanged={(layout, metadata) => {
+            const next_size = layout[ASSISTANT_PANEL_ID];
+            if (metadata.isUserInteraction && next_size !== undefined) {
+              binding.on_panel_size_percent_change?.(next_size);
+            }
+          }}
+        >
+          <ResizablePanel
+            id="global-assistant-workspace"
+            minSize={`${WORKSPACE_PANEL_MIN_WIDTH_PX}px`}
+          >
+            <div className="h-full min-h-0 min-w-0 overflow-hidden">
+              {children}
+            </div>
+          </ResizablePanel>
+          <ResizableHandle withHandle aria-label="调整助手宽度" />
+          <ResizablePanel
+            id={ASSISTANT_PANEL_ID}
+            defaultSize={`${panel_size_percent}%`}
+            minSize={`${ASSISTANT_PANEL_MIN_WIDTH_PX}px`}
+            maxSize={`${ASSISTANT_PANEL_MAX_WIDTH_PX}px`}
+            groupResizeBehavior="preserve-pixel-size"
+          >
+            <aside className="h-full min-h-0 bg-card" aria-label="全局助手">
+              {assistant_panel}
+            </aside>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div className="h-full min-h-0 min-w-0 overflow-hidden">{children}</div>
+      )}
       {compact ? (
         <Sheet open={assistant.open} onOpenChange={assistant.set_open}>
           <SheetContent side="right" className="w-[min(92vw,28rem)] gap-0 p-0">

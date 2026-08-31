@@ -388,6 +388,7 @@ export function use_agent_panel({
     select_session,
     sessions,
     set_draft,
+    set_model_id,
     set_retrieval_scope,
     set_scope_pinned,
     set_thinking_mode,

@@ -116,6 +116,9 @@ describe("GlobalAssistantLayout", () => {
   it("keeps one assistant instance and switches its route context", async () => {
     render_assistant();
 
+    expect(
+      screen.getByRole("separator", { name: "调整助手宽度" }),
+    ).toBeVisible();
     const marker_panel = await screen.findByLabelText("助手面板");
     expect(marker_panel).toHaveAttribute("data-agent-id", "marker");
     expect(marker_panel).toHaveTextContent("当前视频 · 示例");

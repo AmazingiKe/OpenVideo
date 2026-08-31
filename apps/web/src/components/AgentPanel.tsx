@@ -5,6 +5,7 @@ import { use_optional_task_manager } from "@/app/task_manager";
 import { AgentComposer } from "@/components/AgentComposer";
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
 import { AgentMarkdown } from "@/components/AgentMarkdown";
+import { AiModelSelect } from "@/components/AiModelSelect";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Marker, MarkerContent } from "@/components/ui/marker";
 import { Message, MessageContent } from "@/components/ui/message";
@@ -34,6 +35,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Field, FieldLabel } from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -48,6 +50,7 @@ import type {
   AgentCapability,
   AgentEvidenceReference,
   AgentIndexStatus,
+  AgentPermissionMode,
   AgentThinkingMode,
   AiModelSummary,
 } from "@/shared/types";
@@ -81,6 +84,10 @@ export type AgentPanelProps = {
   default_thinking_mode?: AgentThinkingMode;
   thinking_modes_enabled?: boolean;
   library_scope_enabled?: boolean;
+  permission_mode?: AgentPermissionMode;
+  on_permission_mode_change?: (permission_mode: AgentPermissionMode) => void;
+  permission_mode_saving?: boolean;
+  permission_mode_error?: string | null;
   index_status?: AgentIndexStatus;
   title?: string;
   context_label?: string;
@@ -105,6 +112,10 @@ export function AgentPanel({
   default_thinking_mode = "auto",
   thinking_modes_enabled = false,
   library_scope_enabled = false,
+  permission_mode = "smart_approval",
+  on_permission_mode_change,
+  permission_mode_saving = false,
+  permission_mode_error = null,
   index_status,
   title,
   context_label,
@@ -145,6 +156,7 @@ export function AgentPanel({
     select_session,
     sessions,
     set_draft,
+    set_model_id,
     set_retrieval_scope,
     set_scope_pinned,
     set_thinking_mode,
@@ -232,8 +244,11 @@ export function AgentPanel({
             <Badge variant="outline">未开始</Badge>
           )}
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <div className="min-w-0 flex-1 basis-40">
+        <div className="grid min-w-0 grid-cols-2 gap-2">
+          <Field>
+            <FieldLabel htmlFor={`${agent_id}-agent-session`}>
+              历史会话
+            </FieldLabel>
             <Select
               value={state?.session.session_id ?? ""}
               onValueChange={(session_id) => void select_session(session_id)}
@@ -261,11 +276,18 @@ export function AgentPanel({
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </div>
-          <Badge variant="secondary">
-            {retrieval_scope === "library" ? "资料库范围" : "当前视频"}
-          </Badge>
+          </Field>
+          <AiModelSelect
+            id={`${agent_id}-agent-model`}
+            label="执行模型"
+            models={compatible_models}
+            value={model_id}
+            on_change={set_model_id}
+          />
         </div>
+        <Badge className="w-fit" variant="secondary">
+          {retrieval_scope === "library" ? "资料库范围" : "当前视频"}
+        </Badge>
         {definition && compatible_models.length === 0 ? (
           <Alert variant="destructive">
             <AlertTitle>没有兼容模型</AlertTitle>
@@ -512,6 +534,10 @@ export function AgentPanel({
             preparing_attachments={preparing_attachments}
             disabled={!definition?.available || !model_id}
             placeholder={placeholder ?? "输入消息；运行时仍可编辑下一条草稿"}
+            selected_model_name={
+              compatible_models.find((model) => model.model_id === model_id)
+                ?.name
+            }
             thinking_mode={thinking_mode}
             on_thinking_mode_change={set_thinking_mode}
             thinking_modes_enabled={thinking_modes_enabled}
@@ -523,6 +549,10 @@ export function AgentPanel({
             library_scope_enabled={library_scope_enabled}
             scope_pinned={scope_pinned}
             on_scope_pinned_change={set_scope_pinned}
+            permission_mode={permission_mode}
+            on_permission_mode_change={on_permission_mode_change}
+            permission_mode_saving={permission_mode_saving}
+            permission_mode_error={permission_mode_error}
             attachments={visible_attachments}
             on_remove_attachment={(draft_id) =>
               set_dismissed_attachment_ids(
