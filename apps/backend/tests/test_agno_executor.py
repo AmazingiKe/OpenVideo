@@ -197,6 +197,41 @@ async def test_agent_runtime_tool_calling(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_identical_tool_arguments_reuse_the_first_result():
+    execution_count = 0
+
+    def execute(parameters: EchoInput):
+        nonlocal execution_count
+        execution_count += 1
+        return {"ok": True, "text": parameters.text}
+
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="echo",
+            description="回显证据",
+            parameters_model=EchoInput,
+            handler=execute,
+        )
+    )
+    definition = AgentDefinition(
+        agent_id="test",
+        title="测试",
+        description="验证重复工具调用不会重复执行",
+        mode=AgentMode.CHAT,
+        prompt="调用工具",
+        tools=[AgentToolDescriptor(name="echo", description="回显证据")],
+    )
+    functions = AgnoAgentExecutor._tools(registry, definition, 5, {})
+
+    first_result = await functions[0].entrypoint(text="相同证据")
+    second_result = await functions[0].entrypoint(text="相同证据")
+
+    assert first_result == second_result
+    assert execution_count == 1
+
+
+@pytest.mark.asyncio
 async def test_missing_required_tool_gets_one_forced_recovery(monkeypatch):
     tool = ToolExecution(
         tool_call_id="call-required",

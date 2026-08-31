@@ -86,6 +86,7 @@ export function use_agent_panel({
   const [active_run, set_active_run] = useState<AgentRun | null>(null);
   const [submission, set_submission] = useState<AgentSubmission | null>(null);
   const [stream_text, set_stream_text] = useState("");
+  const [stream_complete, set_stream_complete] = useState(false);
   const [connection_message, set_connection_message] = useState<string | null>(
     null,
   );
@@ -123,6 +124,7 @@ export function use_agent_panel({
     set_state(null);
     set_active_run(null);
     set_stream_text("");
+    set_stream_complete(false);
     set_thinking_mode(default_thinking_mode);
     set_retrieval_scope("current_asset");
     set_scope_pinned(false);
@@ -200,6 +202,7 @@ export function use_agent_panel({
       set_state(selected);
       set_active_run(null);
       set_stream_text("");
+      set_stream_complete(false);
       set_error(null);
       const running = [...selected.runs]
         .reverse()
@@ -219,6 +222,7 @@ export function use_agent_panel({
     set_state(null);
     set_active_run(null);
     set_stream_text("");
+    set_stream_complete(false);
     set_connection_message(null);
     set_error(null);
     set_draft("");
@@ -244,6 +248,7 @@ export function use_agent_panel({
     submission_ref.current = true;
     set_error(null);
     set_stream_text("");
+    set_stream_complete(false);
     set_last_content(content);
     set_draft("");
     set_submission({ content, started_at: Date.now() });
@@ -347,7 +352,8 @@ export function use_agent_panel({
             void on_artifact_change?.(artifact);
           }
           if (event === "message.completed") {
-            set_stream_text("");
+            set_stream_text(String(data.content ?? ""));
+            set_stream_complete(true);
           }
         },
         controller.signal,
@@ -377,6 +383,8 @@ export function use_agent_panel({
     try {
       const cancelled = await cancel_agent_run(run_id);
       set_active_run(cancelled);
+      set_stream_text("");
+      set_stream_complete(false);
       set_submission(null);
       submission_ref.current = false;
       connection_ref.current?.abort();
@@ -422,12 +430,19 @@ export function use_agent_panel({
     submission?.started_at ??
     (Number.isNaN(parsed_run_started_at) ? undefined : parsed_run_started_at);
 
+  function complete_stream() {
+    if (!stream_complete) return;
+    set_stream_text("");
+    set_stream_complete(false);
+  }
+
   return {
     active_run,
     artifacts: state?.artifacts ?? [],
     cancel_run,
     compatible_models,
     connection_message,
+    complete_stream,
     definition,
     draft,
     error,
@@ -450,6 +465,7 @@ export function use_agent_panel({
     start_new_conversation,
     state,
     stream_text,
+    stream_complete,
     submitted_content: submission?.content ?? null,
     submitting: submission !== null && !pending,
     submit,

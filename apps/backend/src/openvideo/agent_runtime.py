@@ -41,7 +41,7 @@ from openvideo.llm.events import LlmAgentEvent, LlmAgentEventType
 from openvideo.llm.model_profile import CapabilityName, ModelProfile, Support
 
 
-MAX_AGENT_TOOL_CALLS = 12
+MAX_AGENT_TOOL_CALLS = 6
 AGENT_RUN_TIMEOUT_SECONDS = 180
 AGENT_TOOL_TIMEOUT_SECONDS = 60
 MAX_CONTEXT_CHARACTERS = 48_000

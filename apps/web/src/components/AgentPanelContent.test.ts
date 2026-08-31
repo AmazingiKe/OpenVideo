@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { build_agent_timeline } from "./AgentPanelContent";
+import { build_agent_timeline, group_tool_events } from "./AgentPanelContent";
 import type { AgentEvent, AgentRun } from "@/shared/types";
 
 describe("build_agent_timeline", () => {
@@ -51,6 +51,33 @@ describe("build_agent_timeline", () => {
     expect(build_agent_timeline(events, runs)[0]).toMatchObject({
       metrics: { total_ms: 3_000 },
     });
+  });
+});
+
+describe("group_tool_events", () => {
+  it("collapses repeated tool rows while preserving the first-seen order", () => {
+    const events = [
+      event(1, "tool.status", {
+        name: "search_evidence",
+        call_id: "call-1",
+        stage: "completed",
+      }),
+      event(2, "tool.status", {
+        name: "search_evidence",
+        call_id: "call-2",
+        stage: "completed",
+      }),
+      event(3, "tool.status", {
+        name: "inspect_frames",
+        call_id: "call-3",
+        stage: "completed",
+      }),
+    ];
+
+    expect(group_tool_events(events)).toEqual([
+      { name: "search_evidence", events: events.slice(0, 2) },
+      { name: "inspect_frames", events: events.slice(2) },
+    ]);
   });
 });
 

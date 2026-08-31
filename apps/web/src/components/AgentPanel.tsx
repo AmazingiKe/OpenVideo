@@ -10,6 +10,7 @@ import { AiModelSelect } from "@/components/AiModelSelect";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Marker, MarkerContent } from "@/components/ui/marker";
 import { Message, MessageContent } from "@/components/ui/message";
+import { ResponseStream } from "@/components/ui/response-stream";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -151,6 +152,7 @@ export function AgentPanel({
     artifacts,
     cancel_run,
     compatible_models,
+    complete_stream,
     connection_message,
     definition,
     draft,
@@ -176,6 +178,7 @@ export function AgentPanel({
     start_new_conversation,
     state,
     stream_text,
+    stream_complete,
     submitted_content,
     submitting,
     submit,
@@ -213,14 +216,20 @@ export function AgentPanel({
   const task_input_mode = definition?.definition.input_mode === "task";
   const busy = pending || submitting;
   const timeline = build_agent_timeline(events, state?.runs);
-  const show_submitted_content = Boolean(
-    submitted_content &&
-    !timeline.some(
-      (item) =>
+  const visible_timeline = timeline.filter(
+    (item) =>
+      !(
+        submitted_content &&
         item.type === "message" &&
         item.role === "user" &&
-        item.content === submitted_content,
-    ),
+        item.content === submitted_content
+      ) &&
+      !(
+        stream_text &&
+        item.type === "message" &&
+        item.role === "assistant" &&
+        item.run_id === active_run?.run_id
+      ),
   );
 
   function submit_current(content_override?: string) {
@@ -379,14 +388,8 @@ export function AgentPanel({
                     </Empty>
                   </MessageScrollerItem>
                 ) : null}
-                {timeline.map((item) => (
-                  <MessageScrollerItem
-                    key={item.id}
-                    messageId={item.id}
-                    scrollAnchor={
-                      item.type === "message" && item.role === "user"
-                    }
-                  >
+                {visible_timeline.map((item) => (
+                  <MessageScrollerItem key={item.id} messageId={item.id}>
                     {item.type === "message" ? (
                       <Message align={item.role === "user" ? "end" : "start"}>
                         <MessageContent>
@@ -463,11 +466,8 @@ export function AgentPanel({
                     )}
                   </MessageScrollerItem>
                 ))}
-                {show_submitted_content && submitted_content ? (
-                  <MessageScrollerItem
-                    messageId="submitted-message"
-                    scrollAnchor
-                  >
+                {submitted_content ? (
+                  <MessageScrollerItem messageId="submitted-message">
                     <Message align="end">
                       <MessageContent>
                         <Bubble align="end" variant="default">
@@ -481,31 +481,35 @@ export function AgentPanel({
                     </Message>
                   </MessageScrollerItem>
                 ) : null}
-                {stream_text ? (
-                  <MessageScrollerItem messageId="streaming-answer">
+                {busy || stream_text ? (
+                  <MessageScrollerItem
+                    messageId="active-answer"
+                    className="[contain-intrinsic-size:auto] [content-visibility:visible]"
+                  >
                     <Message align="start">
                       <MessageContent>
                         <Bubble align="start" variant="muted">
                           <BubbleContent>
-                            <AgentMarkdown content={stream_text} />
+                            {stream_text ? (
+                              <ResponseStream
+                                text_stream={stream_text}
+                                stream_live={!stream_complete}
+                                on_complete={complete_stream}
+                              />
+                            ) : (
+                              <AgentLoadingStatus
+                                label={
+                                  submitting
+                                    ? "正在发送请求"
+                                    : "正在处理当前问题"
+                                }
+                                started_at={pending_started_at}
+                              />
+                            )}
                           </BubbleContent>
                         </Bubble>
                       </MessageContent>
                     </Message>
-                  </MessageScrollerItem>
-                ) : null}
-                {busy && !stream_text ? (
-                  <MessageScrollerItem messageId="pending-answer">
-                    <Marker>
-                      <MarkerContent>
-                        <AgentLoadingStatus
-                          label={
-                            submitting ? "正在发送请求" : "正在处理当前问题"
-                          }
-                          started_at={pending_started_at}
-                        />
-                      </MarkerContent>
-                    </Marker>
                   </MessageScrollerItem>
                 ) : null}
                 {artifacts.map((artifact) => (

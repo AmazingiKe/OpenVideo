@@ -48,6 +48,10 @@ from openvideo.llm.request_scheduler import (
 AgnoEventHandler = Callable[[LlmAgentEvent], None]
 STREAM_DELTA_CHARACTER_LIMIT = 256
 STREAM_DELTA_INTERVAL_SECONDS = 0.2
+TOOL_SEQUENCE_INSTRUCTION = (
+    "相同工具和相同参数只允许调用一次；所有工具调用结束后再输出最终正文，"
+    "一旦开始输出最终正文就不得继续调用工具。"
+)
 REQUIRED_TOOL_RECOVERY_INSTRUCTION = (
     "上一步没有完成 Agent 声明的必需工具。不要继续解释过程，也不要普通回答。"
     "先调用尚未完成的前置工具，然后调用必需工具并提交结构化参数。"
@@ -275,7 +279,13 @@ class AgnoAgentExecutor:
         reasoning_enabled: bool,
         forced_tool_name: str | None = None,
     ) -> AgentExecutionResult:
-        agno_tools = self._tools(registry, definition, tool_timeout_seconds)
+        tool_result_cache: dict[str, str] = {}
+        agno_tools = self._tools(
+            registry,
+            definition,
+            tool_timeout_seconds,
+            tool_result_cache,
+        )
         agno_model = create_agent_model(
             model,
             profile,
@@ -285,7 +295,11 @@ class AgnoAgentExecutor:
         agent = Agent(
             id=definition.agent_id,
             model=agno_model,
-            instructions=definition.prompt,
+            instructions=(
+                f"{definition.prompt}\n\n{TOOL_SEQUENCE_INSTRUCTION}"
+                if agno_tools
+                else definition.prompt
+            ),
             tools=agno_tools,
             tool_choice=(
                 agent_tool_choice(
@@ -327,6 +341,7 @@ class AgnoAgentExecutor:
         registry: AgentToolProvider,
         definition: AgentDefinition,
         timeout_seconds: float,
+        result_cache: dict[str, str],
     ) -> list[Function]:
         functions: list[Function] = []
         for schema in registry.schemas(definition.allowed_tools):
@@ -337,6 +352,15 @@ class AgnoAgentExecutor:
                 _tool_name: str = name,
                 **arguments: Any,
             ) -> str:
+                signature = json.dumps(
+                    {"name": _tool_name, "arguments": arguments},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                cached_result = result_cache.get(signature)
+                if cached_result is not None:
+                    return cached_result
                 result = await registry.execute(
                     AgentToolCall(
                         call_id=f"tool-{uuid7().hex}",
@@ -346,7 +370,9 @@ class AgnoAgentExecutor:
                     definition.allowed_tools,
                     timeout_seconds,
                 )
-                return json.dumps(result, ensure_ascii=False)
+                serialized_result = json.dumps(result, ensure_ascii=False)
+                result_cache[signature] = serialized_result
+                return serialized_result
 
             functions.append(
                 Function(

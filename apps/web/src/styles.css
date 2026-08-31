@@ -956,7 +956,7 @@
 @keyframes prompt-kit-loader-text-blink {
   0%,
   100% {
-    color: var(--primary);
+    color: var(--foreground);
   }
 
   50% {
@@ -966,15 +966,16 @@
 
 .prompt-kit-loader-typing [data-slot="loader-dot"] {
   animation: prompt-kit-loader-typing var(--motion-loader-typing-duration)
-    infinite;
+    ease-in-out infinite;
+  will-change: transform, opacity;
 }
 
 .prompt-kit-loader-typing [data-slot="loader-dot"]:nth-of-type(2) {
-  animation-delay: var(--motion-loader-typing-delay);
+  animation-delay: calc(var(--motion-loader-typing-delay) * -1);
 }
 
 .prompt-kit-loader-typing [data-slot="loader-dot"]:nth-of-type(3) {
-  animation-delay: calc(var(--motion-loader-typing-delay) * 2);
+  animation-delay: calc(var(--motion-loader-typing-delay) * -2);
 }
 
 .prompt-kit-loader-text-blink {

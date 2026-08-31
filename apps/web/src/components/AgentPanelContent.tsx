@@ -173,17 +173,20 @@ export function build_agent_timeline(
 }
 
 export function AgentToolActivity({ events }: { events: AgentEvent[] }) {
+  const groups = group_tool_events(events);
   const failed_count = events.filter(
     (event) => event.payload.stage === "failed",
   ).length;
   const running_count = events.filter(
     (event) => event.payload.stage === "started",
   ).length;
-  const first_tool_name = tool_label(events[0]);
+  const first_tool_name = tool_label(groups[0]?.events[0]);
   const activity_summary =
-    events.length === 1
+    groups.length === 1 && events.length === 1
       ? first_tool_name
-      : `${first_tool_name}等 ${events.length} 项`;
+      : groups.length === 1
+        ? `${first_tool_name} × ${events.length}`
+        : `${first_tool_name}等 ${groups.length} 类 · ${events.length} 次`;
   return (
     <Accordion type="single" collapsible>
       <AccordionItem value="tool-activity">
@@ -202,11 +205,8 @@ export function AgentToolActivity({ events }: { events: AgentEvent[] }) {
         </AccordionTrigger>
         <AccordionContent>
           <ul className="flex flex-col" aria-label="工具调用详情">
-            {events.map((event) => (
-              <AgentToolCall
-                key={String(event.payload.call_id ?? event.event_id)}
-                event={event}
-              />
+            {groups.map((group) => (
+              <AgentToolCall key={group.name} events={group.events} />
             ))}
           </ul>
         </AccordionContent>
@@ -215,10 +215,30 @@ export function AgentToolActivity({ events }: { events: AgentEvent[] }) {
   );
 }
 
-function AgentToolCall({ event }: { event: AgentEvent }) {
-  const failed = event.payload.stage === "failed";
-  const running = event.payload.stage === "started";
-  const result = event.payload.result;
+type AgentToolEventGroup = {
+  name: string;
+  events: AgentEvent[];
+};
+
+export function group_tool_events(events: AgentEvent[]): AgentToolEventGroup[] {
+  const groups = new Map<string, AgentEvent[]>();
+  for (const event of events) {
+    const name = String(event.payload.name ?? "tool");
+    const existing = groups.get(name);
+    if (existing) existing.push(event);
+    else groups.set(name, [event]);
+  }
+  return Array.from(groups, ([name, grouped_events]) => ({
+    name,
+    events: grouped_events,
+  }));
+}
+
+function AgentToolCall({ events }: { events: AgentEvent[] }) {
+  const latest_event = events.at(-1);
+  const failed = events.some((event) => event.payload.stage === "failed");
+  const running = events.some((event) => event.payload.stage === "started");
+  const result = latest_event?.payload.result;
   return (
     <li className="flex min-w-0 items-start gap-2 border-b py-2 last:border-b-0">
       {running ? (
@@ -231,7 +251,8 @@ function AgentToolCall({ event }: { event: AgentEvent }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-sm font-medium">
-            {tool_label(event)}
+            {tool_label(latest_event)}
+            {events.length > 1 ? ` × ${events.length}` : ""}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">
             {failed ? "失败" : running ? "调用中" : "完成"}
