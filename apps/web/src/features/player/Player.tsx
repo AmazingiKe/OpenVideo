@@ -25,7 +25,7 @@ import {
   active_subtitle_segment,
   subtitle_is_evidence,
 } from "./subtitle_rules";
-import { use_scrub_preview } from "./use_scrub_preview";
+import { use_seek_preview } from "./use_seek_preview";
 
 const SEEK_CONFIRMATION_TOLERANCE_SECONDS = 0.5;
 const SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS = 1_500;
@@ -83,7 +83,6 @@ type Storyboard = {
 
 type PlayerProps = {
   src: string;
-  scrub_src?: string | null;
   markers?: TimelineMarker[];
   subtitles?: TranscriptSegment[];
   evidence_range?: AgentEvidenceRange | null;
@@ -96,7 +95,6 @@ type PlayerProps = {
 export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   {
     src,
-    scrub_src = null,
     markers = [],
     subtitles = [],
     evidence_range = null,
@@ -108,7 +106,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   ref,
 ) {
   // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
-  const preview_seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
   const seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
   const toggle_playback_fn_ref = useRef<(() => void) | null>(null);
   const set_playback_rate_fn_ref = useRef<((rate: number) => void) | null>(
@@ -127,34 +124,20 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   }, [on_time_change]);
 
   const {
-    video_ref: scrub_video_ref,
-    is_visible: is_scrub_preview_visible,
-    preview_time,
-    fallback_seek_request,
-    preview_to: request_scrub_preview,
+    preview_to: request_seek_preview,
     begin_seek_commit,
     confirm_seek,
     is_active: is_preview_active,
-    on_loaded_metadata: on_scrub_loaded_metadata,
-    on_seeked: on_scrub_seeked,
-    on_error: on_scrub_error,
-  } = use_scrub_preview({
-    src: scrub_src,
+  } = use_seek_preview({
     commit_timeout_milliseconds: SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS,
   });
 
-  useEffect(() => {
-    if (fallback_seek_request) {
-      preview_seek_fn_ref.current?.(fallback_seek_request.seconds);
-    }
-  }, [fallback_seek_request]);
-
   const preview_to = useCallback(
     (seconds: number) => {
-      const bounded_time = request_scrub_preview(seconds);
+      const bounded_time = request_seek_preview(seconds);
       current_time_value_ref.current = bounded_time;
     },
-    [request_scrub_preview],
+    [request_seek_preview],
   );
 
   const preview_from_player = useCallback(
@@ -210,7 +193,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   const on_player_ready = useCallback((instance: PlayerController | null) => {
     current_time_fn_ref.current = instance ? instance.current_time : null;
-    preview_seek_fn_ref.current = instance ? instance.preview_seek : null;
     seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
     toggle_playback_fn_ref.current = instance
       ? () => instance.toggle_playback()
@@ -220,24 +202,27 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       : null;
   }, []);
 
-  const on_player_time_change = useCallback((seconds: number) => {
-    const pending_seek = pending_seek_ref.current;
-    if (pending_seek === null && is_preview_active()) return;
-    const is_waiting_for_seek =
-      pending_seek !== null &&
-      performance.now() - pending_seek.requested_at <
-        SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS;
-    if (
-      is_waiting_for_seek &&
-      Math.abs(seconds - pending_seek.time_seconds) >
-        SEEK_CONFIRMATION_TOLERANCE_SECONDS
-    ) {
-      return;
-    }
-    pending_seek_ref.current = null;
-    current_time_value_ref.current = seconds;
-    on_time_change_ref.current?.(seconds);
-  }, [is_preview_active]);
+  const on_player_time_change = useCallback(
+    (seconds: number) => {
+      const pending_seek = pending_seek_ref.current;
+      if (pending_seek === null && is_preview_active()) return;
+      const is_waiting_for_seek =
+        pending_seek !== null &&
+        performance.now() - pending_seek.requested_at <
+          SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS;
+      if (
+        is_waiting_for_seek &&
+        Math.abs(seconds - pending_seek.time_seconds) >
+          SEEK_CONFIRMATION_TOLERANCE_SECONDS
+      ) {
+        return;
+      }
+      pending_seek_ref.current = null;
+      current_time_value_ref.current = seconds;
+      on_time_change_ref.current?.(seconds);
+    },
+    [is_preview_active],
+  );
 
   const plyr_markers = markers.map((marker) => ({
     time: marker.start_seconds,
@@ -268,11 +253,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         onSeeked={confirm_seek}
       >
         <MediaProvider />
-        <SubtitleOverlay
-          segments={subtitles}
-          evidence_range={evidence_range}
-          preview_time={preview_time}
-        />
+        <SubtitleOverlay segments={subtitles} evidence_range={evidence_range} />
         <PlyrLayout
           icons={plyrLayoutIcons}
           translations={PLAYER_TRANSLATIONS}
@@ -288,22 +269,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
           on_playback_rate_change={on_playback_rate_change}
         />
       </MediaPlayer>
-      {scrub_src ? (
-        <video
-          ref={scrub_video_ref}
-          className="openvideo_scrub_preview"
-          src={scrub_src}
-          preload="auto"
-          muted
-          playsInline
-          tabIndex={-1}
-          data-active={is_scrub_preview_visible || undefined}
-          aria-hidden="true"
-          onLoadedMetadata={on_scrub_loaded_metadata}
-          onSeeked={on_scrub_seeked}
-          onError={on_scrub_error}
-        />
-      ) : null}
     </div>
   );
 });
@@ -311,17 +276,12 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 function SubtitleOverlay({
   segments,
   evidence_range,
-  preview_time,
 }: {
   segments: TranscriptSegment[];
   evidence_range: AgentEvidenceRange | null;
-  preview_time: number | null;
 }) {
   const { currentTime } = useMediaStore();
-  const active_segment = active_subtitle_segment(
-    segments,
-    preview_time ?? currentTime,
-  );
+  const active_segment = active_subtitle_segment(segments, currentTime);
   if (!active_segment) return null;
   const text = active_segment.text.trim();
   if (!text) return null;

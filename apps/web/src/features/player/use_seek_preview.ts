@@ -1,0 +1,67 @@
+import { useCallback, useEffect, useRef } from "react";
+
+type SeekPreviewOptions = {
+  commit_timeout_milliseconds: number;
+};
+
+export function use_seek_preview({
+  commit_timeout_milliseconds,
+}: SeekPreviewOptions) {
+  const active_ref = useRef(false);
+  const commit_pending_ref = useRef(false);
+  const finish_timeout_ref = useRef<number | null>(null);
+
+  const finish_preview = useCallback(() => {
+    commit_pending_ref.current = false;
+    active_ref.current = false;
+    if (finish_timeout_ref.current !== null) {
+      window.clearTimeout(finish_timeout_ref.current);
+      finish_timeout_ref.current = null;
+    }
+  }, []);
+
+  const preview_to = useCallback((seconds: number) => {
+    const bounded_time = Math.max(0, seconds);
+    active_ref.current = true;
+    commit_pending_ref.current = false;
+    if (finish_timeout_ref.current !== null) {
+      window.clearTimeout(finish_timeout_ref.current);
+      finish_timeout_ref.current = null;
+    }
+    return bounded_time;
+  }, []);
+
+  const begin_seek_commit = useCallback(() => {
+    if (!active_ref.current) return;
+    commit_pending_ref.current = true;
+    if (finish_timeout_ref.current !== null) {
+      window.clearTimeout(finish_timeout_ref.current);
+    }
+    finish_timeout_ref.current = window.setTimeout(
+      finish_preview,
+      commit_timeout_milliseconds,
+    );
+  }, [commit_timeout_milliseconds, finish_preview]);
+
+  const confirm_seek = useCallback(() => {
+    if (commit_pending_ref.current) finish_preview();
+  }, [finish_preview]);
+
+  const is_active = useCallback(() => active_ref.current, []);
+
+  useEffect(
+    () => () => {
+      if (finish_timeout_ref.current !== null) {
+        window.clearTimeout(finish_timeout_ref.current);
+      }
+    },
+    [],
+  );
+
+  return {
+    preview_to,
+    begin_seek_commit,
+    confirm_seek,
+    is_active,
+  };
+}

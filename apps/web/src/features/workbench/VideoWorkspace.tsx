@@ -82,11 +82,6 @@ export const VideoWorkspace = memo(function VideoWorkspace({
               key={asset.asset_id}
               ref={player_ref}
               src={media_url(asset.playback_url)}
-              scrub_src={
-                asset.scrub_preview_url
-                  ? media_url(asset.scrub_preview_url)
-                  : null
-              }
               subtitles={transcript?.segments ?? []}
               evidence_range={evidence_range}
               markers={markers.map((marker) => ({

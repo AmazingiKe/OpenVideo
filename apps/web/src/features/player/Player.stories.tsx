@@ -41,9 +41,8 @@ export const Default: Story = {
   },
 };
 
-export const ScrubSubtitlePreview: Story = {
+export const DeferredSeekRefresh: Story = {
   args: {
-    scrub_src: DEMO_VIDEO_URL,
     subtitles: [
       {
         start_seconds: 0,
@@ -55,7 +54,7 @@ export const ScrubSubtitlePreview: Story = {
       {
         start_seconds: 5,
         end_seconds: 12,
-        text: "拖动预览字幕",
+        text: "跳转后字幕",
         emotion: null,
         audio_events: [],
       },
@@ -75,7 +74,8 @@ export const ScrubSubtitlePreview: Story = {
       }),
     );
 
-    expect(await canvas.findByText("拖动预览字幕")).toBeVisible();
+    expect(canvas.getByText("开场字幕")).toBeVisible();
+    expect(canvas.queryByText("跳转后字幕")).not.toBeInTheDocument();
   },
 };
 

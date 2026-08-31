@@ -1,5 +1,5 @@
 import { act, createRef, type PropsWithChildren } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Player, type PlayerHandle } from "./Player";
@@ -138,6 +138,8 @@ describe("Player", () => {
     act(() => player_ref.current?.preview_to(16));
 
     expect(player_ref.current?.current_time()).toBe(16);
+    expect(media.player.currentTime).toBe(12);
+    expect(media.remote.seek).not.toHaveBeenCalled();
     expect(on_time_change).not.toHaveBeenCalled();
 
     media.store.currentTime = 13;
@@ -150,18 +152,6 @@ describe("Player", () => {
     );
     expect(player_ref.current?.current_time()).toBe(16);
     expect(on_time_change).not.toHaveBeenCalled();
-  });
-
-  it("updates the main frame while the proxy video is still loading", async () => {
-    const player_ref = createRef<PlayerHandle>();
-    render(
-      <Player ref={player_ref} src="/video.mp4" scrub_src="/scrub.mp4" />,
-    );
-
-    act(() => player_ref.current?.preview_to(16));
-
-    await waitFor(() => expect(media.player.currentTime).toBe(16));
-    expect(media.remote.seek).not.toHaveBeenCalled();
   });
 
   it("ignores stale time events while an external seek is pending", () => {
@@ -224,45 +214,52 @@ describe("Player", () => {
     );
   });
 
-  it("previews the dragged player time and subtitle before seek release", async () => {
+  it("keeps the frame and subtitle unchanged until seek release", () => {
     const on_time_change = vi.fn();
-    render(
+    const subtitles = [
+      {
+        start_seconds: 10,
+        end_seconds: 14,
+        text: "当前字幕",
+        emotion: null,
+        audio_events: [],
+      },
+      {
+        start_seconds: 15,
+        end_seconds: 18,
+        text: "跳转后字幕",
+        emotion: null,
+        audio_events: [],
+      },
+    ];
+    const { rerender } = render(
       <Player
         src="/video.mp4"
         on_time_change={on_time_change}
-        subtitles={[
-          {
-            start_seconds: 10,
-            end_seconds: 14,
-            text: "当前字幕",
-            emotion: null,
-            audio_events: [],
-          },
-          {
-            start_seconds: 15,
-            end_seconds: 18,
-            text: "拖动预览字幕",
-            emotion: null,
-            audio_events: [],
-          },
-        ]}
+        subtitles={subtitles}
       />,
     );
 
     expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
     act(() => media.events.seeking_request?.(16));
 
-    await waitFor(() =>
-      expect(screen.getByLabelText("视频字幕")).toHaveTextContent(
-        "拖动预览字幕",
-      ),
-    );
+    expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
+    expect(media.player.currentTime).toBe(12);
+    expect(media.remote.seek).not.toHaveBeenCalled();
     expect(on_time_change).toHaveBeenLastCalledWith(16);
 
-    act(() => {
-      media.events.seek_request?.(16);
-      media.events.seeked?.();
-    });
-    expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
+    act(() => media.events.seek_request?.(16));
+    media.player.currentTime = 16;
+    media.store.currentTime = 16;
+    act(() => media.events.seeked?.());
+    rerender(
+      <Player
+        src="/video.mp4"
+        on_time_change={on_time_change}
+        subtitles={subtitles}
+      />,
+    );
+
+    expect(screen.getByLabelText("视频字幕")).toHaveTextContent("跳转后字幕");
   });
 });
