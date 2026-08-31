@@ -26,6 +26,7 @@ from openvideo.core.summary_files import summary_document_depths
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 DATABASE_VERSION = 22
+DISABLED_SQLITE_STATEMENT_CACHE_SIZE = 0
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -431,9 +432,14 @@ def _rebuild_database(
 
 
 def open_index_connection(database_path: Path) -> sqlite3.Connection:
-    """为后台索引任务提供独立 WAL 连接，避免占用主查询连接。"""
+    """跨线程 WAL 连接禁用 CPython 语句缓存，避免并发读取返回损坏行。"""
 
-    connection = sqlite3.connect(database_path, timeout=5, check_same_thread=False)
+    connection = sqlite3.connect(
+        database_path,
+        timeout=5,
+        check_same_thread=False,
+        cached_statements=DISABLED_SQLITE_STATEMENT_CACHE_SIZE,
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA journal_mode = WAL")

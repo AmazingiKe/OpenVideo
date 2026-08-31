@@ -1,6 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -39,6 +41,8 @@ DOCUMENT_ID = "document-01890f4c7a2b7cc298c4dc0c0c07398f"
 MEDIA_ID = "media-01890f4c7a2b7cc298c4dc0c0c07398f"
 VERSION_ID = "summary-version-01890f4c7a2b7cc298c4dc0c0c07398f"
 JOB_ID = "job-01890f4c7a2b7cc298c4dc0c0c07398f"
+CONCURRENT_READER_COUNT = 2
+CONCURRENT_READ_ITERATIONS = 1_000
 
 
 def _asset(asset_id: str = ASSET_ID, title: str = "测试视频") -> MediaAsset:
@@ -117,6 +121,38 @@ def _save_summary(library: MediaLibrary) -> None:
             start_seconds=1,
         )
     )
+
+
+def test_concurrent_asset_reads_return_consistent_rows(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    asset = _asset()
+    _save_asset(library, asset)
+    barrier = Barrier(CONCURRENT_READER_COUNT)
+
+    def read_asset_repeatedly(_worker_index: int) -> list[str]:
+        failures: list[str] = []
+        for _ in range(CONCURRENT_READ_ITERATIONS):
+            barrier.wait()
+            try:
+                loaded_asset = library.get(ASSET_ID)
+            except Exception as error:
+                failures.append(f"{type(error).__name__}: {error}")
+                continue
+            if loaded_asset != asset:
+                failures.append(f"读取到异常素材数据：{loaded_asset!r}")
+        return failures
+
+    try:
+        with ThreadPoolExecutor(max_workers=CONCURRENT_READER_COUNT) as executor:
+            worker_failures = executor.map(
+                read_asset_repeatedly,
+                range(CONCURRENT_READER_COUNT),
+            )
+            failures = [failure for result in worker_failures for failure in result]
+    finally:
+        library.close()
+
+    assert failures == []
 
 
 def test_summary_versions_rebuild_invalid_index_projection(tmp_path: Path):
