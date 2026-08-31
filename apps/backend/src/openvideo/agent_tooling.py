@@ -97,6 +97,10 @@ class ReadSummaryDocumentInput(BaseModel):
     document_id: str
 
 
+class ListSummaryDocumentsInput(BaseModel):
+    version_id: str | None = None
+
+
 class ProposeSummaryEditInput(BaseModel):
     document_id: str
     expected_revision: int = Field(ge=1)
@@ -141,7 +145,7 @@ class RunEvidenceState:
     markers_read: bool = False
     evidence_read: bool = False
     frames_inspected: bool = False
-    summary_read: bool = False
+    summary_read_document_ids: set[str] = field(default_factory=set)
     inspected_frame_times: list[float] = field(default_factory=list)
     inspected_frame_ranges: list[tuple[float, float]] = field(default_factory=list)
     searches: list[AgentEvidenceSearchResult] = field(default_factory=list)

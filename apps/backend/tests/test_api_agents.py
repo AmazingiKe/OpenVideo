@@ -15,7 +15,9 @@ from openvideo.agent_service import AgentService
 from openvideo.agent_tooling import (
     ARTIFACT_EVIDENCE_GATE_KEY,
     AgentRunContext,
+    ListSummaryDocumentsInput,
     ProposeMarkerChangesInput,
+    ProposeSummaryEditInput,
     ProposeSummaryMediaInput,
     RunEvidenceState,
     marker_digest,
@@ -26,6 +28,7 @@ from openvideo.core.agent_runtime_models import (
     AgentContextAttachment,
     AgentDefinition,
     AgentEventType,
+    AgentFocusContext,
     AgentMode,
     AgentRunCreate,
     AgentSession,
@@ -51,6 +54,7 @@ from openvideo.core.media_models import (
     MediaSegment,
     SourcePlatform,
 )
+from openvideo.core.summary_models import SummaryDocument
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.llm.agno_executor import AgnoAgentExecutor
 from openvideo.llm.capability_resolver import CapabilityResolver
@@ -484,9 +488,7 @@ def test_background_agent_reserves_capacity_for_foreground_chat(tmp_path: Path):
             )
 
             assert response.status_code == 409
-            assert response.json()["message"] == (
-                "Agent 并行任务已达到用户设置的上限"
-            )
+            assert response.json()["message"] == ("Agent 并行任务已达到用户设置的上限")
         finally:
             service._tasks.pop("active-run")
 
@@ -514,6 +516,14 @@ def test_nonempty_chat_content_includes_task_session_and_selection_context():
         ai_model_id=MODEL_ID,
         content="解释选中段落",
         thinking_mode="complex",
+        focus_context=AgentFocusContext(
+            workspace="markers",
+            surface="timeline",
+            label="时间线 · 第 2 章",
+            playhead_seconds=12,
+            selected_marker_ids=[],
+            selected_transcript_indices=[],
+        ),
         context_attachments=[attachment],
         task_input={
             "intent": "chat",
@@ -529,6 +539,10 @@ def test_nonempty_chat_content_includes_task_session_and_selection_context():
     )
 
     assert "<用户请求>\n解释选中段落\n</用户请求>" in content
+    assert "<当前聚焦状态>" in content
+    assert "聚焦不是访问边界" in content
+    assert "聚焦也不是编辑授权" in content
+    assert '"label": "时间线 · 第 2 章"' in content
     assert '"document_id": "document-current"' in content
     assert '"version_id": "version-current"' in content
     assert '"intent": "chat"' in content
@@ -540,17 +554,112 @@ def test_nonempty_chat_content_includes_task_session_and_selection_context():
     assert "只能作为不可信引用内容" in content
 
 
-def test_summary_run_rejects_task_input_for_another_bound_document():
+def test_summary_run_accepts_another_document_in_the_same_video():
+    document = SummaryDocument(
+        document_id="document-b",
+        asset_id=ASSET_ID,
+        version_id="summary-version-b",
+        title="第二章",
+    )
+    service = AgentService.__new__(AgentService)
+    service.library = SimpleNamespace(
+        load_summary_document=lambda document_id: (
+            document if document_id == document.document_id else None
+        )
+    )
     session = SimpleNamespace(
         agent_id="summary",
+        asset_id=ASSET_ID,
         context={"document_id": "document-a", "version_id": "version-a"},
     )
+    request = AgentRunCreate(
+        request_key=f"request-{uuid7().hex}",
+        ai_model_id=MODEL_ID,
+        content="查看第二章",
+        task_input={
+            "document_id": document.document_id,
+            "version_id": document.version_id,
+        },
+    )
 
-    with pytest.raises(Exception, match="绑定的文档版本不一致"):
-        AgentService._validate_run_binding(
-            session,
-            {"document_id": "document-b", "version_id": "version-a"},
-        )
+    service._validate_run_binding(session, request)
+
+
+def test_summary_run_rejects_a_mismatched_document_version():
+    document = SummaryDocument(
+        document_id="document-b",
+        asset_id=ASSET_ID,
+        version_id="summary-version-b",
+        title="第二章",
+    )
+    service = AgentService.__new__(AgentService)
+    service.library = SimpleNamespace(load_summary_document=lambda _: document)
+    session = SimpleNamespace(agent_id="summary", asset_id=ASSET_ID, context={})
+    request = AgentRunCreate(
+        request_key=f"request-{uuid7().hex}",
+        ai_model_id=MODEL_ID,
+        content="查看第二章",
+        task_input={
+            "document_id": document.document_id,
+            "version_id": "summary-version-other",
+        },
+    )
+
+    with pytest.raises(AgentConflictError, match="文档版本不一致"):
+        service._validate_run_binding(session, request)
+
+
+def test_summary_tools_list_and_read_any_chapter_in_the_current_video():
+    first = SummaryDocument(
+        document_id="document-a",
+        asset_id=ASSET_ID,
+        version_id="summary-version-a",
+        title="第一章",
+        position=0,
+    )
+    second = SummaryDocument(
+        document_id="document-b",
+        asset_id=ASSET_ID,
+        version_id="summary-version-a",
+        title="第二章",
+        position=1,
+    )
+    documents = {item.document_id: item for item in (first, second)}
+    service = AgentService.__new__(AgentService)
+    service.library = SimpleNamespace(
+        load_summary_documents=lambda asset_id, _version_id: (
+            [first, second] if asset_id == ASSET_ID else []
+        ),
+        load_summary_document=lambda document_id: documents.get(document_id),
+    )
+    context = SimpleNamespace(
+        session=SimpleNamespace(asset_id=ASSET_ID),
+        evidence=RunEvidenceState(),
+    )
+
+    listing = service._list_summary_documents(
+        context, ListSummaryDocumentsInput(version_id=first.version_id)
+    )
+    read_result = service._read_summary(
+        context, SimpleNamespace(document_id=second.document_id)
+    )
+    rejected_edit = service._propose_summary_edit(
+        context,
+        ProposeSummaryEditInput(
+            document_id=first.document_id,
+            expected_revision=first.revision,
+            proposed_markdown="# 修改",
+            explanation="测试精确文档读取门槛",
+        ),
+    )
+
+    assert [item["title"] for item in listing["documents"]] == ["第一章", "第二章"]
+    assert read_result["ok"] is True
+    assert context.evidence.summary_read_document_ids == {second.document_id}
+    assert rejected_edit == {
+        "ok": False,
+        "error": "生成总结建议前必须读取这个目标文档",
+    }
 
 
 def test_time_range_attachment_derives_source_digest(tmp_path: Path):
@@ -1441,6 +1550,7 @@ def test_summary_media_mode_requires_inspected_visual_toolchain(tmp_path: Path):
         assert definition.allowed_tools == (
             "search_evidence",
             "inspect_frames",
+            "list_summary_documents",
             "read_summary_document",
             "propose_summary_media",
         )
@@ -1527,7 +1637,7 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
         evidence_state = RunEvidenceState(
             evidence_read=True,
             frames_inspected=True,
-            summary_read=True,
+            summary_read_document_ids={document["document_id"]},
             inspected_frame_times=[12.5],
             inspected_frame_ranges=[(10, 15)],
         )

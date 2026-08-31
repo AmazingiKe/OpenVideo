@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openvideo.core.identifiers import is_prefixed_uuid7, is_uuid7
 from openvideo.core.agent_governance_models import (
@@ -64,6 +64,21 @@ class AgentRunPhase(StrEnum):
     REASONING = "reasoning"
     TOOL = "tool"
     GENERATION = "generation"
+
+
+class AgentFocusWorkspace(StrEnum):
+    MARKERS = "markers"
+    SUMMARY = "summary"
+
+
+class AgentFocusSurface(StrEnum):
+    VIDEO = "video"
+    TIMELINE = "timeline"
+    MARKERS = "markers"
+    TRANSCRIPT = "transcript"
+    FOCUS_RANGE = "focus_range"
+    SUMMARY_DOCUMENT = "summary_document"
+    SUMMARY_SELECTION = "summary_selection"
 
 
 TERMINAL_AGENT_RUN_STAGES = {
@@ -308,6 +323,84 @@ class AgentContextAttachment(BaseModel):
         return self
 
 
+class AgentFocusChapter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segment_id: str
+    index: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=300)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "AgentFocusChapter":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("聚焦章节结束时间必须晚于开始时间")
+        return self
+
+
+class AgentFocusDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    version_id: str
+    parent_document_id: str | None = None
+    index: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=200)
+    revision: int = Field(ge=1)
+
+
+class AgentFocusTimeRange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selection_id: str
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    revision: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "AgentFocusTimeRange":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("聚焦时间范围结束时间必须晚于开始时间")
+        return self
+
+
+class AgentFocusContext(BaseModel):
+    """记录消息发送瞬间的界面焦点，不承担资源授权或会话分区。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    workspace: AgentFocusWorkspace
+    surface: AgentFocusSurface
+    label: str = Field(min_length=1, max_length=300)
+    playhead_seconds: float | None = Field(default=None, ge=0)
+    chapter: AgentFocusChapter | None = None
+    document: AgentFocusDocument | None = None
+    time_range: AgentFocusTimeRange | None = None
+    selected_marker_ids: list[str] = Field(default_factory=list, max_length=100)
+    selected_transcript_indices: list[int] = Field(default_factory=list, max_length=100)
+    selection_start: int | None = Field(default=None, ge=0)
+    selection_end: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "AgentFocusContext":
+        if len(self.selected_marker_ids) != len(set(self.selected_marker_ids)):
+            raise ValueError("聚焦标记不能重复")
+        if len(self.selected_transcript_indices) != len(
+            set(self.selected_transcript_indices)
+        ):
+            raise ValueError("聚焦字幕片段不能重复")
+        if (self.selection_start is None) != (self.selection_end is None):
+            raise ValueError("聚焦文本选择必须同时提供起点与终点")
+        if (
+            self.selection_start is not None
+            and self.selection_end is not None
+            and self.selection_end <= self.selection_start
+        ):
+            raise ValueError("聚焦文本选择终点必须晚于起点")
+        return self
+
+
 class AgentSessionCreate(BaseModel):
     agent_id: str
     asset_id: str
@@ -321,6 +414,7 @@ class AgentRunCreate(BaseModel):
     content: str = Field(default="", max_length=100_000)
     thinking_mode: AgentThinkingMode = AgentThinkingMode.AUTO
     retrieval_scope: AgentRetrievalScope = AgentRetrievalScope.CURRENT_ASSET
+    focus_context: AgentFocusContext | None = None
     context_attachments: list[AgentContextAttachment] = Field(
         default_factory=list, max_length=32
     )
