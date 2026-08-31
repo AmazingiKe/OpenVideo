@@ -21,3 +21,4 @@
 | [0006](./0006-agent-interaction-and-observability.md) | 采用渐进披露的 Agent 交互与分阶段可观测性 | 已接受 |
 | [0007](./0007-progressive-summary-illustration.md) | 采用渐进式首次总结配图与分层画面选择 | 已接受 |
 | [0008](./0008-video-scoped-agent-focus.md) | 采用视频级 Agent 会话与逐轮聚焦上下文 | 已接受 |
+| [0009](./0009-virtualized-library-browser-interactions.md) | 采用虚拟化、可视框选与无障碍拖放重构视频库浏览器 | 已接受 |
