@@ -1,6 +1,7 @@
 import {
   ArrowUp,
   ChevronDown,
+  Crosshair,
   Pin,
   Plus,
   ShieldCheck,
@@ -36,6 +37,7 @@ import { Toggle } from "@/components/ui/toggle";
 import { cn } from "@/lib/utils";
 import type {
   AgentPermissionMode,
+  AgentFocusContext,
   AgentRetrievalScope,
   AgentThinkingMode,
   AiModelSummary,
@@ -87,6 +89,7 @@ const PERMISSION_MODE_OPTIONS = [
 
 export function AgentComposer({
   value,
+  focus_context,
   on_change,
   on_submit,
   on_cancel,
@@ -114,6 +117,7 @@ export function AgentComposer({
   on_attachment_drop,
 }: {
   value: string;
+  focus_context?: AgentFocusContext;
   on_change: (value: string) => void;
   on_submit: () => void;
   on_cancel?: () => void;
@@ -195,7 +199,7 @@ export function AgentComposer({
             松开即可添加为可见上下文
           </p>
         ) : null}
-        <div className="flex min-w-0 items-center gap-1 px-1 pt-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-1 px-1 pt-1">
           <Badge variant="secondary">
             {retrieval_scope === "library" ? "资料库" : "当前视频"}
           </Badge>
@@ -207,6 +211,17 @@ export function AgentComposer({
           >
             {selected_permission_option.label}
           </Badge>
+          {focus_context ? (
+            <Badge
+              variant="outline"
+              className="max-w-full min-w-0"
+              aria-label={`当前聚焦：${focus_context.label}`}
+              title={focus_context.label}
+            >
+              <Crosshair data-icon="inline-start" />
+              <span className="truncate">{focus_context.label}</span>
+            </Badge>
+          ) : null}
         </div>
         {attachments.length > 0 ? (
           <div className="px-2 pt-2">

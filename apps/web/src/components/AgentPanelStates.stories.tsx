@@ -112,6 +112,14 @@ const meta = {
     models: [MODEL, SECONDARY_MODEL],
     title: "视频助手",
     context_label: "当前视频 · 透视投影课程",
+    focus_context: {
+      workspace: "markers",
+      surface: "markers",
+      label: "标记面板 · 第 3 章",
+      playhead_seconds: 132,
+      selected_marker_ids: [],
+      selected_transcript_indices: [],
+    },
     className: "h-[640px] w-full",
   },
   decorators: [

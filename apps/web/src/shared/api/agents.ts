@@ -3,6 +3,7 @@ import type {
   AgentContextAttachment,
   AgentDefinitionAvailability,
   AgentEventType,
+  AgentFocusContext,
   AgentIndexStatus,
   AgentPermissionGrantScope,
   AgentRetrievalScope,
@@ -65,6 +66,7 @@ export function create_agent_run(
     task_input?: Record<string, unknown>;
     thinking_mode?: AgentThinkingMode;
     retrieval_scope?: AgentRetrievalScope;
+    focus_context?: AgentFocusContext;
     context_attachments?: AgentContextAttachment[];
   },
   signal?: AbortSignal,

@@ -29,7 +29,11 @@ import {
   use_agent_preferences,
   use_ai_models,
 } from "@/features/workbench/use_processing_resources";
-import type { AgentArtifact, AgentEvidenceReference } from "@/shared/types";
+import type {
+  AgentArtifact,
+  AgentEvidenceReference,
+  AgentFocusContext,
+} from "@/shared/types";
 
 const COMPACT_ASSISTANT_QUERY = "(max-width: 1199px)";
 const DEFAULT_PANEL_SIZE_PERCENT = 30;
@@ -43,6 +47,7 @@ export type GlobalAssistantBinding = {
   asset_id: string | null;
   context_label: string;
   context?: Record<string, unknown>;
+  focus_context?: AgentFocusContext;
   task_input?: Record<string, unknown>;
   context_attachments?: AgentContextAttachmentDraft[];
   placeholder?: string;
@@ -194,6 +199,7 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
       asset_id={binding.asset_id}
       models={models}
       context={binding.context}
+      focus_context={binding.focus_context}
       task_input={binding.task_input}
       context_attachments={binding.context_attachments}
       default_thinking_mode={agent_preferences?.default_thinking_mode}

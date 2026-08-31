@@ -30,6 +30,7 @@ import {
 } from "@/features/workbench/TranscriptionToolbarTools";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
+import { timeline_agent_focus } from "@/features/workbench/timeline_agent_context";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -309,9 +310,17 @@ export function MarkersPage() {
       }),
     );
   }
+  const focus_context = timeline_agent_focus({
+    playhead_seconds: current_time,
+    segments,
+    selected_marker_ids: [...selected_marker_ids],
+    selected_transcript_indices,
+    focus_selection,
+  });
   const assistant_binding = {
     agent_id: transcript_correction_open ? "transcript_correction" : "marker",
     asset_id: selected_asset_id,
+    focus_context,
     context_label: transcript_correction_open
       ? `字幕修正 · ${
           transcript_correction_scope === "selection"

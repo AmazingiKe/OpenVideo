@@ -5,7 +5,6 @@ import {
   agent_scope_key,
   materialize_context_attachments,
   parse_context_attachment,
-  session_context_matches_scope,
 } from "./agent_context";
 
 describe("agent context", () => {
@@ -17,24 +16,14 @@ describe("agent context", () => {
     vi.unstubAllGlobals();
   });
 
-  it("builds a stable scope key and rejects a different document version", () => {
-    const left = agent_scope_key("summary", "asset-1", {
-      document_id: "document-1",
-      version_id: "version-2",
-    });
-    const right = agent_scope_key("summary", "asset-1", {
-      version_id: "version-2",
-      document_id: "document-1",
-    });
+  it("keeps one session scope while the focused summary document changes", () => {
+    const first_document_scope = agent_scope_key("summary", "asset-1");
+    const second_document_scope = agent_scope_key("summary", "asset-1");
 
-    expect(left).toBe(right);
-    expect(
-      session_context_matches_scope(
-        { document_id: "document-1", version_id: "version-1" },
-        left,
-        { document_id: "document-1", version_id: "version-2" },
-      ),
-    ).toBe(false);
+    expect(first_document_scope).toBe(second_document_scope);
+    expect(first_document_scope).not.toBe(
+      agent_scope_key("summary", "asset-2"),
+    );
   });
 
   it("materializes text attachments with UUIDv7 and a SHA-256 digest", async () => {

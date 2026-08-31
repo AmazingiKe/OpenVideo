@@ -35,6 +35,14 @@ describe("AgentComposer", () => {
     render(
       <AgentComposer
         value="分析这一段"
+        focus_context={{
+          workspace: "markers",
+          surface: "markers",
+          label: "标记面板 · 第 3 章",
+          playhead_seconds: 42,
+          selected_marker_ids: [],
+          selected_transcript_indices: [],
+        }}
         on_change={vi.fn()}
         on_submit={vi.fn()}
         models={MODELS}
@@ -63,6 +71,7 @@ describe("AgentComposer", () => {
     );
 
     expect(screen.getByText("00:12–00:28 · 按需读取证据")).toBeVisible();
+    expect(screen.getByLabelText("当前聚焦：标记面板 · 第 3 章")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "移除时间线理解范围" }));
     expect(on_remove).toHaveBeenCalledWith("range-1");
   });

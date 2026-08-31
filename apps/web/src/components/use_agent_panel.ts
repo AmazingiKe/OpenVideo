@@ -16,6 +16,7 @@ import { uuid7 } from "@/shared/identifiers";
 import type {
   AgentArtifact,
   AgentEvent,
+  AgentFocusContext,
   AgentPermissionGrantScope,
   AgentRun,
   AgentSession,
@@ -27,7 +28,6 @@ import type {
 import {
   agent_scope_key,
   materialize_context_attachments,
-  session_context_matches_scope,
   type AgentContextAttachmentDraft,
 } from "./agent_context";
 
@@ -43,6 +43,7 @@ type AgentPanelStateOptions = {
   agent_id: string;
   asset_id: string | null;
   context: Record<string, unknown>;
+  focus_context?: AgentFocusContext;
   models: AiModelSummary[];
   on_artifact_change?: (artifact: AgentArtifact) => void | Promise<void>;
   task_input: Record<string, unknown>;
@@ -53,15 +54,15 @@ export function use_agent_panel({
   agent_id,
   asset_id,
   context,
+  focus_context,
   models,
   on_artifact_change,
   task_input,
   default_thinking_mode,
 }: AgentPanelStateOptions) {
   const scope_key = useMemo(
-    () =>
-      asset_id ? agent_scope_key(agent_id, asset_id, context) : "no-asset",
-    [agent_id, asset_id, context],
+    () => (asset_id ? agent_scope_key(agent_id, asset_id) : "no-asset"),
+    [agent_id, asset_id],
   );
   const [definition, set_definition] = useState<
     Awaited<ReturnType<typeof list_agent_definitions>>[number] | null
@@ -141,13 +142,10 @@ export function use_agent_panel({
         (item) => item.definition.agent_id === agent_id,
       );
       set_definition(next_definition ?? null);
-      const matching_sessions = loaded_sessions.filter((session) =>
-        session_context_matches_scope(session.context, scope_key, context),
-      );
-      set_sessions(matching_sessions);
-      if (!matching_sessions[0]) return;
+      set_sessions(loaded_sessions);
+      if (!loaded_sessions[0]) return;
       const restored = await get_agent_session(
-        matching_sessions[0].session_id,
+        loaded_sessions[0].session_id,
         signal,
       );
       set_state(restored);
@@ -239,6 +237,7 @@ export function use_agent_panel({
         task_input,
         thinking_mode,
         retrieval_scope,
+        focus_context,
         context_attachments,
       });
       set_last_content(content);

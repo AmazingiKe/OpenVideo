@@ -43,6 +43,7 @@ import {
 } from "./SummaryWorkspacePanels";
 import { SummaryDocumentNavigation } from "./SummaryDocumentNavigation";
 import { SummaryIllustrationProgress } from "./SummaryIllustrationProgress";
+import { summary_agent_focus } from "./summary_agent_context";
 
 type SummaryEditorLayoutProps = {
   compact_layout: boolean;
@@ -162,11 +163,13 @@ export function SummaryEditorLayout({
     () => ({
       agent_id: "summary",
       asset_id: selected_asset_id,
-      context_label: `总结文档 · ${selected_document.title}`,
-      context: {
-        document_id: selected_document.document_id,
-        version_id: selected_document.version_id,
-      },
+      context_label: `当前视频 · 全部总结章节`,
+      context: { workspace: "summary" },
+      focus_context: summary_agent_focus(
+        documents,
+        selected_document,
+        selection,
+      ),
       task_input: {
         document_id: selected_document.document_id,
         version_id: selected_document.version_id,
@@ -180,6 +183,7 @@ export function SummaryEditorLayout({
     }),
     [
       agent_context_attachments,
+      documents,
       on_artifact_change,
       selected_asset_id,
       selected_document,

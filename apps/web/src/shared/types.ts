@@ -662,6 +662,44 @@ export type VisualIndexStatus = {
   error_message: string | null;
   updated_at: string;
 };
+export type AgentFocusContext = {
+  workspace: "markers" | "summary";
+  surface:
+    | "video"
+    | "timeline"
+    | "markers"
+    | "transcript"
+    | "focus_range"
+    | "summary_document"
+    | "summary_selection";
+  label: string;
+  playhead_seconds?: number;
+  chapter?: {
+    segment_id: string;
+    index: number;
+    title: string;
+    start_seconds: number;
+    end_seconds: number;
+  };
+  document?: {
+    document_id: string;
+    version_id: string;
+    parent_document_id: string | null;
+    index: number;
+    title: string;
+    revision: number;
+  };
+  time_range?: {
+    selection_id: string;
+    start_seconds: number;
+    end_seconds: number;
+    revision: number;
+  };
+  selected_marker_ids: string[];
+  selected_transcript_indices: number[];
+  selection_start?: number;
+  selection_end?: number;
+};
 export type AgentSession = {
   session_id: string;
   agent_id: string;

@@ -56,6 +56,7 @@ import type {
   AgentArtifact,
   AgentCapability,
   AgentEvidenceReference,
+  AgentFocusContext,
   AgentIndexStatus,
   AgentPermissionMode,
   AgentThinkingMode,
@@ -86,6 +87,7 @@ export type AgentPanelProps = {
   asset_id: string | null;
   models: AiModelSummary[];
   context?: Record<string, unknown>;
+  focus_context?: AgentFocusContext;
   task_input?: Record<string, unknown>;
   context_attachments?: AgentContextAttachmentDraft[];
   default_thinking_mode?: AgentThinkingMode;
@@ -114,6 +116,7 @@ export function AgentPanel({
   asset_id,
   models,
   context = {},
+  focus_context,
   task_input = {},
   context_attachments = [],
   default_thinking_mode = "auto",
@@ -178,6 +181,7 @@ export function AgentPanel({
     agent_id,
     asset_id,
     context,
+    focus_context,
     models,
     on_artifact_change,
     task_input,
@@ -537,6 +541,7 @@ export function AgentPanel({
         ) : (
           <AgentComposer
             value={draft}
+            focus_context={focus_context}
             on_change={set_draft}
             on_submit={() => void submit_current()}
             on_cancel={

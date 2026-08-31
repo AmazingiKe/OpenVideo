@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   focus_context_attachment,
+  timeline_agent_focus,
   transcript_context_attachment,
 } from "./timeline_agent_context";
 
@@ -46,6 +47,31 @@ describe("timeline agent context", () => {
       }),
     ).toBeNull();
   });
+
+  it("describes the active panel and chapter without limiting video scope", () => {
+    const focus = timeline_agent_focus({
+      playhead_seconds: 12,
+      segments: [
+        media_segment("segment-1", 0, 10, "开场"),
+        media_segment("segment-2", 10, 20, "核心概念"),
+      ],
+      selected_marker_ids: ["marker-1"],
+      selected_transcript_indices: [],
+      focus_selection: null,
+    });
+
+    expect(focus).toMatchObject({
+      workspace: "markers",
+      surface: "markers",
+      label: "标记面板 · 第 2 章",
+      chapter: {
+        segment_id: "segment-2",
+        index: 2,
+        title: "核心概念",
+      },
+      selected_marker_ids: ["marker-1"],
+    });
+  });
 });
 
 function segment(start_seconds: number, end_seconds: number, text: string) {
@@ -55,5 +81,29 @@ function segment(start_seconds: number, end_seconds: number, text: string) {
     text,
     emotion: null,
     audio_events: [],
+  };
+}
+
+function media_segment(
+  segment_id: string,
+  start_seconds: number,
+  end_seconds: number,
+  title: string,
+) {
+  return {
+    segment_id,
+    asset_id: ASSET_ID,
+    start_seconds,
+    end_seconds,
+    title,
+    detailed_summary: null,
+    transcript_text: null,
+    speaker_name: null,
+    key_frame_paths: [],
+    visual_description: null,
+    ocr_text: null,
+    formula_latex: [],
+    marker_ids: [],
+    tags: [],
   };
 }

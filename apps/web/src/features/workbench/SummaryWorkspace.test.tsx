@@ -667,10 +667,19 @@ describe("SummaryWorkspace", () => {
     expect(global_assistant_state.binding).toMatchObject({
       agent_id: "summary",
       asset_id: ASSET.asset_id,
-      context_label: "总结文档 · 课程总结",
-      context: {
-        document_id: DOCUMENT.document_id,
-        version_id: DOCUMENT.version_id,
+      context_label: "当前视频 · 全部总结章节",
+      context: { workspace: "summary" },
+      focus_context: {
+        workspace: "summary",
+        surface: "summary_document",
+        label: "总结文档 · 第 1 章 · 课程总结",
+        document: {
+          document_id: DOCUMENT.document_id,
+          version_id: DOCUMENT.version_id,
+          index: 1,
+          title: DOCUMENT.title,
+          revision: DOCUMENT.revision,
+        },
       },
     });
   });

@@ -63,6 +63,7 @@ const TOOL_LABELS: Record<string, string> = {
   search_evidence: "检索视频证据",
   inspect_frames: "检查关键画面",
   propose_marker_changes: "生成标记变更预览",
+  list_summary_documents: "读取总结章节结构",
   read_summary_document: "读取总结文档",
   propose_summary_edit: "生成总结修改预览",
   propose_summary_media: "生成图文增强预览",
