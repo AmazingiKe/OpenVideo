@@ -214,6 +214,36 @@ describe("Player", () => {
     );
   });
 
+  it("applies the saved subtitle display presets", () => {
+    render(
+      <Player
+        src="/video.mp4"
+        subtitles={[
+          {
+            start_seconds: 10,
+            end_seconds: 14,
+            text: "自定义字幕",
+            emotion: null,
+            audio_events: [],
+          },
+        ]}
+        subtitle_display={{
+          font_size: "large",
+          position: "center",
+          background: "solid",
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("视频字幕")).toMatchObject({
+      dataset: {
+        fontSize: "large",
+        position: "center",
+        background: "solid",
+      },
+    });
+  });
+
   it("keeps the frame, subtitle, and external timeline unchanged until seek release", () => {
     const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();

@@ -47,6 +47,7 @@ from openvideo.core.transcription_models import Transcript, TranscriptionMetadat
 
 AssetModel = TypeVar("AssetModel", Transcript, TranscriptionMetadata)
 ASSET_METADATA_FILE_NAME = "meta.json"
+VIDEO_CONFIGURATION_FILE_NAME = "video-config.json"
 ARTIFACTS_DIRECTORY_NAME = "artifacts"
 TRANSCRIPT_FILE_NAME = "transcript.json"
 TRANSCRIPTION_METADATA_FILE_NAME = "transcription.json"

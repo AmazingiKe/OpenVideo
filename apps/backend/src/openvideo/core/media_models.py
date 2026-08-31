@@ -32,6 +32,46 @@ class MediaType(StrEnum):
     IMAGE = "image"
 
 
+class SubtitleFontSize(StrEnum):
+    SMALL = "small"
+    MEDIUM = "medium"
+    LARGE = "large"
+
+
+class SubtitlePosition(StrEnum):
+    BOTTOM = "bottom"
+    RAISED = "raised"
+    CENTER = "center"
+
+
+class SubtitleBackground(StrEnum):
+    NONE = "none"
+    SHADOW = "shadow"
+    SOLID = "solid"
+
+
+class SubtitleDisplaySettings(BaseModel):
+    """播放器与烧录导出共享同一组有限预设，保证预览结果可稳定复现。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    font_size: SubtitleFontSize = SubtitleFontSize.MEDIUM
+    position: SubtitlePosition = SubtitlePosition.BOTTOM
+    background: SubtitleBackground = SubtitleBackground.SHADOW
+
+
+class VideoConfiguration(BaseModel):
+    """单素材交互设置需要随视频迁移，不能落入设备级应用配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format_version: int = 1
+    asset_id: str
+    subtitle_display: SubtitleDisplaySettings = Field(
+        default_factory=SubtitleDisplaySettings
+    )
+
+
 class MediaAsset(BaseModel):
     asset_id: str
     folder_id: str | None = None
@@ -96,8 +136,19 @@ class MediaAssetResponse(BaseModel):
     scrub_preview_url: str | None
     thumbnail_url: str | None
     thumbnail_storyboard: ThumbnailStoryboardResponse | None = None
+    subtitle_display: SubtitleDisplaySettings = Field(
+        default_factory=SubtitleDisplaySettings
+    )
     created_at: datetime
     updated_at: datetime
+
+
+class SubtitleExportResult(BaseModel):
+    export_id: str
+    relative_path: str
+    file_name: str
+    size_bytes: int
+    exported_at: datetime
 
 
 class AssetSourceMetadata(BaseModel):

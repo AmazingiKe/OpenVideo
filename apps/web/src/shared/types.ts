@@ -413,6 +413,23 @@ export type Transcript = {
   created_at: string;
 };
 
+export type SubtitleFontSize = "small" | "medium" | "large";
+export type SubtitlePosition = "bottom" | "raised" | "center";
+export type SubtitleBackground = "none" | "shadow" | "solid";
+export type SubtitleDisplaySettings = {
+  font_size: SubtitleFontSize;
+  position: SubtitlePosition;
+  background: SubtitleBackground;
+};
+
+export type SubtitleExportResult = {
+  export_id: string;
+  relative_path: string;
+  file_name: string;
+  size_bytes: number;
+  exported_at: string;
+};
+
 export type MediaSegment = {
   segment_id: string;
   asset_id: string;
@@ -530,6 +547,7 @@ export type MediaAsset = {
   scrub_preview_url: string | null;
   thumbnail_url: string | null;
   thumbnail_storyboard: ThumbnailStoryboard | null;
+  subtitle_display?: SubtitleDisplaySettings;
   created_at: string;
   updated_at: string;
 };

@@ -15,7 +15,11 @@ import {
   useRef,
 } from "react";
 
-import type { AgentEvidenceRange, TranscriptSegment } from "@/shared/types";
+import type {
+  AgentEvidenceRange,
+  SubtitleDisplaySettings,
+  TranscriptSegment,
+} from "@/shared/types";
 import {
   PlayerStateBridge,
   type PlayerController,
@@ -25,6 +29,7 @@ import {
   active_subtitle_segment,
   subtitle_is_evidence,
 } from "./subtitle_rules";
+import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "./subtitle_settings";
 import { use_seek_preview } from "./use_seek_preview";
 
 const SEEK_CONFIRMATION_TOLERANCE_SECONDS = 0.5;
@@ -85,6 +90,7 @@ type PlayerProps = {
   src: string;
   markers?: TimelineMarker[];
   subtitles?: TranscriptSegment[];
+  subtitle_display?: SubtitleDisplaySettings;
   evidence_range?: AgentEvidenceRange | null;
   thumbnails?: Storyboard | null;
   on_time_change?: (seconds: number) => void;
@@ -97,6 +103,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     src,
     markers = [],
     subtitles = [],
+    subtitle_display = DEFAULT_SUBTITLE_DISPLAY_SETTINGS,
     evidence_range = null,
     thumbnails = null,
     on_time_change,
@@ -245,7 +252,11 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         onSeeked={confirm_seek}
       >
         <MediaProvider />
-        <SubtitleOverlay segments={subtitles} evidence_range={evidence_range} />
+        <SubtitleOverlay
+          segments={subtitles}
+          settings={subtitle_display}
+          evidence_range={evidence_range}
+        />
         <PlyrLayout
           icons={plyrLayoutIcons}
           translations={PLAYER_TRANSLATIONS}
@@ -267,9 +278,11 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
 function SubtitleOverlay({
   segments,
+  settings,
   evidence_range,
 }: {
   segments: TranscriptSegment[];
+  settings: SubtitleDisplaySettings;
   evidence_range: AgentEvidenceRange | null;
 }) {
   const { currentTime } = useMediaStore();
@@ -284,6 +297,9 @@ function SubtitleOverlay({
   return (
     <div
       className="openvideo_subtitle"
+      data-font-size={settings.font_size}
+      data-position={settings.position}
+      data-background={settings.background}
       data-evidence-highlight={evidence_highlight || undefined}
       aria-label={evidence_highlight ? "视频字幕，答案证据" : "视频字幕"}
     >

@@ -25,6 +25,7 @@ from openvideo.core.library_files import (
     ASSET_METADATA_FILE_NAME,
     MARKERS_FILE_NAME,
     TRANSCRIPT_FILE_NAME,
+    VIDEO_CONFIGURATION_FILE_NAME,
     IndexIssue,
     MarkersFile,
     atomic_write_model,
@@ -47,6 +48,7 @@ from openvideo.core.media_models import (
     SourcePlatform,
     ThumbnailStoryboardResponse,
     ThumbnailStoryboardTile,
+    VideoConfiguration,
 )
 from openvideo.core.summary_files import read_markdown
 from openvideo.core.summary_models import SummaryDocument
@@ -613,7 +615,33 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
                 else None
             ),
             thumbnail_storyboard=self._storyboard_for(asset),
+            subtitle_display=self.load_video_configuration(
+                asset.asset_id
+            ).subtitle_display,
         )
+
+    def load_video_configuration(self, asset_id: str) -> VideoConfiguration:
+        self._validate_asset_id(asset_id)
+        configuration_path = (
+            self.asset_directory(asset_id) / VIDEO_CONFIGURATION_FILE_NAME
+        )
+        configuration = self._load_optional_model(
+            configuration_path, VideoConfiguration, asset_id
+        )
+        return configuration or VideoConfiguration(asset_id=asset_id)
+
+    def save_video_configuration(
+        self, configuration: VideoConfiguration
+    ) -> VideoConfiguration:
+        self._validate_asset_id(configuration.asset_id)
+        if self.get(configuration.asset_id) is None:
+            raise ValueError("视频配置对应的素材不存在")
+        output_path = (
+            self.asset_directory(configuration.asset_id) / VIDEO_CONFIGURATION_FILE_NAME
+        )
+        with self._lock:
+            atomic_write_model(output_path, configuration)
+        return configuration
 
     def _write_asset_metadata(self, asset: MediaAsset) -> None:
         asset_directory = self.asset_directory(asset.asset_id)

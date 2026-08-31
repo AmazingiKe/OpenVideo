@@ -3,8 +3,14 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaAsset, MediaAssetStatus, SourcePlatform
+from openvideo.core.media_models import (
+    MediaAsset,
+    MediaAssetStatus,
+    SourcePlatform,
+    SubtitleDisplaySettings,
+)
 from openvideo.core.thumbnails import SCRUB_PROXY_FILE_NAME
+from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.settings import Settings
 from openvideo.ui import media_routes
 from openvideo.ui.api import create_app
@@ -97,3 +103,86 @@ def test_generates_and_streams_scrub_preview(monkeypatch, tmp_path: Path):
     assert response.status_code == 206
     assert response.content == generated_content[2:7]
     assert response.headers["content-range"] == "bytes 2-6/13"
+
+
+def test_saves_subtitle_settings_in_the_asset_configuration(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        response = client.patch(
+            f"/api/media/assets/{ASSET_ID}/subtitle-settings",
+            json={
+                "font_size": "large",
+                "position": "raised",
+                "background": "solid",
+            },
+        )
+        asset_response = client.get(f"/api/media/assets/{ASSET_ID}")
+    with TestClient(create_app(Settings(library_path=tmp_path))) as client:
+        reopened_asset_response = client.get(f"/api/media/assets/{ASSET_ID}")
+
+    expected_settings = {
+        "font_size": "large",
+        "position": "raised",
+        "background": "solid",
+    }
+    assert response.status_code == 200
+    assert response.json() == expected_settings
+    assert asset_response.json()["subtitle_display"] == expected_settings
+    assert reopened_asset_response.json()["subtitle_display"] == expected_settings
+    configuration_path = tmp_path / "assets" / ASSET_ID / "video-config.json"
+    assert configuration_path.is_file()
+    assert '"subtitle_display"' in configuration_path.read_text(encoding="utf-8")
+
+
+def test_exports_video_with_saved_subtitle_settings(monkeypatch, tmp_path: Path):
+    exported_settings = []
+
+    def export_video(
+        _media_path,
+        _segments,
+        subtitle_settings,
+        output_path,
+        _configured_ffmpeg_path,
+        _project_bin_dir,
+    ) -> None:
+        exported_settings.append(subtitle_settings)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"subtitled-video")
+
+    monkeypatch.setattr(media_routes, "export_subtitled_video", export_video)
+
+    library = (
+        MediaLibrary.open(tmp_path) if (tmp_path / "library.json").is_file() else None
+    )
+    if library is None:
+        client = create_client(tmp_path)
+        client.close()
+        library = MediaLibrary.open(tmp_path)
+    library.save_transcript(
+        Transcript(
+            asset_id=ASSET_ID,
+            segments=[
+                TranscriptSegment(start_seconds=0, end_seconds=2, text="导出字幕")
+            ],
+        )
+    )
+    configuration = library.load_video_configuration(ASSET_ID)
+    library.save_video_configuration(
+        configuration.model_copy(
+            update={"subtitle_display": SubtitleDisplaySettings(font_size="large")}
+        )
+    )
+    library.close()
+
+    with TestClient(create_app(Settings(library_path=tmp_path))) as client:
+        response = client.post(f"/api/media/assets/{ASSET_ID}/subtitle-exports")
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["export_id"].startswith("export-")
+    assert payload["relative_path"].startswith(
+        f"assets/{ASSET_ID}/artifacts/subtitle-exports/subtitled-"
+    )
+    assert (
+        tmp_path / Path(payload["relative_path"])
+    ).read_bytes() == b"subtitled-video"
+    assert exported_settings[0].font_size == "large"
