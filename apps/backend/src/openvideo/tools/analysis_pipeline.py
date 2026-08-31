@@ -56,7 +56,11 @@ def build_segments(
         settings.ffmpeg_path,
         settings.ffmpeg_bin_dir,
     )
-    semantic_chapters = build_global_semantic_chapters(transcript.segments, chapter_model)
+    semantic_chapters = build_global_semantic_chapters(
+        transcript.segments,
+        chapter_model,
+        scene_boundaries=scene_boundaries,
+    )
     moments = (
         select_timeline_moments(
             transcript,

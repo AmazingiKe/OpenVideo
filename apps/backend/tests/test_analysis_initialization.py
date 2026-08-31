@@ -164,9 +164,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     assert completed is not None
     assert completed.operation == AnalysisOperation.INITIALIZATION
     assert completed.stage == AnalysisStage.COMPLETE
-    assert transcription_contexts == [
-        "GAMES101 第一讲；现代计算机图形学；闫令琪"
-    ]
+    assert transcription_contexts == ["GAMES101 第一讲；现代计算机图形学；闫令琪"]
     assert completed.strategy.depth == AnalysisDepth.DEEP
     assert {
         AnalysisCapability.TRANSCRIPT,
@@ -260,4 +258,127 @@ async def test_initialization_preserves_partial_evidence_when_keyframes_fail(
     assert library.load_transcript(ASSET_ID) == transcript
     assert len(library.load_segments(ASSET_ID)) == 1
     assert evidence_updates == [True]
+    library.close()
+
+
+def test_initialization_rebuilds_legacy_full_length_local_chapter(tmp_path: Path):
+    library_path = tmp_path / "library"
+    library_path.mkdir()
+    library = MediaLibrary.initialize_directory(library_path)
+    asset_directory = library.asset_directory(ASSET_ID)
+    asset_directory.mkdir(parents=True, exist_ok=True)
+    (asset_directory / "playback.mp4").write_bytes(b"video")
+    library.save(
+        MediaAsset(
+            asset_id=ASSET_ID,
+            source_url="https://example.com/lecture",
+            source_platform=SourcePlatform.YOUTUBE,
+            status=MediaAssetStatus.READY,
+            playback_path="playback.mp4",
+            duration_seconds=600,
+        )
+    )
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[
+            TranscriptSegment(
+                start_seconds=index * 30,
+                end_seconds=(index + 1) * 30,
+                text=f"连续讲解 {index}",
+            )
+            for index in range(20)
+        ],
+    )
+    library.save_transcript(transcript)
+    library.save_segments(
+        ASSET_ID,
+        [
+            MediaSegment(
+                segment_id="segment-019c0000000070008000000000000000",
+                asset_id=ASSET_ID,
+                start_seconds=0,
+                end_seconds=600,
+                title="连续讲解",
+                detailed_summary="\n".join(
+                    segment.text for segment in transcript.segments
+                ),
+                transcript_text="\n".join(
+                    segment.text for segment in transcript.segments
+                ),
+                key_frame_paths=["artifacts/frames/legacy.jpg"],
+            )
+        ],
+    )
+    manager = AnalysisManager(
+        library,
+        Settings(
+            library_path=library.library_path,
+            models_directory=str(tmp_path / "models"),
+        ),
+    )
+
+    created = manager.create_initialization(ASSET_ID)
+
+    assert created.stage == AnalysisStage.PENDING
+    assert created.message == "等待后台初始化"
+    library.close()
+
+
+def test_initialization_keeps_completed_generated_analysis(tmp_path: Path):
+    library_path = tmp_path / "library"
+    library_path.mkdir()
+    library = MediaLibrary.initialize_directory(library_path)
+    asset_directory = library.asset_directory(ASSET_ID)
+    asset_directory.mkdir(parents=True, exist_ok=True)
+    (asset_directory / "playback.mp4").write_bytes(b"video")
+    library.save(
+        MediaAsset(
+            asset_id=ASSET_ID,
+            source_url="https://example.com/lecture",
+            source_platform=SourcePlatform.YOUTUBE,
+            status=MediaAssetStatus.READY,
+            playback_path="playback.mp4",
+            duration_seconds=600,
+        )
+    )
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[
+            TranscriptSegment(
+                start_seconds=index * 30,
+                end_seconds=(index + 1) * 30,
+                text=f"连续讲解 {index}",
+            )
+            for index in range(20)
+        ],
+    )
+    library.save_transcript(transcript)
+    library.save_segments(
+        ASSET_ID,
+        [
+            MediaSegment(
+                segment_id="segment-019c0000000070008000000000000000",
+                asset_id=ASSET_ID,
+                start_seconds=0,
+                end_seconds=600,
+                title="AI 视觉总结",
+                detailed_summary="结合画面生成的详细总结",
+                transcript_text="字幕原文",
+                key_frame_paths=["artifacts/frames/generated.jpg"],
+                visual_description="结合画面生成的详细总结",
+            )
+        ],
+    )
+    manager = AnalysisManager(
+        library,
+        Settings(
+            library_path=library.library_path,
+            models_directory=str(tmp_path / "models"),
+        ),
+    )
+
+    created = manager.create_initialization(ASSET_ID)
+
+    assert created.stage == AnalysisStage.COMPLETE
+    assert created.message == "该视频的本地分析产物已就绪"
     library.close()

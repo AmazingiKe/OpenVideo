@@ -14,6 +14,7 @@ const DETAIL_ENTER_ZOOM_PIXELS_PER_SECOND = 40;
 const DETAIL_EXIT_ZOOM_PIXELS_PER_SECOND = 34;
 const LOD_BLOCK_MINIMUM_WIDTH_PIXELS = 2;
 const OVERVIEW_BLOCK_MERGE_GAP_PIXELS = 4;
+const CHAPTER_BOUNDARY_GAP_PIXELS = 1;
 const OVERVIEW_BLOCK_VERTICAL_INSET_PIXELS = 12;
 const COMPACT_BLOCK_VERTICAL_INSET_PIXELS = 8;
 const SELECTED_BLOCK_LINE_WIDTH_PIXELS = 2;
@@ -130,6 +131,7 @@ export function create_timeline_lod_blocks({
     const kind_blocks = blocks_by_kind.get(block.kind) ?? [];
     const previous = kind_blocks.at(-1);
     if (
+      block.kind !== "event" &&
       previous &&
       block.left <= previous.right + OVERVIEW_BLOCK_MERGE_GAP_PIXELS
     ) {
@@ -246,12 +248,13 @@ export const MediaTimelineLodCanvas = memo(function MediaTimelineLodCanvas({
               ? Math.min(0.86, 0.46 + Math.log2(block.count + 1) * 0.1)
               : 0.82;
           context.fillStyle = paint_style.block_colors[block.kind];
-          context.fillRect(
-            block.left,
-            block_top,
-            Math.max(LOD_BLOCK_MINIMUM_WIDTH_PIXELS, block.right - block.left),
-            block_height,
+          const boundary_gap =
+            block.kind === "event" ? CHAPTER_BOUNDARY_GAP_PIXELS : 0;
+          const block_width = Math.max(
+            1,
+            block.right - block.left - boundary_gap,
           );
+          context.fillRect(block.left, block_top, block_width, block_height);
           if (block.selected) {
             context.globalAlpha = 1;
             context.lineWidth = SELECTED_BLOCK_LINE_WIDTH_PIXELS;
@@ -259,10 +262,7 @@ export const MediaTimelineLodCanvas = memo(function MediaTimelineLodCanvas({
             context.strokeRect(
               block.left,
               block_top,
-              Math.max(
-                LOD_BLOCK_MINIMUM_WIDTH_PIXELS,
-                block.right - block.left,
-              ),
+              block_width,
               block_height,
             );
           }

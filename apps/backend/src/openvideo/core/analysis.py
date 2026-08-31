@@ -14,6 +14,9 @@ from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 
 SPEECH_GAP_SECONDS = 8.0
+CHAPTER_PAUSE_SECONDS = 2.0
+MIN_CHAPTER_DURATION_SECONDS = 45.0
+MAX_CHAPTER_DURATION_SECONDS = 300.0
 SEMANTIC_TRANSITION_PREFIXES = (
     "接下来",
     "下面",
@@ -178,40 +181,60 @@ def _full_timeline_moments(
 ) -> list[TimelineMoment]:
     if not segments:
         return []
-    if semantic_chapters:
-        return [
-            _moment_from_segments(segments[chapter.start_index : chapter.end_index + 1])
-            for chapter in semantic_chapters
-        ]
-    groups: list[list[TranscriptSegment]] = []
-    current: list[TranscriptSegment] = []
-    for segment in segments:
-        if current and _starts_new_event(current, segment, scene_boundaries):
-            groups.append(current)
-            current = []
-        current.append(segment)
-    if current:
-        groups.append(current)
-    return [_moment_from_segments(group) for group in groups]
-
-
-def _starts_new_event(
-    current: list[TranscriptSegment],
-    next_segment: TranscriptSegment,
-    scene_boundaries: list[float],
-) -> bool:
-    previous_end = current[-1].end_seconds
-    if next_segment.start_seconds - previous_end >= SPEECH_GAP_SECONDS:
-        return True
-    normalized_text = next_segment.text.casefold().lstrip(" ，。！？,.!?:：")
-    if not normalized_text.startswith(SEMANTIC_TRANSITION_PREFIXES):
-        return False
-    previous_start = current[-1].start_seconds
-    scene_changed = any(
-        previous_start < boundary <= next_segment.start_seconds
-        for boundary in scene_boundaries
+    chapters = semantic_chapters or build_local_chapters(
+        segments,
+        scene_boundaries,
     )
-    return scene_changed or len(current) >= 2
+    return [
+        _moment_from_segments(segments[chapter.start_index : chapter.end_index + 1])
+        for chapter in chapters
+    ]
+
+
+def build_local_chapters(
+    segments: list[TranscriptSegment],
+    scene_boundaries: list[float] | None = None,
+) -> list[SemanticChapter]:
+    """在线语义模型不可用时，仍需生成可导航而不过度碎片化的章节。"""
+
+    if not segments:
+        return []
+    boundaries = scene_boundaries or []
+    starts = [0]
+    final_end_seconds = segments[-1].end_seconds
+    for index in range(1, len(segments)):
+        previous = segments[index - 1]
+        current = segments[index]
+        chapter_start = segments[starts[-1]]
+        chapter_duration = current.start_seconds - chapter_start.start_seconds
+        remaining_duration = final_end_seconds - current.start_seconds
+        speech_gap = current.start_seconds - previous.end_seconds
+        if speech_gap >= SPEECH_GAP_SECONDS:
+            starts.append(index)
+            continue
+        if (
+            chapter_duration < MIN_CHAPTER_DURATION_SECONDS
+            or remaining_duration < MIN_CHAPTER_DURATION_SECONDS
+        ):
+            continue
+        normalized_text = current.text.casefold().lstrip(" ，。！？,.!?:：")
+        has_transition = normalized_text.startswith(SEMANTIC_TRANSITION_PREFIXES)
+        scene_changed = any(
+            previous.start_seconds < boundary <= current.start_seconds
+            for boundary in boundaries
+        )
+        if (
+            speech_gap >= CHAPTER_PAUSE_SECONDS
+            or has_transition
+            or scene_changed
+            or chapter_duration >= MAX_CHAPTER_DURATION_SECONDS
+        ):
+            starts.append(index)
+    candidates = [
+        SemanticChapter(start_index=start, end_index=len(segments) - 1)
+        for start in starts
+    ]
+    return merge_semantic_chapter_candidates(len(segments), candidates)
 
 
 def merge_semantic_chapter_candidates(

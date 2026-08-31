@@ -119,4 +119,45 @@ describe("MediaTimelineLodCanvas", () => {
       },
     ]);
   });
+
+  it("preserves chapter boundaries in overview mode", () => {
+    const blocks = create_timeline_lod_blocks({
+      actions: [
+        timeline_action({
+          id: "chapter-one",
+          start: 0,
+          end: 60,
+          kind: "event",
+        }),
+        timeline_action({
+          id: "chapter-two",
+          start: 60,
+          end: 120,
+          kind: "event",
+        }),
+      ],
+      canvas_width: 240,
+      lod: TIMELINE_LOD_VALUES.overview,
+      scroll_left: 0,
+      start_left: 0,
+      zoom_pixels_per_second: 2,
+    });
+
+    expect(blocks).toEqual([
+      {
+        count: 1,
+        kind: "event",
+        left: 0,
+        right: 120,
+        selected: false,
+      },
+      {
+        count: 1,
+        kind: "event",
+        left: 120,
+        right: 240,
+        selected: false,
+      },
+    ]);
+  });
 });

@@ -6,8 +6,8 @@ import json
 from collections.abc import Callable
 
 from openvideo.core.analysis import (
-    SPEECH_GAP_SECONDS,
     SemanticChapter,
+    build_local_chapters,
     merge_semantic_chapter_candidates,
 )
 from openvideo.core.ai_models import AiModelConfiguration
@@ -26,6 +26,7 @@ def build_global_semantic_chapters(
     segments: list[TranscriptSegment],
     model: AiModelConfiguration | None = None,
     analyzer: ChapterAnalyzer | None = None,
+    scene_boundaries: list[float] | None = None,
 ) -> list[SemanticChapter]:
     """时间窗口只约束模型输入，最终边界始终由全局字幕索引重新生成。"""
 
@@ -41,20 +42,20 @@ def build_global_semantic_chapters(
 
         resolved_analyzer = analyze_with_model
     if resolved_analyzer is None:
-        return _fallback_chapters(segments)
+        return build_local_chapters(segments, scene_boundaries)
     candidates: list[SemanticChapter] = []
     for start, end in _overlapping_windows(segments):
         try:
             window_candidates = resolved_analyzer(segments[start:end], start)
         except LlmCompletionError:
-            return _fallback_chapters(segments)
+            return build_local_chapters(segments, scene_boundaries)
         candidates.extend(
             chapter
             for chapter in window_candidates
             if start == 0 or chapter.start_index != start
         )
     if not candidates:
-        return _fallback_chapters(segments)
+        return build_local_chapters(segments, scene_boundaries)
     return merge_semantic_chapter_candidates(len(segments), candidates)
 
 
@@ -132,17 +133,3 @@ def _parse_chapters(
         if minimum_index <= chapter.start_index <= chapter.end_index <= maximum_index:
             chapters.append(chapter)
     return chapters
-
-
-def _fallback_chapters(segments: list[TranscriptSegment]) -> list[SemanticChapter]:
-    starts = [0]
-    for index in range(1, len(segments)):
-        previous = segments[index - 1]
-        current = segments[index]
-        if current.start_seconds - previous.end_seconds >= SPEECH_GAP_SECONDS:
-            starts.append(index)
-    candidates = [
-        SemanticChapter(start_index=start, end_index=len(segments) - 1)
-        for start in starts
-    ]
-    return merge_semantic_chapter_candidates(len(segments), candidates)

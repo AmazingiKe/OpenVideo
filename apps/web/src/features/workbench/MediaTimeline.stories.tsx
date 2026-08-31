@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from "@storybook/react-vite";
+import type { Decorator, Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
@@ -21,6 +21,11 @@ const ASSET_ID = "019d3f8a-2b1c-7000-8000-000000000001";
 const ZOOM_OUT_TO_MINIMUM_WHEEL_DELTA =
   Math.log(DEFAULT_ZOOM_PIXELS_PER_SECOND / MINIMUM_ZOOM_PIXELS_PER_SECOND) *
   1_000;
+const DARK_TIMELINE_DECORATOR: Decorator = (StoryComponent) => (
+  <div className="dark bg-background text-foreground">
+    <StoryComponent />
+  </div>
+);
 const POINT_MARKER: MediaMarker = {
   marker_id: "marker-019d3f8a2b1c70008000000000000001",
   asset_id: ASSET_ID,
@@ -97,6 +102,29 @@ const ANALYSIS_SEGMENTS: MediaSegment[] = [
     formula_latex: [],
     marker_ids: [],
     tags: ["推导"],
+  },
+];
+const ADJACENT_ANALYSIS_SEGMENTS: MediaSegment[] = [
+  {
+    ...ANALYSIS_SEGMENTS[0]!,
+    segment_id: "segment-019d3f8a2b1c70008000000000000003",
+    start_seconds: 0,
+    end_seconds: 30,
+    title: "投影基础",
+  },
+  {
+    ...ANALYSIS_SEGMENTS[1]!,
+    segment_id: "segment-019d3f8a2b1c70008000000000000004",
+    start_seconds: 30,
+    end_seconds: 60,
+    title: "矩阵推导",
+  },
+  {
+    ...ANALYSIS_SEGMENTS[1]!,
+    segment_id: "segment-019d3f8a2b1c70008000000000000005",
+    start_seconds: 60,
+    end_seconds: 90,
+    title: "结果验证",
   },
 ];
 const FOCUS_SELECTION: FocusSelection = {
@@ -375,14 +403,32 @@ export const ZoomBelowDefault: Story = {
   },
 };
 
+export const AdjacentChaptersOverview: Story = {
+  args: {
+    analysis_segments: ADJACENT_ANALYSIS_SEGMENTS,
+  },
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    story.getByRole("slider", { name: "时间线缩放比例" }).focus();
+    await userEvent.keyboard("{Home}");
+    await waitFor(() => {
+      expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
+        `${MINIMUM_ZOOM_PIXELS_PER_SECOND} px/s`,
+      );
+    });
+  },
+};
+
+export const AdjacentChaptersOverviewDark: Story = {
+  args: {
+    analysis_segments: ADJACENT_ANALYSIS_SEGMENTS,
+  },
+  decorators: [DARK_TIMELINE_DECORATOR],
+  play: AdjacentChaptersOverview.play,
+};
+
 export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
+  decorators: [DARK_TIMELINE_DECORATOR],
 };
 
 export const SelectedPointMarker: Story = {

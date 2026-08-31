@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import RLock
 
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY
+from openvideo.core.analysis import build_local_chapters
 from openvideo.core.analysis_models import (
     AnalysisCapability,
     AnalysisDepth,
@@ -72,6 +73,27 @@ def _segment_digest(segments: list[MediaSegment]) -> str:
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
+
+
+def _needs_local_chapter_rebuild(
+    transcript: Transcript,
+    segments: list[MediaSegment],
+) -> bool:
+    """旧初始化结果只有一个全长片段时，升级后需自动补建可导航章节。"""
+
+    if len(segments) != 1:
+        return False
+    segment = segments[0]
+    has_generated_analysis = bool(
+        segment.visual_description
+        or (
+            segment.detailed_summary
+            and segment.detailed_summary != segment.transcript_text
+        )
+    )
+    if has_generated_analysis:
+        return False
+    return len(build_local_chapters(transcript.segments)) > 1
 
 
 def _transcription_duration_label(seconds: float) -> str:
@@ -259,6 +281,7 @@ class AnalysisManager:
             transcript is not None
             and segments
             and AnalysisCapability.KEY_FRAMES in capabilities
+            and not _needs_local_chapter_rebuild(transcript, segments)
         ):
             return AnalysisJob(
                 job_id=f"job-{uuid7().hex}",
