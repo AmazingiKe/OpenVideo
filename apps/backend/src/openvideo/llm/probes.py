@@ -20,6 +20,7 @@ from openvideo.llm.request_scheduler import (
     defer_model_requests,
     model_request_slot,
 )
+from openvideo.tools.llm import resolved_image_transport_model
 
 
 BASIC_TOOL_PROMPT = "Call report_probe with status set to ok. Do not answer normally."
@@ -143,6 +144,8 @@ def probe_parallel_tools(model: AiModelConfiguration, timeout_seconds: int) -> N
 
 def probe_vision_tools(model: AiModelConfiguration, timeout_seconds: int) -> None:
     request = _base_request(model, timeout_seconds)
+    transport_model = resolved_image_transport_model(model)
+    request["model"] = transport_model
     request.update(
         messages=[
             {
@@ -158,8 +161,12 @@ def probe_vision_tools(model: AiModelConfiguration, timeout_seconds: int) -> Non
         ],
         tools=[REPORT_PROBE_TOOL],
         tool_choice="auto",
-        thinking={"type": "disabled"},
     )
+    thinking = {"type": "disabled"}
+    if transport_model == model.litellm_model:
+        request["thinking"] = thinking
+    else:
+        request["extra_body"] = {"thinking": thinking}
     response = _completion(request)
     _require_tool_calls(response.choices[0].message.tool_calls, {"report_probe"})
 

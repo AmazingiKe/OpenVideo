@@ -12,6 +12,7 @@ from openvideo.llm.probes import (
     probe_streaming_tools,
     probe_vision_tools,
 )
+from openvideo.tools import llm
 
 
 def model() -> AiModelConfiguration:
@@ -77,18 +78,27 @@ def test_streaming_tool_call(monkeypatch):
 
 def test_vision_with_tools(monkeypatch):
     captured: dict[str, object] = {}
+    vision_model = model()
 
     def completion(**request):
         captured.update(request)
         return tool_response()
 
     monkeypatch.setattr("openvideo.llm.probes.litellm.completion", completion)
+    monkeypatch.setitem(
+        llm._vision_transport_models,
+        llm._vision_transport_cache_key(vision_model),
+        "openai/deepseek-v4-flash-vision-exp",
+    )
 
-    probe_vision_tools(model(), 30)
+    probe_vision_tools(vision_model, 30)
 
     content = captured["messages"][0]["content"]
     assert any(part["type"] == "image_url" for part in content)
     assert captured["tool_choice"] == "auto"
+    assert captured["model"] == "openai/deepseek-v4-flash-vision-exp"
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert "thinking" not in captured
 
 
 def test_probe_retries_rate_limit_before_receiving_response(monkeypatch):

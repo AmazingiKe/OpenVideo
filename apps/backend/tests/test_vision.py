@@ -13,6 +13,7 @@ MODEL_ID = "model-01890f4c7a2b7cc298c4dc0c0c07398f"
 
 def test_describe_returns_content(tmp_path: Path, monkeypatch):
     captured: dict = {}
+    probed_models: list[str] = []
     frame = tmp_path / "frame.jpg"
     frame.write_bytes(b"fake-image")
 
@@ -22,6 +23,10 @@ def test_describe_returns_content(tmp_path: Path, monkeypatch):
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     monkeypatch.setattr(llm.litellm, "completion", fake_completion)
+    monkeypatch.setattr(
+        "openvideo.tools.vision.probe_image_input",
+        lambda model, _timeout: probed_models.append(model.model_id),
+    )
     describer = LiteLlmVision(
         AiModelConfiguration(
             model_id=MODEL_ID,
@@ -39,6 +44,7 @@ def test_describe_returns_content(tmp_path: Path, monkeypatch):
     assert captured["api_base"] == "https://api.example.com/v1"
     assert captured["model"] == "openai/gpt-5.6-terra"
     assert captured["api_key"] == "secret"
+    assert probed_models == [MODEL_ID]
     content = captured["messages"][0]["content"]
     assert content[1] == {"type": "text", "text": "候选画面 1"}
     assert content[2]["type"] == "image_url"

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import re
 import secrets
 import struct
+from threading import Lock, RLock
 import zlib
 
 import litellm
@@ -42,11 +45,11 @@ VISION_PROBE_COLORS = {
     "MAGENTA": (255, 0, 255),
     "CYAN": (0, 220, 220),
 }
-VISION_PROBE_IMAGE_WIDTH = 72
-VISION_PROBE_IMAGE_HEIGHT = 32
+VISION_PROBE_IMAGE_WIDTH = 384
+VISION_PROBE_IMAGE_HEIGHT = 192
 VISION_PROBE_STRIPE_COUNT = 3
 VISION_PROBE_STRIPE_WIDTH = VISION_PROBE_IMAGE_WIDTH // VISION_PROBE_STRIPE_COUNT
-VISION_PROBE_MAX_TOKENS = 64
+VISION_PROBE_MAX_TOKENS = 256
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_BIT_DEPTH = 8
 PNG_COLOR_TYPE_RGB = 2
@@ -58,8 +61,26 @@ VISION_PROBE_PROMPT = (
     "YELLOW, MAGENTA, or CYAN."
 )
 VISION_PROBE_LABELS = ("A", "B")
-DEEPSEEK_PROVIDER_PREFIX = "deepseek/"
 OPENAI_COMPATIBLE_PROVIDER_PREFIX = "openai/"
+VISION_TRANSPORT_ERROR_MARKERS = (
+    "content list",
+    "content must be a string",
+    "content should be a string",
+    "image input",
+    "image_url",
+    "multimodal",
+    "unsupported content",
+)
+VISION_PROBE_RESPONSE_PATTERN = re.compile(
+    r"\b([AB])\s*=\s*"
+    r"(LEFT_(?:RED|GREEN|BLUE|YELLOW|MAGENTA|CYAN)_"
+    r"CENTER_(?:RED|GREEN|BLUE|YELLOW|MAGENTA|CYAN)_"
+    r"RIGHT_(?:RED|GREEN|BLUE|YELLOW|MAGENTA|CYAN))\b",
+)
+VisionTransportCacheKey = tuple[str, str, str, str, str]
+_vision_transport_models: dict[VisionTransportCacheKey, str] = {}
+_vision_transport_key_locks: dict[VisionTransportCacheKey, Lock] = {}
+_vision_transport_lock = RLock()
 
 
 def complete_text(
@@ -160,16 +181,19 @@ def _completion_request(
     timeout_seconds: int,
     max_tokens: int | None,
     disable_thinking: bool,
+    *,
+    transport_model: str | None = None,
 ) -> dict[str, object]:
     configuration_error = online_api_configuration_error(model)
     if configuration_error is not None:
         raise LlmCompletionError(configuration_error)
-    deepseek_vision_model = _deepseek_vision_compatibility_model(
-        model.litellm_model,
-        messages,
+    selected_model = transport_model or (
+        resolved_image_transport_model(model)
+        if _messages_contain_images(messages)
+        else model.litellm_model
     )
     request: dict[str, object] = {
-        "model": deepseek_vision_model or model.litellm_model,
+        "model": selected_model,
         "messages": messages,
         "timeout": timeout_seconds,
     }
@@ -183,22 +207,17 @@ def _completion_request(
         request["max_tokens"] = max_tokens
     if disable_thinking:
         thinking = {"type": "disabled"}
-        if deepseek_vision_model is not None:
+        if selected_model != model.litellm_model:
             request["extra_body"] = {"thinking": thinking}
         else:
             request["thinking"] = thinking
     return request
 
 
-def _deepseek_vision_compatibility_model(
-    litellm_model: str,
+def _messages_contain_images(
     messages: list[dict[str, object]],
-) -> str | None:
-    """绕过会把 DeepSeek 多模态内容列表降为纯文本的旧传输适配器。"""
-
-    if not litellm_model.startswith(DEEPSEEK_PROVIDER_PREFIX):
-        return None
-    contains_image = any(
+) -> bool:
+    return any(
         isinstance(content, list)
         and any(
             isinstance(part, dict) and part.get("type") == "image_url"
@@ -207,10 +226,32 @@ def _deepseek_vision_compatibility_model(
         for message in messages
         for content in (message.get("content"),)
     )
-    if not contains_image:
-        return None
-    model_name = litellm_model.removeprefix(DEEPSEEK_PROVIDER_PREFIX)
-    return f"{OPENAI_COMPATIBLE_PROVIDER_PREFIX}{model_name}"
+
+
+def resolved_image_transport_model(model: AiModelConfiguration) -> str:
+    """返回经过真实像素验证的传输模型，尚未验证时保持原生协议。"""
+
+    cache_key = _vision_transport_cache_key(model)
+    with _vision_transport_lock:
+        return _vision_transport_models.get(cache_key, model.litellm_model)
+
+
+def _vision_transport_cache_key(
+    model: AiModelConfiguration,
+) -> VisionTransportCacheKey:
+    api_key_digest = hashlib.sha256((model.api_key or "").encode()).hexdigest()
+    return (
+        model.model_id,
+        model.litellm_model,
+        model.api_base or "",
+        model.api_version or "",
+        api_key_digest,
+    )
+
+
+def _vision_transport_key_lock(cache_key: VisionTransportCacheKey) -> Lock:
+    with _vision_transport_lock:
+        return _vision_transport_key_locks.setdefault(cache_key, Lock())
 
 
 def _validated_content(content: object) -> str:
@@ -223,9 +264,107 @@ def probe_image_input(
     model: AiModelConfiguration,
     timeout_seconds: int,
 ) -> None:
-    """用两张随机三色图验证模型确实读取像素，而不是只接受请求格式。"""
+    """用随机像素协商可读图传输，避免相信声明或接受请求即判定可用。"""
 
+    cache_key = _vision_transport_cache_key(model)
+    with _vision_transport_lock:
+        if cache_key in _vision_transport_models:
+            return
+    with _vision_transport_key_lock(cache_key):
+        with _vision_transport_lock:
+            if cache_key in _vision_transport_models:
+                return
+        _probe_image_transport(model, timeout_seconds, cache_key)
+
+
+def _probe_image_transport(
+    model: AiModelConfiguration,
+    timeout_seconds: int,
+    cache_key: VisionTransportCacheKey,
+) -> None:
     challenges = _vision_probe_challenges()
+    messages = _vision_probe_messages(challenges)
+    expected = {
+        label: answer
+        for label, (_, answer) in zip(VISION_PROBE_LABELS, challenges, strict=True)
+    }
+    errors: list[tuple[str, LlmCompletionError]] = []
+    candidates = _vision_transport_candidates(model)
+    for index, transport_model in enumerate(candidates):
+        try:
+            response = _complete_image_probe(
+                model,
+                messages,
+                timeout_seconds,
+                transport_model,
+            )
+            _validate_image_probe_response(response, expected)
+        except LlmCompletionError as error:
+            errors.append((transport_model, error))
+            has_fallback = index + 1 < len(candidates)
+            if has_fallback and _can_retry_with_compatible_transport(error):
+                continue
+            break
+        with _vision_transport_lock:
+            _vision_transport_models[cache_key] = transport_model
+        return
+    if len(errors) == 1:
+        raise errors[0][1]
+    attempted = "；".join(
+        f"{transport}: {error}" for transport, error in errors
+    )
+    raise LlmCompletionError(f"视觉传输协商失败：{attempted}") from errors[-1][1]
+
+
+def _vision_transport_candidates(model: AiModelConfiguration) -> list[str]:
+    candidates = [model.litellm_model]
+    provider, separator, model_name = model.litellm_model.partition("/")
+    openai_provider = OPENAI_COMPATIBLE_PROVIDER_PREFIX.removesuffix("/")
+    if model.api_base and provider.casefold() != openai_provider:
+        compatible_model_name = model_name if separator else provider
+        compatible_model = (
+            f"{OPENAI_COMPATIBLE_PROVIDER_PREFIX}{compatible_model_name}"
+        )
+        if compatible_model != model.litellm_model:
+            candidates.append(compatible_model)
+    return candidates
+
+
+def _complete_image_probe(
+    model: AiModelConfiguration,
+    messages: list[dict[str, object]],
+    timeout_seconds: int,
+    transport_model: str,
+) -> str:
+    request = _completion_request(
+        model,
+        messages,
+        timeout_seconds,
+        VISION_PROBE_MAX_TOKENS,
+        True,
+        transport_model=transport_model,
+    )
+    content = _complete_with_retry(request, ModelRequestPriority.FOREGROUND)
+    try:
+        return _validated_content(content)
+    except LlmCompletionError as error:
+        raise ImageInputSemanticError("模型未返回可验证的视觉答案") from error
+
+
+def _can_retry_with_compatible_transport(error: LlmCompletionError) -> bool:
+    if isinstance(error, ImageInputSemanticError):
+        return True
+    normalized_message = str(error).casefold()
+    return any(marker in normalized_message for marker in VISION_TRANSPORT_ERROR_MARKERS)
+
+
+class ImageInputSemanticError(LlmCompletionError):
+    """供应商返回了文本，但随机像素证明图片没有进入模型上下文。"""
+
+
+def _vision_probe_messages(
+    challenges: list[tuple[str, str]],
+) -> list[dict[str, object]]:
     content: list[dict[str, object]] = [
         {"type": "text", "text": VISION_PROBE_PROMPT}
     ]
@@ -236,30 +375,21 @@ def probe_image_input(
                 {"type": "image_url", "image_url": {"url": data_url}},
             )
         )
-    response = complete_text(
-        model,
-        [
-            {
-                "role": "user",
-                "content": content,
-            }
-        ],
-        timeout_seconds=timeout_seconds,
-        max_tokens=VISION_PROBE_MAX_TOKENS,
-        disable_thinking=True,
-        priority=ModelRequestPriority.FOREGROUND,
-    )
-    expected_lines = [
-        f"{label}={answer}"
-        for label, (_, answer) in zip(VISION_PROBE_LABELS, challenges, strict=True)
-    ]
-    normalized_lines = [
-        line.strip().upper().strip("` .")
-        for line in response.strip().splitlines()
-        if line.strip()
-    ]
-    if normalized_lines != expected_lines:
-        raise LlmCompletionError("模型接受了请求，但未能读取测试图片中的颜色")
+    return [{"role": "user", "content": content}]
+
+
+def _validate_image_probe_response(
+    response: str,
+    expected: dict[str, str],
+) -> None:
+    reported = {
+        match.group(1): match.group(2)
+        for match in VISION_PROBE_RESPONSE_PATTERN.finditer(response.upper())
+    }
+    if reported != expected:
+        raise ImageInputSemanticError(
+            "模型接受了请求，但未能读取测试图片中的颜色"
+        )
 
 
 def _vision_probe_challenges() -> list[tuple[str, str]]:

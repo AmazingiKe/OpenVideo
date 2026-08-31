@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from pathlib import Path
 from typing import Protocol
 
 from openvideo.core.ai_models import AiModelConfiguration
-from openvideo.tools.llm import LlmCompletionError, complete_text, complete_text_async
+from openvideo.tools.llm import (
+    LlmCompletionError,
+    complete_text,
+    complete_text_async,
+    probe_image_input,
+)
 
 
 DEFAULT_DESCRIBE_TIMEOUT_SECONDS = 120
+VISION_TRANSPORT_PROBE_TIMEOUT_SECONDS = 30
 
 
 class VisionDescriptionError(RuntimeError):
@@ -32,6 +39,7 @@ class LiteLlmVision:
     def describe(self, image_paths: list[Path], prompt: str) -> str:
         messages = _vision_messages(image_paths, prompt)
         try:
+            probe_image_input(self.model, VISION_TRANSPORT_PROBE_TIMEOUT_SECONDS)
             return complete_text(
                 self.model,
                 messages,
@@ -43,6 +51,11 @@ class LiteLlmVision:
     async def describe_async(self, image_paths: list[Path], prompt: str) -> str:
         messages = _vision_messages(image_paths, prompt)
         try:
+            await asyncio.to_thread(
+                probe_image_input,
+                self.model,
+                VISION_TRANSPORT_PROBE_TIMEOUT_SECONDS,
+            )
             return await complete_text_async(
                 self.model,
                 messages,
