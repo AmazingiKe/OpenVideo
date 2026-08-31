@@ -9,6 +9,7 @@ import {
 
 import { AppShell } from "@/app/AppShell";
 import { AssetCatalogProvider } from "@/app/asset_catalog";
+import { BackendConnectionGate } from "@/app/backend_connection";
 import { ApplicationQueryProvider } from "@/app/query_cache";
 import { TaskManagerProvider } from "@/app/task_manager";
 import { GlobalAssistantProvider } from "@/app/global_assistant";
@@ -23,11 +24,13 @@ import { LibrarySetup } from "@/features/library/LibrarySetup";
 
 export function App() {
   return (
-    <BrowserRouter>
-      <LibraryProvider>
-        <ApplicationRoutes />
-      </LibraryProvider>
-    </BrowserRouter>
+    <BackendConnectionGate>
+      <BrowserRouter>
+        <LibraryProvider>
+          <ApplicationRoutes />
+        </LibraryProvider>
+      </BrowserRouter>
+    </BackendConnectionGate>
   );
 }
 

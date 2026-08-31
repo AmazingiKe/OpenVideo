@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -17,7 +19,16 @@ class HealthResponse(BaseModel):
     dependencies: DependencyStatus
 
 
+class BackendProbeResponse(BaseModel):
+    status: Literal["ready"]
+
+
 def register_health_routes(app: FastAPI, settings: Settings) -> None:
+    @app.post("/api/health", response_model=BackendProbeResponse)
+    def probe_backend() -> BackendProbeResponse:
+        """高频前端探活只确认 API 可响应，避免反复启动外部工具做依赖检测。"""
+        return BackendProbeResponse(status="ready")
+
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         tools = media_tool_status(

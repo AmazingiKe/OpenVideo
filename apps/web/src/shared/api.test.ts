@@ -20,6 +20,7 @@ import {
   list_downloads,
   list_transcription_models,
   media_url,
+  probe_backend,
   probe_source,
   request_download_retry,
   save_download_account,
@@ -35,6 +36,21 @@ import { DEFAULT_MODEL_CAPABILITY_OVERRIDES } from "./types";
 afterEach(() => vi.restoreAllMocks());
 
 describe("api client", () => {
+  it("uses the lightweight POST endpoint for backend probes", async () => {
+    const response = { status: "ready" as const };
+    const fetch_mock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify(response), { status: 200 }),
+      );
+
+    await expect(probe_backend()).resolves.toEqual(response);
+    expect(fetch_mock).toHaveBeenCalledWith("/api/health", {
+      method: "POST",
+      signal: undefined,
+    });
+  });
+
   it("loads the shared transcription model catalog", async () => {
     const models = [
       {

@@ -35,6 +35,7 @@ import {
   list_downloads,
   list_event_analyses,
   list_transcription_models,
+  probe_backend,
   probe_source,
   save_download_account,
   test_download_account,
@@ -88,6 +89,7 @@ vi.mock("./shared/api", () => ({
   media_url: (path: string) => path,
   move_assets: vi.fn(),
   move_folder: vi.fn(),
+  probe_backend: vi.fn(),
   probe_source: vi.fn(),
   prepare_visual_index: vi.fn(),
   request_download_retry: vi.fn(),
@@ -205,6 +207,7 @@ describe("App", () => {
     });
     vi.mocked(list_event_analyses).mockResolvedValue([]);
     vi.mocked(list_transcription_models).mockResolvedValue([]);
+    vi.mocked(probe_backend).mockResolvedValue({ status: "ready" });
     vi.mocked(list_assets).mockResolvedValue([]);
     vi.mocked(list_folders).mockResolvedValue([]);
     vi.mocked(update_markers_page_settings).mockImplementation(

@@ -59,6 +59,10 @@ export type HealthResponse = {
   dependencies: DependencyStatus;
 };
 
+export type BackendProbeResponse = {
+  status: "ready";
+};
+
 export type LibraryDescription = {
   library_id: string;
   name: string;
