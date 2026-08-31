@@ -1,13 +1,16 @@
 import { createRef, forwardRef } from "react";
 import { render, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VideoWorkspace } from "./VideoWorkspace";
 import type { PlayerHandle } from "../player/Player";
 import type { MediaAsset } from "../../shared/types";
 
+const player_render = vi.hoisted(() => vi.fn());
+
 vi.mock("../player/Player", () => ({
   Player: forwardRef(function Player() {
+    player_render();
     return <div data-testid="player" />;
   }),
 }));
@@ -15,6 +18,8 @@ vi.mock("../player/Player", () => ({
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 describe("VideoWorkspace", () => {
+  beforeEach(() => player_render.mockClear());
+
   it("uses the player as the only playback control surface", () => {
     const player_ref = createRef<PlayerHandle>();
     player_ref.current = {
@@ -47,6 +52,23 @@ describe("VideoWorkspace", () => {
     expect(controls.queryByText("课程简介")).not.toBeInTheDocument();
     expect(controls.queryByText("1920 × 1080")).not.toBeInTheDocument();
     expect(controls.queryByLabelText("播放控制")).not.toBeInTheDocument();
+  });
+
+  it("keeps the player tree stable across unrelated parent updates", () => {
+    const props = {
+      asset: create_asset(),
+      transcript: null,
+      markers: [],
+      player_ref: createRef<PlayerHandle>(),
+      on_time_change: vi.fn(),
+      on_pause_change: vi.fn(),
+      on_playback_rate_change: vi.fn(),
+    };
+    const workspace = render(<VideoWorkspace {...props} />);
+
+    workspace.rerender(<VideoWorkspace {...props} />);
+
+    expect(player_render).toHaveBeenCalledOnce();
   });
 });
 

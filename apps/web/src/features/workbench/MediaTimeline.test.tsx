@@ -1283,7 +1283,7 @@ describe("MediaTimeline", () => {
   });
 
   it("keeps third-party scale geometry stable across zoom thresholds", () => {
-    render_timeline();
+    const { result } = render_timeline();
 
     function expect_stable_geometry() {
       expect(timeline_props()).toMatchObject({
@@ -1301,6 +1301,16 @@ describe("MediaTimeline", () => {
       expect_stable_geometry();
     }
     expect(timeline_props().scaleWidth).toBeLessThan(27.43);
+    expect(
+      timeline_props().editorData.every((row) => row.actions.length === 0),
+    ).toBe(true);
+    expect(
+      result.container.querySelector(".media_timeline_lod_canvas"),
+    ).toHaveAttribute("data-lod", "compact");
+    expect(screen.getByLabelText(/时间线画布/)).toHaveAttribute(
+      "aria-description",
+      expect.stringContaining("简化层级"),
+    );
 
     const zoom_in = screen.getByRole("button", { name: "放大时间线" });
     for (let index = 0; index < 12; index += 1) {
@@ -1308,6 +1318,44 @@ describe("MediaTimeline", () => {
       expect_stable_geometry();
     }
     expect(timeline_props().scaleWidth).toBe(320);
+    expect(transcript_actions().length).toBeGreaterThan(0);
+    expect(
+      result.container.querySelector(".media_timeline_lod_canvas"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses aggregated blocks instead of action DOM at overview zoom", () => {
+    const segments: TranscriptSegment[] = Array.from(
+      { length: 2_000 },
+      (_, index) => ({
+        start_seconds: index * 1.2,
+        end_seconds: (index + 1) * 1.2,
+        text: `转写 ${index}`,
+        emotion: null,
+        audio_events: [],
+      }),
+    );
+    const { result } = render_timeline({
+      duration_seconds: segments.length * 1.2,
+      transcript_segments: segments,
+      analysis_segments: [],
+    });
+    const zoom_out = screen.getByRole("button", { name: "缩小时间线" });
+
+    for (let index = 0; index < 9; index += 1) fireEvent.click(zoom_out);
+
+    expect(timeline_props().scaleWidth).toBeLessThanOrEqual(12);
+    expect(
+      timeline_props().editorData.every((row) => row.actions.length === 0),
+    ).toBe(true);
+    expect(
+      result.container.querySelector(".media_timeline_lod_canvas"),
+    ).toHaveAttribute("data-lod", "overview");
+    expect(screen.queryByRole("button", { name: /^转写：/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
+
+    expect(transcript_actions().length).toBeLessThanOrEqual(100);
   });
 
   it("normalizes wheel units and applies exponential zoom in event order", () => {

@@ -468,10 +468,19 @@ export const TwoThousandActions: Story = {
     analysis_segments: [],
   },
   play: async ({ canvasElement }) => {
-    const transcript_actions = await within(canvasElement).findAllByRole(
-      "button",
-      { name: /^转写：/ },
-    );
+    const story = within(canvasElement);
+    const transcript_actions = await story.findAllByRole("button", {
+      name: /^转写：/,
+    });
     expect(transcript_actions.length).toBeLessThanOrEqual(100);
+
+    story.getByRole("slider", { name: "时间线缩放比例" }).focus();
+    await userEvent.keyboard("{Home}");
+    await waitFor(() =>
+      expect(
+        canvasElement.querySelector(".media_timeline_lod_canvas"),
+      ).toHaveAttribute("data-lod", "overview"),
+    );
+    expect(story.queryAllByRole("button", { name: /^转写：/ })).toHaveLength(0);
   },
 };

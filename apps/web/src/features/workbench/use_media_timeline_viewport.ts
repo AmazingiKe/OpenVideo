@@ -141,6 +141,19 @@ export function use_media_timeline_viewport({
     }
   }, []);
 
+  const reset_editor_render_window = useCallback(() => {
+    const next_render_window = create_timeline_render_window({
+      viewport: viewport_ref.current,
+      canvas_width: render_metrics_ref.current.canvas_width,
+      duration: render_metrics_ref.current.duration,
+    });
+    set_render_window((current) =>
+      timeline_render_windows_equal(current, next_render_window)
+        ? current
+        : next_render_window,
+    );
+  }, []);
+
   const set_playhead_time = useCallback(
     (time: number, follow_viewport = false) => {
       playhead_time_ref.current = time;
@@ -555,6 +568,7 @@ export function use_media_timeline_viewport({
     editor_render_window,
     handle_timeline_scroll,
     playhead_ref,
+    reset_editor_render_window,
     set_playhead_time,
     timeline_host_ref,
     timeline_ref,

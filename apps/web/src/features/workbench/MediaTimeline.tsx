@@ -81,6 +81,13 @@ import { TimelineRulerCanvas } from "./TimelineRulerCanvas";
 import { EventAnalysisCard } from "./EventAnalysisCard";
 import { MediaTimelineMarkerEditor } from "./MediaTimelineMarkerEditor";
 import { MediaTimelineActionContent } from "./MediaTimelineActionContent";
+import {
+  MediaTimelineLodCanvas,
+  TIMELINE_LOD_VALUES,
+  select_timeline_lod,
+  timeline_lod_label,
+  type TimelineLod,
+} from "./MediaTimelineLodCanvas";
 import { MediaTimelineToolbar } from "./MediaTimelineToolbar";
 import { MediaTimelineTranscriptEditor } from "./MediaTimelineTranscriptEditor";
 import {
@@ -147,6 +154,7 @@ type MediaTimelineEditorHandlers = {
 type MediaTimelineEditorCanvasProps = {
   editor_data: TimelineEditor["editorData"];
   handlers_ref: RefObject<MediaTimelineEditorHandlers>;
+  lod: TimelineLod;
   scale_count: number;
   timeline_ref: RefObject<TimelineState | null>;
   zoom_pixels_per_second: number;
@@ -156,6 +164,7 @@ type MediaTimelineEditorCanvasProps = {
 const MediaTimelineEditorCanvas = memo(function MediaTimelineEditorCanvas({
   editor_data,
   handlers_ref,
+  lod,
   scale_count,
   timeline_ref,
   zoom_pixels_per_second,
@@ -207,6 +216,7 @@ const MediaTimelineEditorCanvas = memo(function MediaTimelineEditorCanvas({
         handlers_ref.current.prepare_action_context_menu(event, action)
       }
       onDoubleClickRow={(event, { row, time }) => {
+        if (lod !== TIMELINE_LOD_VALUES.detail) return;
         event.preventDefault();
         handlers_ref.current.add_marker(row.id, time);
       }}
@@ -432,6 +442,7 @@ export function MediaTimeline({
     editor_render_window,
     handle_timeline_scroll,
     playhead_ref,
+    reset_editor_render_window,
     set_playhead_time,
     timeline_host_ref,
     timeline_ref,
@@ -445,6 +456,24 @@ export function MediaTimeline({
     playback_rate,
     read_playback_time,
   });
+  const [timeline_lod, set_timeline_lod] = useState<TimelineLod>(() =>
+    select_timeline_lod(viewport.zoom_pixels_per_second, null),
+  );
+  useLayoutEffect(() => {
+    const next_lod = select_timeline_lod(
+      viewport.zoom_pixels_per_second,
+      timeline_lod,
+    );
+    if (next_lod === timeline_lod) return;
+    if (next_lod === TIMELINE_LOD_VALUES.detail) {
+      reset_editor_render_window();
+    }
+    set_timeline_lod(next_lod);
+  }, [
+    reset_editor_render_window,
+    timeline_lod,
+    viewport.zoom_pixels_per_second,
+  ]);
   const full_editor_data = useMemo(
     () =>
       build_timeline_rows({
@@ -479,11 +508,23 @@ export function MediaTimeline({
       transcript_segments,
     ],
   );
-  const editor_data = useMemo(
+  const detailed_editor_data = useMemo(
     () =>
       filter_timeline_rows_for_window(full_editor_data, editor_render_window),
     [editor_render_window, full_editor_data],
   );
+  const lod_editor_data = useMemo(
+    () =>
+      full_editor_data.map((row) => ({
+        ...row,
+        actions: [],
+      })),
+    [full_editor_data],
+  );
+  const editor_data =
+    timeline_lod === TIMELINE_LOD_VALUES.detail
+      ? detailed_editor_data
+      : lod_editor_data;
   const evidence_start_seconds = Math.min(
     Math.max(evidence_range?.start_seconds ?? 0, 0),
     duration,
@@ -1061,16 +1102,21 @@ export function MediaTimeline({
             >
               {track_presentations.map((track) => {
                 const TrackIcon = track.icon;
+                const track_state =
+                  timeline_lod === TIMELINE_LOD_VALUES.detail
+                    ? track.state
+                    : timeline_lod_label(timeline_lod);
                 return (
                   <div
                     key={track.id}
                     className="media_timeline_track_label"
-                    aria-label={`${track.name}，${track.state}`}
+                    aria-label={`${track.name}，${track_state}`}
                   >
                     <TrackIcon aria-hidden="true" />
                     <span>{track.name}</span>
-                    <small>{track.state}</small>
-                    {track.state === "只读" ? (
+                    <small>{track_state}</small>
+                    {track.state === "只读" &&
+                    timeline_lod === TIMELINE_LOD_VALUES.detail ? (
                       <LockKeyhole aria-hidden="true" />
                     ) : null}
                   </div>
@@ -1084,8 +1130,16 @@ export function MediaTimeline({
             <div
               ref={timeline_host_ref}
               className="media_timeline_canvas"
-              onPointerDownCapture={start_marquee}
+              data-lod={timeline_lod}
+              onPointerDownCapture={
+                timeline_lod === TIMELINE_LOD_VALUES.detail
+                  ? start_marquee
+                  : undefined
+              }
               aria-label="时间线画布；双击标记轨道空白处添加标记，Enter 编辑片段，Shift+F10 打开菜单"
+              aria-description={timeline_lod_accessible_description(
+                timeline_lod,
+              )}
             >
               <TimelineRulerCanvas
                 canvas_width={canvas_width}
@@ -1119,10 +1173,22 @@ export function MediaTimeline({
               <MediaTimelineEditorCanvas
                 editor_data={editor_data}
                 handlers_ref={editor_handlers_ref}
+                lod={timeline_lod}
                 scale_count={scale_count}
                 timeline_ref={timeline_ref}
                 zoom_pixels_per_second={viewport.zoom_pixels_per_second}
               />
+              {timeline_lod !== TIMELINE_LOD_VALUES.detail ? (
+                <MediaTimelineLodCanvas
+                  canvas_width={canvas_width}
+                  lod={timeline_lod}
+                  rows={full_editor_data}
+                  scroll_left={viewport.scroll_left}
+                  scroll_top={viewport.scroll_top}
+                  start_left={TIMELINE_START_LEFT}
+                  zoom_pixels_per_second={viewport.zoom_pixels_per_second}
+                />
+              ) : null}
               {evidence_range_style && evidence_range ? (
                 <div
                   className="media_timeline_evidence_range"
@@ -1131,7 +1197,8 @@ export function MediaTimeline({
                   aria-hidden="true"
                 />
               ) : null}
-              {marquee_rectangle ? (
+              {marquee_rectangle &&
+              timeline_lod === TIMELINE_LOD_VALUES.detail ? (
                 <div
                   className="media_timeline_marquee"
                   style={{
@@ -1391,6 +1458,16 @@ export function MediaTimeline({
 
 function format_ruler_accessible_time(seconds: number): string {
   return `${round_marker_time(seconds).toFixed(2)} 秒`;
+}
+
+function timeline_lod_accessible_description(lod: TimelineLod): string {
+  if (lod === TIMELINE_LOD_VALUES.overview) {
+    return "当前为概览层级，片段已聚合为区块；放大时间线后可选择和编辑单个片段";
+  }
+  if (lod === TIMELINE_LOD_VALUES.compact) {
+    return "当前为简化层级，仅显示无文字片段；继续放大后可选择和编辑单个片段";
+  }
+  return "当前为详细层级，可选择、移动和编辑时间线片段";
 }
 
 function is_text_editing_target(target: EventTarget | null): boolean {

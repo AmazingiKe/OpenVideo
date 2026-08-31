@@ -1,4 +1,4 @@
-import { type RefObject } from "react";
+import { memo, type RefObject } from "react";
 import { Play } from "lucide-react";
 
 import {
@@ -29,7 +29,7 @@ type VideoWorkspaceProps = {
   on_playback_rate_change: (rate: number) => void;
 };
 
-export function VideoWorkspace({
+export const VideoWorkspace = memo(function VideoWorkspace({
   asset,
   markers,
   transcript,
@@ -103,7 +103,7 @@ export function VideoWorkspace({
       </div>
     </section>
   );
-}
+});
 
 function player_storyboard(asset: MediaAsset) {
   if (!asset.thumbnail_storyboard) return null;
