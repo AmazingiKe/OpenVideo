@@ -58,6 +58,8 @@ VISION_PROBE_PROMPT = (
     "YELLOW, MAGENTA, or CYAN."
 )
 VISION_PROBE_LABELS = ("A", "B")
+DEEPSEEK_PROVIDER_PREFIX = "deepseek/"
+OPENAI_COMPATIBLE_PROVIDER_PREFIX = "openai/"
 
 
 def complete_text(
@@ -162,8 +164,12 @@ def _completion_request(
     configuration_error = online_api_configuration_error(model)
     if configuration_error is not None:
         raise LlmCompletionError(configuration_error)
+    deepseek_vision_model = _deepseek_vision_compatibility_model(
+        model.litellm_model,
+        messages,
+    )
     request: dict[str, object] = {
-        "model": model.litellm_model,
+        "model": deepseek_vision_model or model.litellm_model,
         "messages": messages,
         "timeout": timeout_seconds,
     }
@@ -176,8 +182,35 @@ def _completion_request(
     if max_tokens is not None:
         request["max_tokens"] = max_tokens
     if disable_thinking:
-        request["thinking"] = {"type": "disabled"}
+        thinking = {"type": "disabled"}
+        if deepseek_vision_model is not None:
+            request["extra_body"] = {"thinking": thinking}
+        else:
+            request["thinking"] = thinking
     return request
+
+
+def _deepseek_vision_compatibility_model(
+    litellm_model: str,
+    messages: list[dict[str, object]],
+) -> str | None:
+    """绕过会把 DeepSeek 多模态内容列表降为纯文本的旧传输适配器。"""
+
+    if not litellm_model.startswith(DEEPSEEK_PROVIDER_PREFIX):
+        return None
+    contains_image = any(
+        isinstance(content, list)
+        and any(
+            isinstance(part, dict) and part.get("type") == "image_url"
+            for part in content
+        )
+        for message in messages
+        for content in (message.get("content"),)
+    )
+    if not contains_image:
+        return None
+    model_name = litellm_model.removeprefix(DEEPSEEK_PROVIDER_PREFIX)
+    return f"{OPENAI_COMPATIBLE_PROVIDER_PREFIX}{model_name}"
 
 
 def _validated_content(content: object) -> str:

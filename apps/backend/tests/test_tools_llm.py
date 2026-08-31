@@ -157,6 +157,71 @@ def test_image_probe_requires_pixel_semantics(monkeypatch):
     assert captured["max_tokens"] == llm.VISION_PROBE_MAX_TOKENS
 
 
+def test_deepseek_image_uses_openai_compatible_transport(monkeypatch):
+    captured: dict[str, object] = {}
+    challenges = [
+        ("data:image/png;base64,first", "LEFT_RED_CENTER_GREEN_RIGHT_BLUE"),
+        ("data:image/png;base64,second", "LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA"),
+    ]
+
+    def completion(**request):
+        captured.update(request)
+        message = SimpleNamespace(
+            content=(
+                "A=LEFT_RED_CENTER_GREEN_RIGHT_BLUE\n"
+                "B=LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA"
+            )
+        )
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    monkeypatch.setattr(llm.litellm, "completion", completion)
+    monkeypatch.setattr(llm, "_vision_probe_challenges", lambda: challenges)
+
+    llm.probe_image_input(
+        AiModelConfiguration(
+            model_id=MODEL_ID,
+            name="DeepSeek 视觉模型",
+            litellm_model="deepseek/deepseek-v4-flash-vision-exp",
+            api_base="https://api.deepseek.com",
+            api_key="secret",
+            input_modalities=["text", "image"],
+        ),
+        timeout_seconds=30,
+    )
+
+    assert captured["model"] == "openai/deepseek-v4-flash-vision-exp"
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert "thinking" not in captured
+
+
+def test_deepseek_text_keeps_native_transport(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def completion(**request):
+        captured.update(request)
+        message = SimpleNamespace(content="完成")
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    monkeypatch.setattr(llm.litellm, "completion", completion)
+
+    llm.complete_text(
+        AiModelConfiguration(
+            model_id=MODEL_ID,
+            name="DeepSeek 文本模型",
+            litellm_model="deepseek/deepseek-v4-flash-vision-exp",
+            api_base="https://api.deepseek.com",
+            api_key="secret",
+        ),
+        [{"role": "user", "content": "测试文本"}],
+        timeout_seconds=30,
+        disable_thinking=True,
+    )
+
+    assert captured["model"] == "deepseek/deepseek-v4-flash-vision-exp"
+    assert captured["thinking"] == {"type": "disabled"}
+    assert "extra_body" not in captured
+
+
 def test_image_probe_rejects_model_that_ignores_pixels(monkeypatch):
     def completion(**_request):
         message = SimpleNamespace(content="No image provided")
