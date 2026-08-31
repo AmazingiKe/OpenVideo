@@ -9,6 +9,7 @@ import {
   GlobalAssistantRegistration,
   use_global_assistant_controls,
 } from "@/app/global_assistant";
+import { LocalPreferencesProvider } from "@/app/local_preferences";
 
 vi.mock("@/app/asset_catalog", () => ({
   use_asset_catalog: () => ({
@@ -79,34 +80,36 @@ function OpenAssistantButton() {
 
 function render_assistant(children?: ReactNode) {
   return render(
-    <MemoryRouter initialEntries={["/markers"]}>
-      <GlobalAssistantProvider>
-        <GlobalAssistantLayout>
-          {children ?? (
-            <Routes>
-              <Route
-                path="/markers"
-                element={
-                  <Workspace
-                    agent_id="marker"
-                    context_label="当前视频 · 示例"
-                  />
-                }
-              />
-              <Route
-                path="/summary"
-                element={
-                  <Workspace
-                    agent_id="summary"
-                    context_label="总结文档 · 初稿"
-                  />
-                }
-              />
-            </Routes>
-          )}
-        </GlobalAssistantLayout>
-      </GlobalAssistantProvider>
-    </MemoryRouter>,
+    <LocalPreferencesProvider>
+      <MemoryRouter initialEntries={["/markers"]}>
+        <GlobalAssistantProvider>
+          <GlobalAssistantLayout>
+            {children ?? (
+              <Routes>
+                <Route
+                  path="/markers"
+                  element={
+                    <Workspace
+                      agent_id="marker"
+                      context_label="当前视频 · 示例"
+                    />
+                  }
+                />
+                <Route
+                  path="/summary"
+                  element={
+                    <Workspace
+                      agent_id="summary"
+                      context_label="总结文档 · 初稿"
+                    />
+                  }
+                />
+              </Routes>
+            )}
+          </GlobalAssistantLayout>
+        </GlobalAssistantProvider>
+      </MemoryRouter>
+    </LocalPreferencesProvider>,
   );
 }
 

@@ -25,7 +25,6 @@ def test_markers_settings_round_trip_and_use_versioned_document(tmp_path: Path):
     store = PageSettingsStore(tmp_path, LIBRARY_ID)
     expected = MarkersPageSettings(
         left_panel_size_percent=30,
-        left_panel_collapsed=True,
         agent_panel_size_percent=38,
     )
 

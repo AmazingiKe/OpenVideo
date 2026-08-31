@@ -13,7 +13,6 @@ const SETTINGS_SAVE_DELAY_MS = 300;
 
 export const DEFAULT_MARKERS_PAGE_SETTINGS: MarkersPageSettings = {
   left_panel_size_percent: 24,
-  left_panel_collapsed: false,
   agent_panel_size_percent: 34,
 };
 

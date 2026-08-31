@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  apply_user_color_scheme,
   current_color_scheme,
   initialize_color_scheme,
   subscribe_color_scheme,
-  toggle_color_scheme,
 } from "./color_scheme";
 
 afterEach(() => {
@@ -65,12 +65,35 @@ describe("initialize_color_scheme", () => {
     });
     expect(current_color_scheme(document)).toBe("light");
 
-    expect(toggle_color_scheme(document)).toBe("dark");
+    apply_user_color_scheme(document, "dark");
     expect(current_color_scheme(document)).toBe("dark");
     expect(listener).toHaveBeenCalledOnce();
 
     change_listeners[0]?.({ matches: false } as MediaQueryListEvent);
     expect(current_color_scheme(document)).toBe("dark");
     unsubscribe();
+  });
+
+  it("applies a persisted user preference before following the system", () => {
+    const change_listener = vi.fn();
+    const media_query = {
+      matches: false,
+      addEventListener: vi.fn(
+        (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+          change_listener.mockImplementation(listener);
+        },
+      ),
+      removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList;
+
+    initialize_color_scheme(
+      document,
+      { matchMedia: vi.fn(() => media_query) },
+      "dark",
+    );
+
+    expect(current_color_scheme(document)).toBe("dark");
+    change_listener({ matches: false } as MediaQueryListEvent);
+    expect(current_color_scheme(document)).toBe("dark");
   });
 });

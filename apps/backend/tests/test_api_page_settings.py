@@ -27,13 +27,11 @@ def test_markers_page_settings_validate_and_persist(tmp_path: Path):
         assert defaults.status_code == 200
         assert defaults.json() == {
             "left_panel_size_percent": 24.0,
-            "left_panel_collapsed": False,
             "agent_panel_size_percent": 34.0,
         }
 
         payload = {
             "left_panel_size_percent": 28,
-            "left_panel_collapsed": True,
             "agent_panel_size_percent": 38,
         }
         saved = client.put("/api/page-settings/markers", json=payload)
@@ -86,7 +84,6 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
         second_settings = client.get("/api/page-settings/markers").json()
         assert second_settings["left_panel_size_percent"] == 24
         assert second_settings["agent_panel_size_percent"] == 34
-        second_settings["left_panel_collapsed"] = True
         assert (
             client.put("/api/page-settings/markers", json=second_settings).status_code
             == 200
@@ -99,7 +96,6 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
         restored = client.get("/api/page-settings/markers").json()
         assert restored["left_panel_size_percent"] == 30
         assert restored["agent_panel_size_percent"] == 34
-        assert restored["left_panel_collapsed"] is False
 
 
 def test_markers_page_settings_require_an_open_library(tmp_path: Path):

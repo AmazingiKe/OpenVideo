@@ -9,6 +9,7 @@ import { forwardRef, useImperativeHandle } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { read_local_preferences } from "./app/local_preferences";
 import {
   create_download,
   create_download_account_login_session,
@@ -171,7 +172,6 @@ describe("App", () => {
     });
     vi.mocked(get_markers_page_settings).mockResolvedValue({
       left_panel_size_percent: 24,
-      left_panel_collapsed: false,
       agent_panel_size_percent: 34,
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
@@ -584,6 +584,9 @@ describe("App", () => {
       { timeout: 5_000 },
     );
     fireEvent.click(screen.getByRole("button", { name: "展开视频库" }));
+    await waitFor(() =>
+      expect(read_local_preferences().video_library_open).toBe(true),
+    );
     fireEvent.doubleClick(
       await screen.findByRole("button", { name: /第二段视频/ }),
     );
@@ -599,10 +602,7 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: "展开视频库" })).toBeVisible(),
     );
     await waitFor(() =>
-      expect(update_markers_page_settings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ left_panel_collapsed: true }),
-        expect.any(AbortSignal),
-      ),
+      expect(read_local_preferences().video_library_open).toBe(false),
     );
   }, 10_000);
 

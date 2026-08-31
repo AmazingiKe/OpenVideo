@@ -4,14 +4,17 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { Topbar } from "@/app/Topbar";
 import { GlobalAssistantProvider } from "@/app/global_assistant";
+import { LocalPreferencesProvider } from "@/app/local_preferences";
 
 function render_topbar() {
   return render(
-    <MemoryRouter initialEntries={["/markers"]}>
-      <GlobalAssistantProvider>
-        <Topbar />
-      </GlobalAssistantProvider>
-    </MemoryRouter>,
+    <LocalPreferencesProvider>
+      <MemoryRouter initialEntries={["/markers"]}>
+        <GlobalAssistantProvider>
+          <Topbar />
+        </GlobalAssistantProvider>
+      </MemoryRouter>
+    </LocalPreferencesProvider>,
   );
 }
 

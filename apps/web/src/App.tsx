@@ -14,6 +14,7 @@ import { ApplicationQueryProvider } from "@/app/query_cache";
 import { TaskManagerProvider } from "@/app/task_manager";
 import { GlobalAssistantProvider } from "@/app/global_assistant";
 import { LibraryProvider, use_library_state } from "@/app/library";
+import { LocalPreferencesProvider } from "@/app/local_preferences";
 import { WorkspaceLoading } from "@/app/WorkspaceLoading";
 import {
   SETTINGS_ROUTE,
@@ -24,13 +25,15 @@ import { LibrarySetup } from "@/features/library/LibrarySetup";
 
 export function App() {
   return (
-    <BackendConnectionGate>
-      <BrowserRouter>
-        <LibraryProvider>
-          <ApplicationRoutes />
-        </LibraryProvider>
-      </BrowserRouter>
-    </BackendConnectionGate>
+    <LocalPreferencesProvider>
+      <BackendConnectionGate>
+        <BrowserRouter>
+          <LibraryProvider>
+            <ApplicationRoutes />
+          </LibraryProvider>
+        </BrowserRouter>
+      </BackendConnectionGate>
+    </LocalPreferencesProvider>
   );
 }
 

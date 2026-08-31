@@ -8,9 +8,11 @@ const meta = {
   component: Topbar,
   parameters: { layout: "fullscreen" },
   beforeEach() {
+    window.localStorage.clear();
     document.documentElement.classList.remove("dark");
     document.documentElement.removeAttribute("data-color-scheme-source");
     return () => {
+      window.localStorage.clear();
       document.documentElement.classList.remove("dark");
       document.documentElement.removeAttribute("data-color-scheme-source");
     };

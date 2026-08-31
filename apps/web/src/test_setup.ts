@@ -2,7 +2,12 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+  document.documentElement.classList.remove("dark");
+  document.documentElement.removeAttribute("data-color-scheme-source");
+});
 
 class ResizeObserverMock implements ResizeObserver {
   disconnect() {}

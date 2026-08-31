@@ -10,6 +10,7 @@ import {
 import { useLocation } from "react-router-dom";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
+import { use_local_preferences } from "@/app/local_preferences";
 import { workspace_route } from "@/app/workspace_routes";
 import { AgentPanel } from "@/components/AgentPanel";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
@@ -91,7 +92,8 @@ const GlobalAssistantLayoutContext =
   createContext<GlobalAssistantLayoutState | null>(null);
 
 export function GlobalAssistantProvider({ children }: { children: ReactNode }) {
-  const [open, set_open] = useState(() => !compact_assistant_layout());
+  const { preferences, set_assistant_open } = use_local_preferences();
+  const open = preferences.assistant_open ?? !compact_assistant_layout();
   const [bindings, set_bindings] = useState(
     () => new Map<string, RegisteredBinding>(),
   );
@@ -122,11 +124,14 @@ export function GlobalAssistantProvider({ children }: { children: ReactNode }) {
     (workspace_path: string) => bindings.get(workspace_path)?.binding ?? null,
     [bindings],
   );
-  const controls = useMemo(() => ({ open, set_open }), [open]);
+  const controls = useMemo(
+    () => ({ open, set_open: set_assistant_open }),
+    [open, set_assistant_open],
+  );
   const registry = useMemo(() => ({ register }), [register]);
   const layout = useMemo(
-    () => ({ open, set_open, binding_for }),
-    [binding_for, open],
+    () => ({ open, set_open: set_assistant_open, binding_for }),
+    [binding_for, open, set_assistant_open],
   );
 
   return (

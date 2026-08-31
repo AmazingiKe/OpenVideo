@@ -78,10 +78,10 @@ describe("use_markers_page_settings", () => {
     });
     await act(async () => vi.advanceTimersByTimeAsync(0));
 
-    act(() => result.current.update_settings({ left_panel_collapsed: true }));
+    act(() => result.current.update_settings({ left_panel_size_percent: 30 }));
     await act(async () => vi.advanceTimersByTimeAsync(300));
 
-    expect(result.current.settings.left_panel_collapsed).toBe(true);
+    expect(result.current.settings.left_panel_size_percent).toBe(30);
     expect(result.current.settings_error).toBe("设置保存失败");
   });
 });

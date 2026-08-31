@@ -15,9 +15,9 @@ import { NavLink } from "react-router-dom";
 import { SETTINGS_ROUTE, WORKSPACE_ROUTES } from "@/app/workspace_routes";
 import { TaskCenter } from "@/app/TaskCenter";
 import { use_global_assistant_controls } from "@/app/global_assistant";
+import { use_local_preferences } from "@/app/local_preferences";
 import { use_optional_task_manager } from "@/app/task_manager";
 import { Button } from "@/components/ui/button";
-import { toggle_color_scheme } from "@/color_scheme";
 import { cn } from "@/lib/utils";
 import { use_color_scheme } from "@/use_color_scheme";
 
@@ -38,6 +38,7 @@ const WORKSPACE_ICONS = {
 export function Topbar() {
   const task_manager = use_optional_task_manager();
   const color_scheme = use_color_scheme();
+  const { set_color_scheme } = use_local_preferences();
   const { assistant_open, set_assistant_open } =
     use_global_assistant_controls();
   const dark_mode_is_active = color_scheme === "dark";
@@ -108,7 +109,9 @@ export function Topbar() {
           aria-label={color_scheme_action_label}
           title={color_scheme_action_label}
           aria-pressed={dark_mode_is_active}
-          onClick={() => toggle_color_scheme()}
+          onClick={() =>
+            set_color_scheme(dark_mode_is_active ? "light" : "dark")
+          }
         >
           {dark_mode_is_active ? (
             <Sun aria-hidden="true" />

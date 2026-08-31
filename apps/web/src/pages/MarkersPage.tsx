@@ -1,11 +1,4 @@
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 
@@ -14,6 +7,7 @@ import {
   GlobalAssistantRegistration,
   use_global_assistant_controls,
 } from "@/app/global_assistant";
+import { use_local_preferences } from "@/app/local_preferences";
 import { use_task_manager } from "@/app/task_manager";
 import { marker_asset_path } from "@/app/workspace_routes";
 import { use_asset_analysis } from "@/features/analysis/use_asset_analysis";
@@ -95,6 +89,9 @@ export function MarkersPage() {
   } = use_asset_analysis(selected_asset_id);
   const { settings, settings_error, is_ready, update_settings } =
     use_markers_page_settings();
+  const { preferences, set_video_library_open } = use_local_preferences();
+  const library_open =
+    preferences.video_library_open ?? selected_asset_id === null;
   const {
     transcription_models: loaded_transcription_models,
     default_transcription,
@@ -110,7 +107,6 @@ export function MarkersPage() {
   const [transcript_correction_scope, set_transcript_correction_scope] =
     useState<TranscriptCorrectionScope>("all");
   const [page_error, set_page_error] = useState<string | null>(null);
-  const [library_sheet_open, set_library_sheet_open] = useState(false);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
   const [agent_context_attachments, set_agent_context_attachments] = useState<
@@ -133,9 +129,6 @@ export function MarkersPage() {
   const panel_transition_timeout_ref = useRef<number | null>(null);
   const player_ref = useRef<PlayerHandle>(null);
   const left_panel_ref = useRef<PanelImperativeHandle>(null);
-  const library_visibility_asset_id_ref = useRef<string | null | undefined>(
-    undefined,
-  );
   const mounted_ref = useRef(true);
   const is_compact_layout = use_compact_markers_layout();
   const {
@@ -164,10 +157,6 @@ export function MarkersPage() {
       mounted_ref.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!is_compact_layout) set_library_sheet_open(false);
-  }, [is_compact_layout]);
 
   useEffect(() => {
     set_current_time(0);
@@ -223,7 +212,7 @@ export function MarkersPage() {
     [],
   );
 
-  const animate_panel_size_change = useCallback(() => {
+  function animate_panel_size_change() {
     set_is_panel_size_transitioning(true);
     if (panel_transition_timeout_ref.current !== null) {
       window.clearTimeout(panel_transition_timeout_ref.current);
@@ -232,40 +221,30 @@ export function MarkersPage() {
       panel_transition_timeout_ref.current = null;
       set_is_panel_size_transitioning(false);
     }, PANEL_TOGGLE_TRANSITION_MS);
-  }, []);
+  }
 
-  const set_left_panel_collapsed = useCallback(
-    (collapsed: boolean) => {
-      animate_panel_size_change();
-      if (collapsed) left_panel_ref.current?.collapse();
-      else
-        left_panel_ref.current?.resize(`${settings.left_panel_size_percent}%`);
-      update_settings({ left_panel_collapsed: collapsed });
-    },
-    [
-      animate_panel_size_change,
-      settings.left_panel_size_percent,
-      update_settings,
-    ],
-  );
+  function set_library_open(open: boolean) {
+    animate_panel_size_change();
+    if (open) {
+      left_panel_ref.current?.resize(`${settings.left_panel_size_percent}%`);
+    } else {
+      left_panel_ref.current?.collapse();
+    }
+    set_video_library_open(open);
+  }
 
   useEffect(() => {
-    if (
-      !is_ready ||
-      library_visibility_asset_id_ref.current === selected_asset_id
-    ) {
-      return;
-    }
-    library_visibility_asset_id_ref.current = selected_asset_id;
-    const should_collapse_library = selected_asset_id !== null;
-    if (settings.left_panel_collapsed !== should_collapse_library) {
-      set_left_panel_collapsed(should_collapse_library);
+    if (!is_ready || is_compact_layout) return;
+    if (library_open) {
+      left_panel_ref.current?.resize(`${settings.left_panel_size_percent}%`);
+    } else {
+      left_panel_ref.current?.collapse();
     }
   }, [
     is_ready,
-    selected_asset_id,
-    set_left_panel_collapsed,
-    settings.left_panel_collapsed,
+    is_compact_layout,
+    library_open,
+    settings.left_panel_size_percent,
   ]);
 
   function seek_player(seconds: number) {
@@ -411,20 +390,17 @@ export function MarkersPage() {
   }
 
   function save_library_layout(layout: Record<string, number>) {
-    const left_panel_collapsed =
-      left_panel_ref.current?.isCollapsed() ?? settings.left_panel_collapsed;
-    const patch: Parameters<typeof update_settings>[0] = {
-      left_panel_collapsed,
-    };
-    if (!left_panel_collapsed && layout["left-panel"] !== undefined) {
-      patch.left_panel_size_percent = layout["left-panel"];
+    const panel_open = !(
+      left_panel_ref.current?.isCollapsed() ?? !library_open
+    );
+    const left_panel_size_percent = layout["left-panel"];
+    if (panel_open && left_panel_size_percent !== undefined) {
+      update_settings({ left_panel_size_percent });
     }
-    update_settings(patch);
   }
 
   function open_library_video(asset_id: string) {
-    set_library_sheet_open(false);
-    set_left_panel_collapsed(true);
+    set_library_open(false);
     navigate(marker_asset_path(asset_id));
   }
 
@@ -446,10 +422,10 @@ export function MarkersPage() {
   );
   const library_panel = (
     <MarkerLibraryPanel
-      collapsed={settings.left_panel_collapsed}
+      collapsed={!library_open}
       current_video_id={selected_asset_id}
       initial_folder_id={selected_asset ? selected_asset.folder_id : undefined}
-      on_collapsed_change={set_left_panel_collapsed}
+      on_collapsed_change={(collapsed) => set_library_open(!collapsed)}
       on_open_video={(asset) => open_library_video(asset.asset_id)}
     />
   );
@@ -460,7 +436,7 @@ export function MarkersPage() {
       current_video_id={selected_asset_id}
       initial_folder_id={selected_asset ? selected_asset.folder_id : undefined}
       on_collapsed_change={(collapsed) => {
-        if (!collapsed) set_library_sheet_open(true);
+        if (!collapsed) set_video_library_open(true);
       }}
       on_open_video={(asset) => open_library_video(asset.asset_id)}
     />
@@ -599,8 +575,8 @@ export function MarkersPage() {
                     {compact_library_launcher}
                     <div className="min-h-0 flex-1">{video_workspace}</div>
                     <Sheet
-                      open={library_sheet_open}
-                      onOpenChange={set_library_sheet_open}
+                      open={library_open}
+                      onOpenChange={set_video_library_open}
                     >
                       <SheetContent
                         side="left"
@@ -622,7 +598,7 @@ export function MarkersPage() {
                               : undefined
                           }
                           on_collapsed_change={(collapsed) => {
-                            if (collapsed) set_library_sheet_open(false);
+                            if (collapsed) set_video_library_open(false);
                           }}
                           on_open_video={(asset) =>
                             open_library_video(asset.asset_id)
@@ -644,9 +620,9 @@ export function MarkersPage() {
                       id="left-panel"
                       panelRef={left_panel_ref}
                       defaultSize={
-                        settings.left_panel_collapsed
-                          ? `${PANEL_RAIL_WIDTH_PX}px`
-                          : `${settings.left_panel_size_percent}%`
+                        library_open
+                          ? `${settings.left_panel_size_percent}%`
+                          : `${PANEL_RAIL_WIDTH_PX}px`
                       }
                       minSize={`${LIBRARY_PANEL_MIN_WIDTH_PX}px`}
                       maxSize={`${LIBRARY_PANEL_MAX_WIDTH_PERCENT}%`}
@@ -655,8 +631,9 @@ export function MarkersPage() {
                       onResize={(size) => {
                         const collapsed =
                           size.inPixels <= PANEL_RAIL_WIDTH_PX + 1;
-                        if (collapsed !== settings.left_panel_collapsed) {
-                          update_settings({ left_panel_collapsed: collapsed });
+                        const panel_open = !collapsed;
+                        if (panel_open !== library_open) {
+                          set_video_library_open(panel_open);
                         }
                       }}
                     >

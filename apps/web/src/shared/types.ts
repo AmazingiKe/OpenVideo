@@ -231,7 +231,6 @@ export type AiModelTestResult = {
 
 export type MarkersPageSettings = {
   left_panel_size_percent: number;
-  left_panel_collapsed: boolean;
   agent_panel_size_percent: number;
 };
 

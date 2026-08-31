@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { read_local_preferences } from "./app/local_preferences";
 import { initialize_browser_brand } from "./browser_brand";
 import {
   initialize_color_scheme,
@@ -9,7 +10,8 @@ import {
 } from "./color_scheme";
 import "./styles.css";
 
-initialize_color_scheme(document, window);
+const local_preferences = read_local_preferences();
+initialize_color_scheme(document, window, local_preferences.color_scheme);
 initialize_browser_brand(document);
 subscribe_color_scheme(() => initialize_browser_brand(document), document);
 

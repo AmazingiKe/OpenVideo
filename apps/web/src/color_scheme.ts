@@ -25,6 +25,7 @@ function apply_color_scheme(
 export function initialize_color_scheme(
   document_object: Document,
   window_object: Pick<Window, "matchMedia">,
+  preferred_color_scheme: ColorScheme | null = null,
 ): () => void {
   const media_query = window_object.matchMedia(DARK_COLOR_SCHEME_QUERY);
   const apply_system_color_scheme = ({
@@ -40,7 +41,14 @@ export function initialize_color_scheme(
     apply_color_scheme(document_object, color_scheme_from_system(matches));
   };
 
-  apply_system_color_scheme(media_query);
+  if (preferred_color_scheme) {
+    apply_user_color_scheme(document_object, preferred_color_scheme);
+  } else {
+    document_object.documentElement.removeAttribute(
+      COLOR_SCHEME_SOURCE_ATTRIBUTE,
+    );
+    apply_system_color_scheme(media_query);
+  }
   media_query.addEventListener("change", apply_system_color_scheme);
   return () =>
     media_query.removeEventListener("change", apply_system_color_scheme);
@@ -54,17 +62,15 @@ export function current_color_scheme(
     : "light";
 }
 
-export function toggle_color_scheme(
-  document_object: Document = document,
-): ColorScheme {
-  const next_color_scheme =
-    current_color_scheme(document_object) === "dark" ? "light" : "dark";
+export function apply_user_color_scheme(
+  document_object: Document,
+  color_scheme: ColorScheme,
+): void {
   document_object.documentElement.setAttribute(
     COLOR_SCHEME_SOURCE_ATTRIBUTE,
     USER_COLOR_SCHEME_SOURCE,
   );
-  apply_color_scheme(document_object, next_color_scheme);
-  return next_color_scheme;
+  apply_color_scheme(document_object, color_scheme);
 }
 
 export function subscribe_color_scheme(

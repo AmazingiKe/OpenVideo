@@ -1,7 +1,7 @@
 import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { toggle_color_scheme } from "@/color_scheme";
+import { apply_user_color_scheme } from "@/color_scheme";
 import {
   create_visible_timeline_ruler_ticks,
   format_timeline_ruler_time,
@@ -118,7 +118,7 @@ describe("TimelineRulerCanvas", () => {
 
     const draw_count = context.clearRect.mock.calls.length;
     act(() => {
-      toggle_color_scheme(document);
+      apply_user_color_scheme(document, "dark");
     });
     expect(context.clearRect.mock.calls.length).toBeGreaterThan(draw_count);
   });

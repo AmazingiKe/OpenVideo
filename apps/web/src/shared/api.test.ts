@@ -161,7 +161,6 @@ describe("api client", () => {
   it("loads and saves markers page settings", async () => {
     const settings = {
       left_panel_size_percent: 24,
-      left_panel_collapsed: false,
       agent_panel_size_percent: 34,
     };
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
