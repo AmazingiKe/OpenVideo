@@ -24,7 +24,6 @@ import {
   import_download_account_from_browser,
   import_local_video,
   get_markers,
-  get_focus_selection,
   get_agent_index_status,
   get_segments,
   get_transcript,
@@ -72,7 +71,6 @@ vi.mock("./shared/api", () => ({
   import_download_account_from_browser: vi.fn(),
   import_local_video: vi.fn(),
   get_markers: vi.fn(),
-  get_focus_selection: vi.fn(),
   get_agent_index_status: vi.fn(),
   get_segments: vi.fn(),
   get_transcript: vi.fn(),
@@ -177,7 +175,6 @@ describe("App", () => {
     vi.mocked(list_ai_models).mockResolvedValue([]);
     vi.mocked(list_agent_tasks).mockResolvedValue([]);
     vi.mocked(list_downloads).mockResolvedValue([]);
-    vi.mocked(get_focus_selection).mockResolvedValue(null);
     vi.mocked(get_agent_index_status).mockResolvedValue({
       index_task_id: "index-task-019c012345677abc8123456789abcdef",
       asset_id: null,

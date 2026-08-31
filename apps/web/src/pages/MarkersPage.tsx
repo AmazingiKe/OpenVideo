@@ -43,14 +43,9 @@ import { FloatingError } from "@/components/FloatingError";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
 import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
+import { uuid7 } from "@/shared/identifiers";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
-import {
-  clear_focus_selection,
-  delete_event_analysis,
-  get_focus_selection,
-  list_event_analyses,
-  update_focus_selection,
-} from "@/shared/api";
+import { delete_event_analysis, list_event_analyses } from "@/shared/api";
 import type {
   AgentArtifact,
   AgentEvidenceRange,
@@ -196,13 +191,9 @@ export function MarkersPage() {
   useEffect(() => {
     if (!selected_asset_id) return;
     const controller = new AbortController();
-    void Promise.all([
-      get_focus_selection(selected_asset_id, controller.signal),
-      list_event_analyses(selected_asset_id, controller.signal),
-    ])
-      .then(([selection, analyses]) => {
+    void list_event_analyses(selected_asset_id, controller.signal)
+      .then((analyses) => {
         if (!mounted_ref.current) return;
-        set_focus_selection(selection);
         set_event_analyses(analyses);
       })
       .catch((error) => {
@@ -343,30 +334,46 @@ export function MarkersPage() {
     player_ref.current?.preview_to(seconds);
   }
 
-  async function set_focus_endpoint(
+  function set_range_endpoint(
     endpoint: "in_seconds" | "out_seconds",
     seconds: number,
   ) {
     if (!selected_asset_id) return;
-    try {
-      set_focus_selection(
-        await update_focus_selection(selected_asset_id, {
-          [endpoint]: seconds,
-        }),
-      );
-    } catch (error) {
-      set_page_error(error_message(error));
-    }
+    set_focus_selection((current) => {
+      const selection: FocusSelection = current ?? {
+        selection_id: `focus-selection-${uuid7().replaceAll("-", "")}`,
+        asset_id: selected_asset_id,
+        in_seconds: null,
+        out_seconds: null,
+        revision: 0,
+        updated_at: new Date().toISOString(),
+      };
+      const next_selection = {
+        ...selection,
+        [endpoint]: seconds,
+        revision: selection.revision + 1,
+        updated_at: new Date().toISOString(),
+      };
+      if (
+        endpoint === "in_seconds" &&
+        next_selection.out_seconds !== null &&
+        seconds >= next_selection.out_seconds
+      ) {
+        next_selection.out_seconds = null;
+      }
+      if (
+        endpoint === "out_seconds" &&
+        next_selection.in_seconds !== null &&
+        seconds <= next_selection.in_seconds
+      ) {
+        next_selection.in_seconds = null;
+      }
+      return next_selection;
+    });
   }
 
-  async function clear_focus() {
-    if (!selected_asset_id) return;
-    try {
-      await clear_focus_selection(selected_asset_id);
-      set_focus_selection(null);
-    } catch (error) {
-      set_page_error(error_message(error));
-    }
+  function clear_range() {
+    set_focus_selection(null);
   }
 
   async function remove_event_analysis(event_analysis_id: string) {
@@ -542,13 +549,11 @@ export function MarkersPage() {
         on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_request_transcript_correction={open_transcript_correction}
         on_selected_marker_ids_change={set_selected_marker_ids}
-        on_set_focus_in={(seconds) =>
-          void set_focus_endpoint("in_seconds", seconds)
-        }
+        on_set_focus_in={(seconds) => set_range_endpoint("in_seconds", seconds)}
         on_set_focus_out={(seconds) =>
-          void set_focus_endpoint("out_seconds", seconds)
+          set_range_endpoint("out_seconds", seconds)
         }
-        on_clear_focus={() => void clear_focus()}
+        on_clear_focus={clear_range}
         on_add_agent_context={(attachment) =>
           set_agent_context_attachments((current) => [...current, attachment])
         }

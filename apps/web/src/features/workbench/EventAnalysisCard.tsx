@@ -28,7 +28,7 @@ export function EventAnalysisCard({
           <div className="min-w-0">
             <CardTitle>{analysis.title}</CardTitle>
             <CardDescription>
-              {analysis.target.source === "marker" ? "范围标记" : "焦点选区"}·{" "}
+              {analysis.target.source === "marker" ? "范围标记" : "时间线范围"}·{" "}
               {format_time(analysis.target.start_seconds)}–
               {format_time(analysis.target.end_seconds)}
             </CardDescription>

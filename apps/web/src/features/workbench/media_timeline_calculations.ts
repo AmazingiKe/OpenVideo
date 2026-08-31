@@ -4,7 +4,6 @@ import { format_marker_label } from "@/shared/marker_labels";
 import type {
   AnalysisStrategy,
   EventAnalysis,
-  FocusSelection,
   MediaMarker,
   MediaSegment,
   Transcript,
@@ -15,7 +14,6 @@ export const DEFAULT_ZOOM_PIXELS_PER_SECOND = 80;
 export const MINIMUM_ACTION_DURATION_SECONDS = 0.05;
 export const MARKER_TIME_STEP_SECONDS = 0.05;
 const DEFAULT_POINT_HIT_DURATION_SECONDS = 0.4;
-export const MINIMUM_ZOOM_PIXELS_PER_SECOND = 4;
 export const MAXIMUM_ZOOM_PIXELS_PER_SECOND = 320;
 const WHEEL_DELTA_MODE_PIXEL = 0;
 const WHEEL_DELTA_MODE_LINE = 1;
@@ -26,7 +24,11 @@ const MAXIMUM_WHEEL_FRAME_FACTOR = 1.25;
 const WHEEL_ZOOM_EPSILON = 1e-9;
 export const TIMELINE_START_LEFT = 16;
 export const TIMELINE_ROW_HEIGHT = 48;
+export const TIMELINE_COMPACT_ROW_HEIGHT = 32;
+export const TIMELINE_MINIMUM_ROW_HEIGHT = 24;
+export const TIMELINE_MAXIMUM_ROW_HEIGHT = 160;
 export const TIMELINE_RULER_HEIGHT = 32;
+const TIMELINE_FIT_END_PADDING_PIXELS = 16;
 const RENDER_WINDOW_BUFFER_VIEWPORTS = 0.5;
 const RENDER_WINDOW_COVERAGE_MARGIN_VIEWPORTS = 0.1;
 const RENDER_WINDOW_MOVEMENT_THRESHOLD_VIEWPORTS = 0.25;
@@ -35,7 +37,6 @@ export const TIMELINE_TRACK_IDS = {
   marker: "timeline-marker-track",
   transcript: "timeline-transcript-track",
   event: "timeline-event-track",
-  focus: "timeline-focus-track",
   event_analysis_prefix: "timeline-event-analysis-track",
 } as const;
 
@@ -47,7 +48,7 @@ export const MARKER_SHAPE_VALUES = {
 export type TimelineRow = TimelineEditor["editorData"][number];
 export type TimelineAction = TimelineRow["actions"][number];
 type TimelineActionKind =
-  "marker" | "candidate" | "transcript" | "event" | "focus" | "event_analysis";
+  "marker" | "candidate" | "transcript" | "event" | "event_analysis";
 type MarkerShape =
   (typeof MARKER_SHAPE_VALUES)[keyof typeof MARKER_SHAPE_VALUES];
 
@@ -87,6 +88,50 @@ export type TimelineRenderWindow = {
   start_seconds: number;
   end_seconds: number;
 };
+
+export type TimelineSelectionRange = {
+  start_seconds: number;
+  end_seconds: number;
+};
+
+export function calculate_minimum_timeline_zoom(
+  viewport_width: number,
+  scale_count: number,
+): number {
+  const available_width = Math.max(
+    1,
+    viewport_width - TIMELINE_START_LEFT - TIMELINE_FIT_END_PADDING_PIXELS,
+  );
+  const fit_zoom = available_width / Math.max(1, scale_count);
+  return Math.min(DEFAULT_ZOOM_PIXELS_PER_SECOND, fit_zoom);
+}
+
+export function default_timeline_row_height(row_id: string): number {
+  return row_id === TIMELINE_TRACK_IDS.marker ||
+    row_id === TIMELINE_TRACK_IDS.transcript
+    ? TIMELINE_COMPACT_ROW_HEIGHT
+    : TIMELINE_ROW_HEIGHT;
+}
+
+export function clamp_timeline_row_height(height: number): number {
+  return Math.min(
+    TIMELINE_MAXIMUM_ROW_HEIGHT,
+    Math.max(TIMELINE_MINIMUM_ROW_HEIGHT, height),
+  );
+}
+
+export function selected_timeline_range(
+  rows: TimelineRow[],
+): TimelineSelectionRange | null {
+  const selected_actions = rows.flatMap((row) =>
+    (row.actions as MediaTimelineAction[]).filter((action) => action.selected),
+  );
+  if (selected_actions.length === 0) return null;
+  return {
+    start_seconds: Math.min(...selected_actions.map((action) => action.start)),
+    end_seconds: Math.max(...selected_actions.map((action) => action.end)),
+  };
+}
 
 export type TimelineMarqueePoint = {
   x: number;
@@ -178,9 +223,13 @@ export function calculate_zoom_viewport({
   viewport_width: number;
   scale_count: number;
 }): TimelineZoomViewport {
+  const minimum_zoom_pixels_per_second = calculate_minimum_timeline_zoom(
+    viewport_width,
+    scale_count,
+  );
   const zoom_pixels_per_second = Math.min(
     MAXIMUM_ZOOM_PIXELS_PER_SECOND,
-    Math.max(MINIMUM_ZOOM_PIXELS_PER_SECOND, requested_zoom),
+    Math.max(minimum_zoom_pixels_per_second, requested_zoom),
   );
   const bounded_anchor_x = Math.min(
     Math.max(anchor_x, 0),
@@ -272,8 +321,13 @@ export function consume_timeline_wheel_zoom_frame({
   viewport: TimelineZoomViewport;
   remaining_events: TimelineWheelZoomEvent[];
 } {
+  const viewport_width = events[0]?.viewport_width ?? 0;
+  const minimum_zoom_pixels_per_second = calculate_minimum_timeline_zoom(
+    viewport_width,
+    scale_count,
+  );
   const frame_minimum_zoom = Math.max(
-    MINIMUM_ZOOM_PIXELS_PER_SECOND,
+    minimum_zoom_pixels_per_second,
     viewport.zoom_pixels_per_second * MINIMUM_WHEEL_FRAME_FACTOR,
   );
   const frame_maximum_zoom = Math.min(
@@ -314,7 +368,11 @@ export function consume_timeline_wheel_zoom_frame({
         next_viewport.zoom_pixels_per_second >=
           MAXIMUM_ZOOM_PIXELS_PER_SECOND) ||
       (remaining_delta < 0 &&
-        next_viewport.zoom_pixels_per_second <= MINIMUM_ZOOM_PIXELS_PER_SECOND);
+        next_viewport.zoom_pixels_per_second <=
+          calculate_minimum_timeline_zoom(
+            wheel_event.viewport_width,
+            scale_count,
+          ));
     if (reached_global_limit) continue;
 
     return {
@@ -518,8 +576,8 @@ export function build_timeline_rows({
   selected_marker_ids,
   selected_transcript_indices,
   selected_read_only_action_ids,
-  focus_selection = null,
   event_analyses = [],
+  row_heights = {},
 }: {
   transcript_segments: Transcript["segments"];
   segments: MediaSegment[];
@@ -531,17 +589,17 @@ export function build_timeline_rows({
   selected_marker_ids?: Set<string>;
   selected_transcript_indices?: ReadonlySet<number>;
   selected_read_only_action_ids?: ReadonlySet<string>;
-  focus_selection?: FocusSelection | null;
   event_analyses?: EventAnalysis[];
+  row_heights?: Readonly<Record<string, number>>;
 }): TimelineRow[] {
   const event_analysis_rows = build_event_analysis_rows(
     event_analyses,
     duration,
   );
-  return [
+  const rows = [
     {
       id: TIMELINE_TRACK_IDS.marker,
-      rowHeight: TIMELINE_ROW_HEIGHT,
+      rowHeight: default_timeline_row_height(TIMELINE_TRACK_IDS.marker),
       classNames: ["timeline_row_markers"],
       actions: [
         ...markers.map((marker) =>
@@ -577,7 +635,7 @@ export function build_timeline_rows({
     },
     {
       id: TIMELINE_TRACK_IDS.transcript,
-      rowHeight: TIMELINE_ROW_HEIGHT,
+      rowHeight: default_timeline_row_height(TIMELINE_TRACK_IDS.transcript),
       classNames: ["timeline_row_transcript"],
       actions: transcript_segments.map((segment, index) =>
         create_timeline_action({
@@ -598,7 +656,7 @@ export function build_timeline_rows({
     },
     {
       id: TIMELINE_TRACK_IDS.event,
-      rowHeight: TIMELINE_ROW_HEIGHT,
+      rowHeight: default_timeline_row_height(TIMELINE_TRACK_IDS.event),
       classNames: ["timeline_row_events"],
       actions: segments.map((segment) =>
         create_timeline_action({
@@ -619,20 +677,6 @@ export function build_timeline_rows({
         }),
       ),
     },
-    ...(focus_selection
-      ? [
-          {
-            id: TIMELINE_TRACK_IDS.focus,
-            rowHeight: TIMELINE_ROW_HEIGHT,
-            classNames: ["timeline_row_focus"],
-            actions: create_focus_actions(
-              focus_selection,
-              duration,
-              selected_read_only_action_ids,
-            ),
-          },
-        ]
-      : []),
     ...event_analysis_rows.map((row) => ({
       ...row,
       actions: row.actions.map((action) => ({
@@ -641,52 +685,12 @@ export function build_timeline_rows({
       })),
     })),
   ];
-}
-
-function create_focus_actions(
-  selection: FocusSelection,
-  duration: number,
-  selected_action_ids?: ReadonlySet<string>,
-): MediaTimelineAction[] {
-  if (selection.in_seconds !== null && selection.out_seconds !== null) {
-    return [
-      create_timeline_action({
-        id: selection.selection_id,
-        start: selection.in_seconds,
-        end: selection.out_seconds,
-        duration,
-        selected: selected_action_ids?.has(selection.selection_id),
-        movable: false,
-        flexible: false,
-        data: {
-          kind: "focus",
-          source_id: selection.selection_id,
-          label: "In / Out 焦点选区",
-        },
-      }),
-    ];
-  }
-  return [
-    ["in", selection.in_seconds],
-    ["out", selection.out_seconds],
-  ]
-    .filter((endpoint): endpoint is [string, number] => endpoint[1] !== null)
-    .map(([name, seconds]) =>
-      create_timeline_action({
-        id: `${selection.selection_id}-${name}`,
-        start: seconds,
-        end: seconds + MINIMUM_ACTION_DURATION_SECONDS,
-        duration,
-        selected: selected_action_ids?.has(`${selection.selection_id}-${name}`),
-        movable: false,
-        flexible: false,
-        data: {
-          kind: "focus",
-          source_id: selection.selection_id,
-          label: name === "in" ? "In 端点" : "Out 端点",
-        },
-      }),
-    );
+  return rows.map((row) => ({
+    ...row,
+    rowHeight: clamp_timeline_row_height(
+      row_heights[row.id] ?? default_timeline_row_height(row.id),
+    ),
+  }));
 }
 
 function build_event_analysis_rows(

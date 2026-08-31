@@ -7,6 +7,7 @@ import {
   format_timeline_ruler_time,
   select_timeline_ruler_interval,
   timeline_ruler_bitmap_size,
+  TimelineGrid,
   TimelineRulerCanvas,
 } from "./TimelineRulerCanvas";
 
@@ -29,6 +30,29 @@ describe("TimelineRulerCanvas", () => {
     expect(select_timeline_ruler_interval(181, 1)).toBe(0.5);
     expect(select_timeline_ruler_interval(30, 2)).toBe(2);
     expect(select_timeline_ruler_interval(29.9, 2)).toBe(5);
+    expect(select_timeline_ruler_interval(0.01, null)).toBe(7_200);
+  });
+
+  it("keeps overview grid lines readable instead of drawing every second", () => {
+    const major_interval_seconds = select_timeline_ruler_interval(0.01, null);
+    const { container } = render(
+      <TimelineGrid
+        canvas_width={800}
+        duration_seconds={86_400}
+        major_interval_seconds={major_interval_seconds}
+        scroll_left={0}
+        start_left={16}
+        zoom_pixels_per_second={0.01}
+      />,
+    );
+    const lines = [
+      ...container.querySelectorAll<HTMLElement>(".timeline_grid_line"),
+    ];
+
+    expect(lines.length).toBeLessThan(16);
+    expect(
+      Number.parseFloat(lines[1]?.style.left ?? "0"),
+    ).toBeGreaterThanOrEqual(60);
   });
 
   it("generates only visible ticks with stable major labels", () => {
@@ -99,6 +123,7 @@ describe("TimelineRulerCanvas", () => {
       <TimelineRulerCanvas
         canvas_width={123.5}
         duration_seconds={10}
+        major_interval_seconds={1}
         scroll_left={0}
         start_left={16}
         zoom_pixels_per_second={80}

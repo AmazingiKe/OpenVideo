@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 
 import { format_time } from "@/shared/format";
 import type { ColorScheme } from "@/color_scheme";
@@ -14,7 +14,8 @@ const RULER_MAJOR_TARGET_WIDTH_PIXELS = 96;
 const RULER_MINOR_TICK_COUNT = 5;
 const RULER_FLOATING_POINT_TOLERANCE = 1e-9;
 const RULER_INTERVALS_SECONDS = [
-  0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600,
+  0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1_200, 1_800,
+  3_600, 7_200, 14_400, 28_800, 43_200, 86_400,
 ] as const;
 
 export type TimelineRulerTick = {
@@ -34,6 +35,7 @@ type TimelineRulerPaintStyle = {
 type TimelineRulerCanvasProps = {
   canvas_width: number;
   duration_seconds: number;
+  major_interval_seconds: number;
   scroll_left: number;
   start_left: number;
   zoom_pixels_per_second: number;
@@ -42,12 +44,12 @@ type TimelineRulerCanvasProps = {
 export function TimelineRulerCanvas({
   canvas_width,
   duration_seconds,
+  major_interval_seconds,
   scroll_left,
   start_left,
   zoom_pixels_per_second,
 }: TimelineRulerCanvasProps) {
   const canvas_ref = useRef<HTMLCanvasElement>(null);
-  const major_interval_ref = useRef<number | null>(null);
   const paint_style_ref = useRef<TimelineRulerPaintStyle | null>(null);
   const color_scheme = use_color_scheme();
 
@@ -67,15 +69,10 @@ export function TimelineRulerCanvas({
     if (canvas.height !== bitmap_size.height)
       canvas.height = bitmap_size.height;
 
-    const major_interval = select_timeline_ruler_interval(
-      zoom_pixels_per_second,
-      major_interval_ref.current,
-    );
-    major_interval_ref.current = major_interval;
     const ticks = create_visible_timeline_ruler_ticks({
       canvas_width,
       duration_seconds,
-      major_interval_seconds: major_interval,
+      major_interval_seconds,
       scroll_left,
       start_left,
       zoom_pixels_per_second,
@@ -126,6 +123,7 @@ export function TimelineRulerCanvas({
     canvas_width,
     color_scheme,
     duration_seconds,
+    major_interval_seconds,
     scroll_left,
     start_left,
     zoom_pixels_per_second,
@@ -137,6 +135,49 @@ export function TimelineRulerCanvas({
       className="timeline_ruler_canvas"
       aria-hidden="true"
     />
+  );
+}
+
+type TimelineGridProps = TimelineRulerCanvasProps;
+
+export function TimelineGrid({
+  canvas_width,
+  duration_seconds,
+  major_interval_seconds,
+  scroll_left,
+  start_left,
+  zoom_pixels_per_second,
+}: TimelineGridProps) {
+  const lines = useMemo(
+    () =>
+      create_visible_timeline_ruler_ticks({
+        canvas_width,
+        duration_seconds,
+        major_interval_seconds,
+        scroll_left,
+        start_left,
+        zoom_pixels_per_second,
+      }).filter((tick) => tick.is_major),
+    [
+      canvas_width,
+      duration_seconds,
+      major_interval_seconds,
+      scroll_left,
+      start_left,
+      zoom_pixels_per_second,
+    ],
+  );
+
+  return (
+    <div className="timeline_grid" aria-hidden="true">
+      {lines.map((line) => (
+        <span
+          key={line.seconds}
+          className="timeline_grid_line"
+          style={{ left: line.x }}
+        />
+      ))}
+    </div>
   );
 }
 

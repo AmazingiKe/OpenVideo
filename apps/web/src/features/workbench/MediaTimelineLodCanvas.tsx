@@ -204,10 +204,6 @@ export const MediaTimelineLodCanvas = memo(function MediaTimelineLodCanvas({
             computed_style,
             "--timeline-color-event-border",
           ),
-          focus: timeline_color(
-            computed_style,
-            "--timeline-color-selection-border",
-          ),
           event_analysis: timeline_color(
             computed_style,
             "--timeline-color-event-analysis-border",
@@ -220,6 +216,7 @@ export const MediaTimelineLodCanvas = memo(function MediaTimelineLodCanvas({
       };
       paint_style_ref.current = paint_style;
     }
+    if (!paint_style) return;
 
     context.setTransform(device_pixel_ratio, 0, 0, device_pixel_ratio, 0, 0);
     context.clearRect(0, 0, canvas_width, canvas_height);

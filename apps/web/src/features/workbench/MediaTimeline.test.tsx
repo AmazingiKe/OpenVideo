@@ -27,13 +27,7 @@ import { MediaTimeline } from "./MediaTimeline";
 type MockTimelineAction =
   TimelineEditor["editorData"][number]["actions"][number] & {
     data: {
-      kind:
-        | "marker"
-        | "candidate"
-        | "transcript"
-        | "event"
-        | "focus"
-        | "event_analysis";
+      kind: "marker" | "candidate" | "transcript" | "event" | "event_analysis";
       label: string;
       source_id?: string;
       source_index?: number;
@@ -581,7 +575,7 @@ describe("MediaTimeline", () => {
     expect(host_query).not.toHaveBeenCalled();
   });
 
-  it("marquee-selects all six visible clip kinds without opening read-only details", () => {
+  it("marquee-selects all five visible clip kinds without opening read-only details", () => {
     const { change_selected_marker_ids, change_selected_transcript_indices } =
       render_timeline({
         candidate_markers: [
@@ -616,7 +610,6 @@ describe("MediaTimeline", () => {
       /待审批/,
       /转写：原始转写/,
       /全片分析：矩阵推导/,
-      /焦点选区：In \/ Out 焦点选区/,
       /事件分析：关键步骤/,
     ]) {
       expect(screen.getByRole("button", { name })).toHaveAttribute(
@@ -627,7 +620,7 @@ describe("MediaTimeline", () => {
     expect(
       screen.queryByRole("dialog", { name: "事件分析结果" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("已框选 6 个片段")).toBeInTheDocument();
+    expect(screen.getByText("已框选 5 个片段")).toBeInTheDocument();
   });
 
   it("replaces selection with a normal marquee and toggles hits with Ctrl", () => {
@@ -1040,7 +1033,7 @@ describe("MediaTimeline", () => {
     expect(add_marker).toHaveBeenNthCalledWith(3, 22.05, null);
   });
 
-  it("sets focus endpoints from buttons and shortcuts without hijacking editors", () => {
+  it("sets temporary range endpoints from selected clips and bracket shortcuts", () => {
     const { set_focus_in, set_focus_out, clear_focus } = render_timeline({
       focus_selection: {
         selection_id: "focus-selection-0198d12345677890abcdef1234567890",
@@ -1052,27 +1045,63 @@ describe("MediaTimeline", () => {
       },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "In" }));
-    fireEvent.click(screen.getByRole("button", { name: "Out" }));
-    fireEvent.keyDown(window, { key: "i" });
-    fireEvent.keyDown(window, { key: "O" });
+    fireEvent.click(screen.getByRole("button", { name: /范围标记/ }));
+    fireEvent.click(screen.getByRole("button", { name: "设置范围起点" }));
+    fireEvent.click(screen.getByRole("button", { name: "设置范围终点" }));
+    fireEvent.keyDown(window, { key: "[", code: "BracketLeft" });
+    fireEvent.keyDown(window, { key: "]", code: "BracketRight" });
     expect(set_focus_in).toHaveBeenCalledTimes(2);
     expect(set_focus_out).toHaveBeenCalledTimes(2);
-    expect(action_by_kind("focus").data.label).toBe("In / Out 焦点选区");
+    expect(set_focus_in).toHaveBeenLastCalledWith(32);
+    expect(set_focus_out).toHaveBeenLastCalledWith(36);
+    expect(
+      document.querySelector(".media_timeline_range_selection"),
+    ).toBeInTheDocument();
+    expect(
+      timeline_props().editorData.some((row) => row.id.includes("focus")),
+    ).toBe(false);
 
     const input = document.createElement("input");
     document.body.append(input);
     input.focus();
-    fireEvent.keyDown(input, { key: "i" });
-    fireEvent.keyDown(input, { key: "o" });
+    fireEvent.keyDown(input, { key: "[", code: "BracketLeft" });
+    fireEvent.keyDown(input, { key: "]", code: "BracketRight" });
     expect(set_focus_in).toHaveBeenCalledTimes(2);
     expect(set_focus_out).toHaveBeenCalledTimes(2);
     input.remove();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "清除 In / Out 焦点选区" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "清除时间线范围选区" }));
     expect(clear_focus).toHaveBeenCalledOnce();
+  });
+
+  it("resizes tracks by pointer or keyboard and restores compact defaults", () => {
+    render_timeline();
+    const resize_handle = screen.getByRole("separator", {
+      name: "调整标记轨道高度",
+    });
+    resize_handle.setPointerCapture = vi.fn();
+    resize_handle.releasePointerCapture = vi.fn();
+
+    expect(resize_handle).toHaveAttribute("aria-valuenow", "32");
+    fireEvent.keyDown(resize_handle, { key: "ArrowDown" });
+    expect(resize_handle).toHaveAttribute("aria-valuenow", "40");
+
+    fireEvent.pointerDown(resize_handle, {
+      button: 0,
+      clientY: 100,
+      pointerId: 8,
+    });
+    fireEvent.pointerMove(resize_handle, { clientY: 140, pointerId: 8 });
+    fireEvent.pointerUp(resize_handle, { clientY: 140, pointerId: 8 });
+    expect(resize_handle).toHaveAttribute("aria-valuenow", "80");
+    expect(
+      timeline_props().editorData.find(
+        (row) => row.id === "timeline-marker-track",
+      )?.rowHeight,
+    ).toBe(80);
+
+    fireEvent.doubleClick(resize_handle);
+    expect(resize_handle).toHaveAttribute("aria-valuenow", "32");
   });
 
   it("selects, seeks, edits, and saves transcript actions", async () => {
@@ -1322,6 +1351,26 @@ describe("MediaTimeline", () => {
     expect(
       result.container.querySelector(".media_timeline_lod_canvas"),
     ).not.toBeInTheDocument();
+  });
+
+  it("fits a long video at the slider minimum without reporting zero zoom", () => {
+    const animation_frames = install_animation_frame_mock();
+    const { result } = render_timeline({ duration_seconds: 7_200 });
+    const slider = screen.getByRole("slider", {
+      name: "时间线缩放比例",
+    });
+
+    fireEvent.keyDown(slider, { key: "Home" });
+    animation_frames.run_next_frame();
+
+    expect(timeline_props().scaleWidth).toBeCloseTo(992 / 7_200);
+    expect(screen.getByLabelText("当前时间线缩放")).toHaveTextContent(
+      "0.14 px/s",
+    );
+    expect(screen.getByRole("button", { name: "缩小时间线" })).toBeDisabled();
+    expect(
+      result.container.querySelectorAll(".timeline_grid_line").length,
+    ).toBeLessThan(16);
   });
 
   it("uses aggregated blocks instead of action DOM at overview zoom", () => {

@@ -7,7 +7,6 @@ import "@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css";
 import {
   Bot,
   Captions,
-  Crosshair,
   Flag,
   LockKeyhole,
   Pencil,
@@ -77,7 +76,11 @@ import type {
   MediaSegment,
   Transcript,
 } from "@/shared/types";
-import { TimelineRulerCanvas } from "./TimelineRulerCanvas";
+import {
+  TimelineGrid,
+  TimelineRulerCanvas,
+  select_timeline_ruler_interval,
+} from "./TimelineRulerCanvas";
 import { EventAnalysisCard } from "./EventAnalysisCard";
 import { MediaTimelineMarkerEditor } from "./MediaTimelineMarkerEditor";
 import { MediaTimelineActionContent } from "./MediaTimelineActionContent";
@@ -93,13 +96,18 @@ import { MediaTimelineTranscriptEditor } from "./MediaTimelineTranscriptEditor";
 import {
   MARKER_SHAPE_VALUES,
   MINIMUM_ACTION_DURATION_SECONDS,
+  TIMELINE_MAXIMUM_ROW_HEIGHT,
+  TIMELINE_MINIMUM_ROW_HEIGHT,
   TIMELINE_ROW_HEIGHT,
   TIMELINE_START_LEFT,
   TIMELINE_TRACK_IDS,
   build_timeline_rows,
+  clamp_timeline_row_height,
+  default_timeline_row_height,
   filter_timeline_rows_for_window,
   hit_test_timeline_marquee,
   round_marker_time,
+  selected_timeline_range,
   timeline_content_duration,
   type MediaTimelineAction,
   type TimelineMarqueeRectangle,
@@ -129,6 +137,71 @@ type TimelineTrackPresentation = {
   name: string;
   state: "可编辑" | "只读";
 };
+
+type TimelineTrackResizeHandleProps = {
+  height: number;
+  name: string;
+  on_height_change: (height: number) => void;
+  on_height_reset: () => void;
+};
+
+const TIMELINE_ROW_KEYBOARD_RESIZE_STEP = 8;
+
+function TimelineTrackResizeHandle({
+  height,
+  name,
+  on_height_change,
+  on_height_reset,
+}: TimelineTrackResizeHandleProps) {
+  const drag_ref = useRef<{ pointer_y: number; height: number } | null>(null);
+
+  function start_resize(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    drag_ref.current = { pointer_y: event.clientY, height };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function continue_resize(event: PointerEvent<HTMLDivElement>) {
+    const drag = drag_ref.current;
+    if (!drag) return;
+    on_height_change(drag.height + event.clientY - drag.pointer_y);
+  }
+
+  function finish_resize(event: PointerEvent<HTMLDivElement>) {
+    if (!drag_ref.current) return;
+    drag_ref.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function resize_with_keyboard(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const direction = event.key === "ArrowUp" ? -1 : 1;
+    on_height_change(height + direction * TIMELINE_ROW_KEYBOARD_RESIZE_STEP);
+  }
+
+  return (
+    <div
+      className="media_timeline_track_resize_handle"
+      role="separator"
+      tabIndex={0}
+      aria-label={`调整${name}轨道高度`}
+      aria-orientation="horizontal"
+      aria-valuemin={TIMELINE_MINIMUM_ROW_HEIGHT}
+      aria-valuemax={TIMELINE_MAXIMUM_ROW_HEIGHT}
+      aria-valuenow={height}
+      title="上下拖动调整高度，双击恢复默认"
+      onDoubleClick={on_height_reset}
+      onKeyDown={resize_with_keyboard}
+      onPointerDown={start_resize}
+      onPointerMove={continue_resize}
+      onPointerUp={finish_resize}
+      onPointerCancel={finish_resize}
+    />
+  );
+}
 
 type MediaTimelineEditorHandlers = {
   add_marker: (row_id: string, time: number) => void;
@@ -359,6 +432,7 @@ export function MediaTimeline({
   const [delete_analysis, set_delete_analysis] = useState<EventAnalysis | null>(
     null,
   );
+  const [row_heights, set_row_heights] = useState<Record<string, number>>({});
   const ruler_pointer_id_ref = useRef<number | null>(null);
   const ruler_bounds_ref = useRef<{ left: number } | null>(null);
   const ruler_scrub_time_ref = useRef(0);
@@ -441,6 +515,7 @@ export function MediaTimeline({
     canvas_width,
     editor_render_window,
     handle_timeline_scroll,
+    minimum_zoom_pixels_per_second,
     playhead_ref,
     reset_editor_render_window,
     set_playhead_time,
@@ -459,6 +534,15 @@ export function MediaTimeline({
   const [timeline_lod, set_timeline_lod] = useState<TimelineLod>(() =>
     select_timeline_lod(viewport.zoom_pixels_per_second, null),
   );
+  const [ruler_major_interval_seconds, set_ruler_major_interval_seconds] =
+    useState(() =>
+      select_timeline_ruler_interval(viewport.zoom_pixels_per_second, null),
+    );
+  useLayoutEffect(() => {
+    set_ruler_major_interval_seconds((current) =>
+      select_timeline_ruler_interval(viewport.zoom_pixels_per_second, current),
+    );
+  }, [viewport.zoom_pixels_per_second]);
   useLayoutEffect(() => {
     const next_lod = select_timeline_lod(
       viewport.zoom_pixels_per_second,
@@ -487,8 +571,8 @@ export function MediaTimeline({
         selected_marker_ids: effective_selected_marker_ids,
         selected_transcript_indices: selected_transcript_index_set,
         selected_read_only_action_ids,
-        focus_selection,
         event_analyses,
+        row_heights,
       }),
     // 第三方编辑器会修改 action；保存失败时必须用新对象覆盖其本地变更。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -497,7 +581,6 @@ export function MediaTimeline({
       candidate_markers,
       duration,
       event_analyses,
-      focus_selection,
       interaction_revision,
       markers,
       segments,
@@ -506,7 +589,12 @@ export function MediaTimeline({
       selected_read_only_action_ids,
       selected_transcript_index_set,
       transcript_segments,
+      row_heights,
     ],
+  );
+  const selected_action_range = useMemo(
+    () => selected_timeline_range(full_editor_data),
+    [full_editor_data],
   );
   const detailed_editor_data = useMemo(
     () =>
@@ -546,6 +634,40 @@ export function MediaTimeline({
         ),
       }
     : null;
+  const range_start_seconds = focus_selection?.in_seconds ?? null;
+  const range_end_seconds = focus_selection?.out_seconds ?? null;
+  const range_selection_style =
+    range_start_seconds !== null &&
+    range_end_seconds !== null &&
+    range_start_seconds < range_end_seconds
+      ? {
+          left:
+            TIMELINE_START_LEFT +
+            range_start_seconds * viewport.zoom_pixels_per_second -
+            viewport.scroll_left,
+          width:
+            (range_end_seconds - range_start_seconds) *
+            viewport.zoom_pixels_per_second,
+        }
+      : null;
+  const range_start_style =
+    range_start_seconds === null
+      ? null
+      : {
+          left:
+            TIMELINE_START_LEFT +
+            range_start_seconds * viewport.zoom_pixels_per_second -
+            viewport.scroll_left,
+        };
+  const range_end_style =
+    range_end_seconds === null
+      ? null
+      : {
+          left:
+            TIMELINE_START_LEFT +
+            range_end_seconds * viewport.zoom_pixels_per_second -
+            viewport.scroll_left,
+        };
   const context_marker = markers.find(
     (marker) => marker.marker_id === context_marker_id,
   );
@@ -555,16 +677,6 @@ export function MediaTimeline({
   );
   const track_presentations = [
     ...TIMELINE_TRACK_PRESENTATIONS,
-    ...(full_editor_data.some((row) => row.id === TIMELINE_TRACK_IDS.focus)
-      ? [
-          {
-            id: TIMELINE_TRACK_IDS.focus,
-            icon: Crosshair,
-            name: "焦点选区",
-            state: "只读" as const,
-          },
-        ]
-      : []),
     ...full_editor_data
       .filter((row) =>
         row.id.startsWith(TIMELINE_TRACK_IDS.event_analysis_prefix),
@@ -576,6 +688,12 @@ export function MediaTimeline({
         state: "只读" as const,
       })),
   ];
+  const row_height_by_id = new Map(
+    full_editor_data.map((row) => [
+      row.id,
+      row.rowHeight ?? default_timeline_row_height(row.id),
+    ]),
+  );
   const {
     announcement: marquee_announcement,
     marquee_rectangle,
@@ -596,6 +714,7 @@ export function MediaTimeline({
     set_interaction_error(null);
     set_selected_read_only_action_ids(new Set());
     set_selected_event_analysis_ids([]);
+    set_row_heights({});
     on_selected_marker_ids_change?.(new Set());
     on_selected_transcript_indices_change([]);
   }, [
@@ -706,15 +825,18 @@ export function MediaTimeline({
         !event.altKey &&
         !event.shiftKey
       ) {
-        const key = event.key.toLowerCase();
-        if (key === "i") {
+        if (event.key === "[" || event.code === "BracketLeft") {
           event.preventDefault();
-          on_set_focus_in?.(bounded_time);
+          on_set_focus_in?.(
+            selected_action_range?.start_seconds ?? bounded_time,
+          );
           return;
         }
-        if (key === "o") {
+        if (event.key === "]" || event.code === "BracketRight") {
           event.preventDefault();
-          on_set_focus_out?.(bounded_time);
+          on_set_focus_out?.(
+            selected_action_range?.end_seconds ?? bounded_time,
+          );
           return;
         }
       }
@@ -742,6 +864,7 @@ export function MediaTimeline({
     on_update_marker,
     on_set_focus_in,
     on_set_focus_out,
+    selected_action_range,
     selected_marker_id,
   ]);
 
@@ -851,11 +974,7 @@ export function MediaTimeline({
       on_seek(media_action.start);
       return;
     }
-    if (
-      data.kind === "candidate" ||
-      data.kind === "event" ||
-      data.kind === "focus"
-    ) {
+    if (data.kind === "candidate" || data.kind === "event") {
       const next_selection = toggle_selection
         ? toggle_set_members(
             selected_read_only_action_ids,
@@ -1000,6 +1119,24 @@ export function MediaTimeline({
     }
   }
 
+  function set_timeline_row_height(row_id: string, height: number) {
+    const bounded_height = clamp_timeline_row_height(height);
+    set_row_heights((current) =>
+      current[row_id] === bounded_height
+        ? current
+        : { ...current, [row_id]: bounded_height },
+    );
+  }
+
+  function reset_timeline_row_height(row_id: string) {
+    set_row_heights((current) => {
+      if (current[row_id] === undefined) return current;
+      const next = { ...current };
+      delete next[row_id];
+      return next;
+    });
+  }
+
   const editor_handlers_ref = useRef<MediaTimelineEditorHandlers>({
     add_marker: () => undefined,
     handle_scroll: () => undefined,
@@ -1034,15 +1171,22 @@ export function MediaTimeline({
         duration={duration}
         is_paused={is_paused}
         playback_rate={playback_rate}
+        minimum_zoom_pixels_per_second={minimum_zoom_pixels_per_second}
         zoom_pixels_per_second={viewport.zoom_pixels_per_second}
         on_toggle_playback={on_toggle_playback}
         on_playback_rate_change={on_playback_rate_change}
         on_add_marker={(seconds) => void add_marker_and_select(seconds)}
         on_zoom_change={zoom_to}
-        on_set_focus_in={(seconds) => on_set_focus_in?.(seconds)}
-        on_set_focus_out={(seconds) => on_set_focus_out?.(seconds)}
-        on_clear_focus={() => on_clear_focus?.()}
-        has_focus_selection={focus_selection !== null}
+        on_set_range_start={() =>
+          on_set_focus_in?.(
+            selected_action_range?.start_seconds ?? bounded_time,
+          )
+        }
+        on_set_range_end={() =>
+          on_set_focus_out?.(selected_action_range?.end_seconds ?? bounded_time)
+        }
+        on_clear_range={() => on_clear_focus?.()}
+        has_range_selection={focus_selection !== null}
         tools={toolbar_tools}
         context_sources={
           on_add_agent_context ? (
@@ -1102,6 +1246,9 @@ export function MediaTimeline({
             >
               {track_presentations.map((track) => {
                 const TrackIcon = track.icon;
+                const row_height =
+                  row_height_by_id.get(track.id) ??
+                  default_timeline_row_height(track.id);
                 const track_state =
                   timeline_lod === TIMELINE_LOD_VALUES.detail
                     ? track.state
@@ -1110,6 +1257,7 @@ export function MediaTimeline({
                   <div
                     key={track.id}
                     className="media_timeline_track_label"
+                    style={{ height: row_height, flexBasis: row_height }}
                     aria-label={`${track.name}，${track_state}`}
                   >
                     <TrackIcon aria-hidden="true" />
@@ -1119,6 +1267,16 @@ export function MediaTimeline({
                     timeline_lod === TIMELINE_LOD_VALUES.detail ? (
                       <LockKeyhole aria-hidden="true" />
                     ) : null}
+                    <TimelineTrackResizeHandle
+                      height={row_height}
+                      name={track.name}
+                      on_height_change={(height) =>
+                        set_timeline_row_height(track.id, height)
+                      }
+                      on_height_reset={() =>
+                        reset_timeline_row_height(track.id)
+                      }
+                    />
                   </div>
                 );
               })}
@@ -1136,7 +1294,7 @@ export function MediaTimeline({
                   ? start_marquee
                   : undefined
               }
-              aria-label="时间线画布；双击标记轨道空白处添加标记，Enter 编辑片段，Shift+F10 打开菜单"
+              aria-label="时间线画布；双击标记轨道空白处添加标记，方括号设置范围，Enter 编辑片段，Shift+F10 打开菜单"
               aria-description={timeline_lod_accessible_description(
                 timeline_lod,
               )}
@@ -1144,6 +1302,15 @@ export function MediaTimeline({
               <TimelineRulerCanvas
                 canvas_width={canvas_width}
                 duration_seconds={duration}
+                major_interval_seconds={ruler_major_interval_seconds}
+                scroll_left={viewport.scroll_left}
+                start_left={TIMELINE_START_LEFT}
+                zoom_pixels_per_second={viewport.zoom_pixels_per_second}
+              />
+              <TimelineGrid
+                canvas_width={canvas_width}
+                duration_seconds={duration}
+                major_interval_seconds={ruler_major_interval_seconds}
                 scroll_left={viewport.scroll_left}
                 start_left={TIMELINE_START_LEFT}
                 zoom_pixels_per_second={viewport.zoom_pixels_per_second}
@@ -1178,6 +1345,29 @@ export function MediaTimeline({
                 timeline_ref={timeline_ref}
                 zoom_pixels_per_second={viewport.zoom_pixels_per_second}
               />
+              {range_selection_style ? (
+                <div
+                  className="media_timeline_range_selection"
+                  style={range_selection_style}
+                  aria-hidden="true"
+                />
+              ) : null}
+              {range_start_style ? (
+                <div
+                  className="media_timeline_range_endpoint"
+                  data-edge="start"
+                  style={range_start_style}
+                  aria-hidden="true"
+                />
+              ) : null}
+              {range_end_style ? (
+                <div
+                  className="media_timeline_range_endpoint"
+                  data-edge="end"
+                  style={range_end_style}
+                  aria-hidden="true"
+                />
+              ) : null}
               {timeline_lod !== TIMELINE_LOD_VALUES.detail ? (
                 <MediaTimelineLodCanvas
                   canvas_width={canvas_width}
@@ -1298,6 +1488,17 @@ export function MediaTimeline({
         <output className="sr_only" aria-live="polite">
           已高亮答案证据 {format_time(evidence_range.start_seconds)} 至
           {format_time(evidence_range.end_seconds)}
+        </output>
+      ) : null}
+      {focus_selection ? (
+        <output className="sr_only" aria-live="polite">
+          {range_start_seconds === null
+            ? "尚未设置范围起点"
+            : `范围起点 ${format_time(range_start_seconds)}`}
+          ；
+          {range_end_seconds === null
+            ? "尚未设置范围终点"
+            : `范围终点 ${format_time(range_end_seconds)}`}
         </output>
       ) : null}
       <Sheet

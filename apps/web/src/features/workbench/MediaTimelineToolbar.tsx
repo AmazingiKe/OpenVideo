@@ -1,8 +1,6 @@
 import {
   Eraser,
   Flag,
-  LogIn,
-  LogOut,
   Minus,
   Pause,
   Play,
@@ -31,10 +29,10 @@ import { format_time } from "@/shared/format";
 import {
   DEFAULT_ZOOM_PIXELS_PER_SECOND,
   MAXIMUM_ZOOM_PIXELS_PER_SECOND,
-  MINIMUM_ZOOM_PIXELS_PER_SECOND,
 } from "./media_timeline_calculations";
 
 const ZOOM_BUTTON_FACTOR = 1.25;
+const ZOOM_SLIDER_STEP = 0.1;
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
 type MediaTimelineToolbarProps = {
@@ -43,14 +41,15 @@ type MediaTimelineToolbarProps = {
   duration: number;
   is_paused: boolean;
   playback_rate: number;
+  minimum_zoom_pixels_per_second: number;
   zoom_pixels_per_second: number;
   on_toggle_playback: () => void;
   on_playback_rate_change: (rate: number) => void;
   on_add_marker: (seconds: number) => void;
-  on_set_focus_in: (seconds: number) => void;
-  on_set_focus_out: (seconds: number) => void;
-  on_clear_focus: () => void;
-  has_focus_selection: boolean;
+  on_set_range_start: () => void;
+  on_set_range_end: () => void;
+  on_clear_range: () => void;
+  has_range_selection: boolean;
   on_zoom_change: (zoom_pixels_per_second: number) => void;
   tools: ReactNode;
   context_sources?: ReactNode;
@@ -62,14 +61,15 @@ export function MediaTimelineToolbar({
   duration,
   is_paused,
   playback_rate,
+  minimum_zoom_pixels_per_second,
   zoom_pixels_per_second,
   on_toggle_playback,
   on_playback_rate_change,
   on_add_marker,
-  on_set_focus_in,
-  on_set_focus_out,
-  on_clear_focus,
-  has_focus_selection,
+  on_set_range_start,
+  on_set_range_end,
+  on_clear_range,
+  has_range_selection,
   on_zoom_change,
   tools,
   context_sources,
@@ -168,29 +168,31 @@ export function MediaTimelineToolbar({
         {context_sources}
         <Button
           type="button"
-          size="sm"
+          size="icon-sm"
           variant="outline"
-          title="设置 In（I）"
-          onClick={() => on_set_focus_in(bounded_time)}
+          title="设置范围起点（[）；有片段选中时使用片段起点"
+          aria-label="设置范围起点"
+          onClick={on_set_range_start}
         >
-          <LogIn data-icon="inline-start" aria-hidden="true" /> In
+          [
         </Button>
         <Button
           type="button"
-          size="sm"
+          size="icon-sm"
           variant="outline"
-          title="设置 Out（O）"
-          onClick={() => on_set_focus_out(bounded_time)}
+          title="设置范围终点（]）；有片段选中时使用片段终点"
+          aria-label="设置范围终点"
+          onClick={on_set_range_end}
         >
-          <LogOut data-icon="inline-start" aria-hidden="true" /> Out
+          ]
         </Button>
         <Button
           type="button"
           size="icon-sm"
           variant="ghost"
-          disabled={!has_focus_selection}
-          onClick={on_clear_focus}
-          aria-label="清除 In / Out 焦点选区"
+          disabled={!has_range_selection}
+          onClick={on_clear_range}
+          aria-label="清除时间线范围选区"
         >
           <Eraser aria-hidden="true" />
         </Button>
@@ -200,7 +202,7 @@ export function MediaTimelineToolbar({
           type="button"
           variant="ghost"
           size="icon-xs"
-          disabled={zoom_pixels_per_second <= MINIMUM_ZOOM_PIXELS_PER_SECOND}
+          disabled={zoom_pixels_per_second <= minimum_zoom_pixels_per_second}
           onClick={() =>
             apply_zoom_immediately(zoom_pixels_per_second / ZOOM_BUTTON_FACTOR)
           }
@@ -210,9 +212,9 @@ export function MediaTimelineToolbar({
         </Button>
         <Slider
           value={[zoom_pixels_per_second]}
-          min={MINIMUM_ZOOM_PIXELS_PER_SECOND}
+          min={minimum_zoom_pixels_per_second}
           max={MAXIMUM_ZOOM_PIXELS_PER_SECOND}
-          step={1}
+          step={ZOOM_SLIDER_STEP}
           onValueChange={([zoom = DEFAULT_ZOOM_PIXELS_PER_SECOND]) =>
             schedule_zoom(zoom)
           }
@@ -241,9 +243,15 @@ export function MediaTimelineToolbar({
           <RotateCcw data-icon="inline-start" aria-hidden="true" />
         </Button>
         <output aria-label="当前时间线缩放">
-          {Math.round(zoom_pixels_per_second)} px/s
+          {format_timeline_zoom(zoom_pixels_per_second)} px/s
         </output>
       </div>
     </div>
   );
+}
+
+function format_timeline_zoom(zoom_pixels_per_second: number): string {
+  return zoom_pixels_per_second < 1
+    ? zoom_pixels_per_second.toFixed(2)
+    : String(Math.round(zoom_pixels_per_second));
 }

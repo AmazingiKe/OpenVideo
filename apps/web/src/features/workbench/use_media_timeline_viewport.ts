@@ -11,6 +11,7 @@ import {
 import {
   DEFAULT_ZOOM_PIXELS_PER_SECOND,
   TIMELINE_START_LEFT,
+  calculate_minimum_timeline_zoom,
   calculate_playhead_follow_scroll_left,
   calculate_zoom_viewport,
   consume_timeline_wheel_zoom_frame,
@@ -101,6 +102,11 @@ export function use_media_timeline_viewport({
   const viewport_ref = useRef(viewport);
   const [canvas_width, set_canvas_width] = useState(
     DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS,
+  );
+  const scale_count = Math.max(1, Math.ceil(duration));
+  const minimum_zoom_pixels_per_second = useMemo(
+    () => calculate_minimum_timeline_zoom(canvas_width, scale_count),
+    [canvas_width, scale_count],
   );
   const [render_window, set_render_window] = useState(() =>
     create_timeline_render_window({
@@ -430,6 +436,29 @@ export function use_media_timeline_viewport({
     [],
   );
 
+  useLayoutEffect(() => {
+    const current_viewport = viewport_ref.current;
+    if (
+      current_viewport.zoom_pixels_per_second >= minimum_zoom_pixels_per_second
+    ) {
+      return;
+    }
+    commit_zoom_viewport(
+      calculate_zoom_viewport({
+        viewport: current_viewport,
+        requested_zoom: current_viewport.zoom_pixels_per_second,
+        anchor_x: canvas_width / 2,
+        viewport_width: canvas_width,
+        scale_count,
+      }),
+    );
+  }, [
+    canvas_width,
+    commit_zoom_viewport,
+    minimum_zoom_pixels_per_second,
+    scale_count,
+  ]);
+
   const zoom_to = useCallback(
     (requested_zoom: number, anchor_x?: number) => {
       commit_pending_scroll();
@@ -567,6 +596,7 @@ export function use_media_timeline_viewport({
     canvas_width,
     editor_render_window,
     handle_timeline_scroll,
+    minimum_zoom_pixels_per_second,
     playhead_ref,
     reset_editor_render_window,
     set_playhead_time,

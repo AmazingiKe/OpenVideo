@@ -9,9 +9,11 @@ import type {
 } from "@/shared/types";
 import {
   MAXIMUM_ZOOM_PIXELS_PER_SECOND,
-  MINIMUM_ZOOM_PIXELS_PER_SECOND,
+  TIMELINE_COMPACT_ROW_HEIGHT,
+  TIMELINE_ROW_HEIGHT,
   TIMELINE_TRACK_IDS,
   build_timeline_rows,
+  calculate_minimum_timeline_zoom,
   calculate_playhead_follow_scroll_left,
   calculate_zoom_viewport,
   consume_timeline_wheel_zoom_frame,
@@ -22,6 +24,7 @@ import {
   normalize_wheel_delta,
   normalize_timeline_marquee_rectangle,
   round_marker_time,
+  selected_timeline_range,
   timeline_content_duration,
   type MediaTimelineAction,
   type TimelineRow,
@@ -59,15 +62,25 @@ describe("media timeline calculations", () => {
   });
 
   it("resets scroll when zoomed content fits inside the viewport", () => {
+    const minimum_zoom = calculate_minimum_timeline_zoom(800, 120);
     const result = calculate_zoom_viewport({
       viewport: { zoom_pixels_per_second: 80, scroll_left: 200 },
-      requested_zoom: MINIMUM_ZOOM_PIXELS_PER_SECOND,
+      requested_zoom: 0,
       anchor_x: 400,
       viewport_width: 800,
       scale_count: 120,
     });
 
+    expect(minimum_zoom).toBe(6.4);
+    expect(result.zoom_pixels_per_second).toBe(minimum_zoom);
     expect(result.scroll_left).toBe(0);
+  });
+
+  it("fits long media into the viewport at the dynamic minimum zoom", () => {
+    const minimum_zoom = calculate_minimum_timeline_zoom(1_024, 7_200);
+
+    expect(minimum_zoom).toBeCloseTo(992 / 7_200);
+    expect(7_200 * minimum_zoom + 16).toBeLessThan(1_024);
   });
 
   it("pages an offscreen playhead to the timeline start and clamps the end", () => {
@@ -426,6 +439,35 @@ describe("media timeline calculations", () => {
         [],
       ),
     ).toBe(8);
-    expect(round_marker_time(MINIMUM_ZOOM_PIXELS_PER_SECOND / 100)).toBe(0.05);
+    expect(round_marker_time(0.04)).toBe(0.05);
+  });
+
+  it("keeps marker and transcript rows compact and derives selected bounds", () => {
+    const rows = build_timeline_rows({
+      transcript_segments: [
+        {
+          start_seconds: 5,
+          end_seconds: 8,
+          text: "selected",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
+      segments: [],
+      markers: [],
+      candidate_markers: [],
+      analysis_strategy: DEFAULT_ANALYSIS_STRATEGY,
+      duration: 20,
+      selected_marker_id: null,
+      selected_transcript_indices: new Set([0]),
+    });
+
+    expect(rows[0]?.rowHeight).toBe(TIMELINE_COMPACT_ROW_HEIGHT);
+    expect(rows[1]?.rowHeight).toBe(TIMELINE_COMPACT_ROW_HEIGHT);
+    expect(rows[2]?.rowHeight).toBe(TIMELINE_ROW_HEIGHT);
+    expect(selected_timeline_range(rows)).toEqual({
+      start_seconds: 5,
+      end_seconds: 8,
+    });
   });
 });

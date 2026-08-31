@@ -1019,9 +1019,8 @@
 }
 
 .media_timeline_track_label {
+  position: relative;
   display: grid;
-  height: 48px;
-  flex: 0 0 48px;
   min-width: 0;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
@@ -1039,7 +1038,7 @@
   color: var(--timeline-color-track-header-muted-foreground);
 }
 
-.media_timeline_track_label > svg:last-child {
+.media_timeline_track_label > svg:nth-of-type(2) {
   display: none;
 }
 
@@ -1054,6 +1053,38 @@
   color: var(--timeline-color-track-header-muted-foreground);
   font-size: 8px;
   font-weight: 500;
+}
+
+.media_timeline_track_resize_handle {
+  position: absolute;
+  right: 0;
+  bottom: -4px;
+  left: 0;
+  z-index: 1;
+  height: 8px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.media_timeline_track_resize_handle::after {
+  position: absolute;
+  right: 8px;
+  bottom: 3px;
+  left: 8px;
+  height: 1px;
+  background: var(--timeline-color-control-hover-border);
+  content: "";
+  opacity: 0;
+}
+
+.media_timeline_track_label:hover .media_timeline_track_resize_handle::after,
+.media_timeline_track_resize_handle:focus-visible::after {
+  opacity: 1;
+}
+
+.media_timeline_track_resize_handle:focus-visible {
+  outline: 2px solid var(--timeline-color-accent);
+  outline-offset: -2px;
 }
 
 .media_timeline_canvas {
@@ -1093,6 +1124,24 @@
 .timeline_ruler_interaction:focus-visible {
   outline: 2px solid var(--timeline-color-accent);
   outline-offset: -2px;
+}
+
+.timeline_grid {
+  position: absolute;
+  z-index: 1;
+  top: var(--timeline-ruler-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.timeline_grid_line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--timeline-color-grid);
 }
 
 .media_timeline_lod_canvas {
@@ -1150,26 +1199,58 @@
 .media_timeline .timeline-editor-edit-row {
   box-sizing: border-box;
   border-bottom: 1px solid var(--timeline-color-track-divider);
-  background-color: var(--timeline-color-canvas-background);
-  background-image: linear-gradient(
-      var(--timeline-color-canvas-background),
-      var(--timeline-color-canvas-background)
-    ),
-    linear-gradient(
-      90deg,
-      var(--timeline-color-grid) 1px,
-      transparent 1px
-    );
+  background: var(--timeline-color-canvas-background);
 }
 
 .media_timeline .timeline-editor-action {
+  z-index: 3;
   box-sizing: border-box;
   padding: 4px 0;
   background: transparent;
 }
 
 .media_timeline .timeline-editor-action-selected {
+  z-index: 4;
+}
+
+.media_timeline_range_selection {
+  position: absolute;
   z-index: 2;
+  top: var(--timeline-ruler-height);
+  bottom: 0;
+  border-inline: 1px solid var(--timeline-color-selection-border);
+  background: var(--timeline-color-evidence-background);
+  pointer-events: none;
+}
+
+.media_timeline_range_endpoint {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-1px);
+  background: var(--timeline-color-selection-border);
+  pointer-events: none;
+}
+
+.media_timeline_range_endpoint::before {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 10px;
+  border-top: 2px solid var(--timeline-color-selection-border);
+  content: "";
+}
+
+.media_timeline_range_endpoint[data-edge="start"]::before {
+  left: 0;
+  border-left: 2px solid var(--timeline-color-selection-border);
+}
+
+.media_timeline_range_endpoint[data-edge="end"]::before {
+  right: 0;
+  border-right: 2px solid var(--timeline-color-selection-border);
 }
 
 .media_timeline_evidence_range {
@@ -1236,11 +1317,6 @@
   background: var(--timeline-color-event-background-selected);
 }
 
-.media_timeline .timeline_action_focus {
-  border-color: var(--timeline-color-selection-border);
-  background: var(--timeline-color-focus-background);
-}
-
 .media_timeline .timeline_action_event_analysis {
   border-color: var(--timeline-color-event-analysis-border);
   background: var(--timeline-color-event-analysis-background);
@@ -1300,7 +1376,7 @@
 
 .media_timeline_playhead {
   position: absolute;
-  z-index: 2;
+  z-index: 5;
   top: 0;
   bottom: 0;
   left: 0;
@@ -1329,7 +1405,7 @@
 
 .media_timeline_marquee {
   position: absolute;
-  z-index: 4;
+  z-index: 6;
   box-sizing: border-box;
   border: 1px solid var(--timeline-color-marquee-border);
   background: var(--timeline-color-marquee-background);
@@ -1396,7 +1472,7 @@
     display: none;
   }
 
-  .media_timeline_track_label > svg:last-child {
+  .media_timeline_track_label > svg:nth-of-type(2) {
     display: block;
     width: 12px;
     height: 12px;

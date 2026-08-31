@@ -63,7 +63,7 @@ export function timeline_agent_focus({
     surface_label = "标记面板";
   } else if (time_range) {
     surface = "focus_range";
-    surface_label = "时间线焦点";
+    surface_label = "时间线范围";
   }
 
   return {

@@ -12,15 +12,10 @@ import type {
   TranscriptSegment,
 } from "@/shared/types";
 import { MediaTimeline } from "./MediaTimeline";
-import {
-  DEFAULT_ZOOM_PIXELS_PER_SECOND,
-  MINIMUM_ZOOM_PIXELS_PER_SECOND,
-} from "./media_timeline_calculations";
+import { DEFAULT_ZOOM_PIXELS_PER_SECOND } from "./media_timeline_calculations";
 
 const ASSET_ID = "019d3f8a-2b1c-7000-8000-000000000001";
-const ZOOM_OUT_TO_MINIMUM_WHEEL_DELTA =
-  Math.log(DEFAULT_ZOOM_PIXELS_PER_SECOND / MINIMUM_ZOOM_PIXELS_PER_SECOND) *
-  1_000;
+const ZOOM_OUT_TO_MINIMUM_WHEEL_DELTA = 100_000;
 const DARK_TIMELINE_DECORATOR: Decorator = (StoryComponent) => (
   <div className="dark bg-background text-foreground">
     <StoryComponent />
@@ -209,6 +204,8 @@ function TimelineStory({
   );
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
+  const [range_selection, set_range_selection] =
+    useState<FocusSelection | null>(focus_selection);
   const [is_paused, set_is_paused] = useState(true);
   const [playback_rate, set_playback_rate] = useState(1);
 
@@ -221,6 +218,24 @@ function TimelineStory({
         marker.marker_id === marker_id ? { ...marker, ...update } : marker,
       ),
     );
+  }
+
+  function set_range_endpoint(
+    endpoint: "in_seconds" | "out_seconds",
+    seconds: number,
+  ) {
+    set_range_selection((current) => ({
+      ...(current ?? {
+        selection_id: "focus-selection-019d3f8a2b1c70008000000000000002",
+        asset_id: ASSET_ID,
+        in_seconds: null,
+        out_seconds: null,
+        revision: 0,
+        updated_at: "2026-08-30T00:00:00Z",
+      }),
+      [endpoint]: seconds,
+      revision: (current?.revision ?? 0) + 1,
+    }));
   }
 
   return (
@@ -239,7 +254,7 @@ function TimelineStory({
         }}
         segments={analysis_segments}
         event_analyses={event_analyses}
-        focus_selection={focus_selection}
+        focus_selection={range_selection}
         markers={markers}
         candidate_markers={candidate_markers}
         selected_marker_ids={selected_marker_ids}
@@ -252,6 +267,11 @@ function TimelineStory({
         on_playback_rate_change={set_playback_rate}
         on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_selected_marker_ids_change={set_selected_marker_ids}
+        on_set_focus_in={(seconds) => set_range_endpoint("in_seconds", seconds)}
+        on_set_focus_out={(seconds) =>
+          set_range_endpoint("out_seconds", seconds)
+        }
+        on_clear_focus={() => set_range_selection(null)}
         on_request_transcript_correction={() => undefined}
         on_add_marker={async () => undefined}
         on_update_marker={update_marker}
@@ -335,12 +355,36 @@ export const DynamicAnalysisTracks: Story = {
 
     editor_grid.scrollTop = 48;
     editor_grid.dispatchEvent(new Event("scroll", { bubbles: true }));
-    await waitFor(() =>
+    await waitFor(() => {
+      expect(editor_grid.scrollTop).toBeGreaterThan(0);
       expect(track_labels?.style.transform).toBe(
-        "translate3d(0px, -48px, 0px)",
-      ),
-    );
+        `translate3d(0px, -${editor_grid.scrollTop}px, 0px)`,
+      );
+    });
   },
+};
+
+export const TemporaryRangeSelection: Story = {
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    await userEvent.click(story.getByRole("button", { name: /范围标记/ }));
+    await userEvent.keyboard("[BracketLeft][BracketRight]");
+
+    await waitFor(() => {
+      expect(story.getByText(/范围起点 00:24；范围终点 00:31/)).toBeVisible();
+    });
+    expect(
+      canvasElement.querySelector(".media_timeline_range_selection"),
+    ).not.toBeNull();
+    expect(
+      canvasElement.querySelector('[data-row-id="timeline-focus-track"]'),
+    ).toBeNull();
+  },
+};
+
+export const TemporaryRangeSelectionDark: Story = {
+  decorators: [DARK_TIMELINE_DECORATOR],
+  play: TemporaryRangeSelection.play,
 };
 
 export const ZoomBelowDefault: Story = {
@@ -373,9 +417,9 @@ export const ZoomBelowDefault: Story = {
       editor_grid.dispatchEvent(wheel_event);
 
       await waitFor(() => {
-        expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
-          `${MINIMUM_ZOOM_PIXELS_PER_SECOND} px/s`,
-        );
+        expect(
+          story.getByRole("button", { name: "缩小时间线" }),
+        ).toBeDisabled();
       });
       expect(wheel_event.defaultPrevented).toBe(true);
 
@@ -392,9 +436,9 @@ export const ZoomBelowDefault: Story = {
       story.getByRole("slider", { name: "时间线缩放比例" }).focus();
       await userEvent.keyboard("{Home}");
       await waitFor(() => {
-        expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
-          `${MINIMUM_ZOOM_PIXELS_PER_SECOND} px/s`,
-        );
+        expect(
+          story.getByRole("button", { name: "缩小时间线" }),
+        ).toBeDisabled();
       });
       expect(runtime_errors).toEqual([]);
     } finally {
@@ -412,9 +456,7 @@ export const AdjacentChaptersOverview: Story = {
     story.getByRole("slider", { name: "时间线缩放比例" }).focus();
     await userEvent.keyboard("{Home}");
     await waitFor(() => {
-      expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
-        `${MINIMUM_ZOOM_PIXELS_PER_SECOND} px/s`,
-      );
+      expect(story.getByRole("button", { name: "缩小时间线" })).toBeDisabled();
     });
   },
 };
@@ -425,6 +467,28 @@ export const AdjacentChaptersOverviewDark: Story = {
   },
   decorators: [DARK_TIMELINE_DECORATOR],
   play: AdjacentChaptersOverview.play,
+};
+
+export const LongVideoOverview: Story = {
+  args: {
+    duration_seconds: 7_200,
+    initial_time: 3_600,
+  },
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    story.getByRole("slider", { name: "时间线缩放比例" }).focus();
+    await userEvent.keyboard("{Home}");
+
+    await waitFor(() => {
+      expect(story.getByRole("button", { name: "缩小时间线" })).toBeDisabled();
+      expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
+        /0\.\d{2} px\/s/,
+      );
+    });
+    expect(
+      canvasElement.querySelectorAll(".timeline_grid_line").length,
+    ).toBeLessThan(16);
+  },
 };
 
 export const Dark: Story = {
