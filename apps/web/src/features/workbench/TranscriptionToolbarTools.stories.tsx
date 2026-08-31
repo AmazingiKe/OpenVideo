@@ -115,6 +115,7 @@ const meta = {
     correction_scope: "all",
     on_correction_open_change: () => undefined,
     on_correction_scope_change: () => undefined,
+    on_request_correction: () => undefined,
   },
   render: (args) => <ControlledTranscriptionToolbarTools {...args} />,
   beforeEach() {
@@ -147,6 +148,14 @@ export const CorrectionSelection: Story = {
     selected_transcript_indices: [0, 1],
     correction_open: true,
     correction_scope: "selection",
+  },
+};
+
+export const CorrectionAll: Story = {
+  args: {
+    selected_transcript_indices: [],
+    correction_open: true,
+    correction_scope: "all",
   },
 };
 

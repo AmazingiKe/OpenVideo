@@ -20,6 +20,7 @@ import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/markers/use_asset_markers";
 import {
   TranscriptionToolbarTools,
+  type TranscriptCorrectionRequest,
   type TranscriptCorrectionScope,
 } from "@/features/workbench/TranscriptionToolbarTools";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
@@ -59,6 +60,10 @@ import type {
   MediaMarker,
   TranscriptionOptions,
 } from "@/shared/types";
+
+type TranscriptCorrectionTask = TranscriptCorrectionRequest & {
+  segment_indices: number[] | null;
+};
 
 const MediaTimeline = lazy(() =>
   import("@/features/workbench/MediaTimeline").then((module) => ({
@@ -106,6 +111,8 @@ export function MarkersPage() {
     useState(false);
   const [transcript_correction_scope, set_transcript_correction_scope] =
     useState<TranscriptCorrectionScope>("all");
+  const [transcript_correction_task, set_transcript_correction_task] =
+    useState<TranscriptCorrectionTask | null>(null);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
@@ -165,6 +172,7 @@ export function MarkersPage() {
     set_selected_transcript_indices([]);
     set_transcript_correction_open(false);
     set_transcript_correction_scope("all");
+    set_transcript_correction_task(null);
     set_candidate_markers([]);
     set_focus_selection(null);
     set_agent_context_attachments([]);
@@ -297,31 +305,29 @@ export function MarkersPage() {
     focus_selection,
   });
   const assistant_binding = {
-    agent_id: transcript_correction_open ? "transcript_correction" : "marker",
+    agent_id: transcript_correction_task ? "transcript_correction" : "marker",
     asset_id: selected_asset_id,
     focus_context,
-    context_label: transcript_correction_open
+    context_label: transcript_correction_task
       ? `字幕修正 · ${
-          transcript_correction_scope === "selection"
-            ? `已选择 ${selected_transcript_indices.length} 条`
+          transcript_correction_task.scope === "selection"
+            ? `已选择 ${transcript_correction_task.segment_indices?.length ?? 0} 条`
             : "全部字幕"
         }`
       : selected_asset
         ? `当前视频 · ${selected_asset.title}`
         : "尚未选择视频",
-    task_input: transcript_correction_open
+    task_input: transcript_correction_task
       ? {
-          segment_indices:
-            transcript_correction_scope === "selection"
-              ? selected_transcript_indices
-              : null,
+          segment_indices: transcript_correction_task.segment_indices,
+          correction_instruction: transcript_correction_task.instruction,
           execution_mode: "automatic",
         }
       : {},
-    context_attachments: transcript_correction_open
+    context_attachments: transcript_correction_task
       ? []
       : agent_context_attachments,
-    placeholder: transcript_correction_open
+    placeholder: transcript_correction_task
       ? undefined
       : "询问视频内容，或直接描述希望创建的标记…",
     panel_size_percent: settings.agent_panel_size_percent,
@@ -409,7 +415,16 @@ export function MarkersPage() {
     set_transcript_correction_scope(
       segment_indices.length > 0 ? "selection" : "all",
     );
+    set_transcript_correction_task(null);
     set_transcript_correction_open(true);
+  }
+
+  function request_transcript_correction(request: TranscriptCorrectionRequest) {
+    set_transcript_correction_task({
+      ...request,
+      segment_indices:
+        request.scope === "selection" ? [...selected_transcript_indices] : null,
+    });
     open_assistant();
   }
 
@@ -470,8 +485,12 @@ export function MarkersPage() {
       selected_transcript_indices={selected_transcript_indices}
       correction_open={transcript_correction_open}
       correction_scope={transcript_correction_scope}
-      on_correction_open_change={set_transcript_correction_open}
+      on_correction_open_change={(open) => {
+        if (open) set_transcript_correction_task(null);
+        set_transcript_correction_open(open);
+      }}
       on_correction_scope_change={set_transcript_correction_scope}
+      on_request_correction={request_transcript_correction}
     />
   );
 

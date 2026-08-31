@@ -137,6 +137,8 @@ MARKER_ARTIFACT_TYPE = "marker_changes"
 SUMMARY_ARTIFACT_TYPE = "summary_edit"
 SUMMARY_MEDIA_ARTIFACT_TYPE = "summary_media"
 TRANSCRIPT_ARTIFACT_TYPE = "transcript_correction"
+TRANSCRIPT_CORRECTION_INSTRUCTION_INPUT_KEY = "correction_instruction"
+TRANSCRIPT_CORRECTION_INSTRUCTION_MAX_CHARACTERS = 4_000
 SESSION_TITLE_LENGTH = 60
 AGENT_RUN_INTENT_KEY = "intent"
 AGENT_RUN_EDIT_INTENT = "edit"
@@ -1218,19 +1220,21 @@ class AgentService:
         )
         correction = AgentDefinition(
             agent_id=TRANSCRIPT_CORRECTION_AGENT_ID,
-            title="字幕纠错",
-            description="校对指定字幕片段并生成逐项修改预览。",
+            title="字幕处理",
+            description="按自定义要求处理指定字幕并生成逐项修改预览。",
             mode=AgentMode.TASK,
             input_mode="task",
             prompt=(
-                "你是 OpenVideo 字幕纠错 Agent。必须调用 correct_transcript 完成任务，"
-                "只修正识别错误，不改变时间边界。"
+                "你是 OpenVideo 字幕处理 Agent。必须调用 correct_transcript 完成任务，"
+                "可以按用户要求校对、翻译或统一术语，但不能改变字幕时间边界。"
+                "如果运行元数据没有 correction_instruction，必须把用户的处理要求原样传入"
+                " correct_transcript 的 instruction。"
             ),
             required_capabilities={AgentCapability.TOOLS, AgentCapability.LONG_CONTEXT},
             minimum_context_tokens=16_000,
             tools=[
                 AgentToolDescriptor(
-                    name="correct_transcript", description="校对指定字幕片段"
+                    name="correct_transcript", description="按要求处理指定字幕片段"
                 )
             ],
             required_tools={"correct_transcript"},
@@ -1570,7 +1574,7 @@ class AgentService:
         registry.register(
             AgentTool(
                 "correct_transcript",
-                "校对指定字幕片段并生成修改预览。",
+                "按用户要求处理指定字幕片段并生成修改预览。",
                 CorrectTranscriptInput,
                 lambda parameters: self._correct_transcript(context, parameters),
             )
@@ -2013,13 +2017,23 @@ class AgentService:
             index < 0 or index >= len(transcript.segments) for index in resolved
         ):
             return {"ok": False, "error": "字幕片段范围无效"}
+        instruction = parameters.instruction
+        task_instruction = context.task_input.get(
+            TRANSCRIPT_CORRECTION_INSTRUCTION_INPUT_KEY
+        )
+        if task_instruction is not None:
+            if not isinstance(task_instruction, str) or not task_instruction.strip():
+                return {"ok": False, "error": "字幕处理要求无效"}
+            if len(task_instruction) > TRANSCRIPT_CORRECTION_INSTRUCTION_MAX_CHARACTERS:
+                return {"ok": False, "error": "字幕处理要求过长"}
+            instruction = task_instruction.strip()
         corrector = LiteLlmTranscriptCorrector(context.model)
         method = {
             "automatic": corrector.correct_async,
             "chunked": corrector.correct_chunked_async,
             "compressed": corrector.correct_with_compressed_context_async,
         }[parameters.execution_mode]
-        corrections = await method(transcript, resolved)
+        corrections = await method(transcript, resolved, instruction=instruction)
         context.cancellation.raise_if_cancelled()
         changes = [
             {

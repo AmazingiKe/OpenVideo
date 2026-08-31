@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useState } from "react";
 import { Captions, WandSparkles } from "lucide-react";
 
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   TRANSCRIPTION_LANGUAGE_OPTIONS,
@@ -42,6 +43,25 @@ import { use_transcription_tool_state } from "./use_transcription_tool_state";
 
 export type TranscriptCorrectionScope = "all" | "selection";
 
+export type TranscriptCorrectionRequest = {
+  scope: TranscriptCorrectionScope;
+  instruction: string;
+};
+
+const QUICK_CORRECTION_INSTRUCTION =
+  "根据整段转录上下文修正错字、漏字、同音词和专业术语，保持原意与表达风格。";
+const CORRECTION_INSTRUCTION_MAX_LENGTH = 4_000;
+
+function initial_correction_instructions(): Record<
+  TranscriptCorrectionScope,
+  string
+> {
+  return {
+    selection: QUICK_CORRECTION_INSTRUCTION,
+    all: "",
+  };
+}
+
 type TranscriptionToolbarToolsProps = {
   asset: MediaAsset | null;
   has_transcript: boolean;
@@ -55,6 +75,7 @@ type TranscriptionToolbarToolsProps = {
   correction_scope: TranscriptCorrectionScope;
   on_correction_open_change: (open: boolean) => void;
   on_correction_scope_change: (scope: TranscriptCorrectionScope) => void;
+  on_request_correction: (request: TranscriptCorrectionRequest) => void;
 };
 
 export function TranscriptionToolbarTools({
@@ -70,9 +91,14 @@ export function TranscriptionToolbarTools({
   correction_scope,
   on_correction_open_change,
   on_correction_scope_change,
+  on_request_correction,
 }: TranscriptionToolbarToolsProps) {
   const transcription_title_id = useId();
   const correction_title_id = useId();
+  const correction_instruction_id = useId();
+  const [correction_instructions, set_correction_instructions] = useState(
+    initial_correction_instructions,
+  );
   const {
     available_transcription_models,
     selected_transcription_model,
@@ -83,6 +109,12 @@ export function TranscriptionToolbarTools({
     default_transcription,
     transcription_models,
   });
+  const correction_instruction = correction_instructions[correction_scope];
+  const correction_ready = correction_instruction.trim().length > 0;
+
+  useEffect(() => {
+    set_correction_instructions(initial_correction_instructions());
+  }, [asset?.asset_id]);
 
   function change_correction_open(open: boolean) {
     if (open) {
@@ -264,12 +296,24 @@ export function TranscriptionToolbarTools({
           <PopoverHeader>
             <PopoverTitle id={correction_title_id}>字幕修正</PopoverTitle>
             <PopoverDescription>
-              校对字幕文字并预览变化；时间边界保持不变。
+              选择处理范围并说明如何修改，字幕时间边界保持不变。
             </PopoverDescription>
           </PopoverHeader>
-          <div className="flex min-h-0 flex-col gap-4">
+          <form
+            className="flex min-h-0 flex-col gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const instruction = correction_instruction.trim();
+              if (!instruction) return;
+              on_request_correction({
+                scope: correction_scope,
+                instruction,
+              });
+              on_correction_open_change(false);
+            }}
+          >
             <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>处理范围</span>
+              <span>处理模式</span>
               <Badge variant="secondary">
                 {selected_transcript_indices.length > 0
                   ? `已选择 ${selected_transcript_indices.length} 条`
@@ -285,27 +329,69 @@ export function TranscriptionToolbarTools({
                 }
               }}
               className="w-full"
-              aria-label="字幕修正范围"
+              aria-label="字幕处理模式"
             >
-              <ToggleGroupItem value="all" className="flex-1">
-                全部字幕
-              </ToggleGroupItem>
               <ToggleGroupItem
                 value="selection"
                 className="flex-1"
                 disabled={selected_transcript_indices.length === 0}
               >
-                时间线选择
+                选择字幕
+              </ToggleGroupItem>
+              <ToggleGroupItem value="all" className="flex-1">
+                全部字幕
               </ToggleGroupItem>
             </ToggleGroup>
+            <FieldGroup>
+              <Field>
+                <div className="flex items-center justify-between gap-2">
+                  <FieldLabel htmlFor={correction_instruction_id}>
+                    处理要求
+                  </FieldLabel>
+                  {correction_scope === "selection" ? (
+                    <Badge variant="outline">快速模板</Badge>
+                  ) : (
+                    <Badge variant="outline">必填</Badge>
+                  )}
+                </div>
+                <Textarea
+                  id={correction_instruction_id}
+                  value={correction_instruction}
+                  onChange={(event) =>
+                    set_correction_instructions((current) => ({
+                      ...current,
+                      [correction_scope]: event.target.value,
+                    }))
+                  }
+                  placeholder={
+                    correction_scope === "selection"
+                      ? "说明如何处理已选字幕"
+                      : "例如：将英文翻译成中文，并结合整段视频上下文保留专业术语"
+                  }
+                  maxLength={CORRECTION_INSTRUCTION_MAX_LENGTH}
+                  rows={4}
+                  className="max-h-40 resize-none"
+                  required
+                />
+                <FieldDescription>
+                  {correction_scope === "selection"
+                    ? "已填入快速校对模板，可直接使用，也可改成翻译、术语统一等要求。"
+                    : "全部字幕不使用默认模板，必须明确填写修正、翻译或其他处理要求。"}
+                </FieldDescription>
+              </Field>
+            </FieldGroup>
             <Alert>
               <WandSparkles aria-hidden="true" />
-              <AlertTitle>已切换到全局助手</AlertTitle>
+              <AlertTitle>修改会先生成预览</AlertTitle>
               <AlertDescription>
-                确认处理范围后，在全局助手中启动字幕修正任务；结果仍需审批才会应用。
+                继续后在全局助手中启动任务，确认结果后才会写回字幕。
               </AlertDescription>
             </Alert>
-          </div>
+            <Button type="submit" disabled={!correction_ready}>
+              <WandSparkles data-icon="inline-start" aria-hidden="true" />
+              继续到助手
+            </Button>
+          </form>
         </PopoverContent>
       </Popover>
     </>

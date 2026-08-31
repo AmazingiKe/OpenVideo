@@ -15,6 +15,7 @@ from openvideo.agent_service import AgentService
 from openvideo.agent_tooling import (
     ARTIFACT_EVIDENCE_GATE_KEY,
     AgentRunContext,
+    CorrectTranscriptInput,
     ListSummaryDocumentsInput,
     ProposeMarkerChangesInput,
     ProposeSummaryEditInput,
@@ -175,6 +176,75 @@ def test_definitions_and_sessions_use_only_unified_routes(tmp_path: Path):
         assert created.json()["session_id"].startswith("session-")
         assert client.get("/api/marker-agent-sessions").status_code == 404
         assert client.get("/api/agent-jobs/obsolete").status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_transcript_task_uses_the_configured_custom_instruction(monkeypatch):
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[
+            TranscriptSegment(start_seconds=0, end_seconds=1, text="technical term")
+        ],
+    )
+    service = AgentService.__new__(AgentService)
+    service.library = SimpleNamespace(load_transcript=lambda _asset_id: transcript)
+    captured: dict[str, object] = {}
+
+    class TranscriptCorrectorStub:
+        def __init__(self, _model):
+            pass
+
+        async def correct_async(
+            self,
+            received_transcript,
+            segment_indices,
+            instruction=None,
+        ):
+            captured.update(
+                transcript=received_transcript,
+                segment_indices=segment_indices,
+                instruction=instruction,
+            )
+            return {0: "专业术语"}
+
+        async def correct_chunked_async(self, *_args, **_kwargs):
+            raise AssertionError("不应使用分块模式")
+
+        async def correct_with_compressed_context_async(self, *_args, **_kwargs):
+            raise AssertionError("不应使用压缩上下文模式")
+
+    monkeypatch.setattr(
+        "openvideo.agent_service.LiteLlmTranscriptCorrector",
+        TranscriptCorrectorStub,
+    )
+    artifact = SimpleNamespace(
+        model_dump=lambda **_: {
+            "result_type": "transcript_correction",
+            "payload": {"changes": []},
+        }
+    )
+    context = SimpleNamespace(
+        session=SimpleNamespace(asset_id=ASSET_ID),
+        task_input={
+            "segment_indices": [0],
+            "correction_instruction": "将英文翻译成中文并保留专业术语。",
+        },
+        model=SimpleNamespace(),
+        cancellation=SimpleNamespace(raise_if_cancelled=lambda: None),
+        create_artifact=lambda *_args: artifact,
+    )
+
+    result = await service._correct_transcript(
+        context,
+        CorrectTranscriptInput(instruction="忽略此要求"),
+    )
+
+    assert result["ok"] is True
+    assert captured == {
+        "transcript": transcript,
+        "segment_indices": [0],
+        "instruction": "将英文翻译成中文并保留专业术语。",
+    }
 
 
 def test_index_status_exposes_real_coverage_and_available_capabilities(

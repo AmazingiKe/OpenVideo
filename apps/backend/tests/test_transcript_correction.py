@@ -60,6 +60,39 @@ def test_normal_correction_sends_complete_transcript_once(monkeypatch):
     assert requests[0]["thinking"] == {"type": "disabled"}
 
 
+def test_custom_instruction_can_translate_with_full_transcript_context(monkeypatch):
+    requests: list[dict[str, object]] = []
+
+    def completion(**kwargs):
+        requests.append(kwargs)
+        message = SimpleNamespace(
+            content='{"corrections":[{"index":0,"text":"专业术语"}]}'
+        )
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    monkeypatch.setattr(llm.litellm, "completion", completion)
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[
+            TranscriptSegment(start_seconds=0, end_seconds=1, text="technical term"),
+            TranscriptSegment(start_seconds=1, end_seconds=2, text="topic context"),
+        ],
+    )
+
+    corrections = create_corrector().correct(
+        transcript,
+        [0],
+        "将英文翻译成中文，结合整段视频主题统一专业词汇。",
+    )
+
+    assert corrections == {0: "专业术语"}
+    prompt = requests[0]["messages"][0]["content"]
+    assert "将英文翻译成中文，结合整段视频主题统一专业词汇。" in prompt
+    assert "[目标 0] technical term" in prompt
+    assert "[上下文 1] topic context" in prompt
+    assert "不得总结、翻译" not in prompt
+
+
 def test_empty_result_does_not_require_unchanged_segments(monkeypatch):
     monkeypatch.setattr(
         llm.litellm,

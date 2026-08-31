@@ -135,6 +135,7 @@ class ProposeSummaryMediaInput(BaseModel):
 
 class CorrectTranscriptInput(BaseModel):
     segment_indices: list[int] | None = None
+    instruction: str | None = Field(default=None, min_length=1, max_length=4_000)
     execution_mode: str = Field(
         default="automatic", pattern=r"^(automatic|chunked|compressed)$"
     )

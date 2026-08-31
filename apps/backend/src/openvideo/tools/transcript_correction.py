@@ -20,6 +20,9 @@ DEFAULT_CORRECTION_TIMEOUT_SECONDS = 120
 MAX_CORRECTED_TEXT_CHARACTERS = 10_000
 CHUNK_MAX_CHARACTERS = 12_000
 CONTEXT_EXTRACTION_MAX_TOKENS = 2_048
+DEFAULT_CORRECTION_INSTRUCTION = (
+    "修正错字、漏字、同音词、专有名词和必要标点，保持原意与口语风格。"
+)
 
 
 class TranscriptCorrectionError(RuntimeError):
@@ -31,7 +34,7 @@ class TranscriptCorrectionContextLengthError(TranscriptCorrectionError):
 
 
 class LiteLlmTranscriptCorrector:
-    """通过可选模型修正文本，同时严格约束可写回的片段集合。"""
+    """按用户要求处理字幕文本，同时严格约束可写回的片段集合。"""
 
     def __init__(self, model: AiModelConfiguration) -> None:
         self.model = model
@@ -40,11 +43,12 @@ class LiteLlmTranscriptCorrector:
         self,
         transcript: Transcript,
         segment_indices: list[int],
+        instruction: str | None = None,
     ) -> dict[int, str]:
         if not segment_indices:
             return {}
         return self._request_corrections(
-            _correction_prompt(transcript, segment_indices),
+            _correction_prompt(transcript, segment_indices, instruction=instruction),
             segment_indices,
         )
 
@@ -52,11 +56,12 @@ class LiteLlmTranscriptCorrector:
         self,
         transcript: Transcript,
         segment_indices: list[int],
+        instruction: str | None = None,
     ) -> dict[int, str]:
         if not segment_indices:
             return {}
         return await self._request_corrections_async(
-            _correction_prompt(transcript, segment_indices),
+            _correction_prompt(transcript, segment_indices, instruction=instruction),
             segment_indices,
         )
 
@@ -65,6 +70,7 @@ class LiteLlmTranscriptCorrector:
         transcript: Transcript,
         segment_indices: list[int],
         global_context: str | None = None,
+        instruction: str | None = None,
     ) -> dict[int, str]:
         corrections: dict[int, str] = {}
         for target_indices in _continuous_chunks(transcript, segment_indices):
@@ -76,6 +82,7 @@ class LiteLlmTranscriptCorrector:
                         target_indices,
                         context_indices,
                         global_context,
+                        instruction,
                     ),
                     target_indices,
                 )
@@ -87,6 +94,7 @@ class LiteLlmTranscriptCorrector:
         transcript: Transcript,
         segment_indices: list[int],
         global_context: str | None = None,
+        instruction: str | None = None,
     ) -> dict[int, str]:
         corrections: dict[int, str] = {}
         for target_indices in _continuous_chunks(transcript, segment_indices):
@@ -98,6 +106,7 @@ class LiteLlmTranscriptCorrector:
                         target_indices,
                         context_indices,
                         global_context,
+                        instruction,
                     ),
                     target_indices,
                 )
@@ -108,6 +117,7 @@ class LiteLlmTranscriptCorrector:
         self,
         transcript: Transcript,
         segment_indices: list[int],
+        instruction: str | None = None,
     ) -> dict[int, str]:
         summaries = [
             self._extract_context(transcript, chunk)
@@ -117,12 +127,18 @@ class LiteLlmTranscriptCorrector:
             )
         ]
         global_context = self._merge_context(summaries)
-        return self.correct_chunked(transcript, segment_indices, global_context)
+        return self.correct_chunked(
+            transcript,
+            segment_indices,
+            global_context,
+            instruction,
+        )
 
     async def correct_with_compressed_context_async(
         self,
         transcript: Transcript,
         segment_indices: list[int],
+        instruction: str | None = None,
     ) -> dict[int, str]:
         summaries: list[str] = []
         for chunk in _continuous_chunks(
@@ -135,6 +151,7 @@ class LiteLlmTranscriptCorrector:
             transcript,
             segment_indices,
             global_context,
+            instruction,
         )
 
     def _request_corrections(
@@ -200,7 +217,7 @@ class LiteLlmTranscriptCorrector:
                 {
                     "role": "user",
                     "content": (
-                        "从以下转录片段提取校对所需的术语、人物、组织、主题和语言风格。"
+                        "从以下转录片段提取字幕处理所需的术语、人物、组织、主题和语言风格。"
                         "只返回简洁事实列表，不修正文稿。\n\n" + "\n".join(lines)
                     ),
                 }
@@ -221,7 +238,7 @@ class LiteLlmTranscriptCorrector:
                 {
                     "role": "user",
                     "content": (
-                        "从以下转录片段提取校对所需的术语、人物、组织、主题和语言风格。"
+                        "从以下转录片段提取字幕处理所需的术语、人物、组织、主题和语言风格。"
                         "只返回简洁事实列表，不修正文稿。\n\n" + "\n".join(lines)
                     ),
                 }
@@ -336,6 +353,7 @@ def _correction_prompt(
     target_indices: list[int],
     context_indices: list[int] | None = None,
     global_context: str | None = None,
+    instruction: str | None = None,
 ) -> str:
     resolved_context_indices = context_indices or list(range(len(transcript.segments)))
     target_index_set = set(target_indices)
@@ -348,10 +366,13 @@ def _correction_prompt(
         for index in resolved_context_indices
     ]
     context_section = f"\n\n全局上下文：\n{global_context}" if global_context else ""
+    resolved_instruction = instruction.strip() if instruction else ""
+    if not resolved_instruction:
+        resolved_instruction = DEFAULT_CORRECTION_INSTRUCTION
     return (
-        "请基于整份上下文校准标记为目标的转录片段。"
-        "只修正错字、漏字、同音词、专有名词和必要标点；"
-        "不得总结、翻译、扩写、改变原意或口语风格。"
+        f"字幕处理要求：\n{resolved_instruction}\n\n"
+        "请基于整份上下文并严格按照处理要求修改标记为目标的转录片段。"
+        "处理要求可以是校对、翻译、术语统一或其他文字转换。"
         "上下文片段仅用于理解，不得返回。"
         "只返回发生变化的目标项；未修改片段不要返回；无修改返回空数组。"
         "严格返回 JSON："

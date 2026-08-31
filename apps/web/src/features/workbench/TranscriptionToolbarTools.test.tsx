@@ -9,6 +9,7 @@ import {
 } from "@/shared/types";
 import {
   TranscriptionToolbarTools,
+  type TranscriptCorrectionRequest,
   type TranscriptCorrectionScope,
 } from "./TranscriptionToolbarTools";
 
@@ -113,14 +114,56 @@ describe("TranscriptionToolbarTools", () => {
     expect(
       document.querySelector('[data-slot="sheet-content"]'),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "时间线选择" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "选择字幕" })).toBeChecked();
     expect(screen.getByText("已选择 2 条")).toBeInTheDocument();
-    expect(screen.getByText("已切换到全局助手")).toBeVisible();
-    expect(
-      screen.getByText(
-        "确认处理范围后，在全局助手中启动字幕修正任务；结果仍需审批才会应用。",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText("快速模板")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "处理要求" })).toHaveValue(
+      "根据整段转录上下文修正错字、漏字、同音词和专业术语，保持原意与表达风格。",
+    );
+    expect(screen.getByRole("button", { name: "继续到助手" })).toBeEnabled();
+  });
+
+  it("allows selected subtitles to use a custom instruction", () => {
+    const request_correction = vi.fn();
+    render_tools({
+      selected_transcript_indices: [1, 2],
+      request_correction,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "字幕修正" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "处理要求" }), {
+      target: { value: "把已选英文字幕翻译成中文，保留专业术语。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "继续到助手" }));
+
+    expect(request_correction).toHaveBeenCalledWith({
+      scope: "selection",
+      instruction: "把已选英文字幕翻译成中文，保留专业术语。",
+    });
+  });
+
+  it("requires an instruction before processing all subtitles", () => {
+    const request_correction = vi.fn();
+    render_tools({ request_correction });
+
+    fireEvent.click(screen.getByRole("button", { name: "字幕修正" }));
+
+    expect(screen.getByRole("radio", { name: "全部字幕" })).toBeChecked();
+    expect(screen.getByText("必填")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "处理要求" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "继续到助手" })).toBeDisabled();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "处理要求" }), {
+      target: {
+        value: "将英文翻译成中文，结合整段视频主题统一专业词汇。",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "继续到助手" }));
+
+    expect(request_correction).toHaveBeenCalledWith({
+      scope: "all",
+      instruction: "将英文翻译成中文，结合整段视频主题统一专业词汇。",
+    });
   });
 
   it("disables correction until a transcript exists", () => {
@@ -153,6 +196,7 @@ type RenderOptions = {
   selected_transcript_indices?: number[];
   has_transcript?: boolean;
   transcription_models?: TranscriptionModelDescriptor[];
+  request_correction?: (request: TranscriptCorrectionRequest) => void;
 };
 
 function render_tools(options: RenderOptions = {}) {
@@ -183,6 +227,7 @@ function ControlledTools({ options }: { options: RenderOptions }) {
           correction_scope={correction_scope}
           on_correction_open_change={set_correction_open}
           on_correction_scope_change={set_correction_scope}
+          on_request_correction={options.request_correction ?? vi.fn()}
         />
       </div>
     </div>
