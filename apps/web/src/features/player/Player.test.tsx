@@ -1,5 +1,5 @@
 import { act, createRef, type PropsWithChildren } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Player, type PlayerHandle } from "./Player";
@@ -123,6 +123,24 @@ describe("Player", () => {
     expect(media.remote.changePlaybackRate).toHaveBeenCalledWith(1.5);
   });
 
+  it("keeps imperative timeline previews local until seek commit", () => {
+    const player_ref = createRef<PlayerHandle>();
+    const on_time_change = vi.fn();
+    render(
+      <Player
+        ref={player_ref}
+        src="/video.mp4"
+        on_time_change={on_time_change}
+      />,
+    );
+    on_time_change.mockClear();
+
+    act(() => player_ref.current?.preview_to(16));
+
+    expect(player_ref.current?.current_time()).toBe(16);
+    expect(on_time_change).not.toHaveBeenCalled();
+  });
+
   it("ignores stale time events while an external seek is pending", () => {
     const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();
@@ -183,7 +201,7 @@ describe("Player", () => {
     );
   });
 
-  it("previews the dragged player time and subtitle before seek release", () => {
+  it("previews the dragged player time and subtitle before seek release", async () => {
     const on_time_change = vi.fn();
     render(
       <Player
@@ -211,7 +229,11 @@ describe("Player", () => {
     expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
     act(() => media.events.seeking_request?.(16));
 
-    expect(screen.getByLabelText("视频字幕")).toHaveTextContent("拖动预览字幕");
+    await waitFor(() =>
+      expect(screen.getByLabelText("视频字幕")).toHaveTextContent(
+        "拖动预览字幕",
+      ),
+    );
     expect(on_time_change).toHaveBeenLastCalledWith(16);
 
     act(() => {

@@ -41,12 +41,14 @@ export function use_scrub_preview({
     frame_ref.current = null;
     const requested_time = requested_time_ref.current;
     if (requested_time === null) return;
+    set_preview_time(requested_time);
     const video = video_ref.current;
     if (!available_ref.current) {
       set_fallback_seek_request({ seconds: requested_time });
       return;
     }
     if (!video || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    if (video.seeking) return;
     const bounded_time = Number.isFinite(video.duration)
       ? Math.min(requested_time, video.duration)
       : requested_time;
@@ -71,9 +73,9 @@ export function use_scrub_preview({
       const bounded_time = Math.max(0, seconds);
       requested_time_ref.current = bounded_time;
       commit_pending_ref.current = false;
+      const was_active = active_ref.current;
       active_ref.current = true;
-      set_is_previewing(true);
-      set_preview_time(bounded_time);
+      if (!was_active) set_is_previewing(true);
       if (hide_timeout_ref.current !== null) {
         window.clearTimeout(hide_timeout_ref.current);
         hide_timeout_ref.current = null;
@@ -106,8 +108,19 @@ export function use_scrub_preview({
   }, [queue_requested_time]);
 
   const on_seeked = useCallback(() => {
-    if (active_ref.current) set_is_ready(true);
-  }, []);
+    if (!active_ref.current) return;
+    set_is_ready(true);
+    const video = video_ref.current;
+    const requested_time = requested_time_ref.current;
+    if (
+      video &&
+      requested_time !== null &&
+      Math.abs(video.currentTime - requested_time) >=
+        SCRUB_PREVIEW_SEEK_TOLERANCE_SECONDS
+    ) {
+      queue_requested_time();
+    }
+  }, [queue_requested_time]);
 
   const on_error = useCallback(() => {
     available_ref.current = false;

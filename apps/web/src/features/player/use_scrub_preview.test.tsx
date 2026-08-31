@@ -87,6 +87,37 @@ describe("use_scrub_preview", () => {
     expect(result.current.is_visible).toBe(false);
   });
 
+  it("waits for the current proxy seek before applying the latest request", () => {
+    const { result } = renderHook(() =>
+      use_scrub_preview({
+        src: "/scrub.mp4",
+        commit_timeout_milliseconds: 1_500,
+      }),
+    );
+    let is_seeking = true;
+    const video = document.createElement("video");
+    Object.defineProperties(video, {
+      readyState: { value: HTMLMediaElement.HAVE_METADATA },
+      duration: { value: 20 },
+      seeking: { get: () => is_seeking },
+    });
+    result.current.video_ref.current = video;
+
+    act(() => {
+      result.current.preview_to(8);
+      run_frame();
+    });
+    expect(video.currentTime).toBe(0);
+    expect(result.current.preview_time).toBe(8);
+
+    is_seeking = false;
+    act(() => {
+      result.current.on_seeked();
+      run_frame();
+    });
+    expect(video.currentTime).toBe(8);
+  });
+
   it("cancels queued work when the preview unmounts", () => {
     const { result, unmount } = renderHook(() =>
       use_scrub_preview({

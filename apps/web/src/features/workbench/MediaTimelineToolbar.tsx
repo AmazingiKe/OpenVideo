@@ -9,7 +9,13 @@ import {
   Plus,
   RotateCcw,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +39,7 @@ const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
 type MediaTimelineToolbarProps = {
   current_time: number;
+  current_time_output_ref: RefObject<HTMLOutputElement | null>;
   duration: number;
   is_paused: boolean;
   playback_rate: number;
@@ -51,6 +58,7 @@ type MediaTimelineToolbarProps = {
 
 export function MediaTimelineToolbar({
   current_time,
+  current_time_output_ref,
   duration,
   is_paused,
   playback_rate,
@@ -67,6 +75,45 @@ export function MediaTimelineToolbar({
   context_sources,
 }: MediaTimelineToolbarProps) {
   const bounded_time = current_time;
+  const scheduled_zoom_ref = useRef<number | null>(null);
+  const zoom_frame_ref = useRef<number | null>(null);
+  const on_zoom_change_ref = useRef(on_zoom_change);
+
+  useLayoutEffect(() => {
+    on_zoom_change_ref.current = on_zoom_change;
+  });
+
+  useEffect(
+    () => () => {
+      if (zoom_frame_ref.current !== null) {
+        window.cancelAnimationFrame(zoom_frame_ref.current);
+      }
+    },
+    [],
+  );
+
+  function apply_scheduled_zoom() {
+    zoom_frame_ref.current = null;
+    const scheduled_zoom = scheduled_zoom_ref.current;
+    scheduled_zoom_ref.current = null;
+    if (scheduled_zoom !== null) on_zoom_change_ref.current(scheduled_zoom);
+  }
+
+  function schedule_zoom(zoom: number) {
+    scheduled_zoom_ref.current = zoom;
+    if (zoom_frame_ref.current !== null) return;
+    zoom_frame_ref.current = window.requestAnimationFrame(apply_scheduled_zoom);
+  }
+
+  function apply_zoom_immediately(zoom: number) {
+    if (zoom_frame_ref.current !== null) {
+      window.cancelAnimationFrame(zoom_frame_ref.current);
+      zoom_frame_ref.current = null;
+    }
+    scheduled_zoom_ref.current = null;
+    on_zoom_change_ref.current(zoom);
+  }
+
   return (
     <div className="media_timeline_toolbar" aria-label="时间线工具栏">
       <div className="media_timeline_transport">
@@ -83,7 +130,7 @@ export function MediaTimelineToolbar({
             <Pause data-icon="inline-start" aria-hidden="true" />
           )}
         </Button>
-        <output aria-label="当前播放时间和总时长">
+        <output ref={current_time_output_ref} aria-label="当前播放时间和总时长">
           {format_time(bounded_time)} / {format_time(duration)}
         </output>
         <Select
@@ -155,7 +202,7 @@ export function MediaTimelineToolbar({
           size="icon-xs"
           disabled={zoom_pixels_per_second <= MINIMUM_ZOOM_PIXELS_PER_SECOND}
           onClick={() =>
-            on_zoom_change(zoom_pixels_per_second / ZOOM_BUTTON_FACTOR)
+            apply_zoom_immediately(zoom_pixels_per_second / ZOOM_BUTTON_FACTOR)
           }
           aria-label="缩小时间线"
         >
@@ -167,7 +214,7 @@ export function MediaTimelineToolbar({
           max={MAXIMUM_ZOOM_PIXELS_PER_SECOND}
           step={1}
           onValueChange={([zoom = DEFAULT_ZOOM_PIXELS_PER_SECOND]) =>
-            on_zoom_change(zoom)
+            schedule_zoom(zoom)
           }
           aria-label="时间线缩放比例"
         />
@@ -177,7 +224,7 @@ export function MediaTimelineToolbar({
           size="icon-xs"
           disabled={zoom_pixels_per_second >= MAXIMUM_ZOOM_PIXELS_PER_SECOND}
           onClick={() =>
-            on_zoom_change(zoom_pixels_per_second * ZOOM_BUTTON_FACTOR)
+            apply_zoom_immediately(zoom_pixels_per_second * ZOOM_BUTTON_FACTOR)
           }
           aria-label="放大时间线"
         >
@@ -187,7 +234,7 @@ export function MediaTimelineToolbar({
           type="button"
           variant="ghost"
           size="icon-xs"
-          onClick={() => on_zoom_change(DEFAULT_ZOOM_PIXELS_PER_SECOND)}
+          onClick={() => apply_zoom_immediately(DEFAULT_ZOOM_PIXELS_PER_SECOND)}
           aria-label="重置时间线缩放"
           title="重置为 80 px/s"
         >

@@ -1,4 +1,8 @@
-import { Timeline, type TimelineEditor } from "@xzdarcy/react-timeline-editor";
+import {
+  Timeline,
+  type TimelineEditor,
+  type TimelineState,
+} from "@xzdarcy/react-timeline-editor";
 import "@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css";
 import {
   Bot,
@@ -15,11 +19,14 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
+  type RefObject,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  memo,
   type ReactNode,
 } from "react";
 
@@ -115,6 +122,108 @@ type TimelineTrackPresentation = {
   name: string;
   state: "可编辑" | "只读";
 };
+
+type MediaTimelineEditorHandlers = {
+  add_marker: (row_id: string, time: number) => void;
+  handle_scroll: (position: { scrollLeft: number; scrollTop: number }) => void;
+  open_action_editor: (
+    action: TimelineAction,
+    pointer_position: TimelinePointerPosition,
+  ) => void;
+  persist_marker_bounds: (
+    action: TimelineAction,
+    start_seconds: number,
+    end_seconds: number,
+    interaction: "move" | "resize",
+  ) => void;
+  prepare_action_context_menu: (
+    event: MouseEvent<HTMLElement>,
+    action: TimelineAction,
+  ) => void;
+  seek: (time: number) => void;
+  select_action: (action: TimelineAction, toggle_selection: boolean) => void;
+};
+
+type MediaTimelineEditorCanvasProps = {
+  editor_data: TimelineEditor["editorData"];
+  handlers_ref: RefObject<MediaTimelineEditorHandlers>;
+  scale_count: number;
+  timeline_ref: RefObject<TimelineState | null>;
+  zoom_pixels_per_second: number;
+};
+
+// 播放时间变化只移动播放头；编辑器仅在数据或视口几何变化时重渲染。
+const MediaTimelineEditorCanvas = memo(function MediaTimelineEditorCanvas({
+  editor_data,
+  handlers_ref,
+  scale_count,
+  timeline_ref,
+  zoom_pixels_per_second,
+}: MediaTimelineEditorCanvasProps) {
+  return (
+    <Timeline
+      ref={timeline_ref}
+      editorData={editor_data}
+      effects={EMPTY_TIMELINE_EFFECTS}
+      scale={TIMELINE_SCALE_SECONDS}
+      scaleWidth={zoom_pixels_per_second}
+      scaleSplitCount={TIMELINE_SCALE_SPLIT_COUNT}
+      minScaleCount={scale_count}
+      maxScaleCount={scale_count}
+      startLeft={TIMELINE_START_LEFT}
+      rowHeight={TIMELINE_ROW_HEIGHT}
+      gridSnap={false}
+      dragLine={false}
+      autoScroll
+      autoReRender={false}
+      hideCursor
+      getActionRender={(action) => (
+        <MediaTimelineActionContent
+          action={action}
+          action_editor_ref={handlers_ref}
+        />
+      )}
+      onScroll={(position) => handlers_ref.current.handle_scroll(position)}
+      onChange={() => false}
+      onClickTimeArea={(time) => {
+        handlers_ref.current.seek(time);
+        return true;
+      }}
+      onClickActionOnly={(event, { action }) => {
+        event.stopPropagation();
+        handlers_ref.current.select_action(
+          action,
+          event.ctrlKey || event.metaKey,
+        );
+      }}
+      onDoubleClickAction={(event, { action }) => {
+        event.stopPropagation();
+        handlers_ref.current.open_action_editor(action, {
+          x: event.clientX,
+          y: event.clientY,
+        });
+      }}
+      onContextMenuAction={(event, { action }) =>
+        handlers_ref.current.prepare_action_context_menu(event, action)
+      }
+      onDoubleClickRow={(event, { row, time }) => {
+        event.preventDefault();
+        handlers_ref.current.add_marker(row.id, time);
+      }}
+      onActionMoveEnd={({ action, start, end }) => {
+        handlers_ref.current.persist_marker_bounds(action, start, end, "move");
+      }}
+      onActionResizeEnd={({ action, start, end }) => {
+        handlers_ref.current.persist_marker_bounds(
+          action,
+          start,
+          end,
+          "resize",
+        );
+      }}
+    />
+  );
+});
 
 const TIMELINE_TRACK_PRESENTATIONS: TimelineTrackPresentation[] = [
   {
@@ -241,7 +350,9 @@ export function MediaTimeline({
     null,
   );
   const ruler_pointer_id_ref = useRef<number | null>(null);
+  const ruler_bounds_ref = useRef<{ left: number } | null>(null);
   const ruler_scrub_time_ref = useRef(0);
+  const current_time_output_ref = useRef<HTMLOutputElement>(null);
   const previous_asset_id_ref = useRef(asset_id);
   const transcript_segments = useMemo(
     () => transcript?.segments ?? [],
@@ -848,10 +959,37 @@ export function MediaTimeline({
     }
   }
 
+  const editor_handlers_ref = useRef<MediaTimelineEditorHandlers>({
+    add_marker: () => undefined,
+    handle_scroll: () => undefined,
+    open_action_editor: () => undefined,
+    persist_marker_bounds: () => undefined,
+    prepare_action_context_menu: () => undefined,
+    seek: () => undefined,
+    select_action: () => undefined,
+  });
+  useLayoutEffect(() => {
+    editor_handlers_ref.current = {
+      add_marker: (row_id, time) => {
+        if (row_id !== TIMELINE_TRACK_IDS.marker) return;
+        void add_marker_and_select(Math.min(Math.max(time, 0), duration));
+      },
+      handle_scroll: handle_timeline_scroll,
+      open_action_editor,
+      persist_marker_bounds: (action, start, end, interaction) => {
+        void persist_marker_bounds(action, start, end, interaction);
+      },
+      prepare_action_context_menu,
+      seek: on_seek_bounded,
+      select_action,
+    };
+  });
+
   return (
     <section className="media_timeline" aria-label="剪辑时间轴">
       <MediaTimelineToolbar
         current_time={bounded_time}
+        current_time_output_ref={current_time_output_ref}
         duration={duration}
         is_paused={is_paused}
         playback_rate={playback_rate}
@@ -978,61 +1116,12 @@ export function MediaTimeline({
                 data-visible="false"
                 aria-hidden="true"
               />
-              <Timeline
-                ref={timeline_ref}
-                editorData={editor_data}
-                effects={EMPTY_TIMELINE_EFFECTS}
-                scale={TIMELINE_SCALE_SECONDS}
-                scaleWidth={viewport.zoom_pixels_per_second}
-                scaleSplitCount={TIMELINE_SCALE_SPLIT_COUNT}
-                minScaleCount={scale_count}
-                maxScaleCount={scale_count}
-                startLeft={TIMELINE_START_LEFT}
-                rowHeight={TIMELINE_ROW_HEIGHT}
-                gridSnap={false}
-                dragLine={false}
-                autoScroll
-                autoReRender={false}
-                hideCursor
-                getActionRender={(action) => (
-                  <MediaTimelineActionContent
-                    action={action}
-                    open_action_editor={open_action_editor}
-                  />
-                )}
-                onScroll={handle_timeline_scroll}
-                onChange={() => false}
-                onClickTimeArea={(time) => {
-                  on_seek_bounded(time);
-                  return true;
-                }}
-                onClickActionOnly={(event, { action }) => {
-                  event.stopPropagation();
-                  select_action(action, event.ctrlKey || event.metaKey);
-                }}
-                onDoubleClickAction={(event, { action }) => {
-                  event.stopPropagation();
-                  open_action_editor(action, {
-                    x: event.clientX,
-                    y: event.clientY,
-                  });
-                }}
-                onContextMenuAction={(event, { action }) =>
-                  prepare_action_context_menu(event, action)
-                }
-                onDoubleClickRow={(event, { row, time }) => {
-                  if (row.id !== TIMELINE_TRACK_IDS.marker) return;
-                  event.preventDefault();
-                  void add_marker_and_select(
-                    Math.min(Math.max(time, 0), duration),
-                  );
-                }}
-                onActionMoveEnd={({ action, start, end }) => {
-                  void persist_marker_bounds(action, start, end, "move");
-                }}
-                onActionResizeEnd={({ action, start, end }) => {
-                  void persist_marker_bounds(action, start, end, "resize");
-                }}
+              <MediaTimelineEditorCanvas
+                editor_data={editor_data}
+                handlers_ref={editor_handlers_ref}
+                scale_count={scale_count}
+                timeline_ref={timeline_ref}
+                zoom_pixels_per_second={viewport.zoom_pixels_per_second}
               />
               {evidence_range_style && evidence_range ? (
                 <div
@@ -1217,9 +1306,10 @@ export function MediaTimeline({
     on_scrub(Math.min(Math.max(seconds, 0), duration));
   }
 
-  function ruler_time_from_pointer(event: PointerEvent<HTMLDivElement>) {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const pointer_x = event.clientX - bounds.left;
+  function ruler_time_from_pointer(client_x: number) {
+    const bounds = ruler_bounds_ref.current;
+    if (!bounds) return ruler_scrub_time_ref.current;
+    const pointer_x = client_x - bounds.left;
     return Math.min(
       Math.max(
         (viewport.scroll_left + pointer_x - TIMELINE_START_LEFT) /
@@ -1230,38 +1320,54 @@ export function MediaTimeline({
     );
   }
 
+  function update_ruler_scrub_feedback(ruler: HTMLDivElement, time: number) {
+    ruler.setAttribute("aria-valuenow", String(time));
+    ruler.setAttribute("aria-valuetext", format_ruler_accessible_time(time));
+    const output = current_time_output_ref.current;
+    if (output) {
+      output.textContent = `${format_time(time)} / ${format_time(duration)}`;
+    }
+  }
+
   function start_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || ruler_pointer_id_ref.current !== null) return;
     event.preventDefault();
     ruler_pointer_id_ref.current = event.pointerId;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    ruler_bounds_ref.current = { left: bounds.left };
     event.currentTarget.setPointerCapture(event.pointerId);
-    const time = ruler_time_from_pointer(event);
+    const time = ruler_time_from_pointer(event.clientX);
     ruler_scrub_time_ref.current = time;
     set_playhead_time(time);
+    update_ruler_scrub_feedback(event.currentTarget, time);
     on_scrub_bounded(time);
   }
 
   function continue_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
     if (ruler_pointer_id_ref.current !== event.pointerId) return;
-    const time = ruler_time_from_pointer(event);
+    const time = ruler_time_from_pointer(event.clientX);
     ruler_scrub_time_ref.current = time;
     set_playhead_time(time);
+    update_ruler_scrub_feedback(event.currentTarget, time);
     on_scrub_bounded(time);
   }
 
   function finish_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
     if (ruler_pointer_id_ref.current !== event.pointerId) return;
-    const time = ruler_time_from_pointer(event);
+    const time = ruler_time_from_pointer(event.clientX);
     ruler_pointer_id_ref.current = null;
+    ruler_bounds_ref.current = null;
     ruler_scrub_time_ref.current = time;
     event.currentTarget.releasePointerCapture(event.pointerId);
     set_playhead_time(time);
+    update_ruler_scrub_feedback(event.currentTarget, time);
     on_seek_bounded(time);
   }
 
   function cancel_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
     if (ruler_pointer_id_ref.current !== event.pointerId) return;
     ruler_pointer_id_ref.current = null;
+    ruler_bounds_ref.current = null;
     on_seek_bounded(ruler_scrub_time_ref.current);
   }
 

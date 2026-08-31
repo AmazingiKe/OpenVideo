@@ -344,7 +344,6 @@ export function MarkersPage() {
   const { open_assistant } = use_global_assistant_controls();
 
   function preview_player(seconds: number) {
-    set_current_time(seconds);
     player_ref.current?.preview_to(seconds);
   }
 

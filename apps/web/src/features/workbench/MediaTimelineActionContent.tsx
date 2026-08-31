@@ -1,4 +1,5 @@
 import type { TimelineEditor } from "@xzdarcy/react-timeline-editor";
+import { memo, type RefObject } from "react";
 
 import { cn } from "@/lib/utils";
 import { format_time } from "@/shared/format";
@@ -11,15 +12,17 @@ type TimelineAction = TimelineEditor["editorData"][number]["actions"][number];
 
 type MediaTimelineActionContentProps = {
   action: TimelineAction;
-  open_action_editor: (
-    action: TimelineAction,
-    pointer_position: { x: number; y: number },
-  ) => void;
+  action_editor_ref: RefObject<{
+    open_action_editor: (
+      action: TimelineAction,
+      pointer_position: { x: number; y: number },
+    ) => void;
+  }>;
 };
 
-export function MediaTimelineActionContent({
+function MediaTimelineActionContentComponent({
   action,
-  open_action_editor,
+  action_editor_ref,
 }: MediaTimelineActionContentProps) {
   const media_action = action as MediaTimelineAction;
   const marker_anchor_position = marker_anchor_percent(media_action);
@@ -37,7 +40,7 @@ export function MediaTimelineActionContent({
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           const bounds = event.currentTarget.getBoundingClientRect();
-          open_action_editor(media_action, {
+          action_editor_ref.current.open_action_editor(media_action, {
             x: bounds.left + bounds.width / 2,
             y: bounds.bottom,
           });
@@ -72,6 +75,27 @@ export function MediaTimelineActionContent({
     </button>
   );
 }
+
+function timeline_action_content_props_equal(
+  previous: MediaTimelineActionContentProps,
+  next: MediaTimelineActionContentProps,
+): boolean {
+  const previous_action = previous.action as MediaTimelineAction;
+  const next_action = next.action as MediaTimelineAction;
+  return (
+    previous.action_editor_ref === next.action_editor_ref &&
+    previous_action.id === next_action.id &&
+    previous_action.start === next_action.start &&
+    previous_action.end === next_action.end &&
+    previous_action.selected === next_action.selected &&
+    previous_action.data === next_action.data
+  );
+}
+
+export const MediaTimelineActionContent = memo(
+  MediaTimelineActionContentComponent,
+  timeline_action_content_props_equal,
+);
 
 function marker_anchor_percent(action: MediaTimelineAction): number | null {
   if (

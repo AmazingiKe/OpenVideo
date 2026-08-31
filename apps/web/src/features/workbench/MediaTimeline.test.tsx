@@ -871,6 +871,22 @@ describe("MediaTimeline", () => {
     expect(change_playback_rate).toHaveBeenCalledWith(1.5);
   });
 
+  it("keeps the editor render boundary stable for visible playback updates", () => {
+    const { change_current_time } = render_timeline({ current_time: 5 });
+    const render_count = timeline_mock.viewport_events.filter(
+      (event) => event.type === "render",
+    ).length;
+
+    act(() => change_current_time(5.1));
+
+    expect(
+      timeline_mock.viewport_events.filter((event) => event.type === "render"),
+    ).toHaveLength(render_count);
+    expect(screen.getByLabelText("当前播放时间和总时长")).toHaveTextContent(
+      "00:05 / 02:00",
+    );
+  });
+
   it("follows the exact player clock without rerendering the editor", () => {
     const animation_frames = install_animation_frame_mock();
     let playback_time = 30.04;
@@ -970,17 +986,19 @@ describe("MediaTimeline", () => {
       ".media_timeline_playhead",
     );
     if (!playhead) throw new Error("Missing playback head");
-    vi.spyOn(ruler, "getBoundingClientRect").mockReturnValue({
-      x: 16,
-      y: 0,
-      left: 16,
-      top: 0,
-      right: 816,
-      bottom: 32,
-      width: 800,
-      height: 32,
-      toJSON: () => undefined,
-    });
+    const get_ruler_bounds = vi
+      .spyOn(ruler, "getBoundingClientRect")
+      .mockReturnValue({
+        x: 16,
+        y: 0,
+        left: 16,
+        top: 0,
+        right: 816,
+        bottom: 32,
+        width: 800,
+        height: 32,
+        toJSON: () => undefined,
+      });
     ruler.setPointerCapture = vi.fn();
     ruler.releasePointerCapture = vi.fn();
 
@@ -997,6 +1015,11 @@ describe("MediaTimeline", () => {
     fireEvent.pointerUp(ruler, { clientX: 576, pointerId: 7 });
     expect(seek_to).toHaveBeenCalledWith(6.8);
     expect(playhead.style.transform).toBe("translate3d(560px, 0, 0)");
+    expect(get_ruler_bounds).toHaveBeenCalledOnce();
+    expect(ruler).toHaveAttribute("aria-valuenow", "6.8");
+    expect(screen.getByLabelText("当前播放时间和总时长")).toHaveTextContent(
+      "00:06 / 02:00",
+    );
   });
 
   it("adds markers from the toolbar, shortcut, and marker row", async () => {
@@ -1326,6 +1349,27 @@ describe("MediaTimeline", () => {
     animation_frames.run_next_frame();
     expect(timeline_props().scaleWidth).toBeCloseTo(80 * Math.exp(0.048));
     expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
+  });
+
+  it("batches slider zoom input into one animation frame", () => {
+    const animation_frames = install_animation_frame_mock();
+    render_timeline();
+    const slider = screen.getByRole("slider", { name: "时间线缩放比例" });
+
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+
+    expect(animation_frames.frames.size).toBe(1);
+    expect(timeline_props().scaleWidth).toBe(80);
+
+    animation_frames.run_next_frame();
+    expect(timeline_props().scaleWidth).toBeGreaterThan(80);
+
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    expect(animation_frames.frames.size).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
+    expect(animation_frames.frames.size).toBe(0);
+    expect(timeline_props().scaleWidth).toBe(80);
   });
 
   it("keeps playback and Alt wheel zoom independent in one display frame", () => {

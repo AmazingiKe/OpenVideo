@@ -74,7 +74,7 @@ export const ScrubSubtitlePreview: Story = {
       }),
     );
 
-    expect(canvas.getByText("拖动预览字幕")).toBeVisible();
+    expect(await canvas.findByText("拖动预览字幕")).toBeVisible();
   },
 };
 

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 
 import { format_time } from "@/shared/format";
+import type { ColorScheme } from "@/color_scheme";
 import { use_color_scheme } from "@/use_color_scheme";
 
 const RULER_HEIGHT_PIXELS = 32;
@@ -23,6 +24,13 @@ export type TimelineRulerTick = {
   label: string | null;
 };
 
+type TimelineRulerPaintStyle = {
+  color_scheme: ColorScheme;
+  ruler_font: string;
+  text_color: string;
+  tick_color: string;
+};
+
 type TimelineRulerCanvasProps = {
   canvas_width: number;
   duration_seconds: number;
@@ -40,6 +48,7 @@ export function TimelineRulerCanvas({
 }: TimelineRulerCanvasProps) {
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const major_interval_ref = useRef<number | null>(null);
+  const paint_style_ref = useRef<TimelineRulerPaintStyle | null>(null);
   const color_scheme = use_color_scheme();
 
   useLayoutEffect(() => {
@@ -71,23 +80,30 @@ export function TimelineRulerCanvas({
       start_left,
       zoom_pixels_per_second,
     });
-    const computed_style = getComputedStyle(canvas);
-    const tick_color = computed_style
-      .getPropertyValue("--timeline-color-ruler-tick")
-      .trim();
-    const text_color = computed_style
-      .getPropertyValue("--timeline-color-ruler-text")
-      .trim();
-    const ruler_font = computed_style
-      .getPropertyValue("--timeline-ruler-font")
-      .trim();
+    let paint_style = paint_style_ref.current;
+    if (!paint_style || paint_style.color_scheme !== color_scheme) {
+      const computed_style = getComputedStyle(canvas);
+      paint_style = {
+        color_scheme,
+        tick_color: computed_style
+          .getPropertyValue("--timeline-color-ruler-tick")
+          .trim(),
+        text_color: computed_style
+          .getPropertyValue("--timeline-color-ruler-text")
+          .trim(),
+        ruler_font: computed_style
+          .getPropertyValue("--timeline-ruler-font")
+          .trim(),
+      };
+      paint_style_ref.current = paint_style;
+    }
 
     context.setTransform(device_pixel_ratio, 0, 0, device_pixel_ratio, 0, 0);
     context.clearRect(0, 0, canvas_width, RULER_HEIGHT_PIXELS);
     context.lineWidth = 1;
-    context.strokeStyle = tick_color;
-    context.fillStyle = text_color;
-    context.font = ruler_font;
+    context.strokeStyle = paint_style.tick_color;
+    context.fillStyle = paint_style.text_color;
+    context.font = paint_style.ruler_font;
     context.textAlign = "center";
     context.textBaseline = "top";
 
