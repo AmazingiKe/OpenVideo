@@ -102,7 +102,11 @@ describe("AgentComposer", () => {
       screen.getByText("模型角色路由尚未接通，仅支持自动模式。"),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "检索范围：当前视频" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "检索与权限：当前视频，仅风险询问",
+      }),
+    );
     const retrieval_scope_slider = screen.getByRole("slider", {
       name: "检索范围",
     });
@@ -146,8 +150,13 @@ describe("AgentComposer", () => {
     ).toContainElement(screen.getByRole("textbox", { name: "助手指令" }));
     expect(screen.getByRole("button", { name: "添加上下文" })).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "检索范围：资料库" }),
-    ).toHaveTextContent("资料库");
+      screen.getByText("资料库", { selector: '[data-slot="badge"]' }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: "检索与权限：资料库，仅风险询问",
+      }),
+    ).toBeVisible();
     expect(
       screen.getByRole("button", {
         name: "模型与思考强度：5.6 Sol，高",
@@ -217,7 +226,11 @@ describe("AgentComposer", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "检索范围：资料库" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "检索与权限：资料库，仅风险询问",
+      }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "将资料库范围固定到当前对话" }),
     );

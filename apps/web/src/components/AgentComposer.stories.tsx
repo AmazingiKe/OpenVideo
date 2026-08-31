@@ -76,7 +76,23 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Default: Story = {};
+export const Default: Story = {
+  play: async ({ canvas }) => {
+    const scope_status = canvas.getByText("当前视频", {
+      selector: '[data-slot="badge"]',
+    });
+    const composer = canvas.getByRole("textbox", { name: "助手指令" });
+    await expect(
+      scope_status.compareDocumentPosition(composer) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await expect(
+      canvas.getByRole("button", {
+        name: "检索与权限：当前视频，仅风险询问",
+      }),
+    ).toBeVisible();
+  },
+};
 
 export const WithContext: Story = {
   args: {
@@ -156,8 +172,12 @@ export const RetrievalPermissions: Story = {
     scope_pinned: true,
   },
   play: async ({ canvas, canvasElement, userEvent }) => {
-    const trigger = canvas.getByRole("button", { name: "检索范围：资料库" });
-    await expect(trigger).toHaveTextContent("资料库");
+    const trigger = canvas.getByRole("button", {
+      name: "检索与权限：资料库，仅风险询问",
+    });
+    await expect(
+      canvas.getByText("资料库", { selector: '[data-slot="badge"]' }),
+    ).toBeVisible();
     await userEvent.click(trigger);
     const page = within(canvasElement.ownerDocument.body);
     const popover = page.getByRole("dialog", { name: "检索与权限" });

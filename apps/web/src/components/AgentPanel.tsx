@@ -300,9 +300,11 @@ export function AgentPanel({
             on_change={set_model_id}
           />
         ) : null}
-        <Badge className="w-fit" variant="secondary">
-          {retrieval_scope === "library" ? "资料库范围" : "当前视频"}
-        </Badge>
+        {task_input_mode ? (
+          <Badge className="w-fit" variant="secondary">
+            {retrieval_scope === "library" ? "资料库范围" : "当前视频"}
+          </Badge>
+        ) : null}
         {definition && compatible_models.length === 0 ? (
           <Alert variant="destructive">
             <AlertTitle>没有兼容模型</AlertTitle>

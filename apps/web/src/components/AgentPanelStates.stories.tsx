@@ -208,6 +208,7 @@ export const CompactHeaderControls: Story = {
     ).toHaveTextContent("透视投影问答");
     await expect(canvas.queryByText("历史会话")).toBeNull();
     await expect(canvas.queryByText("视频助手")).toBeNull();
+    await expect(canvas.getAllByText("当前视频")).toHaveLength(1);
     const index_control = canvas.getByRole("button", {
       name: "索引状态：正在解析检索文本",
     });

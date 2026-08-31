@@ -4,6 +4,7 @@ import {
   Pin,
   Plus,
   ShieldCheck,
+  SlidersHorizontal,
   Square,
   Zap,
 } from "lucide-react";
@@ -11,6 +12,7 @@ import { useId, useState, type DragEvent, type FormEvent } from "react";
 
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
 import { AiModelSelect } from "@/components/AiModelSelect";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -191,6 +193,11 @@ export function AgentComposer({
             松开即可添加为可见上下文
           </p>
         ) : null}
+        <div className="flex min-w-0 items-center px-1 pt-1">
+          <Badge variant="secondary">
+            {retrieval_scope === "library" ? "资料库" : "当前视频"}
+          </Badge>
+        </div>
         {attachments.length > 0 ? (
           <div className="px-2 pt-2">
             <AgentContextAttachments
@@ -356,13 +363,13 @@ function RetrievalScopeControl({
       <PopoverTrigger asChild>
         <Button
           type="button"
-          variant="secondary"
-          size="sm"
+          variant="ghost"
+          size="icon"
           className="rounded-full"
-          aria-label={`检索范围：${selected_option.label}`}
+          aria-label={`检索与权限：${selected_option.label}，${selected_permission_option.label}`}
+          title="检索与权限"
         >
-          <span>{selected_option.label}</span>
-          <ChevronDown data-icon="inline-end" />
+          <SlidersHorizontal />
         </Button>
       </PopoverTrigger>
       <PopoverContent
