@@ -143,6 +143,8 @@ export function AgentComposer({
   const submitting = pending || preparing_attachments;
   const control_id = useId();
   const [context_drop_active, set_context_drop_active] = useState(false);
+  const selected_permission_option =
+    find_permission_mode_option(permission_mode);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -193,9 +195,17 @@ export function AgentComposer({
             松开即可添加为可见上下文
           </p>
         ) : null}
-        <div className="flex min-w-0 items-center px-1 pt-1">
+        <div className="flex min-w-0 items-center gap-1 px-1 pt-1">
           <Badge variant="secondary">
             {retrieval_scope === "library" ? "资料库" : "当前视频"}
+          </Badge>
+          <Badge
+            variant={
+              permission_mode === "full_access" ? "destructive" : "outline"
+            }
+            aria-label={`权限状态：${selected_permission_option.label}`}
+          >
+            {selected_permission_option.label}
           </Badge>
         </div>
         {attachments.length > 0 ? (
@@ -353,11 +363,11 @@ function RetrievalScopeControl({
     (option) => option.value === retrieval_scope,
   );
   const selected_option = RETRIEVAL_SCOPE_OPTIONS[selected_index];
-  const selected_permission_index = PERMISSION_MODE_OPTIONS.findIndex(
-    (option) => option.value === permission_mode,
-  );
   const selected_permission_option =
-    PERMISSION_MODE_OPTIONS[selected_permission_index];
+    find_permission_mode_option(permission_mode);
+  const selected_permission_index = PERMISSION_MODE_OPTIONS.indexOf(
+    selected_permission_option,
+  );
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -517,6 +527,14 @@ function RetrievalScopeControl({
         ) : null}
       </PopoverContent>
     </Popover>
+  );
+}
+
+function find_permission_mode_option(permission_mode: AgentPermissionMode) {
+  return (
+    PERMISSION_MODE_OPTIONS.find(
+      (option) => option.value === permission_mode,
+    ) ?? PERMISSION_MODE_OPTIONS[1]
   );
 }
 

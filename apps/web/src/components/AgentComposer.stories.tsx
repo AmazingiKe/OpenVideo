@@ -81,7 +81,12 @@ export const Default: Story = {
     const scope_status = canvas.getByText("当前视频", {
       selector: '[data-slot="badge"]',
     });
+    const permission_status = canvas.getByLabelText("权限状态：仅风险询问");
     const composer = canvas.getByRole("textbox", { name: "助手指令" });
+    await expect(
+      scope_status.compareDocumentPosition(permission_status) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     await expect(
       scope_status.compareDocumentPosition(composer) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -118,6 +123,18 @@ export const Streaming: Story = {
     value: "继续补充一个例子",
     pending: true,
     on_cancel: fn(),
+  },
+};
+
+export const FullAccessStatus: Story = {
+  args: {
+    permission_mode: "full_access",
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText("权限状态：完全访问")).toHaveAttribute(
+      "data-variant",
+      "destructive",
+    );
   },
 };
 

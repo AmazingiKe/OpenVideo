@@ -152,6 +152,7 @@ describe("AgentComposer", () => {
     expect(
       screen.getByText("资料库", { selector: '[data-slot="badge"]' }),
     ).toBeVisible();
+    expect(screen.getByLabelText("权限状态：仅风险询问")).toBeVisible();
     expect(
       screen.getByRole("button", {
         name: "检索与权限：资料库，仅风险询问",
