@@ -44,8 +44,11 @@ type AgentPanelStateOptions = {
   asset_id: string | null;
   context: Record<string, unknown>;
   focus_context?: AgentFocusContext;
+  history_agent_ids?: readonly string[];
   models: AiModelSummary[];
   on_artifact_change?: (artifact: AgentArtifact) => void | Promise<void>;
+  on_session_change?: (agent_id: string, session_id: string | null) => void;
+  requested_session_id?: string | null;
   task_input: Record<string, unknown>;
   default_thinking_mode: AgentThinkingMode;
 };
@@ -60,11 +63,19 @@ export function use_agent_panel({
   asset_id,
   context,
   focus_context,
+  history_agent_ids,
   models,
   on_artifact_change,
+  on_session_change,
+  requested_session_id,
   task_input,
   default_thinking_mode,
 }: AgentPanelStateOptions) {
+  const history_agent_ids_key = useMemo(
+    () =>
+      [...new Set([agent_id, ...(history_agent_ids ?? [])])].sort().join("|"),
+    [agent_id, history_agent_ids],
+  );
   const scope_key = useMemo(
     () => (asset_id ? agent_scope_key(agent_id, asset_id) : "no-asset"),
     [agent_id, asset_id],
@@ -141,22 +152,55 @@ export function use_agent_panel({
       controller.abort();
       connection_ref.current?.abort();
     };
-  }, [agent_id, asset_id, default_thinking_mode, scope_key]);
+  }, [
+    agent_id,
+    asset_id,
+    default_thinking_mode,
+    history_agent_ids_key,
+    requested_session_id,
+    scope_key,
+  ]);
 
   async function restore_panel(asset: string, signal: AbortSignal) {
     try {
+      const visible_agent_ids = new Set(history_agent_ids_key.split("|"));
+      const session_filters =
+        visible_agent_ids.size > 1
+          ? { asset_id: asset }
+          : { agent_id, asset_id: asset };
       const [definitions, loaded_sessions] = await Promise.all([
         list_agent_definitions(signal),
-        list_agent_sessions({ agent_id, asset_id: asset }, signal),
+        list_agent_sessions(session_filters, signal),
       ]);
+      const visible_sessions = loaded_sessions.filter((session) =>
+        visible_agent_ids.has(session.agent_id),
+      );
       const next_definition = definitions.find(
         (item) => item.definition.agent_id === agent_id,
       );
       set_definition(next_definition ?? null);
-      set_sessions(loaded_sessions);
-      if (!loaded_sessions[0]) return;
+      set_sessions(visible_sessions);
+      if (requested_session_id === null) return;
+      const requested_session = requested_session_id
+        ? visible_sessions.find(
+            (session) => session.session_id === requested_session_id,
+          )
+        : visible_sessions[0];
+      if (!requested_session) return;
+      if (requested_session.agent_id !== agent_id && on_session_change) {
+        on_session_change(
+          requested_session.agent_id,
+          requested_session.session_id,
+        );
+        return;
+      }
+      const session_to_restore =
+        requested_session.agent_id === agent_id
+          ? requested_session
+          : visible_sessions.find((session) => session.agent_id === agent_id);
+      if (!session_to_restore) return;
       const restored = await get_agent_session(
-        loaded_sessions[0].session_id,
+        session_to_restore.session_id,
         signal,
       );
       set_state(restored);
@@ -194,6 +238,11 @@ export function use_agent_panel({
   }
 
   async function select_session(session_id: string) {
+    const session = sessions.find((item) => item.session_id === session_id);
+    if (session && on_session_change) {
+      on_session_change(session.agent_id, session.session_id);
+      return;
+    }
     connection_ref.current?.abort();
     set_submission(null);
     submission_ref.current = false;
@@ -229,6 +278,7 @@ export function use_agent_panel({
     set_last_content("");
     set_submission(null);
     submission_ref.current = false;
+    on_session_change?.(agent_id, null);
   }
 
   function submit(

@@ -90,7 +90,12 @@ export type AgentPanelProps = {
   models: AiModelSummary[];
   context?: Record<string, unknown>;
   focus_context?: AgentFocusContext;
+  history_agent_ids?: readonly string[];
+  // undefined 恢复最近会话，null 保持新会话，字符串恢复指定会话。
+  requested_session_id?: string | null;
+  on_session_change?: (agent_id: string, session_id: string | null) => void;
   task_input?: Record<string, unknown>;
+  task_submission_enabled?: boolean;
   context_attachments?: AgentContextAttachmentDraft[];
   default_thinking_mode?: AgentThinkingMode;
   thinking_modes_enabled?: boolean;
@@ -119,7 +124,11 @@ export function AgentPanel({
   models,
   context = {},
   focus_context,
+  history_agent_ids,
+  requested_session_id,
+  on_session_change,
   task_input = {},
+  task_submission_enabled = true,
   context_attachments = [],
   default_thinking_mode = "auto",
   thinking_modes_enabled = false,
@@ -188,8 +197,11 @@ export function AgentPanel({
     asset_id,
     context,
     focus_context,
+    history_agent_ids,
     models,
     on_artifact_change,
+    on_session_change,
+    requested_session_id,
     task_input,
     default_thinking_mode,
   });
@@ -579,9 +591,18 @@ export function AgentPanel({
             <Button
               type="button"
               onClick={() => void submit_current()}
-              disabled={busy || !definition.available || !model_id}
+              disabled={
+                busy ||
+                !definition.available ||
+                !model_id ||
+                !task_submission_enabled
+              }
             >
-              {submitting ? "正在启动" : "启动任务"}
+              {submitting
+                ? "正在启动"
+                : task_submission_enabled
+                  ? "启动任务"
+                  : "请先配置任务"}
             </Button>
           </div>
         ) : (

@@ -60,6 +60,14 @@ type TranscriptCorrectionTask = TranscriptCorrectionRequest & {
   segment_indices: number[] | null;
 };
 
+const MARKER_AGENT_ID = "marker";
+const TRANSCRIPT_CORRECTION_AGENT_ID = "transcript_correction";
+const MARKER_WORKSPACE_AGENT_IDS = [
+  MARKER_AGENT_ID,
+  TRANSCRIPT_CORRECTION_AGENT_ID,
+] as const;
+type MarkerWorkspaceAgentId = (typeof MARKER_WORKSPACE_AGENT_IDS)[number];
+
 const MediaTimeline = lazy(() =>
   import("@/features/workbench/MediaTimeline").then((module) => ({
     default: module.MediaTimeline,
@@ -108,6 +116,11 @@ export function MarkersPage() {
     useState<TranscriptCorrectionScope>("all");
   const [transcript_correction_task, set_transcript_correction_task] =
     useState<TranscriptCorrectionTask | null>(null);
+  const [assistant_agent_id, set_assistant_agent_id] =
+    useState<MarkerWorkspaceAgentId>(MARKER_AGENT_ID);
+  const [assistant_session_id, set_assistant_session_id] = useState<
+    string | null | undefined
+  >(undefined);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
@@ -168,6 +181,8 @@ export function MarkersPage() {
     set_transcript_correction_open(false);
     set_transcript_correction_scope("all");
     set_transcript_correction_task(null);
+    set_assistant_agent_id(MARKER_AGENT_ID);
+    set_assistant_session_id(undefined);
     set_candidate_markers([]);
     set_focus_selection(null);
     set_agent_context_attachments([]);
@@ -295,19 +310,31 @@ export function MarkersPage() {
     selected_transcript_indices,
     focus_selection,
   });
+  const transcript_agent_active =
+    assistant_agent_id === TRANSCRIPT_CORRECTION_AGENT_ID;
   const assistant_binding = {
-    agent_id: transcript_correction_task ? "transcript_correction" : "marker",
+    agent_id: assistant_agent_id,
     asset_id: selected_asset_id,
     focus_context,
+    history_agent_ids: MARKER_WORKSPACE_AGENT_IDS,
+    requested_session_id: assistant_session_id,
+    on_session_change: (agent_id: string, session_id: string | null) => {
+      if (!is_marker_workspace_agent_id(agent_id)) return;
+      set_assistant_agent_id(agent_id);
+      set_assistant_session_id(session_id);
+      set_transcript_correction_task(null);
+    },
     context_label: transcript_correction_task
       ? `字幕修正 · ${
           transcript_correction_task.scope === "selection"
             ? `已选择 ${transcript_correction_task.segment_indices?.length ?? 0} 条`
             : "全部字幕"
         }`
-      : selected_asset
-        ? `当前视频 · ${selected_asset.title}`
-        : "尚未选择视频",
+      : transcript_agent_active
+        ? "字幕处理会话"
+        : selected_asset
+          ? `当前视频 · ${selected_asset.title}`
+          : "尚未选择视频",
     task_input: transcript_correction_task
       ? {
           segment_indices: transcript_correction_task.segment_indices,
@@ -315,10 +342,12 @@ export function MarkersPage() {
           execution_mode: "automatic",
         }
       : {},
-    context_attachments: transcript_correction_task
+    task_submission_enabled:
+      !transcript_agent_active || transcript_correction_task !== null,
+    context_attachments: transcript_agent_active
       ? []
       : agent_context_attachments,
-    placeholder: transcript_correction_task
+    placeholder: transcript_agent_active
       ? undefined
       : "询问视频内容，或直接描述希望创建的标记…",
     panel_size_percent: settings.agent_panel_size_percent,
@@ -427,6 +456,8 @@ export function MarkersPage() {
   }
 
   function request_transcript_correction(request: TranscriptCorrectionRequest) {
+    set_assistant_agent_id(TRANSCRIPT_CORRECTION_AGENT_ID);
+    set_assistant_session_id(null);
     set_transcript_correction_task({
       ...request,
       segment_indices:
@@ -698,5 +729,13 @@ export function MarkersPage() {
       </div>
       {error ? <FloatingError message={error} /> : null}
     </>
+  );
+}
+
+function is_marker_workspace_agent_id(
+  agent_id: string,
+): agent_id is MarkerWorkspaceAgentId {
+  return MARKER_WORKSPACE_AGENT_IDS.some(
+    (workspace_agent_id) => workspace_agent_id === agent_id,
   );
 }
