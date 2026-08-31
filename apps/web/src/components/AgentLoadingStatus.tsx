@@ -38,7 +38,7 @@ export function AgentLoadingStatus({
       aria-label={label}
     >
       <span className="inline-flex items-center gap-2" aria-hidden="true">
-        <Loader variant="typing" size="sm" />
+        <Loader variant="typing" size="md" />
         <Loader variant="text-blink" size="sm" text={label} />
         <time
           className="font-mono text-xs text-muted-foreground tabular-nums"

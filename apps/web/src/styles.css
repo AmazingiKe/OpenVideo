@@ -127,9 +127,9 @@
     color-mix(in srgb, var(--foreground) 10%, transparent);
   --editor-shadow-large: 0 8px 24px
     color-mix(in srgb, var(--foreground) 14%, transparent);
-  --motion-loader-typing-duration: 1s;
+  --motion-loader-typing-duration: 800ms;
   --motion-loader-text-blink-duration: 2s;
-  --motion-loader-typing-delay: 250ms;
+  --motion-loader-typing-delay: 160ms;
 
   /* 播放器保持中性深色画布，时间线则通过独立语义 Token 跟随应用主题。 */
   --player-canvas-background: #000000;
@@ -948,7 +948,18 @@
   }
 
   50% {
-    transform: translateY(-2px);
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@keyframes prompt-kit-loader-typing-reduced {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
     opacity: 1;
   }
 }
@@ -984,7 +995,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .prompt-kit-loader-typing [data-slot="loader-dot"],
+  .prompt-kit-loader-typing [data-slot="loader-dot"] {
+    animation-name: prompt-kit-loader-typing-reduced;
+    animation-timing-function: step-end;
+    transform: none;
+  }
+
   .prompt-kit-loader-text-blink {
     animation: none;
   }
