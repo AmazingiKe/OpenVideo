@@ -23,12 +23,16 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: [
+      "@dnd-kit/dom",
+      "@dnd-kit/react",
       "@milkdown/kit/component/link-tooltip",
       "@milkdown/kit/core",
       "@milkdown/kit/preset/commonmark",
       "@milkdown/kit/preset/gfm",
       "@milkdown/kit/prose/commands",
       "@milkdown/kit/prose/schema-list",
+      "@tanstack/react-virtual",
+      "@viselect/react",
     ],
   },
   server: {

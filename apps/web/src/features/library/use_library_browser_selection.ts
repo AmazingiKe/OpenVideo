@@ -1,31 +1,17 @@
 import {
-  type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
-  type PointerEvent,
   useEffect,
   useRef,
   useState,
 } from "react";
 
 import type { LibraryFolder, MediaAsset } from "@/shared/types";
-import {
-  normalized_rectangle,
-  rectangles_intersect,
-  type SelectionRectangle,
-} from "./library_browser_geometry";
 
-type FocusedItem =
+export type LibraryFocusedItem =
   { kind: "folder"; id: string } | { kind: "video"; id: string } | null;
 
-type ContextTarget = "background" | FocusedItem;
-
-type MarqueeGesture = {
-  pointer_id: number;
-  start_x: number;
-  start_y: number;
-  base_selection: Set<string>;
-};
+type ContextTarget = "background" | LibraryFocusedItem;
 
 type LibraryBrowserSelectionOptions = {
   assets: MediaAsset[];
@@ -40,7 +26,6 @@ type LibraryBrowserSelectionOptions = {
 const SEARCH_INPUT_SELECTOR =
   'input, textarea, select, [contenteditable="true"]';
 const LIBRARY_ITEM_SELECTOR = '[data-library-item="true"]';
-const MARQUEE_DRAG_THRESHOLD_PX = 3;
 
 export function use_library_browser_selection({
   assets,
@@ -57,15 +42,10 @@ export function use_library_browser_selection({
   const [selected_asset_ids, set_selected_asset_ids] = useState<Set<string>>(
     new Set(),
   );
-  const [focused_item, set_focused_item] = useState<FocusedItem>(null);
+  const [focused_item, set_focused_item] = useState<LibraryFocusedItem>(null);
   const [context_target, set_context_target] =
     useState<ContextTarget>("background");
-  const [dragging_asset_ids, set_dragging_asset_ids] = useState<string[]>([]);
-  const [drop_folder_id, set_drop_folder_id] = useState<string | null>(null);
-  const [selection_rectangle, set_selection_rectangle] =
-    useState<SelectionRectangle | null>(null);
   const selection_anchor_id_ref = useRef<string | null>(null);
-  const marquee_gesture_ref = useRef<MarqueeGesture | null>(null);
 
   const all_visible_videos_selected =
     assets.length > 0 && selected_asset_ids.size === assets.length;
@@ -98,6 +78,16 @@ export function use_library_browser_selection({
   function clear_selection() {
     set_selected_folder_id(null);
     set_selected_asset_ids(new Set());
+    selection_anchor_id_ref.current = null;
+  }
+
+  function replace_video_selection(asset_ids: Iterable<string>) {
+    const visible_asset_ids = new Set(assets.map((asset) => asset.asset_id));
+    const next = new Set(
+      [...asset_ids].filter((asset_id) => visible_asset_ids.has(asset_id)),
+    );
+    set_selected_folder_id(null);
+    set_selected_asset_ids(next);
     selection_anchor_id_ref.current = null;
   }
 
@@ -165,7 +155,7 @@ export function use_library_browser_selection({
     );
   }
 
-  function open_focused_item(item: FocusedItem) {
+  function open_focused_item(item: LibraryFocusedItem) {
     if (!item) return;
     if (item.kind === "folder") {
       navigate_to_folder(item.id);
@@ -178,10 +168,11 @@ export function use_library_browser_selection({
   function handle_key_down(event: KeyboardEvent<HTMLDivElement>) {
     const target = event.target instanceof Element ? event.target : null;
     if (target?.matches(SEARCH_INPUT_SELECTOR)) return;
+    if (target?.closest("[data-library-drag-handle]")) return;
     const target_item = target?.closest<HTMLElement>(LIBRARY_ITEM_SELECTOR);
     const target_kind = target_item?.dataset.libraryKind;
     const target_id = target_item?.dataset.libraryId;
-    const keyboard_item: FocusedItem =
+    const keyboard_item: LibraryFocusedItem =
       target_id && (target_kind === "folder" || target_kind === "video")
         ? { kind: target_kind, id: target_id }
         : focused_item;
@@ -216,95 +207,16 @@ export function use_library_browser_selection({
     }
   }
 
-  function handle_pointer_down(event: PointerEvent<HTMLDivElement>) {
-    if (
-      event.button !== 0 ||
-      (event.pointerType && event.pointerType !== "mouse")
-    ) {
-      return;
-    }
-    const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest("[data-library-item]")) return;
-
-    event.preventDefault();
-    event.currentTarget.focus({ preventScroll: true });
-    const base_selection =
-      event.ctrlKey || event.metaKey
-        ? new Set(selected_asset_ids)
-        : new Set<string>();
-    marquee_gesture_ref.current = {
-      pointer_id: event.pointerId,
-      start_x: event.clientX,
-      start_y: event.clientY,
-      base_selection,
-    };
-    set_selected_folder_id(null);
-    set_selected_asset_ids(base_selection);
-    selection_anchor_id_ref.current = null;
-    set_selection_rectangle(null);
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  }
-
-  function handle_pointer_move(event: PointerEvent<HTMLDivElement>) {
-    const gesture = marquee_gesture_ref.current;
-    if (!gesture || gesture.pointer_id !== event.pointerId) return;
-    const horizontal_distance = Math.abs(event.clientX - gesture.start_x);
-    const vertical_distance = Math.abs(event.clientY - gesture.start_y);
-    if (
-      horizontal_distance < MARQUEE_DRAG_THRESHOLD_PX &&
-      vertical_distance < MARQUEE_DRAG_THRESHOLD_PX
-    ) {
-      return;
-    }
-
-    const selection_bounds = normalized_rectangle(
-      gesture.start_x,
-      gesture.start_y,
-      event.clientX,
-      event.clientY,
-    );
-    const container_bounds = event.currentTarget.getBoundingClientRect();
-    set_selection_rectangle({
-      left: selection_bounds.left - container_bounds.left,
-      top: selection_bounds.top - container_bounds.top,
-      width: selection_bounds.width,
-      height: selection_bounds.height,
-    });
-    const next = new Set(gesture.base_selection);
-    event.currentTarget
-      .querySelectorAll<HTMLElement>('[data-library-kind="video"]')
-      .forEach((card) => {
-        const asset_id = card.dataset.libraryId;
-        if (
-          asset_id &&
-          rectangles_intersect(selection_bounds, card.getBoundingClientRect())
-        ) {
-          next.add(asset_id);
-        }
-      });
-    set_selected_asset_ids(next);
-  }
-
-  function finish_marquee_selection(event: PointerEvent<HTMLDivElement>) {
-    const gesture = marquee_gesture_ref.current;
-    if (!gesture || gesture.pointer_id !== event.pointerId) return;
-    marquee_gesture_ref.current = null;
-    set_selection_rectangle(null);
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }
-
   function handle_context_menu(event: MouseEvent<HTMLDivElement>) {
     const target = event.target instanceof Element ? event.target : null;
-    const item = target?.closest<HTMLElement>("[data-library-item]");
+    const item = target?.closest<HTMLElement>(LIBRARY_ITEM_SELECTOR);
     const item_id = item?.dataset.libraryId;
     const item_kind = item?.dataset.libraryKind;
     if (!item_id || (item_kind !== "folder" && item_kind !== "video")) {
       set_context_target("background");
       return;
     }
-    const next_target = { kind: item_kind, id: item_id } as FocusedItem;
+    const next_target = { kind: item_kind, id: item_id } as LibraryFocusedItem;
     set_context_target(next_target);
     set_focused_item(next_target);
     if (item_kind === "folder") {
@@ -314,55 +226,21 @@ export function use_library_browser_selection({
     }
   }
 
-  function handle_video_drag_start(
-    event: DragEvent<HTMLButtonElement>,
-    asset: MediaAsset,
-  ) {
-    const dragged_ids = selected_asset_ids.has(asset.asset_id)
-      ? [...selected_asset_ids]
-      : [asset.asset_id];
-    if (!selected_asset_ids.has(asset.asset_id)) {
-      select_video(asset.asset_id, { additive: false, range: false });
-    }
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", asset.title);
-    set_dragging_asset_ids(dragged_ids);
-  }
-
-  function handle_folder_drag_over(
-    event: DragEvent<HTMLButtonElement>,
-    folder_id: string,
-  ) {
-    if (dragging_asset_ids.length === 0) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    set_drop_folder_id(folder_id);
-  }
-
   return {
     all_visible_videos_selected,
     clear_selection,
     context_asset,
     context_folder,
-    dragging_asset_ids,
-    drop_folder_id,
-    finish_marquee_selection,
     handle_context_menu,
-    handle_folder_drag_over,
     handle_key_down,
-    handle_pointer_down,
-    handle_pointer_move,
-    handle_video_drag_start,
     navigate_to_folder,
     navigate_to_parent,
+    replace_video_selection,
     select_all_videos,
     select_folder,
     select_video,
     selected_asset_ids,
     selected_folder_id,
-    selection_rectangle,
-    set_dragging_asset_ids,
-    set_drop_folder_id,
     set_focused_item,
   };
 }

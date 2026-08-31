@@ -11,7 +11,7 @@ import {
 import { error_message } from "@/shared/errors";
 import type { LibraryFolder, MediaAsset } from "@/shared/types";
 import type { FolderEditor, MoveTarget } from "./LibraryBrowserDialogs";
-import { has_descendants } from "./library_browser_geometry";
+import { has_descendants } from "./library_folder_tree";
 
 type LibraryBrowserMutationOptions = {
   assets: MediaAsset[];
@@ -127,8 +127,10 @@ export function use_library_browser_mutations({
       await move_assets(asset_ids, folder_id);
       clear_selection();
       await refresh_library();
+      return true;
     } catch (error) {
       set_operation_error(error_message(error));
+      return false;
     } finally {
       set_submitting(false);
     }

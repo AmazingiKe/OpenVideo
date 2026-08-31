@@ -74,3 +74,23 @@ export const STORY_ASSETS: MediaAsset[] = [
     updated_at: "2026-01-02T00:00:00Z",
   },
 ];
+
+export function create_large_library_story_assets(count: number): MediaAsset[] {
+  return Array.from({ length: count }, (_, index) => {
+    const item_number = index + 1;
+    const suffix = item_number.toString(16).padStart(12, "0");
+    return {
+      ...STORY_ASSETS[index % STORY_ASSETS.length],
+      asset_id: `019c0000-0000-7000-8000-${suffix}`,
+      folder_id: null,
+      source_video_id: `STORY${item_number.toString().padStart(8, "0")}`,
+      title: `大型资料库视频 ${item_number.toLocaleString("zh-CN")}`,
+      created_at: new Date(
+        Date.UTC(2026, 0, 1, 0, 0, item_number),
+      ).toISOString(),
+      updated_at: new Date(
+        Date.UTC(2026, 0, 1, 0, 0, item_number),
+      ).toISOString(),
+    };
+  });
+}

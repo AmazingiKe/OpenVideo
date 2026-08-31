@@ -9,7 +9,7 @@ import {
   DEFAULT_THUMBNAIL_SIZE_PX,
   type SortValue,
 } from "./LibraryBrowserToolbar";
-import { folder_ancestors } from "./library_browser_geometry";
+import { folder_ancestors } from "./library_folder_tree";
 
 const EMPTY_FOLDERS: LibraryFolder[] = [];
 const EMPTY_ASSETS: MediaAsset[] = [];

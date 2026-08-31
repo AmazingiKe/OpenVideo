@@ -1,4 +1,4 @@
-import { type CSSProperties, type DragEvent, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   CheckSquare,
   FolderInput,
@@ -32,11 +32,8 @@ import {
 import { cn } from "@/lib/utils";
 import { error_message } from "@/shared/errors";
 import type { MediaAsset } from "@/shared/types";
-import {
-  FolderItem,
-  LibraryBrowserSkeleton,
-  VideoItem,
-} from "./LibraryBrowserItems";
+import { LibraryBrowserSkeleton } from "./LibraryBrowserItems";
+import { LibraryBrowserViewport } from "./LibraryBrowserViewport";
 import { LibraryBrowserDialogs } from "./LibraryBrowserDialogs";
 import { LibraryBrowserToolbar } from "./LibraryBrowserToolbar";
 import { use_library_browser_data } from "./use_library_browser_data";
@@ -81,6 +78,17 @@ export function LibraryBrowser({
     visible_item_count,
   } = use_library_browser_data(compact, initial_folder_id);
   const [operation_error, set_operation_error] = useState<string | null>(null);
+  const [scroll_element, set_scroll_element] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const scroll_element_ref = useRef<HTMLDivElement | null>(null);
+  const set_scroll_element_ref = useCallback(
+    (element: HTMLDivElement | null) => {
+      scroll_element_ref.current = element;
+      set_scroll_element(element);
+    },
+    [],
+  );
 
   async function open_asset(asset: MediaAsset) {
     if (asset.status !== "ready") return;
@@ -97,25 +105,16 @@ export function LibraryBrowser({
     clear_selection,
     context_asset,
     context_folder,
-    dragging_asset_ids,
-    drop_folder_id,
-    finish_marquee_selection,
     handle_context_menu,
-    handle_folder_drag_over,
     handle_key_down,
-    handle_pointer_down,
-    handle_pointer_move,
-    handle_video_drag_start,
     navigate_to_folder,
     navigate_to_parent,
+    replace_video_selection,
     select_all_videos,
     select_folder,
     select_video,
     selected_asset_ids,
     selected_folder_id,
-    selection_rectangle,
-    set_dragging_asset_ids,
-    set_drop_folder_id,
     set_focused_item,
   } = use_library_browser_selection({
     assets,
@@ -160,18 +159,6 @@ export function LibraryBrowser({
     set_operation_error,
   });
 
-  async function handle_folder_drop(
-    event: DragEvent<HTMLButtonElement>,
-    folder_id: string,
-  ) {
-    if (dragging_asset_ids.length === 0) return;
-    event.preventDefault();
-    const asset_ids = dragging_asset_ids;
-    set_drop_folder_id(null);
-    set_dragging_asset_ids([]);
-    await move_assets_to_folder(asset_ids, folder_id);
-  }
-
   return (
     <section
       className={cn(
@@ -215,14 +202,11 @@ export function LibraryBrowser({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
-            className="relative min-h-0 flex-1 overflow-auto rounded-xl outline-none select-none focus-visible:ring-2 focus-visible:ring-focus-subtle"
+            ref={set_scroll_element_ref}
+            className="relative min-h-0 flex-1 overflow-auto overscroll-contain rounded-xl outline-none select-none focus-visible:ring-2 focus-visible:ring-focus-subtle"
             role="region"
             aria-label="视频库项目"
             tabIndex={0}
-            onPointerDown={handle_pointer_down}
-            onPointerMove={handle_pointer_move}
-            onPointerUp={finish_marquee_selection}
-            onPointerCancel={finish_marquee_selection}
             onContextMenu={handle_context_menu}
           >
             <p className="sr-only" aria-live="polite">
@@ -256,76 +240,26 @@ export function LibraryBrowser({
                 </EmptyHeader>
               </Empty>
             ) : (
-              <div
-                className={cn(
-                  "pb-2",
-                  view_mode === "grid" ? "grid gap-3" : "flex flex-col gap-2",
-                )}
-                style={
-                  view_mode === "grid"
-                    ? ({
-                        gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${thumbnail_size}px), 1fr))`,
-                      } satisfies CSSProperties)
-                    : undefined
-                }
-              >
-                {direct_folders.map((folder) => (
-                  <FolderItem
-                    key={folder.folder_id}
-                    folder={folder}
-                    view_mode={view_mode}
-                    selected={selected_folder_id === folder.folder_id}
-                    drop_active={drop_folder_id === folder.folder_id}
-                    on_click={select_folder}
-                    on_focus={() =>
-                      set_focused_item({
-                        kind: "folder",
-                        id: folder.folder_id,
-                      })
-                    }
-                    on_open={navigate_to_folder}
-                    on_drag_over={handle_folder_drag_over}
-                    on_drag_leave={() => set_drop_folder_id(null)}
-                    on_drop={handle_folder_drop}
-                  />
-                ))}
-                {assets.map((asset) => (
-                  <VideoItem
-                    key={asset.asset_id}
-                    asset={asset}
-                    view_mode={view_mode}
-                    compact={compact}
-                    current={asset.asset_id === current_video_id}
-                    selected={selected_asset_ids.has(asset.asset_id)}
-                    dragging={dragging_asset_ids.includes(asset.asset_id)}
-                    on_click={(event) =>
-                      select_video(asset.asset_id, {
-                        additive: event.ctrlKey || event.metaKey,
-                        range: event.shiftKey,
-                      })
-                    }
-                    on_focus={() =>
-                      set_focused_item({ kind: "video", id: asset.asset_id })
-                    }
-                    on_open={() => void open_asset(asset)}
-                    on_drag_start={(event) =>
-                      handle_video_drag_start(event, asset)
-                    }
-                    on_drag_end={() => {
-                      set_dragging_asset_ids([]);
-                      set_drop_folder_id(null);
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-            {selection_rectangle ? (
-              <div
-                className="pointer-events-none absolute rounded-sm border border-primary bg-primary-muted"
-                style={selection_rectangle satisfies CSSProperties}
-                aria-hidden="true"
+              <LibraryBrowserViewport
+                assets={assets}
+                compact={compact}
+                current_video_id={current_video_id}
+                direct_folders={direct_folders}
+                scroll_element={scroll_element}
+                scroll_element_ref={scroll_element_ref}
+                selected_asset_ids={selected_asset_ids}
+                selected_folder_id={selected_folder_id}
+                thumbnail_size={thumbnail_size}
+                view_mode={view_mode}
+                move_assets_to_folder={move_assets_to_folder}
+                navigate_to_folder={navigate_to_folder}
+                open_asset={open_asset}
+                replace_video_selection={replace_video_selection}
+                select_folder={select_folder}
+                select_video={select_video}
+                set_focused_item={set_focused_item}
               />
-            ) : null}
+            )}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>

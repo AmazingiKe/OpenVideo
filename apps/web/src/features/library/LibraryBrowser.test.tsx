@@ -125,10 +125,20 @@ describe("LibraryBrowser", () => {
     const course = screen.getByRole("button", { name: "课程，2 个视频" });
 
     fireEvent.click(first);
-    fireEvent.click(second, { ctrlKey: true });
+    fireEvent.click(second, { shiftKey: true });
     expect(first).toHaveAttribute("aria-pressed", "true");
     expect(second).toHaveAttribute("aria-pressed", "true");
     expect(screen.getAllByText("已选择 2 个视频")).toHaveLength(2);
+
+    fireEvent.keyDown(screen.getByRole("region", { name: "视频库项目" }), {
+      key: "a",
+      ctrlKey: true,
+    });
+    expect(first).toHaveAttribute("aria-pressed", "false");
+    expect(second).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(first);
+    fireEvent.click(second, { ctrlKey: true });
 
     fireEvent.click(course);
     expect(course).toHaveAttribute("aria-pressed", "true");
@@ -220,55 +230,47 @@ describe("LibraryBrowser", () => {
     });
     const first = await screen.findByRole("button", { name: /未分类访谈/ });
     const second = await screen.findByRole("button", { name: /未分类花絮/ });
+    const first_card = first.closest<HTMLElement>("[data-library-item]");
+    const second_card = second.closest<HTMLElement>("[data-library-item]");
+    if (!first_card || !second_card) throw new Error("视频卡片未挂载");
     vi.spyOn(selection_region, "getBoundingClientRect").mockReturnValue(
       dom_rectangle(0, 0, 600, 400),
     );
-    vi.spyOn(first, "getBoundingClientRect").mockReturnValue(
+    vi.spyOn(first_card, "getBoundingClientRect").mockReturnValue(
       dom_rectangle(20, 20, 180, 180),
     );
-    vi.spyOn(second, "getBoundingClientRect").mockReturnValue(
+    vi.spyOn(second_card, "getBoundingClientRect").mockReturnValue(
       dom_rectangle(320, 20, 480, 180),
     );
 
-    fireEvent.pointerDown(selection_region, {
+    fireEvent.mouseDown(selection_region, {
       button: 0,
-      pointerId: 2,
-      pointerType: "mouse",
       clientX: 0,
       clientY: 0,
     });
-    fireEvent.pointerMove(selection_region, {
-      pointerId: 2,
-      pointerType: "mouse",
+    fireEvent.mouseMove(document, {
       clientX: 220,
       clientY: 220,
     });
-    expect(first).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(first).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.mouseUp(document, { clientX: 220, clientY: 220 });
     expect(second).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("moves every selected video by dragging it onto a folder", async () => {
+  it("keeps a keyboard-accessible move action beside drag handles", async () => {
     render_browser();
     const first = await screen.findByRole("button", { name: /未分类访谈/ });
     const second = screen.getByRole("button", { name: /未分类花絮/ });
     fireEvent.click(first);
     fireEvent.click(second, { ctrlKey: true });
-    const data_transfer = {
-      effectAllowed: "none",
-      dropEffect: "none",
-      setData: vi.fn(),
-    };
-    fireEvent.dragStart(first, { dataTransfer: data_transfer });
-    const target = screen.getByRole("button", { name: "课程，2 个视频" });
-    fireEvent.dragOver(target, { dataTransfer: data_transfer });
-    fireEvent.drop(target, { dataTransfer: data_transfer });
+    expect(
+      screen.getAllByRole("button", { name: "拖动所选视频" }),
+    ).toHaveLength(2);
 
-    await waitFor(() =>
-      expect(move_assets).toHaveBeenCalledWith(
-        [ROOT_ASSET_ID, SECOND_ROOT_ASSET_ID],
-        COURSE_ID,
-      ),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "移动" }));
+    expect(
+      await screen.findByRole("dialog", { name: "移动视频" }),
+    ).toBeVisible();
   });
 
   it("creates and renames folders from the shared management UI", async () => {

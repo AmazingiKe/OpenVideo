@@ -1485,3 +1485,17 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+.library_browser_selection_area {
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: var(--primary-muted);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library_browser_selection_surface * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
