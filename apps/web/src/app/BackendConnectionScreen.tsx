@@ -20,13 +20,27 @@ export function BackendConnectionScreen({
   return (
     <main className="grid min-h-svh place-items-center bg-background px-4 py-8 text-foreground">
       <Empty
-        className="max-w-lg"
+        key={state}
+        className="max-w-lg motion-safe:animate-in motion-safe:duration-300 motion-safe:fade-in-0 motion-safe:zoom-in-95"
         role={checking ? "status" : "alert"}
         aria-live={checking ? "polite" : "assertive"}
       >
         <EmptyHeader>
-          <EmptyMedia variant="icon">
-            {checking ? <Spinner /> : <ServerOff aria-hidden="true" />}
+          <EmptyMedia className="relative" variant="icon">
+            {checking ? (
+              <Spinner className="motion-reduce:animate-none" />
+            ) : (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-0 rounded-lg ring-1 ring-current motion-safe:animate-ping"
+                />
+                <ServerOff
+                  aria-hidden="true"
+                  className="motion-safe:animate-pulse"
+                />
+              </>
+            )}
           </EmptyMedia>
           <EmptyTitle role="heading" aria-level={1}>
             {checking ? "正在连接后端" : "后端未启动"}
