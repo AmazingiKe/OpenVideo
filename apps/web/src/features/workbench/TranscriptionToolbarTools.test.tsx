@@ -60,6 +60,31 @@ describe("TranscriptionToolbarTools", () => {
     expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
   });
 
+  it("allows the task language to use automatic detection", () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const start_transcription = vi.fn();
+    render_tools({ start_transcription, has_transcript: false });
+
+    fireEvent.click(screen.getByRole("button", { name: "转录" }));
+    const language_trigger = screen.getByRole("combobox", {
+      name: "音频语言",
+    });
+    language_trigger.hasPointerCapture = () => false;
+    language_trigger.setPointerCapture = vi.fn();
+    language_trigger.releasePointerCapture = vi.fn();
+    fireEvent.pointerDown(language_trigger, {
+      button: 0,
+      pointerType: "mouse",
+    });
+    fireEvent.click(screen.getByRole("option", { name: "自动检测" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成转录" }));
+
+    expect(start_transcription).toHaveBeenCalledWith({
+      ...DEFAULT_TRANSCRIPTION,
+      language: null,
+    });
+  });
+
   it("allows an existing transcript to be regenerated", () => {
     const start_transcription = vi.fn();
     render_tools({ start_transcription });

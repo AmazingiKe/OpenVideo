@@ -52,8 +52,18 @@ vi.mock("@vidstack/react", () => ({
 }));
 
 vi.mock("@vidstack/react/player/layouts/plyr", () => ({
-  PlyrLayout: ({ controls }: { controls: string[] }) => (
-    <div data-testid="plyr-layout" data-controls={controls.join(",")} />
+  PlyrLayout: ({
+    controls,
+    invertTime,
+  }: {
+    controls: string[];
+    invertTime: boolean;
+  }) => (
+    <div
+      data-testid="plyr-layout"
+      data-controls={controls.join(",")}
+      data-invert-time={String(invertTime)}
+    />
   ),
   plyrLayoutIcons: {},
 }));
@@ -79,6 +89,10 @@ describe("Player", () => {
     expect(screen.getByTestId("plyr-layout")).toHaveAttribute(
       "data-controls",
       "play,progress,current-time,mute+volume,captions,settings,pip,airplay,fullscreen",
+    );
+    expect(screen.getByTestId("plyr-layout")).toHaveAttribute(
+      "data-invert-time",
+      "false",
     );
   });
 

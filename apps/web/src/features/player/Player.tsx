@@ -269,6 +269,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
           markers={plyr_markers}
           thumbnails={plyr_thumbnails}
           controls={PLAYER_CONTROLS}
+          invertTime={false}
         />
         <PlayerStateBridge
           on_player_ready={on_player_ready}

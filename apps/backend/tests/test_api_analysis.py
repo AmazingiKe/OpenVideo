@@ -60,6 +60,7 @@ def create_client(tmp_path: Path) -> TestClient:
             source_platform=SourcePlatform.BILIBILI,
             source_video_id="BV1xx411c7mD",
             title="测试视频",
+            duration_seconds=60,
             status=MediaAssetStatus.READY,
             playback_path="playback.mp4",
         )
@@ -243,6 +244,84 @@ def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
     assert response.status_code == 202
     assert response.json()["operation"] == "transcription"
     assert response.json()["job_id"].startswith("job-")
+
+
+def test_transcription_defaults_to_automatic_language_detection(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        analysis_manager_module,
+        "transcribe_media",
+        lambda *args, **kwargs: TranscriptionResult(
+            transcript=Transcript(asset_id=ASSET_ID, language="en"),
+            output_source="faster-whisper",
+        ),
+    )
+    with create_client(tmp_path) as client:
+        model_directory = tmp_path / "models" / "faster-whisper" / "small"
+        model_directory.mkdir(parents=True)
+        (model_directory / "model.bin").write_bytes(b"model")
+        created = client.post(f"/api/media/assets/{ASSET_ID}/transcribe").json()
+        completed = wait_for_analysis_job(client, created["job_id"])
+        metadata = client.app.state.library.load_transcription_metadata(ASSET_ID)
+
+    assert completed["stage"] == "complete"
+    assert metadata is not None
+    assert metadata.options.language is None
+
+
+def test_transcription_clamps_segments_to_media_duration(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        analysis_manager_module,
+        "transcribe_media",
+        lambda *args, **kwargs: TranscriptionResult(
+            transcript=Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(
+                        start_seconds=55,
+                        end_seconds=65,
+                        text="结尾片段",
+                    ),
+                    TranscriptSegment(
+                        start_seconds=61,
+                        end_seconds=62,
+                        text="越界片段",
+                    ),
+                ],
+            ),
+            output_source="faster-whisper",
+        ),
+    )
+    with create_client(tmp_path) as client:
+        model_directory = tmp_path / "models" / "faster-whisper" / "small"
+        model_directory.mkdir(parents=True)
+        (model_directory / "model.bin").write_bytes(b"model")
+        created = client.post(f"/api/media/assets/{ASSET_ID}/transcribe").json()
+        completed = wait_for_analysis_job(client, created["job_id"])
+        transcript = client.get(f"/api/media/assets/{ASSET_ID}/transcript").json()
+
+    assert completed["stage"] == "complete"
+    assert transcript["segments"] == [
+        {
+            "start_seconds": 55.0,
+            "end_seconds": 60.0,
+            "text": "结尾片段",
+            "emotion": None,
+            "audio_events": [],
+        }
+    ]
+
+
+def test_transcription_rejects_unrelated_active_initialization(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        created = client.app.state.analysis_manager.create_initialization(ASSET_ID)
+        response = client.post(f"/api/media/assets/{ASSET_ID}/transcribe")
+
+    assert created.operation.value == "initialization"
+    assert response.status_code == 409
+    assert response.json()["detail"] == "后台初始化正在运行，完成后再开始转录"
 
 
 def test_transcription_reports_real_audio_progress_and_latest_text(

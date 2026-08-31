@@ -58,6 +58,7 @@ from openvideo.core.summary_models import (
     SummaryVersion,
 )
 from openvideo.core.summary_presets import require_summary_preset
+from openvideo.core.transcription_models import TranscriptSegment
 from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.settings import Settings
 from openvideo.tools.llm import LlmCompletionError, complete_text
@@ -90,6 +91,18 @@ SUMMARY_JSON_RETRY_INSTRUCTION = (
     "总长度、允许路径和 JSON 结构；优先压缩措辞，必须返回完整闭合的 JSON。"
 )
 EXPORT_FILE_NAME_TIME_FORMAT = "%Y%m%d-%H%M%S-%f"
+SECONDS_PER_MINUTE = 60
+SUMMARY_DECIMAL_EVIDENCE_PATTERN = re.compile(
+    r"\\?\[(?P<start>\d+(?:\.\d+)?)\s*[-–—]\s*"
+    r"(?P<end>\d+(?:\.\d+)?)\\?\]"
+)
+SUMMARY_TIMESTAMP_RANGE_PATTERN = re.compile(
+    r"(?:【|\[)(?P<start_minutes>\d+):(?P<start_seconds>[0-5]\d)\s*"
+    r"[-–—]\s*(?P<end_minutes>\d+):(?P<end_seconds>[0-5]\d)(?:】|\])"
+    r"|(?P<label_start_minutes>\d+):(?P<label_start_seconds>[0-5]\d)\s*"
+    r"[-–—]\s*(?P<label_end_minutes>\d+):(?P<label_end_seconds>[0-5]\d)"
+    r"\s*(?:区域|片段|段落)"
+)
 
 SummaryModelT = TypeVar("SummaryModelT", bound=BaseModel)
 
@@ -324,13 +337,17 @@ class SummaryManager:
                 lambda result: _validate_body_contract(
                     result,
                     set(allowed_paths),
+                    asset.duration_seconds,
                 ),
             )
         except (LlmCompletionError, ValidationError, ValueError) as error:
             raise SummaryError(f"总结正文输出无效：{error}") from error
         markdown_by_path = {
             document.relative_path: _sanitize_markdown_links(
-                document.markdown,
+                _normalize_summary_evidence_ranges(
+                    document.markdown,
+                    asset.duration_seconds,
+                ),
                 document.relative_path,
                 set(allowed_paths),
             )
@@ -1013,18 +1030,25 @@ class SummaryManager:
             and analysis.status == EventAnalysisStatus.VALID
         ]
         transcript_values = [
-            segment.model_dump(mode="json") for segment in transcript.segments
+            _summary_transcript_value(segment) for segment in transcript.segments
         ]
         marker_values = []
         for marker in markers:
             excerpts = [
-                segment.model_dump(mode="json")
+                _summary_transcript_value(segment)
                 for segment in transcript.segments
                 if segment.end_seconds > marker.start_seconds
                 and segment.start_seconds < marker.end_seconds
             ]
             marker_values.append(
-                {**marker.model_dump(mode="json"), "transcript": excerpts}
+                {
+                    **marker.model_dump(mode="json"),
+                    "time_range": _summary_time_range(
+                        marker.start_seconds,
+                        marker.end_seconds,
+                    ),
+                    "transcript": excerpts,
+                }
             )
         analysis_values = [analysis.model_dump(mode="json") for analysis in analyses]
         context = (
@@ -1319,6 +1343,9 @@ def _body_messages(
                 "正文中的每个事实都必须由所给上下文直接支持。不得用常识补全或改写"
                 "人名、机构、日期、数字和作品名；转录不清或证据冲突时必须省略或明确"
                 "标注不确定。"
+                "上下文中的 start_seconds 与 end_seconds 单位都是秒；引用视频时间时必须"
+                "原样使用 time_range 字段并写成【MM:SS–MM:SS】，不得把秒数解释成分钟，"
+                "也不得输出 [143.86-148.86] 一类裸数字区间。"
                 "不要生成图片、截图链接或图片占位符，配图由独立任务处理。"
             ),
         },
@@ -1434,6 +1461,7 @@ def _limit_summary_plan(plan: SummaryPlan, detail: SummaryDetail) -> SummaryPlan
 def _validate_body_contract(
     body: SummaryBody,
     allowed_paths: set[str],
+    duration_seconds: float | None,
 ) -> None:
     generated_paths = [document.relative_path for document in body.documents]
     if (
@@ -1441,6 +1469,85 @@ def _validate_body_contract(
         or set(generated_paths) != allowed_paths
     ):
         raise ValueError("总结正文必须覆盖后端预分配的完整路径表")
+    for document in body.documents:
+        _validate_summary_evidence_ranges(document.markdown, duration_seconds)
+
+
+def _summary_transcript_value(segment: TranscriptSegment) -> dict:
+    return {
+        **segment.model_dump(mode="json"),
+        "time_range": _summary_time_range(
+            segment.start_seconds,
+            segment.end_seconds,
+        ),
+    }
+
+
+def _summary_time_range(start_seconds: float, end_seconds: float) -> str:
+    return f"{_summary_timestamp(start_seconds)}–{_summary_timestamp(end_seconds)}"
+
+
+def _summary_timestamp(seconds: float) -> str:
+    whole_seconds = max(int(seconds), 0)
+    minutes, remaining_seconds = divmod(whole_seconds, SECONDS_PER_MINUTE)
+    return f"{minutes:02d}:{remaining_seconds:02d}"
+
+
+def _validate_summary_evidence_ranges(
+    markdown: str,
+    duration_seconds: float | None,
+) -> None:
+    if duration_seconds is None or duration_seconds <= 0:
+        return
+    for match in SUMMARY_DECIMAL_EVIDENCE_PATTERN.finditer(markdown):
+        _require_summary_range_within_duration(
+            float(match.group("start")),
+            float(match.group("end")),
+            duration_seconds,
+        )
+    for match in SUMMARY_TIMESTAMP_RANGE_PATTERN.finditer(markdown):
+        start_minutes = match.group("start_minutes") or match.group(
+            "label_start_minutes"
+        )
+        start_seconds = match.group("start_seconds") or match.group(
+            "label_start_seconds"
+        )
+        end_minutes = match.group("end_minutes") or match.group("label_end_minutes")
+        end_seconds = match.group("end_seconds") or match.group("label_end_seconds")
+        assert start_minutes and start_seconds and end_minutes and end_seconds
+        _require_summary_range_within_duration(
+            int(start_minutes) * SECONDS_PER_MINUTE + int(start_seconds),
+            int(end_minutes) * SECONDS_PER_MINUTE + int(end_seconds),
+            duration_seconds,
+        )
+
+
+def _require_summary_range_within_duration(
+    start_seconds: float,
+    end_seconds: float,
+    duration_seconds: float,
+) -> None:
+    if start_seconds > end_seconds or end_seconds > duration_seconds:
+        raise ValueError("总结引用的视频时间超出素材范围")
+
+
+def _normalize_summary_evidence_ranges(
+    markdown: str,
+    duration_seconds: float | None,
+) -> str:
+    _validate_summary_evidence_ranges(markdown, duration_seconds)
+
+    def replace_decimal_range(match: re.Match[str]) -> str:
+        return (
+            "【"
+            + _summary_time_range(
+                float(match.group("start")),
+                float(match.group("end")),
+            )
+            + "】"
+        )
+
+    return SUMMARY_DECIMAL_EVIDENCE_PATTERN.sub(replace_decimal_range, markdown)
 
 
 MARKDOWN_LINK_PATTERN = re.compile(

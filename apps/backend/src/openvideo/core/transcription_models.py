@@ -222,7 +222,7 @@ def find_transcription_model(
 class TranscriptionOptions(BaseModel):
     engine: TranscriptionEngine = TranscriptionEngine.FASTER_WHISPER
     model: str = "small"
-    language: str | None = "zh"
+    language: str | None = None
     device: TranscriptionDevice = TranscriptionDevice.CPU
     compute_type: TranscriptionComputeType = TranscriptionComputeType.INT8
 
@@ -268,6 +268,12 @@ class TranscriptSegment(BaseModel):
     text: str
     emotion: TranscriptEmotion | None = None
     audio_events: list[TranscriptAudioEvent] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "TranscriptSegment":
+        if self.end_seconds < self.start_seconds:
+            raise ValueError("转录片段结束时间不能早于开始时间")
+        return self
 
 
 class Transcript(BaseModel):

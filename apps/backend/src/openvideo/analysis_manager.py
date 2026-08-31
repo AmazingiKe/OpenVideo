@@ -80,6 +80,25 @@ def _transcription_duration_label(seconds: float) -> str:
     return f"{minutes:02d}:{remaining_seconds:02d}"
 
 
+def _bound_transcript_to_media(
+    transcript: Transcript,
+    duration_seconds: float | None,
+) -> Transcript:
+    """ASR 时间戳允许轻微越界，但持久化证据必须落在真实媒体范围内。"""
+
+    if duration_seconds is None or duration_seconds <= 0:
+        return transcript
+    bounded_segments = []
+    for segment in transcript.segments:
+        if segment.start_seconds >= duration_seconds:
+            continue
+        end_seconds = min(segment.end_seconds, duration_seconds)
+        if end_seconds <= segment.start_seconds:
+            continue
+        bounded_segments.append(segment.model_copy(update={"end_seconds": end_seconds}))
+    return transcript.model_copy(update={"segments": bounded_segments})
+
+
 class AnalysisError(RuntimeError):
     """分析任务无法创建或执行时抛出。"""
 
@@ -169,6 +188,17 @@ class AnalysisManager:
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法转录")
+        active_job = self._active_job_for(asset_id)
+        if active_job:
+            if active_job.operation == AnalysisOperation.TRANSCRIPTION:
+                return active_job
+            operation_label = {
+                AnalysisOperation.ANALYSIS: "内容分析",
+                AnalysisOperation.INITIALIZATION: "后台初始化",
+            }[active_job.operation]
+            raise AnalysisPrerequisiteError(
+                f"{operation_label}正在运行，完成后再开始转录"
+            )
         try:
             descriptor = require_transcription_adapter(options)
             require_transcription_model_installed(
@@ -177,9 +207,6 @@ class AnalysisManager:
             )
         except (TranscriptionFailure, TranscriptionModelDownloadError) as error:
             raise AnalysisPrerequisiteError(str(error)) from error
-        active_job = self._active_job_for(asset_id)
-        if active_job:
-            return active_job
         existing_transcript = self.library.load_transcript(asset_id)
         if existing_transcript is not None and not force:
             return AnalysisJob(
@@ -506,7 +533,10 @@ class AnalysisManager:
                             self._transcription_context(asset),
                         ),
                     )
-                    transcript = transcription_result.transcript
+                    transcript = _bound_transcript_to_media(
+                        transcription_result.transcript,
+                        asset.duration_seconds,
+                    )
                     self._update_job(
                         job_id,
                         AnalysisStage.TRANSCRIBING,

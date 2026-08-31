@@ -29,7 +29,10 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { transcription_runtime_profile } from "@/shared/transcription";
+import {
+  TRANSCRIPTION_LANGUAGE_OPTIONS,
+  transcription_runtime_profile,
+} from "@/shared/transcription";
 import {
   type MediaAsset,
   type TranscriptionModelDescriptor,
@@ -163,6 +166,40 @@ export function TranscriptionToolbarTools({
                   {transcription_options.compute_type}。
                 </FieldDescription>
               ) : null}
+            </Field>
+            <Field
+              data-disabled={
+                !transcription_options || is_transcribing || undefined
+              }
+            >
+              <FieldLabel htmlFor="transcription_language">音频语言</FieldLabel>
+              <Select
+                value={transcription_options?.language ?? "auto"}
+                onValueChange={(language) => {
+                  if (!transcription_options) return;
+                  set_transcription_options({
+                    ...transcription_options,
+                    language: language === "auto" ? null : language,
+                  });
+                }}
+                disabled={!transcription_options || is_transcribing}
+              >
+                <SelectTrigger id="transcription_language" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {TRANSCRIPTION_LANGUAGE_OPTIONS.map((language) => (
+                      <SelectItem key={language.value} value={language.value}>
+                        {language.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                不确定音频语言时使用自动检测，明确语言时可按本次任务覆盖。
+              </FieldDescription>
             </Field>
           </FieldGroup>
           {selected_transcription_model &&

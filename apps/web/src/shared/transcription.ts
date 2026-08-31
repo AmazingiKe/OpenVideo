@@ -4,6 +4,13 @@ import type {
   TranscriptionModelDescriptor,
 } from "./types";
 
+export const TRANSCRIPTION_LANGUAGE_OPTIONS = [
+  { value: "auto", label: "自动检测" },
+  { value: "zh", label: "中文" },
+  { value: "en", label: "英语" },
+  { value: "yue", label: "粤语" },
+] as const;
+
 export type TranscriptionRuntimeProfile = {
   devices: readonly TranscriptionDevice[];
   compute_types: readonly TranscriptionComputeType[];

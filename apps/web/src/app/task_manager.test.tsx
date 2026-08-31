@@ -6,10 +6,14 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetCatalogProvider } from "@/app/asset_catalog";
-import { ApplicationQueryProvider } from "@/app/query_cache";
+import {
+  ApplicationQueryProvider,
+  RESOURCE_QUERY_KEYS,
+} from "@/app/query_cache";
 import { TaskManagerProvider, use_task_manager } from "@/app/task_manager";
 import {
   create_download,
@@ -45,9 +49,12 @@ vi.mock("@/shared/api", () => ({
   respond_to_agent_job: vi.fn(),
 }));
 
+const load_analysis_resource = vi.fn(async () => "loaded");
+
 describe("TaskManagerProvider", () => {
   beforeEach(() => {
     vi.mocked(get_agent_index_status).mockResolvedValue(agent_index_status());
+    load_analysis_resource.mockClear();
   });
 
   afterEach(() => {
@@ -180,6 +187,77 @@ describe("TaskManagerProvider", () => {
     );
     expect(list_agent_tasks).toHaveBeenCalledTimes(2);
   });
+
+  it("reports automatic initialization transcription without creating a duplicate task", async () => {
+    vi.mocked(list_downloads).mockResolvedValue([]);
+    vi.mocked(list_agent_tasks).mockResolvedValue([]);
+    vi.mocked(get_agent_index_status).mockResolvedValue({
+      ...agent_index_status(),
+      asset_id: "asset-019c012345677abc8123456789abcdef",
+      state: "initializing",
+      stage: "transcribing",
+      stage_label: "正在转写音频",
+    });
+
+    render(
+      <MemoryRouter>
+        <ApplicationQueryProvider>
+          <AssetCatalogProvider>
+            <TaskManagerProvider>
+              <TranscriptionStatus />
+              <TaskStatus />
+            </TaskManagerProvider>
+          </AssetCatalogProvider>
+        </ApplicationQueryProvider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText("transcription-running"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("当前视频证据索引")).toBeInTheDocument();
+    expect(screen.queryByText("素材转录")).not.toBeInTheDocument();
+  });
+
+  it("refreshes analysis data when automatic transcription finishes", async () => {
+    vi.useFakeTimers();
+    vi.mocked(list_downloads).mockResolvedValue([]);
+    vi.mocked(list_agent_tasks).mockResolvedValue([]);
+    vi.mocked(get_agent_index_status)
+      .mockResolvedValueOnce({
+        ...agent_index_status(),
+        asset_id: "asset-019c012345677abc8123456789abcdef",
+        state: "initializing",
+        stage: "transcribing",
+        stage_label: "正在转写音频",
+      })
+      .mockResolvedValue({
+        ...agent_index_status(),
+        asset_id: "asset-019c012345677abc8123456789abcdef",
+        state: "initializing",
+        stage: "building_timeline",
+        stage_label: "正在构建时间轴事件",
+      });
+
+    render(
+      <MemoryRouter>
+        <ApplicationQueryProvider>
+          <AssetCatalogProvider>
+            <TaskManagerProvider>
+              <AnalysisResourceStatus />
+            </TaskManagerProvider>
+          </AssetCatalogProvider>
+        </ApplicationQueryProvider>
+      </MemoryRouter>,
+    );
+
+    await act(async () => Promise.resolve());
+    expect(load_analysis_resource).toHaveBeenCalledOnce();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    expect(load_analysis_resource).toHaveBeenCalledTimes(2);
+  });
 });
 
 function TaskStarter() {
@@ -233,6 +311,27 @@ function AgentResumeStarter() {
       继续助手任务
     </button>
   );
+}
+
+function TranscriptionStatus() {
+  const { is_transcription_running } = use_task_manager();
+  return (
+    <p>
+      {is_transcription_running("asset-019c012345677abc8123456789abcdef")
+        ? "transcription-running"
+        : "transcription-idle"}
+    </p>
+  );
+}
+
+function AnalysisResourceStatus() {
+  useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.asset_analysis(
+      "asset-019c012345677abc8123456789abcdef",
+    ),
+    queryFn: load_analysis_resource,
+  });
+  return null;
 }
 
 function download_job(

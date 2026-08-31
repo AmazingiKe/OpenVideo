@@ -220,8 +220,10 @@ def test_summary_presets_and_formal_context_exclude_focus_selection(
         "正式标记分析" in messages[1]["content"]
         and "焦点选区分析" not in messages[1]["content"]
         and "不得进入总结" not in messages[1]["content"]
+        and '"time_range": "00:05–00:20"' in messages[1]["content"]
         for messages in captured
     )
+    assert "不得把秒数解释成分钟" in captured[-1][0]["content"]
 
 
 def test_generation_appends_versions_and_history_remains_editable(
@@ -571,6 +573,92 @@ def test_generation_sanitizes_unallocated_markdown_links(
         "越界\n[外链](https://example.com)\n图片：坏图\n"
     )
     assert not (tmp_path / "assets" / ASSET_ID / "summary" / "outside.md").exists()
+
+
+def test_generation_rejects_evidence_time_beyond_media_duration(
+    tmp_path: Path,
+    monkeypatch,
+):
+    responses = iter(
+        (
+            json.dumps(
+                {"documents": [{"key": "root", "title": "总结", "parent_key": None}]},
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "documents": [
+                        {
+                            "relative_path": "index.md",
+                            "markdown": "转录不清晰（如0:00-20:00区域）",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "documents": [
+                        {
+                            "relative_path": "index.md",
+                            "markdown": "转录不清晰（如0:00-20:00区域）",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    install_generation_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "openvideo.summary_manager.complete_text",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={"ai_model_id": MODEL_ID, "preset_id": "knowledge_notes"},
+        )
+
+    assert response.status_code == 409
+    assert "视频时间超出素材范围" in response.json()["detail"]
+
+
+def test_generation_normalizes_decimal_evidence_ranges(
+    tmp_path: Path,
+    monkeypatch,
+):
+    def complete(_model, messages, *_args, **_kwargs):
+        if "规划" in messages[0]["content"]:
+            return json.dumps(
+                {"documents": [{"key": "root", "title": "总结", "parent_key": None}]},
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "documents": [
+                    {
+                        "relative_path": "index.md",
+                        "markdown": "结论来自 \\[5.2-20.9\\]。",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    install_generation_mocks(monkeypatch)
+    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete)
+    with create_client(tmp_path) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
+            json={"ai_model_id": MODEL_ID, "preset_id": "knowledge_notes"},
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["documents"][0]["markdown"] == (
+        "结论来自 【00:05–00:20】。\n"
+    )
 
 
 def test_legacy_single_summary_migrates_once(tmp_path: Path):

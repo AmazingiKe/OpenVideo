@@ -8,8 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
   create_download,
   get_agent_index_status,
@@ -34,6 +36,11 @@ import { merge_task_record, type TaskRecord } from "@/features/workbench/tasks";
 const TERMINAL_DOWNLOAD_STAGES = new Set(["complete", "failed"]);
 const INITIAL_DOWNLOAD_TASK_LIMIT = 50;
 const AGENT_TASK_REFRESH_INTERVAL_MS = 2_000;
+const TRANSCRIPTION_STAGES = new Set<AgentIndexStatus["stage"]>([
+  "preparing_transcription_model",
+  "extracting_audio",
+  "transcribing",
+]);
 
 type TaskManager = {
   task_records: TaskRecord[];
@@ -54,6 +61,7 @@ type TaskManager = {
 const TaskManagerContext = createContext<TaskManager | null>(null);
 
 export function TaskManagerProvider({ children }: { children: ReactNode }) {
+  const query_client = useQueryClient();
   const { refresh_assets, select_asset, selected_asset_id } =
     use_asset_catalog();
   const [task_records, set_task_records] = useState<TaskRecord[]>([]);
@@ -65,6 +73,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   >(new Set());
   const download_controller_ref = useRef<AbortController | null>(null);
   const transcription_controller_ref = useRef<AbortController | null>(null);
+  const previous_index_status_ref = useRef<AgentIndexStatus | null>(null);
 
   useEffect(
     () => () => {
@@ -158,13 +167,28 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const controller = new AbortController();
+    previous_index_status_ref.current = null;
     set_index_status(null);
     const refresh_index_status = () => {
       try {
         void get_agent_index_status(selected_asset_id, controller.signal)
           .then((status) => {
+            const previous_status = previous_index_status_ref.current;
+            previous_index_status_ref.current = status;
             set_index_status(status);
             record_task(index_task_record(status));
+            if (
+              previous_status?.asset_id &&
+              previous_status.asset_id === status.asset_id &&
+              TRANSCRIPTION_STAGES.has(previous_status.stage) &&
+              !TRANSCRIPTION_STAGES.has(status.stage)
+            ) {
+              void query_client.invalidateQueries({
+                queryKey: RESOURCE_QUERY_KEYS.asset_analysis(
+                  previous_status.asset_id,
+                ),
+              });
+            }
           })
           .catch(() => undefined);
       } catch {
@@ -180,7 +204,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       controller.abort();
       window.clearInterval(interval_id);
     };
-  }, [record_task, selected_asset_id]);
+  }, [query_client, record_task, selected_asset_id]);
 
   const track_download_jobs = useCallback(
     async (jobs: DownloadJob[], controller: AbortController) => {
@@ -307,7 +331,9 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       resume_agent_task,
       start_transcription,
       is_transcription_running: (asset_id) =>
-        active_transcriptions.has(asset_id),
+        active_transcriptions.has(asset_id) ||
+        (index_status?.asset_id === asset_id &&
+          TRANSCRIPTION_STAGES.has(index_status.stage)),
     }),
     [
       active_transcriptions,

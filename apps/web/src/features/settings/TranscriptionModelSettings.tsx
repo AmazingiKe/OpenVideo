@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  TRANSCRIPTION_LANGUAGE_OPTIONS,
   transcription_compute_type_is_compatible,
   transcription_model_is_selectable,
   transcription_runtime_profile,
@@ -48,13 +49,6 @@ const COMPUTE_TYPE_LABELS: Record<TranscriptionComputeType, string> = {
   int8: "Int8",
   float16: "Float16",
 };
-
-const LANGUAGE_OPTIONS = [
-  { value: "auto", label: "自动检测" },
-  { value: "zh", label: "中文" },
-  { value: "en", label: "英语" },
-  { value: "yue", label: "粤语" },
-] as const;
 
 const INSTALLATION_LABELS: Record<
   TranscriptionModelDescriptor["installation_status"],
@@ -189,7 +183,7 @@ export function TranscriptionModelSettings({
               <SelectContent>
                 <SelectGroup>
                   <SelectLabel>音频语言</SelectLabel>
-                  {LANGUAGE_OPTIONS.map((language) => (
+                  {TRANSCRIPTION_LANGUAGE_OPTIONS.map((language) => (
                     <SelectItem key={language.value} value={language.value}>
                       {language.label}
                     </SelectItem>
