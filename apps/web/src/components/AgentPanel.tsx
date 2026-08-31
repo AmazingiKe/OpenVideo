@@ -1,10 +1,4 @@
-import {
-  Bot,
-  Database,
-  History,
-  MessageCirclePlus,
-  ShieldCheck,
-} from "lucide-react";
+import { Bot, Database, MessageCirclePlus, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { use_optional_task_manager } from "@/app/task_manager";
@@ -29,10 +23,8 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Empty,
@@ -41,7 +33,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldLabel } from "@/components/ui/field";
 import {
   Popover,
   PopoverContent,
@@ -55,6 +46,7 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -243,18 +235,36 @@ export function AgentPanel({
       data-slot="agent-panel"
     >
       <CardHeader className="min-w-0 shrink-0 gap-3 border-b px-4 py-4">
-        <div className="flex min-w-0 items-start justify-between gap-4">
-          <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2">
-              <Bot />
-              {panel_title}
-            </CardTitle>
-            <CardDescription>
-              {context_label ??
-                definition?.definition.description ??
-                "正在读取助手配置"}
-            </CardDescription>
-          </div>
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <Select
+            value={state?.session.session_id ?? ""}
+            onValueChange={(session_id) => void select_session(session_id)}
+          >
+            <SelectTrigger
+              size="sm"
+              variant="ghost"
+              className="max-w-full min-w-0"
+              aria-label={`${panel_title}历史对话${context_label ? `，${context_label}` : ""}`}
+            >
+              <SelectValue placeholder="新建对话" />
+            </SelectTrigger>
+            <SelectContent position="popper" align="start">
+              <SelectGroup>
+                {sessions.length ? (
+                  sessions.map((session) => (
+                    <SelectItem
+                      key={session.session_id}
+                      value={session.session_id}
+                    >
+                      {session.title}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <SelectLabel>暂无历史对话</SelectLabel>
+                )}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
           <div className="flex shrink-0 items-center gap-1">
             {active_run ? (
               <AgentRunBadge stage={active_run.stage} />
@@ -281,54 +291,15 @@ export function AgentPanel({
             </Button>
           </div>
         </div>
-        <div
-          className={cn(
-            "grid min-w-0 gap-2",
-            task_input_mode ? "grid-cols-2" : "grid-cols-1",
-          )}
-        >
-          <Field>
-            <FieldLabel htmlFor={`${agent_id}-agent-session`}>
-              历史会话
-            </FieldLabel>
-            <Select
-              value={state?.session.session_id ?? ""}
-              onValueChange={(session_id) => void select_session(session_id)}
-              disabled={sessions.length === 0}
-            >
-              <SelectTrigger
-                id={`${agent_id}-agent-session`}
-                size="sm"
-                className="w-full min-w-0"
-                aria-label="助手历史会话"
-              >
-                <History />
-                <SelectValue placeholder="发送时创建新会话" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {sessions.map((session) => (
-                    <SelectItem
-                      key={session.session_id}
-                      value={session.session_id}
-                    >
-                      {session.title}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-          {task_input_mode ? (
-            <AiModelSelect
-              id={`${agent_id}-agent-model`}
-              label="执行模型"
-              models={compatible_models}
-              value={model_id}
-              on_change={set_model_id}
-            />
-          ) : null}
-        </div>
+        {task_input_mode ? (
+          <AiModelSelect
+            id={`${agent_id}-agent-model`}
+            label="执行模型"
+            models={compatible_models}
+            value={model_id}
+            on_change={set_model_id}
+          />
+        ) : null}
         <Badge className="w-fit" variant="secondary">
           {retrieval_scope === "library" ? "资料库范围" : "当前视频"}
         </Badge>

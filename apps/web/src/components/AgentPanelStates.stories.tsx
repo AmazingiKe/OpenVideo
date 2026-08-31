@@ -146,6 +146,11 @@ export const Empty: Story = {
   play: async ({ canvas, canvasElement, userEvent }) => {
     await expect(await canvas.findByText("尚未创建会话")).toBeVisible();
     await expect(
+      canvas.getByRole("combobox", {
+        name: "视频助手历史对话，当前视频 · 透视投影课程",
+      }),
+    ).toHaveTextContent("新建对话");
+    await expect(
       canvas.getByRole("textbox", { name: "助手指令" }),
     ).toBeEnabled();
     const execution_control = canvas.getByRole("button", {
@@ -196,6 +201,13 @@ export const CompactHeaderControls: Story = {
   beforeEach: () => install_dark_agent_story("low-confidence"),
   play: async ({ canvas, canvasElement, userEvent }) => {
     await expect(await canvas.findByText("暂定结论")).toBeVisible();
+    await expect(
+      canvas.getByRole("combobox", {
+        name: "视频助手历史对话，当前视频 · 透视投影课程",
+      }),
+    ).toHaveTextContent("透视投影问答");
+    await expect(canvas.queryByText("历史会话")).toBeNull();
+    await expect(canvas.queryByText("视频助手")).toBeNull();
     const index_control = canvas.getByRole("button", {
       name: "索引状态：正在解析检索文本",
     });
@@ -219,6 +231,11 @@ export const NewConversation: Story = {
   play: async ({ canvas, userEvent }) => {
     await expect(await canvas.findByText("暂定结论")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "新建对话" }));
+    await expect(
+      canvas.getByRole("combobox", {
+        name: "视频助手历史对话，当前视频 · 透视投影课程",
+      }),
+    ).toHaveTextContent("新建对话");
     await expect(canvas.getByText("尚未创建会话")).toBeVisible();
     await expect(canvas.queryByText("暂定结论")).toBeNull();
   },
