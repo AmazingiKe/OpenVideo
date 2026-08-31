@@ -27,6 +27,8 @@ from openvideo.core.summary_files import summary_document_depths
 DATABASE_FILE_NAME = "openvideo.sqlite3"
 DATABASE_VERSION = 22
 DISABLED_SQLITE_STATEMENT_CACHE_SIZE = 0
+VIDEO_AGENT_ID = "marker"
+LEGACY_TRANSCRIPT_AGENT_ID = "transcript_correction"
 REQUIRED_AGENT_TABLES = {
     "agent_sessions",
     "agent_events",
@@ -56,6 +58,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     _ensure_agent_permission_grant_schema(connection)
     _ensure_download_quality_schema(connection)
     _ensure_download_event_schema(connection)
+    _migrate_transcript_agent_sessions(connection)
     synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
     return connection
@@ -462,6 +465,20 @@ def _ensure_download_event_schema(connection: sqlite3.Connection) -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS download_events_job_created_index "
             "ON download_events(job_id, created_at)"
+        )
+
+
+def _migrate_transcript_agent_sessions(connection: sqlite3.Connection) -> None:
+    """字幕处理已并入视频对话，旧会话迁移后仍可继续原生对话。"""
+
+    with connection:
+        connection.execute(
+            "UPDATE agent_sessions SET agent_id = ? WHERE agent_id = ?",
+            (VIDEO_AGENT_ID, LEGACY_TRANSCRIPT_AGENT_ID),
+        )
+        connection.execute(
+            "UPDATE agent_artifacts SET agent_id = ? WHERE agent_id = ?",
+            (VIDEO_AGENT_ID, LEGACY_TRANSCRIPT_AGENT_ID),
         )
 
 

@@ -1,8 +1,7 @@
-import { useEffect, useId, useState } from "react";
-import { Captions, WandSparkles } from "lucide-react";
+import { useId } from "react";
+import { Captions } from "lucide-react";
 
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,8 +27,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   TRANSCRIPTION_LANGUAGE_OPTIONS,
   transcription_runtime_profile,
@@ -41,27 +38,6 @@ import {
 } from "@/shared/types";
 import { use_transcription_tool_state } from "./use_transcription_tool_state";
 
-export type TranscriptCorrectionScope = "all" | "selection";
-
-export type TranscriptCorrectionRequest = {
-  scope: TranscriptCorrectionScope;
-  instruction: string;
-};
-
-const QUICK_CORRECTION_INSTRUCTION =
-  "根据整段转录上下文修正错字、漏字、同音词和专业术语，保持原意与表达风格。";
-const CORRECTION_INSTRUCTION_MAX_LENGTH = 4_000;
-
-function initial_correction_instructions(): Record<
-  TranscriptCorrectionScope,
-  string
-> {
-  return {
-    selection: QUICK_CORRECTION_INSTRUCTION,
-    all: "",
-  };
-}
-
 type TranscriptionToolbarToolsProps = {
   asset: MediaAsset | null;
   has_transcript: boolean;
@@ -70,12 +46,6 @@ type TranscriptionToolbarToolsProps = {
   transcription_models: TranscriptionModelDescriptor[];
   default_transcription: TranscriptionOptions | null;
   on_transcription_model_change: (model: TranscriptionModelDescriptor) => void;
-  selected_transcript_indices: number[];
-  correction_open: boolean;
-  correction_scope: TranscriptCorrectionScope;
-  on_correction_open_change: (open: boolean) => void;
-  on_correction_scope_change: (scope: TranscriptCorrectionScope) => void;
-  on_request_correction: (request: TranscriptCorrectionRequest) => void;
 };
 
 export function TranscriptionToolbarTools({
@@ -86,19 +56,8 @@ export function TranscriptionToolbarTools({
   transcription_models,
   default_transcription,
   on_transcription_model_change,
-  selected_transcript_indices,
-  correction_open,
-  correction_scope,
-  on_correction_open_change,
-  on_correction_scope_change,
-  on_request_correction,
 }: TranscriptionToolbarToolsProps) {
   const transcription_title_id = useId();
-  const correction_title_id = useId();
-  const correction_instruction_id = useId();
-  const [correction_instructions, set_correction_instructions] = useState(
-    initial_correction_instructions,
-  );
   const {
     available_transcription_models,
     selected_transcription_model,
@@ -109,291 +68,148 @@ export function TranscriptionToolbarTools({
     default_transcription,
     transcription_models,
   });
-  const correction_instruction = correction_instructions[correction_scope];
-  const correction_ready = correction_instruction.trim().length > 0;
-
-  useEffect(() => {
-    set_correction_instructions(initial_correction_instructions());
-  }, [asset?.asset_id]);
-
-  function change_correction_open(open: boolean) {
-    if (open) {
-      on_correction_scope_change(
-        selected_transcript_indices.length > 0 ? "selection" : "all",
-      );
-    }
-    on_correction_open_change(open);
-  }
-
   return (
-    <>
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button type="button" size="sm" variant="ghost" aria-label="转录">
-            <Captions data-icon="inline-start" aria-hidden="true" />
-            <span className="media_timeline_tool_label">转录</span>
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          side="top"
-          align="start"
-          className="w-80 gap-4 p-4"
-          aria-labelledby={transcription_title_id}
-        >
-          <PopoverHeader>
-            <PopoverTitle id={transcription_title_id}>转录</PopoverTitle>
-            <PopoverDescription>
-              选择本地语音模型，为当前视频生成可编辑字幕。
-            </PopoverDescription>
-          </PopoverHeader>
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>状态</span>
-            <Badge variant="secondary">
-              {is_transcribing
-                ? "转录中"
-                : has_transcript
-                  ? "已完成"
-                  : "未开始"}
-            </Badge>
-          </div>
-          <FieldGroup>
-            <Field data-disabled={is_transcribing || undefined}>
-              <FieldLabel htmlFor="transcription_model">模型</FieldLabel>
-              <Select
-                value={transcription_options?.model ?? ""}
-                onValueChange={(model_name) => {
-                  const model = available_transcription_models.find(
-                    (item) => item.model === model_name,
-                  );
-                  if (!model || !transcription_options) return;
-                  const runtime_profile = transcription_runtime_profile(model);
-                  set_transcription_options({
-                    ...transcription_options,
-                    engine: model.engine,
-                    model: model.model,
-                    device: runtime_profile.recommended_device,
-                    compute_type: runtime_profile.recommended_compute_type,
-                  });
-                }}
-                disabled={!transcription_options || is_transcribing}
-              >
-                <SelectTrigger id="transcription_model" className="w-full">
-                  <SelectValue placeholder="正在读取默认模型" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {available_transcription_models.map((model) => (
-                      <SelectItem key={model.model} value={model.model}>
-                        {model.name}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              {selected_transcription_model && transcription_options ? (
-                <FieldDescription>
-                  {selected_transcription_model.description} 当前使用
-                  {transcription_options.language ?? "自动检测"}、
-                  {transcription_options.device.toUpperCase()}、
-                  {transcription_options.compute_type}。
-                </FieldDescription>
-              ) : null}
-            </Field>
-            <Field
-              data-disabled={
-                !transcription_options || is_transcribing || undefined
-              }
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button type="button" size="sm" variant="ghost" aria-label="转录">
+          <Captions data-icon="inline-start" aria-hidden="true" />
+          <span className="media_timeline_tool_label">转录</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        className="w-80 gap-4 p-4"
+        aria-labelledby={transcription_title_id}
+      >
+        <PopoverHeader>
+          <PopoverTitle id={transcription_title_id}>转录</PopoverTitle>
+          <PopoverDescription>
+            选择本地语音模型，为当前视频生成可编辑字幕。
+          </PopoverDescription>
+        </PopoverHeader>
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>状态</span>
+          <Badge variant="secondary">
+            {is_transcribing ? "转录中" : has_transcript ? "已完成" : "未开始"}
+          </Badge>
+        </div>
+        <FieldGroup>
+          <Field data-disabled={is_transcribing || undefined}>
+            <FieldLabel htmlFor="transcription_model">模型</FieldLabel>
+            <Select
+              value={transcription_options?.model ?? ""}
+              onValueChange={(model_name) => {
+                const model = available_transcription_models.find(
+                  (item) => item.model === model_name,
+                );
+                if (!model || !transcription_options) return;
+                const runtime_profile = transcription_runtime_profile(model);
+                set_transcription_options({
+                  ...transcription_options,
+                  engine: model.engine,
+                  model: model.model,
+                  device: runtime_profile.recommended_device,
+                  compute_type: runtime_profile.recommended_compute_type,
+                });
+              }}
+              disabled={!transcription_options || is_transcribing}
             >
-              <FieldLabel htmlFor="transcription_language">音频语言</FieldLabel>
-              <Select
-                value={transcription_options?.language ?? "auto"}
-                onValueChange={(language) => {
-                  if (!transcription_options) return;
-                  set_transcription_options({
-                    ...transcription_options,
-                    language: language === "auto" ? null : language,
-                  });
-                }}
-                disabled={!transcription_options || is_transcribing}
-              >
-                <SelectTrigger id="transcription_language" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {TRANSCRIPTION_LANGUAGE_OPTIONS.map((language) => (
-                      <SelectItem key={language.value} value={language.value}>
-                        {language.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <SelectTrigger id="transcription_model" className="w-full">
+                <SelectValue placeholder="正在读取默认模型" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {available_transcription_models.map((model) => (
+                    <SelectItem key={model.model} value={model.model}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            {selected_transcription_model && transcription_options ? (
               <FieldDescription>
-                不确定音频语言时使用自动检测，明确语言时可按本次任务覆盖。
+                {selected_transcription_model.description} 当前使用
+                {transcription_options.language ?? "自动检测"}、
+                {transcription_options.device.toUpperCase()}、
+                {transcription_options.compute_type}。
               </FieldDescription>
-            </Field>
-          </FieldGroup>
-          {selected_transcription_model &&
-          selected_transcription_model.installation_status !== "installed" ? (
-            <TranscriptionModelDownloadAction
-              model={selected_transcription_model}
-              action_label="下载并使用"
-              on_change={on_transcription_model_change}
-              on_complete={() => {
-                if (transcription_options) {
-                  on_start_transcription(transcription_options);
-                }
-              }}
-              disabled={!asset || is_transcribing}
-            />
-          ) : (
-            <Button
-              className="w-full"
-              type="button"
-              onClick={() => {
-                if (transcription_options) {
-                  on_start_transcription(transcription_options);
-                }
-              }}
-              disabled={!asset || !transcription_options || is_transcribing}
-            >
-              {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
-              {is_transcribing
-                ? "转录中…"
-                : has_transcript
-                  ? "重新转录"
-                  : "生成转录"}
-            </Button>
-          )}
-          <FieldDescription>
-            {has_transcript
-              ? "重新转录会在成功后替换当前文字；失败时保留现有结果。"
-              : "转录生成可编辑文字，完成后可继续修正内容。"}
-          </FieldDescription>
-        </PopoverContent>
-      </Popover>
-
-      <Popover open={correction_open} onOpenChange={change_correction_open}>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={!has_transcript}
-            aria-label="字幕修正"
+            ) : null}
+          </Field>
+          <Field
+            data-disabled={
+              !transcription_options || is_transcribing || undefined
+            }
           >
-            <WandSparkles data-icon="inline-start" aria-hidden="true" />
-            <span className="media_timeline_tool_label">字幕修正</span>
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          side="top"
-          align="end"
-          className="max-h-[calc(100dvh-4rem)] w-96 max-w-[calc(100vw-2rem)] gap-4 overflow-y-auto p-4"
-          aria-labelledby={correction_title_id}
-        >
-          <PopoverHeader>
-            <PopoverTitle id={correction_title_id}>字幕修正</PopoverTitle>
-            <PopoverDescription>
-              选择处理范围并说明如何修改，字幕时间边界保持不变。
-            </PopoverDescription>
-          </PopoverHeader>
-          <form
-            className="flex min-h-0 flex-col gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const instruction = correction_instruction.trim();
-              if (!instruction) return;
-              on_request_correction({
-                scope: correction_scope,
-                instruction,
-              });
-              on_correction_open_change(false);
+            <FieldLabel htmlFor="transcription_language">音频语言</FieldLabel>
+            <Select
+              value={transcription_options?.language ?? "auto"}
+              onValueChange={(language) => {
+                if (!transcription_options) return;
+                set_transcription_options({
+                  ...transcription_options,
+                  language: language === "auto" ? null : language,
+                });
+              }}
+              disabled={!transcription_options || is_transcribing}
+            >
+              <SelectTrigger id="transcription_language" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {TRANSCRIPTION_LANGUAGE_OPTIONS.map((language) => (
+                    <SelectItem key={language.value} value={language.value}>
+                      {language.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              不确定音频语言时使用自动检测，明确语言时可按本次任务覆盖。
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
+        {selected_transcription_model &&
+        selected_transcription_model.installation_status !== "installed" ? (
+          <TranscriptionModelDownloadAction
+            model={selected_transcription_model}
+            action_label="下载并使用"
+            on_change={on_transcription_model_change}
+            on_complete={() => {
+              if (transcription_options) {
+                on_start_transcription(transcription_options);
+              }
             }}
+            disabled={!asset || is_transcribing}
+          />
+        ) : (
+          <Button
+            className="w-full"
+            type="button"
+            onClick={() => {
+              if (transcription_options) {
+                on_start_transcription(transcription_options);
+              }
+            }}
+            disabled={!asset || !transcription_options || is_transcribing}
           >
-            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>处理模式</span>
-              <Badge variant="secondary">
-                {selected_transcript_indices.length > 0
-                  ? `已选择 ${selected_transcript_indices.length} 条`
-                  : "未选择字幕"}
-              </Badge>
-            </div>
-            <ToggleGroup
-              type="single"
-              value={correction_scope}
-              onValueChange={(value) => {
-                if (value === "all" || value === "selection") {
-                  on_correction_scope_change(value);
-                }
-              }}
-              className="w-full"
-              aria-label="字幕处理模式"
-            >
-              <ToggleGroupItem
-                value="selection"
-                className="flex-1"
-                disabled={selected_transcript_indices.length === 0}
-              >
-                选择字幕
-              </ToggleGroupItem>
-              <ToggleGroupItem value="all" className="flex-1">
-                全部字幕
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <FieldGroup>
-              <Field>
-                <div className="flex items-center justify-between gap-2">
-                  <FieldLabel htmlFor={correction_instruction_id}>
-                    处理要求
-                  </FieldLabel>
-                  {correction_scope === "selection" ? (
-                    <Badge variant="outline">快速模板</Badge>
-                  ) : (
-                    <Badge variant="outline">必填</Badge>
-                  )}
-                </div>
-                <Textarea
-                  id={correction_instruction_id}
-                  value={correction_instruction}
-                  onChange={(event) =>
-                    set_correction_instructions((current) => ({
-                      ...current,
-                      [correction_scope]: event.target.value,
-                    }))
-                  }
-                  placeholder={
-                    correction_scope === "selection"
-                      ? "说明如何处理已选字幕"
-                      : "例如：将英文翻译成中文，并结合整段视频上下文保留专业术语"
-                  }
-                  maxLength={CORRECTION_INSTRUCTION_MAX_LENGTH}
-                  rows={4}
-                  className="max-h-40 resize-none"
-                  required
-                />
-                <FieldDescription>
-                  {correction_scope === "selection"
-                    ? "已填入快速校对模板，可直接使用，也可改成翻译、术语统一等要求。"
-                    : "全部字幕不使用默认模板，必须明确填写修正、翻译或其他处理要求。"}
-                </FieldDescription>
-              </Field>
-            </FieldGroup>
-            <Alert>
-              <WandSparkles aria-hidden="true" />
-              <AlertTitle>修改会先生成预览</AlertTitle>
-              <AlertDescription>
-                继续后在全局助手中启动任务，确认结果后才会写回字幕。
-              </AlertDescription>
-            </Alert>
-            <Button type="submit" disabled={!correction_ready}>
-              <WandSparkles data-icon="inline-start" aria-hidden="true" />
-              继续到助手
-            </Button>
-          </form>
-        </PopoverContent>
-      </Popover>
-    </>
+            {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
+            {is_transcribing
+              ? "转录中…"
+              : has_transcript
+                ? "重新转录"
+                : "生成转录"}
+          </Button>
+        )}
+        <FieldDescription>
+          {has_transcript
+            ? "重新转录会在成功后替换当前文字；失败时保留现有结果。"
+            : "转录生成可编辑文字，完成后可继续修正内容。"}
+        </FieldDescription>
+      </PopoverContent>
+    </Popover>
   );
 }

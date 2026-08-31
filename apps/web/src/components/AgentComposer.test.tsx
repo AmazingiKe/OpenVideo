@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { unknown_model_profile, type AiModelSummary } from "@/shared/types";
@@ -306,5 +307,64 @@ describe("AgentComposer", () => {
 
     expect(on_attachment_drop).toHaveBeenCalledWith(attachment);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("offers slash commands and requires details for full transcript processing", () => {
+    function CommandComposer() {
+      const [value, set_value] = useState("");
+      return (
+        <AgentComposer
+          value={value}
+          commands={[
+            {
+              name: "修正选中字幕",
+              label: "快速修正选中字幕",
+              description: "结合上下文修正错字",
+              task_input: { intent: "transcript_edit" },
+            },
+            {
+              name: "处理全部字幕",
+              label: "处理全部字幕",
+              description: "按说明处理全部字幕",
+              task_input: { intent: "transcript_edit" },
+              instruction_required: true,
+            },
+          ]}
+          on_change={set_value}
+          on_submit={vi.fn()}
+          models={MODELS}
+          model_id={MODEL_ID}
+          on_model_change={vi.fn()}
+          thinking_mode="auto"
+          on_thinking_mode_change={vi.fn()}
+          thinking_modes_enabled
+          retrieval_scope="current_asset"
+          on_retrieval_scope_change={vi.fn()}
+          library_scope_enabled={false}
+          scope_pinned={false}
+          on_scope_pinned_change={vi.fn()}
+          attachments={[]}
+          on_remove_attachment={vi.fn()}
+        />
+      );
+    }
+
+    render(<CommandComposer />);
+    const composer = screen.getByRole("textbox", { name: "助手指令" });
+    fireEvent.change(composer, { target: { value: "/" } });
+
+    expect(screen.getByRole("listbox", { name: "助手命令" })).toBeVisible();
+    fireEvent.click(screen.getByRole("option", { name: /处理全部字幕/ }));
+
+    expect(composer).toHaveValue("/处理全部字幕 ");
+    expect(
+      screen.getByText("请在 /处理全部字幕 后说明具体处理要求。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "发送指令" })).toBeDisabled();
+
+    fireEvent.change(composer, {
+      target: { value: "/处理全部字幕 翻译成中文并保留专业术语" },
+    });
+    expect(screen.getByRole("button", { name: "发送指令" })).toBeEnabled();
   });
 });

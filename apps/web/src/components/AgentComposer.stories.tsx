@@ -138,6 +138,38 @@ export const FullAccessStatus: Story = {
   },
 };
 
+export const SlashCommands: Story = {
+  args: {
+    value: "/",
+    commands: [
+      {
+        name: "修正选中字幕",
+        label: "快速修正选中字幕",
+        description: "结合整段上下文修正错字、漏字和专业术语",
+        task_input: { intent: "transcript_edit", segment_indices: [3, 4] },
+      },
+      {
+        name: "处理全部字幕",
+        label: "处理全部字幕",
+        description: "在命令后说明修正、翻译或术语统一要求",
+        task_input: { intent: "transcript_edit", segment_indices: null },
+        instruction_required: true,
+      },
+    ],
+  },
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByRole("listbox", { name: "助手命令" }),
+    ).toBeVisible();
+    await expect(
+      canvas.getByRole("option", { name: /修正选中字幕/ }),
+    ).toBeVisible();
+    await expect(
+      canvas.getByRole("option", { name: /处理全部字幕/ }),
+    ).toBeVisible();
+  },
+};
+
 export const CompactControls: Story = {
   args: {
     thinking_modes_enabled: false,

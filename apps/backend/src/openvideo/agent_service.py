@@ -1,4 +1,4 @@
-"""声明式注册三个用途，并通过同一服务管理会话、运行与审批。"""
+"""声明式注册视频与总结 Agent，并通过同一服务管理会话、运行与审批。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from openvideo.agent_permission_policy import PermissionPolicy
 from openvideo.agent_intent_router import (
+    AgentIntent,
     AgentIntentRoute,
     AgentIntentRoutingError,
     route_agent_intent,
@@ -132,7 +133,6 @@ from openvideo.llm.model_profile import CapabilityName, ModelProfile, Support
 
 MARKER_AGENT_ID = "marker"
 SUMMARY_AGENT_ID = "summary"
-TRANSCRIPT_CORRECTION_AGENT_ID = "transcript_correction"
 MARKER_ARTIFACT_TYPE = "marker_changes"
 SUMMARY_ARTIFACT_TYPE = "summary_edit"
 SUMMARY_MEDIA_ARTIFACT_TYPE = "summary_media"
@@ -142,6 +142,7 @@ TRANSCRIPT_CORRECTION_INSTRUCTION_MAX_CHARACTERS = 4_000
 SESSION_TITLE_LENGTH = 60
 AGENT_RUN_INTENT_KEY = "intent"
 AGENT_RUN_EDIT_INTENT = "edit"
+AGENT_RUN_TRANSCRIPT_EDIT_INTENT = "transcript_edit"
 AGENT_DOCUMENT_ID_KEY = "document_id"
 AGENT_VERSION_ID_KEY = "version_id"
 SUMMARY_RUN_ILLUSTRATE_INTENT = "illustrate"
@@ -899,6 +900,12 @@ class AgentService:
         if router_model is None:
             raise AgentServiceError("快速模型不存在，无法判断助手工作方式")
         requested_intent = request.task_input.get(AGENT_RUN_INTENT_KEY)
+        if requested_intent == AGENT_RUN_TRANSCRIPT_EDIT_INTENT:
+            return AgentIntentRoute(
+                intent=AgentIntent.TRANSCRIPT_EDIT,
+                model_role=AgentModelRole.COMPLEX,
+                reason="用户通过助手命令选择字幕处理工作流",
+            )
         try:
             return await asyncio.to_thread(
                 route_agent_intent,
@@ -1100,10 +1107,7 @@ class AgentService:
 
     @staticmethod
     def _artifact_write_block_reason(artifact: AgentArtifact) -> str | None:
-        if (
-            artifact.agent_id == TRANSCRIPT_CORRECTION_AGENT_ID
-            and artifact.result_type == TRANSCRIPT_ARTIFACT_TYPE
-        ):
+        if artifact.result_type == TRANSCRIPT_ARTIFACT_TYPE:
             return None
         try:
             decision = AgentEvidenceWriteDecision.model_validate(
@@ -1175,6 +1179,10 @@ class AgentService:
                     description="生成整批标记变更审批预览",
                     prerequisites=["read_markers", "search_evidence"],
                 ),
+                AgentToolDescriptor(
+                    name="correct_transcript",
+                    description="按要求修正、翻译或统一字幕文字",
+                ),
             ],
             result_type=MARKER_ARTIFACT_TYPE,
         )
@@ -1219,34 +1227,11 @@ class AgentService:
             ],
             result_type=SUMMARY_ARTIFACT_TYPE,
         )
-        correction = AgentDefinition(
-            agent_id=TRANSCRIPT_CORRECTION_AGENT_ID,
-            title="字幕处理",
-            description="按自定义要求处理指定字幕并生成逐项修改预览。",
-            mode=AgentMode.TASK,
-            input_mode="task",
-            prompt=(
-                "你是 OpenVideo 字幕处理 Agent。必须调用 correct_transcript 完成任务，"
-                "可以按用户要求校对、翻译或统一术语，但不能改变字幕时间边界。"
-                "如果运行元数据没有 correction_instruction，必须把用户的处理要求原样传入"
-                " correct_transcript 的 instruction。"
-            ),
-            required_capabilities={AgentCapability.TOOLS, AgentCapability.LONG_CONTEXT},
-            minimum_context_tokens=16_000,
-            tools=[
-                AgentToolDescriptor(
-                    name="correct_transcript", description="按要求处理指定字幕片段"
-                )
-            ],
-            required_tools={"correct_transcript"},
-            requires_approval=True,
-            result_type=TRANSCRIPT_ARTIFACT_TYPE,
-        )
         return [
             RegisteredAgent(
                 marker,
                 self._marker_tools,
-                self._approve_marker_changes,
+                self._approve_marker_artifact,
                 None,
                 self._marker_run_definition,
             ),
@@ -1256,13 +1241,6 @@ class AgentService:
                 self._approve_summary_artifact,
                 self._validate_summary_session,
                 self._summary_run_definition,
-            ),
-            RegisteredAgent(
-                correction,
-                self._transcript_tools,
-                self._approve_transcript_correction,
-                None,
-                None,
             ),
         ]
 
@@ -1395,9 +1373,30 @@ class AgentService:
         request: AgentRunCreate,
         _profile: ModelProfile,
     ) -> AgentDefinition:
-        edit_intent = (
-            request.task_input.get(AGENT_RUN_INTENT_KEY) == AGENT_RUN_EDIT_INTENT
-        )
+        intent = request.task_input.get(AGENT_RUN_INTENT_KEY)
+        if intent == AGENT_RUN_TRANSCRIPT_EDIT_INTENT:
+            transcript_tools = [
+                tool for tool in definition.tools if tool.name == "correct_transcript"
+            ]
+            return definition.model_copy(
+                update={
+                    "prompt": (
+                        "你是 OpenVideo 视频 Agent。当前运行只处理字幕文字，不能改变时间边界。"
+                        "必须且只能调用一次 correct_transcript；字幕范围与处理要求优先采用运行元数据，"
+                        "缺少处理要求时才从用户消息提取。工具成功后直接简要说明结果，不得再次调用。"
+                    ),
+                    "required_capabilities": {
+                        AgentCapability.TOOLS,
+                        AgentCapability.LONG_CONTEXT,
+                    },
+                    "minimum_context_tokens": 16_000,
+                    "tools": transcript_tools,
+                    "required_tools": {"correct_transcript"},
+                    "requires_approval": True,
+                    "result_type": TRANSCRIPT_ARTIFACT_TYPE,
+                }
+            )
+        edit_intent = intent == AGENT_RUN_EDIT_INTENT
         if edit_intent:
             return definition.model_copy(
                 update={
@@ -1490,6 +1489,14 @@ class AgentService:
                 ),
             )
         )
+        registry.register(
+            AgentTool(
+                "correct_transcript",
+                "按用户要求处理指定字幕片段并生成修改预览。",
+                CorrectTranscriptInput,
+                lambda parameters: self._correct_transcript(context, parameters),
+            )
+        )
         return registry
 
     def _summary_tools(
@@ -1566,20 +1573,6 @@ class AgentService:
                     ),
                 )
             )
-        return registry
-
-    def _transcript_tools(
-        self, context: AgentRunContext, definition: AgentDefinition
-    ) -> AgentToolRegistry:
-        registry = AgentToolRegistry()
-        registry.register(
-            AgentTool(
-                "correct_transcript",
-                "按用户要求处理指定字幕片段并生成修改预览。",
-                CorrectTranscriptInput,
-                lambda parameters: self._correct_transcript(context, parameters),
-            )
-        )
         return registry
 
     def _read_markers(self, context: AgentRunContext) -> dict[str, Any]:
@@ -2002,6 +1995,22 @@ class AgentService:
     async def _correct_transcript(
         self, context: AgentRunContext, parameters: CorrectTranscriptInput
     ) -> dict[str, Any]:
+        existing_artifact = next(
+            (
+                artifact
+                for artifact in self.library.load_agent_artifacts(
+                    run_id=context.run.run_id
+                )
+                if artifact.result_type == TRANSCRIPT_ARTIFACT_TYPE
+            ),
+            None,
+        )
+        if existing_artifact is not None:
+            return {
+                "ok": True,
+                "artifact": existing_artifact.model_dump(mode="json"),
+                "reused": True,
+            }
         transcript = self.library.load_transcript(context.session.asset_id)
         if transcript is None or not transcript.segments:
             return {"ok": False, "error": "当前视频没有可纠错的字幕"}
@@ -2054,6 +2063,15 @@ class AgentService:
             },
         )
         return {"ok": True, "artifact": artifact.model_dump(mode="json")}
+
+    def _approve_marker_artifact(self, artifact: AgentArtifact) -> dict[str, Any]:
+        """视频 Agent 同时产出标记和字幕变更，写回必须按产物类型分派。"""
+
+        if artifact.result_type == MARKER_ARTIFACT_TYPE:
+            return self._approve_marker_changes(artifact)
+        if artifact.result_type == TRANSCRIPT_ARTIFACT_TYPE:
+            return self._approve_transcript_correction(artifact)
+        raise AgentConflictError("视频 Agent 产物类型无效")
 
     def _approve_marker_changes(self, artifact: AgentArtifact) -> dict[str, Any]:
         current = self.library.load_markers(artifact.asset_id)

@@ -1,11 +1,8 @@
-import { type ComponentProps, useEffect, useState } from "react";
+import { type ComponentProps, useEffect } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import type { MediaAsset, TranscriptionModelDescriptor } from "@/shared/types";
-import {
-  TranscriptionToolbarTools,
-  type TranscriptCorrectionScope,
-} from "./TranscriptionToolbarTools";
+import { TranscriptionToolbarTools } from "./TranscriptionToolbarTools";
 
 const TRANSCRIPTION_MODELS: TranscriptionModelDescriptor[] = [
   {
@@ -63,21 +60,10 @@ function agent_fetch(input: RequestInfo | URL): Promise<Response> {
 function ControlledTranscriptionToolbarTools(
   props: ComponentProps<typeof TranscriptionToolbarTools>,
 ) {
-  const [correction_open, set_correction_open] = useState(
-    props.correction_open,
-  );
-  const [correction_scope, set_correction_scope] =
-    useState<TranscriptCorrectionScope>(props.correction_scope);
   return (
     <div className="media_timeline_toolbar">
       <div className="media_timeline_transport">
-        <TranscriptionToolbarTools
-          {...props}
-          correction_open={correction_open}
-          correction_scope={correction_scope}
-          on_correction_open_change={set_correction_open}
-          on_correction_scope_change={set_correction_scope}
-        />
+        <TranscriptionToolbarTools {...props} />
       </div>
     </div>
   );
@@ -110,12 +96,6 @@ const meta = {
       compute_type: "auto",
     },
     on_transcription_model_change: () => undefined,
-    selected_transcript_indices: [],
-    correction_open: false,
-    correction_scope: "all",
-    on_correction_open_change: () => undefined,
-    on_correction_scope_change: () => undefined,
-    on_request_correction: () => undefined,
   },
   render: (args) => <ControlledTranscriptionToolbarTools {...args} />,
   beforeEach() {
@@ -141,22 +121,6 @@ export const Default: Story = {};
 
 export const Transcribing: Story = {
   args: { is_transcribing: true },
-};
-
-export const CorrectionSelection: Story = {
-  args: {
-    selected_transcript_indices: [0, 1],
-    correction_open: true,
-    correction_scope: "selection",
-  },
-};
-
-export const CorrectionAll: Story = {
-  args: {
-    selected_transcript_indices: [],
-    correction_open: true,
-    correction_scope: "all",
-  },
 };
 
 export const Dark: Story = {

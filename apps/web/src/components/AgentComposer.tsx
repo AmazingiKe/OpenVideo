@@ -9,7 +9,14 @@ import {
   Square,
   Zap,
 } from "lucide-react";
-import { useId, useState, type DragEvent, type FormEvent } from "react";
+import {
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type FormEvent,
+} from "react";
 
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
 import { AiModelSelect } from "@/components/AiModelSelect";
@@ -47,6 +54,11 @@ import {
   read_context_attachment_drag_data,
   type AgentContextAttachmentDraft,
 } from "./agent_context";
+import {
+  agent_command_suggestions,
+  selected_agent_command,
+  type AgentCommand,
+} from "./agent_commands";
 
 const THINKING_MODE_OPTIONS = [
   { value: "fast", label: "低" },
@@ -89,6 +101,7 @@ const PERMISSION_MODE_OPTIONS = [
 
 export function AgentComposer({
   value,
+  commands = [],
   focus_context,
   on_change,
   on_submit,
@@ -117,6 +130,7 @@ export function AgentComposer({
   on_attachment_drop,
 }: {
   value: string;
+  commands?: readonly AgentCommand[];
   focus_context?: AgentFocusContext;
   on_change: (value: string) => void;
   on_submit: () => void;
@@ -146,13 +160,47 @@ export function AgentComposer({
 }) {
   const busy = pending || submitting;
   const control_id = useId();
+  const textarea_ref = useRef<HTMLTextAreaElement>(null);
   const [context_drop_active, set_context_drop_active] = useState(false);
+  const [highlighted_command_index, set_highlighted_command_index] =
+    useState(0);
+  const [dismissed_command_value, set_dismissed_command_value] = useState<
+    string | null
+  >(null);
   const selected_permission_option =
     find_permission_mode_option(permission_mode);
+  const command_suggestions = useMemo(
+    () => agent_command_suggestions(value, commands),
+    [commands, value],
+  );
+  const command_menu_open =
+    command_suggestions.length > 0 && dismissed_command_value !== value;
+  const active_command_index = Math.min(
+    highlighted_command_index,
+    Math.max(0, command_suggestions.length - 1),
+  );
+  const active_command = selected_agent_command(value, commands);
+  const active_command_instruction = active_command
+    ? value.trim().slice(`/${active_command.name}`.length).trim()
+    : "";
+  const command_instruction_missing = Boolean(
+    active_command?.instruction_required &&
+    !active_command_instruction &&
+    !active_command.default_instruction,
+  );
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (value.trim() && !disabled && !busy) on_submit();
+    if (value.trim() && !disabled && !busy && !command_instruction_missing) {
+      on_submit();
+    }
+  }
+
+  function select_command(command: AgentCommand) {
+    if (command.disabled) return;
+    on_change(`/${command.name} `);
+    set_dismissed_command_value(null);
+    window.requestAnimationFrame(() => textarea_ref.current?.focus());
   }
 
   function drop_attachment(event: DragEvent<HTMLFormElement>) {
@@ -232,27 +280,114 @@ export function AgentComposer({
             />
           </div>
         ) : null}
+        {command_menu_open ? (
+          <div
+            id={`${control_id}-commands`}
+            className="mx-1 overflow-hidden rounded-xl border bg-popover p-1 shadow-md"
+            role="listbox"
+            aria-label="助手命令"
+          >
+            {command_suggestions.map((command, index) => (
+              <button
+                key={command.name}
+                id={`${control_id}-command-${index}`}
+                type="button"
+                role="option"
+                aria-selected={index === active_command_index}
+                disabled={command.disabled}
+                className={cn(
+                  "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-focus-strong disabled:cursor-not-allowed disabled:opacity-50",
+                  index === active_command_index && "bg-accent",
+                )}
+                onMouseEnter={() => set_highlighted_command_index(index)}
+                onClick={() => select_command(command)}
+              >
+                <span className="shrink-0 font-mono text-sm font-medium text-foreground">
+                  /{command.name}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">
+                    {command.label}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {command.disabled_reason ?? command.description}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <FieldGroup className="gap-2">
           <Field data-disabled={disabled || undefined}>
             <FieldLabel className="sr-only" htmlFor={`${control_id}-composer`}>
               助手指令
             </FieldLabel>
             <Textarea
+              ref={textarea_ref}
               id={`${control_id}-composer`}
               value={value}
-              onChange={(event) => on_change(event.target.value)}
+              onChange={(event) => {
+                set_dismissed_command_value(null);
+                set_highlighted_command_index(0);
+                on_change(event.target.value);
+              }}
               onKeyDown={(event) => {
+                if (command_menu_open) {
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const offset = event.key === "ArrowDown" ? 1 : -1;
+                    set_highlighted_command_index(
+                      (current) =>
+                        (current + offset + command_suggestions.length) %
+                        command_suggestions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    set_dismissed_command_value(value);
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    const command = command_suggestions[active_command_index];
+                    if (command) select_command(command);
+                    return;
+                  }
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  if (value.trim() && !disabled && !busy) on_submit();
+                  if (
+                    value.trim() &&
+                    !disabled &&
+                    !busy &&
+                    !command_instruction_missing
+                  ) {
+                    on_submit();
+                  }
                 }
               }}
+              aria-autocomplete="list"
+              aria-haspopup="listbox"
+              aria-controls={
+                command_menu_open ? `${control_id}-commands` : undefined
+              }
+              aria-activedescendant={
+                command_menu_open
+                  ? `${control_id}-command-${active_command_index}`
+                  : undefined
+              }
               placeholder={placeholder}
               rows={2}
               disabled={disabled}
               variant="ghost"
               className="max-h-40 min-h-20 resize-none"
             />
+            {command_instruction_missing && active_command ? (
+              <FieldDescription className="px-2 text-destructive">
+                请在 /{active_command.name} 后说明具体处理要求。
+              </FieldDescription>
+            ) : null}
           </Field>
           <div className="flex min-w-0 items-center justify-between gap-2 px-1 pb-1">
             <div className="flex min-w-0 items-center gap-1">
@@ -287,6 +422,7 @@ export function AgentComposer({
                 disabled={
                   disabled ||
                   submitting ||
+                  command_instruction_missing ||
                   (pending ? !on_cancel : !value.trim())
                 }
                 aria-label={pending && on_cancel ? "停止助手" : "发送指令"}

@@ -1125,7 +1125,7 @@ describe("MediaTimeline", () => {
     );
   });
 
-  it("opens subtitle correction from the transcript context menu", async () => {
+  it("starts quick subtitle correction from the transcript context menu", async () => {
     const {
       change_selected_transcript_indices,
       request_transcript_correction,
@@ -1135,14 +1135,16 @@ describe("MediaTimeline", () => {
     });
 
     fireEvent.contextMenu(transcript_button);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "修正字幕" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "快速修正字幕" }),
+    );
 
     expect(change_selected_transcript_indices).toHaveBeenCalledWith([0]);
     expect(request_transcript_correction).toHaveBeenCalledWith([0]);
     expect(transcript_button).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("preserves a multi-selection when opening correction with the keyboard", async () => {
+  it("preserves a multi-selection when starting correction with the keyboard", async () => {
     const { request_transcript_correction } = render_timeline({
       transcript_segments: [
         {
@@ -1171,7 +1173,9 @@ describe("MediaTimeline", () => {
     fireEvent.click(first_transcript);
     fireEvent.click(second_transcript, { ctrlKey: true });
     fireEvent.keyDown(second_transcript, { key: "F10", shiftKey: true });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "修正字幕" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "快速修正字幕" }),
+    );
 
     expect(first_transcript).toHaveAttribute("aria-pressed", "true");
     expect(second_transcript).toHaveAttribute("aria-pressed", "true");

@@ -11,7 +11,6 @@ import {
   LockKeyhole,
   Pencil,
   ScanSearch,
-  WandSparkles,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -1444,8 +1443,7 @@ export function MediaTimeline({
                     on_request_transcript_correction(context_transcript_indices)
                   }
                 >
-                  <WandSparkles aria-hidden="true" />
-                  修正字幕
+                  快速修正字幕
                 </ContextMenuItem>
                 {transcript_attachment && on_add_agent_context ? (
                   <ContextMenuItem

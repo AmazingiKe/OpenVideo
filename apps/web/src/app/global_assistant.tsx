@@ -12,8 +12,12 @@ import { useLocation } from "react-router-dom";
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { use_local_preferences } from "@/app/local_preferences";
 import { workspace_route } from "@/app/workspace_routes";
-import { AgentPanel } from "@/components/AgentPanel";
+import {
+  AgentPanel,
+  type AgentInvocationRequest,
+} from "@/components/AgentPanel";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
+import type { AgentCommand } from "@/components/agent_commands";
 import {
   Sheet,
   SheetContent,
@@ -46,15 +50,12 @@ const ASSISTANT_PANEL_ID = "global-assistant-panel";
 export type GlobalAssistantBinding = {
   agent_id: string;
   asset_id: string | null;
+  commands?: readonly AgentCommand[];
   context_label: string;
   context?: Record<string, unknown>;
   focus_context?: AgentFocusContext;
-  history_agent_ids?: readonly string[];
-  // undefined 恢复最近会话，null 保持新会话，字符串恢复指定会话。
-  requested_session_id?: string | null;
-  on_session_change?: (agent_id: string, session_id: string | null) => void;
+  invocation_request?: AgentInvocationRequest | null;
   task_input?: Record<string, unknown>;
-  task_submission_enabled?: boolean;
   context_attachments?: AgentContextAttachmentDraft[];
   placeholder?: string;
   panel_size_percent?: number;
@@ -208,13 +209,11 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
       agent_id={binding.agent_id}
       asset_id={binding.asset_id}
       models={models}
+      commands={binding.commands}
       context={binding.context}
       focus_context={binding.focus_context}
-      history_agent_ids={binding.history_agent_ids}
-      requested_session_id={binding.requested_session_id}
-      on_session_change={binding.on_session_change}
+      invocation_request={binding.invocation_request}
       task_input={binding.task_input}
-      task_submission_enabled={binding.task_submission_enabled}
       context_attachments={binding.context_attachments}
       default_thinking_mode={agent_preferences?.default_thinking_mode}
       thinking_modes_enabled

@@ -18,11 +18,7 @@ import { MarkerLibraryPanel } from "@/features/markers/MarkerLibraryPanel";
 import { evidence_range_for_asset } from "@/features/markers/evidence_navigation";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/markers/use_asset_markers";
-import {
-  TranscriptionToolbarTools,
-  type TranscriptCorrectionRequest,
-  type TranscriptCorrectionScope,
-} from "@/features/workbench/TranscriptionToolbarTools";
+import { TranscriptionToolbarTools } from "@/features/workbench/TranscriptionToolbarTools";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import { timeline_agent_focus } from "@/features/workbench/timeline_agent_context";
@@ -40,7 +36,9 @@ import {
 } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { FloatingError } from "@/components/FloatingError";
+import type { AgentInvocationRequest } from "@/components/AgentPanel";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
+import type { AgentCommand } from "@/components/agent_commands";
 import { cn } from "@/lib/utils";
 import { error_message, is_abort_error } from "@/shared/errors";
 import { uuid7 } from "@/shared/identifiers";
@@ -56,17 +54,13 @@ import type {
   TranscriptionOptions,
 } from "@/shared/types";
 
-type TranscriptCorrectionTask = TranscriptCorrectionRequest & {
-  segment_indices: number[] | null;
-};
-
 const MARKER_AGENT_ID = "marker";
-const TRANSCRIPT_CORRECTION_AGENT_ID = "transcript_correction";
-const MARKER_WORKSPACE_AGENT_IDS = [
-  MARKER_AGENT_ID,
-  TRANSCRIPT_CORRECTION_AGENT_ID,
-] as const;
-type MarkerWorkspaceAgentId = (typeof MARKER_WORKSPACE_AGENT_IDS)[number];
+const TRANSCRIPT_EDIT_INTENT = "transcript_edit";
+const TRANSCRIPT_CORRECTION_INSTRUCTION_INPUT_KEY = "correction_instruction";
+const CORRECT_SELECTED_TRANSCRIPT_COMMAND = "修正选中字幕";
+const PROCESS_ALL_TRANSCRIPT_COMMAND = "处理全部字幕";
+const QUICK_CORRECTION_INSTRUCTION =
+  "根据整段转录上下文修正错字、漏字、同音词和专业术语，保持原意与表达风格。";
 
 const MediaTimeline = lazy(() =>
   import("@/features/workbench/MediaTimeline").then((module) => ({
@@ -110,17 +104,8 @@ export function MarkersPage() {
   const [playback_rate, set_playback_rate] = useState(1);
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
-  const [transcript_correction_open, set_transcript_correction_open] =
-    useState(false);
-  const [transcript_correction_scope, set_transcript_correction_scope] =
-    useState<TranscriptCorrectionScope>("all");
-  const [transcript_correction_task, set_transcript_correction_task] =
-    useState<TranscriptCorrectionTask | null>(null);
-  const [assistant_agent_id, set_assistant_agent_id] =
-    useState<MarkerWorkspaceAgentId>(MARKER_AGENT_ID);
-  const [assistant_session_id, set_assistant_session_id] = useState<
-    string | null | undefined
-  >(undefined);
+  const [assistant_invocation_request, set_assistant_invocation_request] =
+    useState<AgentInvocationRequest | null>(null);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
@@ -178,11 +163,7 @@ export function MarkersPage() {
     set_is_paused(true);
     set_playback_rate(1);
     set_selected_transcript_indices([]);
-    set_transcript_correction_open(false);
-    set_transcript_correction_scope("all");
-    set_transcript_correction_task(null);
-    set_assistant_agent_id(MARKER_AGENT_ID);
-    set_assistant_session_id(undefined);
+    set_assistant_invocation_request(null);
     set_candidate_markers([]);
     set_focus_selection(null);
     set_agent_context_attachments([]);
@@ -310,46 +291,46 @@ export function MarkersPage() {
     selected_transcript_indices,
     focus_selection,
   });
-  const transcript_agent_active =
-    assistant_agent_id === TRANSCRIPT_CORRECTION_AGENT_ID;
-  const assistant_binding = {
-    agent_id: assistant_agent_id,
-    asset_id: selected_asset_id,
-    focus_context,
-    history_agent_ids: MARKER_WORKSPACE_AGENT_IDS,
-    requested_session_id: assistant_session_id,
-    on_session_change: (agent_id: string, session_id: string | null) => {
-      if (!is_marker_workspace_agent_id(agent_id)) return;
-      set_assistant_agent_id(agent_id);
-      set_assistant_session_id(session_id);
-      set_transcript_correction_task(null);
+  const transcript_commands: AgentCommand[] = [
+    {
+      name: CORRECT_SELECTED_TRANSCRIPT_COMMAND,
+      label: "快速修正选中字幕",
+      description: "结合整段上下文修正错字、漏字、同音词和专业术语",
+      disabled: selected_transcript_indices.length === 0,
+      disabled_reason: "请先在时间线上选择字幕",
+      task_input: {
+        intent: TRANSCRIPT_EDIT_INTENT,
+        segment_indices: [...selected_transcript_indices],
+      },
+      default_instruction: QUICK_CORRECTION_INSTRUCTION,
+      instruction_input_key: TRANSCRIPT_CORRECTION_INSTRUCTION_INPUT_KEY,
     },
-    context_label: transcript_correction_task
-      ? `字幕修正 · ${
-          transcript_correction_task.scope === "selection"
-            ? `已选择 ${transcript_correction_task.segment_indices?.length ?? 0} 条`
-            : "全部字幕"
-        }`
-      : transcript_agent_active
-        ? "字幕处理会话"
-        : selected_asset
-          ? `当前视频 · ${selected_asset.title}`
-          : "尚未选择视频",
-    task_input: transcript_correction_task
-      ? {
-          segment_indices: transcript_correction_task.segment_indices,
-          correction_instruction: transcript_correction_task.instruction,
-          execution_mode: "automatic",
-        }
-      : {},
-    task_submission_enabled:
-      !transcript_agent_active || transcript_correction_task !== null,
-    context_attachments: transcript_agent_active
-      ? []
-      : agent_context_attachments,
-    placeholder: transcript_agent_active
-      ? undefined
-      : "询问视频内容，或直接描述希望创建的标记…",
+    {
+      name: PROCESS_ALL_TRANSCRIPT_COMMAND,
+      label: "处理全部字幕",
+      description: "在命令后说明修正、翻译或术语统一要求",
+      disabled: transcript === null,
+      disabled_reason: "当前视频还没有字幕",
+      task_input: {
+        intent: TRANSCRIPT_EDIT_INTENT,
+        segment_indices: null,
+      },
+      instruction_input_key: TRANSCRIPT_CORRECTION_INSTRUCTION_INPUT_KEY,
+      instruction_required: true,
+    },
+  ];
+  const assistant_binding = {
+    agent_id: MARKER_AGENT_ID,
+    asset_id: selected_asset_id,
+    commands: transcript_commands,
+    focus_context,
+    invocation_request: assistant_invocation_request,
+    context_label: selected_asset
+      ? `当前视频 · ${selected_asset.title}`
+      : "尚未选择视频",
+    task_input: {},
+    context_attachments: agent_context_attachments,
+    placeholder: "询问视频内容；输入 / 可修正选中字幕或处理全部字幕…",
     panel_size_percent: settings.agent_panel_size_percent,
     on_panel_size_percent_change: (agent_panel_size_percent: number) =>
       update_settings({ agent_panel_size_percent }),
@@ -446,22 +427,12 @@ export function MarkersPage() {
     navigate(marker_asset_path(asset_id));
   }
 
-  function open_transcript_correction(segment_indices: number[]) {
+  function request_quick_transcript_correction(segment_indices: number[]) {
+    if (segment_indices.length === 0) return;
     set_selected_transcript_indices(segment_indices);
-    set_transcript_correction_scope(
-      segment_indices.length > 0 ? "selection" : "all",
-    );
-    set_transcript_correction_task(null);
-    set_transcript_correction_open(true);
-  }
-
-  function request_transcript_correction(request: TranscriptCorrectionRequest) {
-    set_assistant_agent_id(TRANSCRIPT_CORRECTION_AGENT_ID);
-    set_assistant_session_id(null);
-    set_transcript_correction_task({
-      ...request,
-      segment_indices:
-        request.scope === "selection" ? [...selected_transcript_indices] : null,
+    set_assistant_invocation_request({
+      request_id: `assistant-invocation-${uuid7().replaceAll("-", "")}`,
+      content: `/${CORRECT_SELECTED_TRANSCRIPT_COMMAND}`,
     });
     open_assistant();
   }
@@ -520,15 +491,6 @@ export function MarkersPage() {
           [`${updated_model.engine}:${updated_model.model}`]: updated_model,
         }))
       }
-      selected_transcript_indices={selected_transcript_indices}
-      correction_open={transcript_correction_open}
-      correction_scope={transcript_correction_scope}
-      on_correction_open_change={(open) => {
-        if (open) set_transcript_correction_task(null);
-        set_transcript_correction_open(open);
-      }}
-      on_correction_scope_change={set_transcript_correction_scope}
-      on_request_correction={request_transcript_correction}
     />
   );
 
@@ -578,7 +540,7 @@ export function MarkersPage() {
           player_ref.current?.set_playback_rate(rate)
         }
         on_selected_transcript_indices_change={set_selected_transcript_indices}
-        on_request_transcript_correction={open_transcript_correction}
+        on_request_transcript_correction={request_quick_transcript_correction}
         on_selected_marker_ids_change={set_selected_marker_ids}
         on_set_focus_in={(seconds) => set_range_endpoint("in_seconds", seconds)}
         on_set_focus_out={(seconds) =>
@@ -729,13 +691,5 @@ export function MarkersPage() {
       </div>
       {error ? <FloatingError message={error} /> : null}
     </>
-  );
-}
-
-function is_marker_workspace_agent_id(
-  agent_id: string,
-): agent_id is MarkerWorkspaceAgentId {
-  return MARKER_WORKSPACE_AGENT_IDS.some(
-    (workspace_agent_id) => workspace_agent_id === agent_id,
   );
 }

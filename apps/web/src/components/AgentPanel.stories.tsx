@@ -112,7 +112,7 @@ export const TranscriptApproval: Story = {
   args: {
     artifact: {
       ...BASE_ARTIFACT,
-      agent_id: "transcript_correction",
+      agent_id: "marker",
       result_type: "transcript_correction",
       payload: {
         changes: [

@@ -30,6 +30,7 @@ import {
   materialize_context_attachments,
   type AgentContextAttachmentDraft,
 } from "./agent_context";
+import { resolve_agent_command, type AgentCommand } from "./agent_commands";
 
 const TERMINAL_RUN_STAGES = new Set<AgentRun["stage"]>([
   "waiting_for_approval",
@@ -42,13 +43,11 @@ const TERMINAL_RUN_STAGES = new Set<AgentRun["stage"]>([
 type AgentPanelStateOptions = {
   agent_id: string;
   asset_id: string | null;
+  commands?: readonly AgentCommand[];
   context: Record<string, unknown>;
   focus_context?: AgentFocusContext;
-  history_agent_ids?: readonly string[];
   models: AiModelSummary[];
   on_artifact_change?: (artifact: AgentArtifact) => void | Promise<void>;
-  on_session_change?: (agent_id: string, session_id: string | null) => void;
-  requested_session_id?: string | null;
   task_input: Record<string, unknown>;
   default_thinking_mode: AgentThinkingMode;
 };
@@ -61,21 +60,14 @@ type AgentSubmission = {
 export function use_agent_panel({
   agent_id,
   asset_id,
+  commands = [],
   context,
   focus_context,
-  history_agent_ids,
   models,
   on_artifact_change,
-  on_session_change,
-  requested_session_id,
   task_input,
   default_thinking_mode,
 }: AgentPanelStateOptions) {
-  const history_agent_ids_key = useMemo(
-    () =>
-      [...new Set([agent_id, ...(history_agent_ids ?? [])])].sort().join("|"),
-    [agent_id, history_agent_ids],
-  );
   const scope_key = useMemo(
     () => (asset_id ? agent_scope_key(agent_id, asset_id) : "no-asset"),
     [agent_id, asset_id],
@@ -94,6 +86,9 @@ export function use_agent_panel({
     useState<AgentRetrievalScope>("current_asset");
   const [scope_pinned, set_scope_pinned] = useState(false);
   const [last_content, set_last_content] = useState("");
+  const [last_task_input, set_last_task_input] = useState<
+    Record<string, unknown>
+  >({});
   const [active_run, set_active_run] = useState<AgentRun | null>(null);
   const [submission, set_submission] = useState<AgentSubmission | null>(null);
   const [stream_text, set_stream_text] = useState("");
@@ -152,55 +147,22 @@ export function use_agent_panel({
       controller.abort();
       connection_ref.current?.abort();
     };
-  }, [
-    agent_id,
-    asset_id,
-    default_thinking_mode,
-    history_agent_ids_key,
-    requested_session_id,
-    scope_key,
-  ]);
+  }, [agent_id, asset_id, default_thinking_mode, scope_key]);
 
   async function restore_panel(asset: string, signal: AbortSignal) {
     try {
-      const visible_agent_ids = new Set(history_agent_ids_key.split("|"));
-      const session_filters =
-        visible_agent_ids.size > 1
-          ? { asset_id: asset }
-          : { agent_id, asset_id: asset };
       const [definitions, loaded_sessions] = await Promise.all([
         list_agent_definitions(signal),
-        list_agent_sessions(session_filters, signal),
+        list_agent_sessions({ agent_id, asset_id: asset }, signal),
       ]);
-      const visible_sessions = loaded_sessions.filter((session) =>
-        visible_agent_ids.has(session.agent_id),
-      );
       const next_definition = definitions.find(
         (item) => item.definition.agent_id === agent_id,
       );
       set_definition(next_definition ?? null);
-      set_sessions(visible_sessions);
-      if (requested_session_id === null) return;
-      const requested_session = requested_session_id
-        ? visible_sessions.find(
-            (session) => session.session_id === requested_session_id,
-          )
-        : visible_sessions[0];
-      if (!requested_session) return;
-      if (requested_session.agent_id !== agent_id && on_session_change) {
-        on_session_change(
-          requested_session.agent_id,
-          requested_session.session_id,
-        );
-        return;
-      }
-      const session_to_restore =
-        requested_session.agent_id === agent_id
-          ? requested_session
-          : visible_sessions.find((session) => session.agent_id === agent_id);
-      if (!session_to_restore) return;
+      set_sessions(loaded_sessions);
+      if (!loaded_sessions[0]) return;
       const restored = await get_agent_session(
-        session_to_restore.session_id,
+        loaded_sessions[0].session_id,
         signal,
       );
       set_state(restored);
@@ -238,11 +200,6 @@ export function use_agent_panel({
   }
 
   async function select_session(session_id: string) {
-    const session = sessions.find((item) => item.session_id === session_id);
-    if (session && on_session_change) {
-      on_session_change(session.agent_id, session.session_id);
-      return;
-    }
     connection_ref.current?.abort();
     set_submission(null);
     submission_ref.current = false;
@@ -276,14 +233,15 @@ export function use_agent_panel({
     set_error(null);
     set_draft("");
     set_last_content("");
+    set_last_task_input({});
     set_submission(null);
     submission_ref.current = false;
-    on_session_change?.(agent_id, null);
   }
 
   function submit(
     content_override?: string,
     context_attachment_drafts: AgentContextAttachmentDraft[] = [],
+    task_input_override?: Record<string, unknown>,
   ): boolean {
     const next_content = content_override ?? draft;
     if (
@@ -295,14 +253,27 @@ export function use_agent_panel({
       return false;
     }
     const content = next_content.trim();
+    const command_resolution = task_input_override
+      ? { task_input: task_input_override, error: null }
+      : resolve_agent_command(content, commands, task_input);
+    if (command_resolution.error) {
+      set_error(command_resolution.error);
+      return false;
+    }
     submission_ref.current = true;
     set_error(null);
     set_stream_text("");
     set_stream_complete(false);
     set_last_content(content);
+    set_last_task_input(command_resolution.task_input);
     set_draft("");
     set_submission({ content, started_at: Date.now() });
-    void start_submission(content, context_attachment_drafts, model_id);
+    void start_submission(
+      content,
+      context_attachment_drafts,
+      model_id,
+      command_resolution.task_input,
+    );
     return true;
   }
 
@@ -310,6 +281,7 @@ export function use_agent_panel({
     content: string,
     context_attachment_drafts: AgentContextAttachmentDraft[],
     selected_model_id: string,
+    submission_task_input: Record<string, unknown>,
   ) {
     try {
       const context_attachments = await materialize_context_attachments(
@@ -320,7 +292,7 @@ export function use_agent_panel({
         request_key: `request-${uuid7().replaceAll("-", "")}`,
         ai_model_id: selected_model_id,
         content,
-        task_input,
+        task_input: submission_task_input,
         thinking_mode,
         retrieval_scope,
         focus_context,
@@ -416,6 +388,11 @@ export function use_agent_panel({
       );
       set_active_run(final_run);
       set_state(refreshed);
+      for (const artifact of refreshed.artifacts) {
+        if (artifact.status === "approved") {
+          void on_artifact_change?.(artifact);
+        }
+      }
       set_submission(null);
       submission_ref.current = false;
       set_connection_message(null);
@@ -499,6 +476,7 @@ export function use_agent_panel({
     events: state?.events ?? [],
     follow_run,
     last_content,
+    last_task_input,
     model_id,
     pending,
     pending_started_at,

@@ -1,5 +1,5 @@
 import { Bot, Database, MessageCirclePlus, ShieldCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { use_optional_task_manager } from "@/app/task_manager";
 import { AgentComposer } from "@/components/AgentComposer";
@@ -76,6 +76,7 @@ import {
   build_agent_timeline,
 } from "./AgentPanelContent";
 import type { AgentContextAttachmentDraft } from "./agent_context";
+import type { AgentCommand } from "./agent_commands";
 import { use_agent_panel } from "./use_agent_panel";
 
 const CAPABILITY_LABELS: Record<AgentCapability, string> = {
@@ -88,14 +89,11 @@ export type AgentPanelProps = {
   agent_id: string;
   asset_id: string | null;
   models: AiModelSummary[];
+  commands?: readonly AgentCommand[];
   context?: Record<string, unknown>;
   focus_context?: AgentFocusContext;
-  history_agent_ids?: readonly string[];
-  // undefined 恢复最近会话，null 保持新会话，字符串恢复指定会话。
-  requested_session_id?: string | null;
-  on_session_change?: (agent_id: string, session_id: string | null) => void;
+  invocation_request?: AgentInvocationRequest | null;
   task_input?: Record<string, unknown>;
-  task_submission_enabled?: boolean;
   context_attachments?: AgentContextAttachmentDraft[];
   default_thinking_mode?: AgentThinkingMode;
   thinking_modes_enabled?: boolean;
@@ -118,17 +116,20 @@ export type AgentPanelProps = {
   className?: string;
 };
 
+export type AgentInvocationRequest = {
+  request_id: string;
+  content: string;
+};
+
 export function AgentPanel({
   agent_id,
   asset_id,
   models,
+  commands = [],
   context = {},
   focus_context,
-  history_agent_ids,
-  requested_session_id,
-  on_session_change,
+  invocation_request = null,
   task_input = {},
-  task_submission_enabled = true,
   context_attachments = [],
   default_thinking_mode = "auto",
   thinking_modes_enabled = false,
@@ -155,6 +156,7 @@ export function AgentPanel({
   const [evidence_return_seconds, set_evidence_return_seconds] = useState<
     number | null
   >(null);
+  const processed_invocation_request_id_ref = useRef<string | null>(null);
   useEffect(() => set_evidence_return_seconds(null), [asset_id]);
   const {
     active_run,
@@ -169,6 +171,7 @@ export function AgentPanel({
     events,
     follow_run,
     last_content,
+    last_task_input,
     model_id,
     pending,
     pending_started_at,
@@ -195,13 +198,11 @@ export function AgentPanel({
   } = use_agent_panel({
     agent_id,
     asset_id,
+    commands,
     context,
     focus_context,
-    history_agent_ids,
     models,
     on_artifact_change,
-    on_session_change,
-    requested_session_id,
     task_input,
     default_thinking_mode,
   });
@@ -244,15 +245,46 @@ export function AgentPanel({
       ),
   );
 
-  function submit_current(content_override?: string) {
-    const submitted = submit(content_override, visible_attachments);
+  function submit_current(
+    content_override?: string,
+    task_input_override?: Record<string, unknown>,
+  ): boolean {
+    const submitted = submit(
+      content_override,
+      visible_attachments,
+      task_input_override,
+    );
     if (submitted) {
       set_dismissed_attachment_ids(
         new Set(visible_attachments.map((attachment) => attachment.draft_id)),
       );
       set_dropped_attachments([]);
     }
+    return submitted;
   }
+
+  const submit_invocation_event = useEffectEvent((content: string) =>
+    submit_current(content),
+  );
+  const invocation_ready =
+    !pending &&
+    !submitting &&
+    !restoring &&
+    Boolean(definition?.available) &&
+    model_id !== null;
+
+  useEffect(() => {
+    if (
+      !invocation_request ||
+      !invocation_ready ||
+      processed_invocation_request_id_ref.current ===
+        invocation_request.request_id
+    ) {
+      return;
+    }
+    processed_invocation_request_id_ref.current = invocation_request.request_id;
+    submit_invocation_event(invocation_request.content);
+  }, [invocation_ready, invocation_request]);
 
   if (!asset_id) {
     return (
@@ -536,7 +568,11 @@ export function AgentPanel({
                         void resolve_artifact(artifact, action, grant_scope)
                       }
                       on_regenerate={() =>
-                        void submit(last_content, visible_attachments)
+                        void submit(
+                          last_content,
+                          visible_attachments,
+                          last_task_input,
+                        )
                       }
                     />
                   </MessageScrollerItem>
@@ -591,23 +627,15 @@ export function AgentPanel({
             <Button
               type="button"
               onClick={() => void submit_current()}
-              disabled={
-                busy ||
-                !definition.available ||
-                !model_id ||
-                !task_submission_enabled
-              }
+              disabled={busy || !definition.available || !model_id}
             >
-              {submitting
-                ? "正在启动"
-                : task_submission_enabled
-                  ? "启动任务"
-                  : "请先配置任务"}
+              {submitting ? "正在启动" : "启动任务"}
             </Button>
           </div>
         ) : (
           <AgentComposer
             value={draft}
+            commands={commands}
             focus_context={focus_context}
             on_change={set_draft}
             on_submit={() => void submit_current()}

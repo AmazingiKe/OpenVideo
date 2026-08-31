@@ -22,6 +22,7 @@ from openvideo.agent_tooling import (
     ProposeSummaryMediaInput,
     RunEvidenceState,
     marker_digest,
+    transcript_digest,
 )
 from openvideo.core.agent_runtime_models import (
     AgentArtifact,
@@ -163,9 +164,17 @@ def test_definitions_and_sessions_use_only_unified_routes(tmp_path: Path):
         assert {item["definition"]["agent_id"] for item in definitions.json()} == {
             "marker",
             "summary",
-            "transcript_correction",
         }
         assert client.get("/api/agent-sessions").json() == []
+        marker_definition = next(
+            item["definition"]
+            for item in definitions.json()
+            if item["definition"]["agent_id"] == "marker"
+        )
+        assert marker_definition["input_mode"] == "message"
+        assert "correct_transcript" in {
+            tool["name"] for tool in marker_definition["tools"]
+        }
 
         created = client.post(
             "/api/agent-sessions",
@@ -178,29 +187,30 @@ def test_definitions_and_sessions_use_only_unified_routes(tmp_path: Path):
         assert client.get("/api/agent-jobs/obsolete").status_code == 404
 
 
-def test_empty_task_content_uses_the_agent_title(tmp_path: Path, monkeypatch):
-    async def complete_task(*_args, **_kwargs):
-        return AgentExecutionResult(content="字幕任务已完成")
-
-    monkeypatch.setattr(AgnoAgentExecutor, "run", complete_task)
+def test_legacy_transcript_sessions_migrate_into_video_conversations(tmp_path: Path):
     with create_client(tmp_path) as client:
-        session = client.post(
-            "/api/agent-sessions",
-            json={"agent_id": "transcript_correction", "asset_id": ASSET_ID},
-        ).json()
-
-        response = client.post(
-            f"/api/agent-sessions/{session['session_id']}/runs",
-            json={
-                "request_key": f"request-{uuid7().hex}",
-                "ai_model_id": MODEL_ID,
-                "content": "",
-            },
+        legacy_session = AgentSession(
+            session_id=f"session-{uuid7().hex}",
+            agent_id="transcript_correction",
+            asset_id=ASSET_ID,
+            title="字幕处理",
         )
-        state = client.get(f"/api/agent-sessions/{session['session_id']}").json()
+        client.app.state.library.save_agent_session(legacy_session)
 
-    assert response.status_code == 202
-    assert state["session"]["title"] == "字幕处理"
+    reopened_library = MediaLibrary.open(tmp_path)
+    try:
+        marker_sessions = reopened_library.load_agent_sessions(
+            agent_id="marker", asset_id=ASSET_ID
+        )
+    finally:
+        reopened_library.close()
+
+    migrated = next(
+        session
+        for session in marker_sessions
+        if session.session_id == legacy_session.session_id
+    )
+    assert migrated.agent_id == "marker"
 
 
 @pytest.mark.asyncio
@@ -212,7 +222,10 @@ async def test_transcript_task_uses_the_configured_custom_instruction(monkeypatc
         ],
     )
     service = AgentService.__new__(AgentService)
-    service.library = SimpleNamespace(load_transcript=lambda _asset_id: transcript)
+    service.library = SimpleNamespace(
+        load_agent_artifacts=lambda **_kwargs: [],
+        load_transcript=lambda _asset_id: transcript,
+    )
     captured: dict[str, object] = {}
 
     class TranscriptCorrectorStub:
@@ -249,6 +262,7 @@ async def test_transcript_task_uses_the_configured_custom_instruction(monkeypatc
         }
     )
     context = SimpleNamespace(
+        run=SimpleNamespace(run_id=f"run-{uuid7().hex}"),
         session=SimpleNamespace(asset_id=ASSET_ID),
         task_input={
             "segment_indices": [0],
@@ -270,6 +284,34 @@ async def test_transcript_task_uses_the_configured_custom_instruction(monkeypatc
         "segment_indices": [0],
         "instruction": "将英文翻译成中文并保留专业术语。",
     }
+
+
+@pytest.mark.asyncio
+async def test_transcript_tool_reuses_the_first_artifact_in_one_run():
+    existing_artifact = AgentArtifact(
+        artifact_id=f"artifact-{uuid7().hex}",
+        run_id=f"run-{uuid7().hex}",
+        session_id=f"session-{uuid7().hex}",
+        agent_id="marker",
+        asset_id=ASSET_ID,
+        result_type="transcript_correction",
+        payload={"changes": []},
+    )
+    service = AgentService.__new__(AgentService)
+    service.library = SimpleNamespace(
+        load_agent_artifacts=lambda **_kwargs: [existing_artifact],
+        load_transcript=lambda _asset_id: pytest.fail("不应重复读取和处理字幕"),
+    )
+    context = SimpleNamespace(
+        run=SimpleNamespace(run_id=existing_artifact.run_id),
+        session=SimpleNamespace(asset_id=ASSET_ID),
+    )
+
+    result = await service._correct_transcript(context, CorrectTranscriptInput())
+
+    assert result["ok"] is True
+    assert result["reused"] is True
+    assert result["artifact"]["artifact_id"] == existing_artifact.artifact_id
 
 
 def test_index_status_exposes_real_coverage_and_available_capabilities(
@@ -558,34 +600,6 @@ def test_run_rejects_non_uuid7_request_key(tmp_path: Path):
         )
 
         assert response.status_code == 422
-
-
-def test_background_agent_reserves_capacity_for_foreground_chat(tmp_path: Path):
-    with create_client(tmp_path) as client:
-        service = client.app.state.agent_service
-        service.settings.agent = service.settings.agent.model_copy(
-            update={"max_concurrent_runs": 2}
-        )
-        service._tasks["active-run"] = SimpleNamespace(done=lambda: False)
-        try:
-            session = client.post(
-                "/api/agent-sessions",
-                json={"agent_id": "transcript_correction", "asset_id": ASSET_ID},
-            ).json()
-
-            response = client.post(
-                f"/api/agent-sessions/{session['session_id']}/runs",
-                json={
-                    "request_key": f"request-{uuid7().hex}",
-                    "ai_model_id": MODEL_ID,
-                    "content": "校对字幕",
-                },
-            )
-
-            assert response.status_code == 409
-            assert response.json()["message"] == ("Agent 并行任务已达到用户设置的上限")
-        finally:
-            service._tasks.pop("active-run")
 
 
 def test_nonempty_chat_content_includes_task_session_and_selection_context():
@@ -1621,6 +1635,79 @@ def test_marker_run_mode_separates_questions_from_change_proposals(tmp_path: Pat
         assert proposal_definition.allowed_tools == registered.definition.allowed_tools
         assert proposal_definition.required_tools == {"propose_marker_changes"}
         assert proposal_definition.requires_approval is True
+
+        transcript_definition = registered.run_definition(
+            registered.definition,
+            AgentRunCreate(
+                request_key=f"request-{uuid7().hex}",
+                ai_model_id=MODEL_ID,
+                content="/修正选中字幕",
+                task_input={"intent": "transcript_edit", "segment_indices": [0]},
+            ),
+            profile,
+        )
+        assert transcript_definition.allowed_tools == ("correct_transcript",)
+        assert transcript_definition.required_tools == {"correct_transcript"}
+        assert transcript_definition.requires_approval is True
+        assert transcript_definition.result_type == "transcript_correction"
+
+
+def test_full_access_auto_applies_video_agent_transcript_artifact(tmp_path: Path):
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[TranscriptSegment(start_seconds=0, end_seconds=1, text="错梧")],
+    )
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        service.library.save_transcript(transcript)
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        artifact = AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=run.run_id,
+            session_id=session.session_id,
+            agent_id="marker",
+            asset_id=ASSET_ID,
+            result_type="transcript_correction",
+            payload={
+                "transcript_digest": transcript_digest(transcript),
+                "changes": [
+                    {
+                        "segment_index": 0,
+                        "start_seconds": 0,
+                        "end_seconds": 1,
+                        "before": "错梧",
+                        "after": "错误",
+                    }
+                ],
+            },
+        )
+        service.library.save_agent_artifact(artifact)
+        service.settings.agent = service.settings.agent.model_copy(
+            update={"permission_mode": AgentPermissionMode.FULL_ACCESS}
+        )
+        context = AgentRunContext(
+            service=service,
+            session=session,
+            run=run,
+            model=service.settings.ai_model(MODEL_ID),
+            task_input={},
+        )
+
+        service._process_run_artifacts(context, [artifact])
+
+        applied = service.library.load_agent_artifact(artifact.artifact_id)
+        updated_transcript = service.library.load_transcript(ASSET_ID)
+
+    assert applied.status == AgentArtifactStatus.APPROVED
+    assert updated_transcript.segments[0].text == "错误"
 
 
 def test_summary_media_mode_requires_inspected_visual_toolchain(tmp_path: Path):
