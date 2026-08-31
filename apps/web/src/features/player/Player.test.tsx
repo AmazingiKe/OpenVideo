@@ -214,7 +214,8 @@ describe("Player", () => {
     );
   });
 
-  it("keeps the frame and subtitle unchanged until seek release", () => {
+  it("keeps the frame, subtitle, and external timeline unchanged until seek release", () => {
+    const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();
     const subtitles = [
       {
@@ -234,6 +235,7 @@ describe("Player", () => {
     ];
     const { rerender } = render(
       <Player
+        ref={player_ref}
         src="/video.mp4"
         on_time_change={on_time_change}
         subtitles={subtitles}
@@ -241,19 +243,24 @@ describe("Player", () => {
     );
 
     expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
+    on_time_change.mockClear();
     act(() => media.events.seeking_request?.(16));
 
     expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
     expect(media.player.currentTime).toBe(12);
+    expect(player_ref.current?.current_time()).toBe(12);
     expect(media.remote.seek).not.toHaveBeenCalled();
-    expect(on_time_change).toHaveBeenLastCalledWith(16);
+    expect(on_time_change).not.toHaveBeenCalled();
 
     act(() => media.events.seek_request?.(16));
+    expect(on_time_change).toHaveBeenCalledWith(16);
+    expect(player_ref.current?.current_time()).toBe(16);
     media.player.currentTime = 16;
     media.store.currentTime = 16;
     act(() => media.events.seeked?.());
     rerender(
       <Player
+        ref={player_ref}
         src="/video.mp4"
         on_time_change={on_time_change}
         subtitles={subtitles}

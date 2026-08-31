@@ -140,14 +140,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     [request_seek_preview],
   );
 
-  const preview_from_player = useCallback(
-    (seconds: number) => {
-      preview_to(seconds);
-      on_time_change_ref.current?.(current_time_value_ref.current);
-    },
-    [preview_to],
-  );
-
   const prepare_seek_commit = useCallback(
     (seconds: number) => {
       const bounded_time = Math.max(0, seconds);
@@ -248,7 +240,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         className="openvideo_player"
         src={{ src, type: "video/mp4" }}
         ariaLabel="OpenVideo 播放器"
-        onMediaSeekingRequest={preview_from_player}
+        onMediaSeekingRequest={request_seek_preview}
         onMediaSeekRequest={prepare_seek_commit}
         onSeeked={confirm_seek}
       >
