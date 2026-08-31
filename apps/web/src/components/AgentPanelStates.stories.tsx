@@ -144,7 +144,7 @@ export const NoVideo: Story = {
 export const Loading: Story = {
   beforeEach: () => install_agent_fetch("loading"),
   play: async ({ canvas }) => {
-    await expect(canvas.getByText("正在加载助手会话…")).toBeVisible();
+    await expect(canvas.getByText("正在加载助手会话")).toBeVisible();
     await expect(canvas.queryByText("尚未创建会话")).toBeNull();
   },
 };
@@ -173,6 +173,22 @@ export const Empty: Story = {
       await page.findByRole("option", { name: /备用工具模型/ }),
     );
     await expect(model_select).toHaveTextContent("备用工具模型");
+  },
+};
+
+export const Submitting: Story = {
+  beforeEach: () => install_agent_fetch("submitting"),
+  play: async ({ canvas, userEvent }) => {
+    await expect(await canvas.findByText("尚未创建会话")).toBeVisible();
+    const composer = canvas.getByRole("textbox", { name: "助手指令" });
+    await userEvent.type(composer, "分析当前画面的构图");
+    await userEvent.click(canvas.getByRole("button", { name: "发送指令" }));
+
+    await expect(composer).toHaveValue("");
+    await expect(canvas.getByText("分析当前画面的构图")).toBeVisible();
+    await expect(canvas.getByText("正在发送请求")).toBeVisible();
+    await expect(canvas.getByText("00:00")).toBeVisible();
+    await expect(canvas.queryByText("尚未创建会话")).toBeNull();
   },
 };
 
@@ -265,6 +281,7 @@ export const ManyEvidence: Story = {
 type AgentStoryState =
   | "loading"
   | "empty"
+  | "submitting"
   | "streaming"
   | "failure"
   | "low-confidence"
@@ -306,9 +323,28 @@ function agent_fetch(
     return Promise.resolve(json_response([DEFINITION]));
   }
   if (url.pathname === "/api/agent-sessions") {
-    return Promise.resolve(json_response(state === "empty" ? [] : [SESSION]));
+    if (init?.method === "POST" && state === "submitting") {
+      return Promise.resolve(json_response(SESSION));
+    }
+    const sessions =
+      state === "empty" || state === "submitting" ? [] : [SESSION];
+    return Promise.resolve(json_response(sessions));
+  }
+  if (
+    url.pathname === `/api/agent-sessions/${SESSION_ID}/runs` &&
+    state === "submitting"
+  ) {
+    return pending_response(init?.signal);
   }
   if (url.pathname === `/api/agent-sessions/${SESSION_ID}`) {
+    if (state === "submitting") {
+      return Promise.resolve(
+        new Response(JSON.stringify({ message: "新会话不应被重复读取" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }
     return Promise.resolve(json_response(session_state(state)));
   }
   if (url.pathname === `/api/agent-runs/${RUN_ID}/events`) {

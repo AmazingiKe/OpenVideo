@@ -50,6 +50,11 @@ type AgentPanelStateOptions = {
   default_thinking_mode: AgentThinkingMode;
 };
 
+type AgentSubmission = {
+  content: string;
+  started_at: number;
+};
+
 export function use_agent_panel({
   agent_id,
   asset_id,
@@ -77,9 +82,9 @@ export function use_agent_panel({
   const [retrieval_scope, set_retrieval_scope] =
     useState<AgentRetrievalScope>("current_asset");
   const [scope_pinned, set_scope_pinned] = useState(false);
-  const [preparing_attachments, set_preparing_attachments] = useState(false);
   const [last_content, set_last_content] = useState("");
   const [active_run, set_active_run] = useState<AgentRun | null>(null);
+  const [submission, set_submission] = useState<AgentSubmission | null>(null);
   const [stream_text, set_stream_text] = useState("");
   const [connection_message, set_connection_message] = useState<string | null>(
     null,
@@ -89,9 +94,12 @@ export function use_agent_panel({
     null,
   );
   const connection_ref = useRef<AbortController | null>(null);
+  const submission_ref = useRef(false);
   const run_sequence_ref = useRef(new Map<string, number>());
   const restore_panel_event = useEffectEvent(restore_panel);
   const restoring = Boolean(asset_id) && restored_scope_key !== scope_key;
+  const pending =
+    active_run !== null && !TERMINAL_RUN_STAGES.has(active_run.stage);
 
   const compatible_models = useMemo(() => {
     if (!definition) return [];
@@ -118,7 +126,8 @@ export function use_agent_panel({
     set_thinking_mode(default_thinking_mode);
     set_retrieval_scope("current_asset");
     set_scope_pinned(false);
-    set_preparing_attachments(false);
+    set_submission(null);
+    submission_ref.current = false;
     run_sequence_ref.current.clear();
     set_error(null);
     if (!asset_id) {
@@ -171,7 +180,12 @@ export function use_agent_panel({
       asset_id,
       context: { ...context, scope_key },
     });
-    const created_state = await get_agent_session(session.session_id);
+    const created_state: AgentSessionState = {
+      session,
+      runs: [],
+      events: [],
+      artifacts: [],
+    };
     set_sessions((current) => [session, ...current]);
     set_state(created_state);
     return created_state;
@@ -179,6 +193,8 @@ export function use_agent_panel({
 
   async function select_session(session_id: string) {
     connection_ref.current?.abort();
+    set_submission(null);
+    submission_ref.current = false;
     try {
       const selected = await get_agent_session(session_id);
       set_state(selected);
@@ -207,24 +223,39 @@ export function use_agent_panel({
     set_error(null);
     set_draft("");
     set_last_content("");
-    set_preparing_attachments(false);
+    set_submission(null);
+    submission_ref.current = false;
   }
 
-  async function submit(
+  function submit(
     content_override?: string,
     context_attachment_drafts: AgentContextAttachmentDraft[] = [],
-  ): Promise<boolean> {
+  ): boolean {
     const next_content = content_override ?? draft;
     if (
+      pending ||
+      submission_ref.current ||
       !model_id ||
       (!next_content.trim() && definition?.definition.input_mode !== "task")
     ) {
       return false;
     }
     const content = next_content.trim();
+    submission_ref.current = true;
     set_error(null);
     set_stream_text("");
-    set_preparing_attachments(true);
+    set_last_content(content);
+    set_draft("");
+    set_submission({ content, started_at: Date.now() });
+    void start_submission(content, context_attachment_drafts, model_id);
+    return true;
+  }
+
+  async function start_submission(
+    content: string,
+    context_attachment_drafts: AgentContextAttachmentDraft[],
+    selected_model_id: string,
+  ) {
     try {
       const context_attachments = await materialize_context_attachments(
         context_attachment_drafts,
@@ -232,7 +263,7 @@ export function use_agent_panel({
       const current = await ensure_session();
       const run = await create_agent_run(current.session.session_id, {
         request_key: `request-${uuid7().replaceAll("-", "")}`,
-        ai_model_id: model_id,
+        ai_model_id: selected_model_id,
         content,
         task_input,
         thinking_mode,
@@ -240,17 +271,14 @@ export function use_agent_panel({
         focus_context,
         context_attachments,
       });
-      set_last_content(content);
-      set_draft("");
       set_active_run(run);
       void follow_run(run, current.events);
       if (!scope_pinned) set_retrieval_scope("current_asset");
-      return true;
     } catch (caught) {
       set_error(error_message(caught));
-      return false;
-    } finally {
-      set_preparing_attachments(false);
+      set_draft((current) => (current.trim() ? current : content));
+      set_submission(null);
+      submission_ref.current = false;
     }
   }
 
@@ -332,6 +360,8 @@ export function use_agent_panel({
       );
       set_active_run(final_run);
       set_state(refreshed);
+      set_submission(null);
+      submission_ref.current = false;
       set_connection_message(null);
       if (final_run.stage === "failed") {
         set_error(final_run.error_message ?? "助手运行失败");
@@ -347,6 +377,8 @@ export function use_agent_panel({
     try {
       const cancelled = await cancel_agent_run(run_id);
       set_active_run(cancelled);
+      set_submission(null);
+      submission_ref.current = false;
       connection_ref.current?.abort();
       if (state) set_state(await get_agent_session(state.session.session_id));
     } catch (caught) {
@@ -381,6 +413,15 @@ export function use_agent_panel({
     }
   }
 
+  const active_run_started_at =
+    active_run?.started_at ?? active_run?.created_at;
+  const parsed_run_started_at = active_run_started_at
+    ? Date.parse(active_run_started_at)
+    : Number.NaN;
+  const pending_started_at =
+    submission?.started_at ??
+    (Number.isNaN(parsed_run_started_at) ? undefined : parsed_run_started_at);
+
   return {
     active_run,
     artifacts: state?.artifacts ?? [],
@@ -394,8 +435,8 @@ export function use_agent_panel({
     follow_run,
     last_content,
     model_id,
-    pending: active_run !== null && !TERMINAL_RUN_STAGES.has(active_run.stage),
-    preparing_attachments,
+    pending,
+    pending_started_at,
     resolve_artifact,
     select_session,
     sessions,
@@ -409,6 +450,8 @@ export function use_agent_panel({
     start_new_conversation,
     state,
     stream_text,
+    submitted_content: submission?.content ?? null,
+    submitting: submission !== null && !pending,
     submit,
     thinking_mode,
     retrieval_scope,

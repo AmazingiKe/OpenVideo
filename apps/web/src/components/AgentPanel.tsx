@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { use_optional_task_manager } from "@/app/task_manager";
 import { AgentComposer } from "@/components/AgentComposer";
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
+import { AgentLoadingStatus } from "@/components/AgentLoadingStatus";
 import { AgentMarkdown } from "@/components/AgentMarkdown";
 import { AiModelSelect } from "@/components/AiModelSelect";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -159,7 +160,7 @@ export function AgentPanel({
     last_content,
     model_id,
     pending,
-    preparing_attachments,
+    pending_started_at,
     resolve_artifact,
     retrieval_scope,
     restoring,
@@ -175,6 +176,8 @@ export function AgentPanel({
     start_new_conversation,
     state,
     stream_text,
+    submitted_content,
+    submitting,
     submit,
     thinking_mode,
   } = use_agent_panel({
@@ -208,9 +211,20 @@ export function AgentPanel({
 
   const panel_title = title ?? "助手";
   const task_input_mode = definition?.definition.input_mode === "task";
+  const busy = pending || submitting;
+  const timeline = build_agent_timeline(events, state?.runs);
+  const show_submitted_content = Boolean(
+    submitted_content &&
+    !timeline.some(
+      (item) =>
+        item.type === "message" &&
+        item.role === "user" &&
+        item.content === submitted_content,
+    ),
+  );
 
-  async function submit_current(content_override?: string) {
-    const submitted = await submit(content_override, visible_attachments);
+  function submit_current(content_override?: string) {
+    const submitted = submit(content_override, visible_attachments);
     if (submitted) {
       set_dismissed_attachment_ids(
         new Set(visible_attachments.map((attachment) => attachment.draft_id)),
@@ -243,6 +257,7 @@ export function AgentPanel({
           <Select
             value={state?.session.session_id ?? ""}
             onValueChange={(session_id) => void select_session(session_id)}
+            disabled={busy || restoring}
           >
             <SelectTrigger
               size="sm"
@@ -270,7 +285,9 @@ export function AgentPanel({
             </SelectContent>
           </Select>
           <div className="flex shrink-0 items-center gap-1">
-            {active_run ? (
+            {submitting ? (
+              <Badge variant="secondary">发送中</Badge>
+            ) : active_run ? (
               <AgentRunBadge stage={active_run.stage} />
             ) : (
               <Badge variant="outline">未开始</Badge>
@@ -283,8 +300,8 @@ export function AgentPanel({
               variant="ghost"
               size="icon-sm"
               aria-label="新建对话"
-              title={pending ? "任务运行中，暂时无法新建对话" : "新建对话"}
-              disabled={pending || restoring}
+              title={busy ? "任务运行中，暂时无法新建对话" : "新建对话"}
+              disabled={busy || restoring}
               onClick={() => {
                 start_new_conversation();
                 set_dismissed_attachment_ids(new Set());
@@ -330,14 +347,15 @@ export function AgentPanel({
               role="log"
               aria-label="助手对话消息"
               aria-live="polite"
+              aria-busy={busy || restoring}
               tabIndex={0}
             >
               <MessageScrollerContent className="gap-4 p-4">
                 {restoring ? (
                   <MessageScrollerItem messageId="restoring-session">
                     <Marker>
-                      <MarkerContent className="shimmer">
-                        正在加载助手会话…
+                      <MarkerContent>
+                        <AgentLoadingStatus label="正在加载助手会话" />
                       </MarkerContent>
                     </Marker>
                   </MessageScrollerItem>
@@ -345,7 +363,8 @@ export function AgentPanel({
                 {!restoring &&
                 !error &&
                 events.length === 0 &&
-                artifacts.length === 0 ? (
+                artifacts.length === 0 &&
+                !busy ? (
                   <MessageScrollerItem messageId="empty-session">
                     <Empty className="border-0">
                       <EmptyHeader>
@@ -360,7 +379,7 @@ export function AgentPanel({
                     </Empty>
                   </MessageScrollerItem>
                 ) : null}
-                {build_agent_timeline(events, state?.runs).map((item) => (
+                {timeline.map((item) => (
                   <MessageScrollerItem
                     key={item.id}
                     messageId={item.id}
@@ -444,6 +463,24 @@ export function AgentPanel({
                     )}
                   </MessageScrollerItem>
                 ))}
+                {show_submitted_content && submitted_content ? (
+                  <MessageScrollerItem
+                    messageId="submitted-message"
+                    scrollAnchor
+                  >
+                    <Message align="end">
+                      <MessageContent>
+                        <Bubble align="end" variant="default">
+                          <BubbleContent>
+                            <p className="whitespace-pre-wrap">
+                              {submitted_content}
+                            </p>
+                          </BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
+                ) : null}
                 {stream_text ? (
                   <MessageScrollerItem messageId="streaming-answer">
                     <Message align="start">
@@ -457,11 +494,16 @@ export function AgentPanel({
                     </Message>
                   </MessageScrollerItem>
                 ) : null}
-                {pending && !stream_text ? (
+                {busy && !stream_text ? (
                   <MessageScrollerItem messageId="pending-answer">
                     <Marker>
-                      <MarkerContent className="shimmer">
-                        正在处理当前问题…
+                      <MarkerContent>
+                        <AgentLoadingStatus
+                          label={
+                            submitting ? "正在发送请求" : "正在处理当前问题"
+                          }
+                          started_at={pending_started_at}
+                        />
                       </MarkerContent>
                     </Marker>
                   </MessageScrollerItem>
@@ -533,9 +575,9 @@ export function AgentPanel({
             <Button
               type="button"
               onClick={() => void submit_current()}
-              disabled={pending || !definition.available || !model_id}
+              disabled={busy || !definition.available || !model_id}
             >
-              启动任务
+              {submitting ? "正在启动" : "启动任务"}
             </Button>
           </div>
         ) : (
@@ -548,7 +590,7 @@ export function AgentPanel({
               active_run ? () => void cancel_run(active_run.run_id) : undefined
             }
             pending={pending}
-            preparing_attachments={preparing_attachments}
+            submitting={submitting}
             disabled={!definition?.available || !model_id}
             placeholder={placeholder ?? "输入消息；运行时仍可编辑下一条草稿"}
             models={compatible_models}

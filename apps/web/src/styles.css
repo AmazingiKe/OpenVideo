@@ -127,6 +127,9 @@
     color-mix(in srgb, var(--foreground) 10%, transparent);
   --editor-shadow-large: 0 8px 24px
     color-mix(in srgb, var(--foreground) 14%, transparent);
+  --motion-loader-typing-duration: 1s;
+  --motion-loader-text-blink-duration: 2s;
+  --motion-loader-typing-delay: 250ms;
 
   /* 播放器保持中性深色画布，时间线则通过独立语义 Token 跟随应用主题。 */
   --player-canvas-background: #000000;
@@ -935,6 +938,55 @@
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.08em;
+}
+
+@keyframes prompt-kit-loader-typing {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: translateY(-2px);
+    opacity: 1;
+  }
+}
+
+@keyframes prompt-kit-loader-text-blink {
+  0%,
+  100% {
+    color: var(--primary);
+  }
+
+  50% {
+    color: var(--muted-foreground);
+  }
+}
+
+.prompt-kit-loader-typing [data-slot="loader-dot"] {
+  animation: prompt-kit-loader-typing var(--motion-loader-typing-duration)
+    infinite;
+}
+
+.prompt-kit-loader-typing [data-slot="loader-dot"]:nth-of-type(2) {
+  animation-delay: var(--motion-loader-typing-delay);
+}
+
+.prompt-kit-loader-typing [data-slot="loader-dot"]:nth-of-type(3) {
+  animation-delay: calc(var(--motion-loader-typing-delay) * 2);
+}
+
+.prompt-kit-loader-text-blink {
+  animation: prompt-kit-loader-text-blink
+    var(--motion-loader-text-blink-duration) ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-kit-loader-typing [data-slot="loader-dot"],
+  .prompt-kit-loader-text-blink {
+    animation: none;
+  }
 }
 
 .media_timeline_track_labels_viewport {

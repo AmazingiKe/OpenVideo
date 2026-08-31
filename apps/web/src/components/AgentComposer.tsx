@@ -95,7 +95,7 @@ export function AgentComposer({
   on_cancel,
   disabled = false,
   pending = false,
-  preparing_attachments = false,
+  submitting = false,
   placeholder = "描述希望如何处理当前内容…",
   models,
   model_id,
@@ -123,7 +123,7 @@ export function AgentComposer({
   on_cancel?: () => void;
   disabled?: boolean;
   pending?: boolean;
-  preparing_attachments?: boolean;
+  submitting?: boolean;
   placeholder?: string;
   models: AiModelSummary[];
   model_id: string | null;
@@ -144,7 +144,7 @@ export function AgentComposer({
   on_remove_attachment: (draft_id: string) => void;
   on_attachment_drop?: (attachment: AgentContextAttachmentDraft) => void;
 }) {
-  const submitting = pending || preparing_attachments;
+  const busy = pending || submitting;
   const control_id = useId();
   const [context_drop_active, set_context_drop_active] = useState(false);
   const selected_permission_option =
@@ -152,7 +152,7 @@ export function AgentComposer({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (value.trim() && !disabled && !submitting) on_submit();
+    if (value.trim() && !disabled && !busy) on_submit();
   }
 
   function drop_attachment(event: DragEvent<HTMLFormElement>) {
@@ -244,7 +244,7 @@ export function AgentComposer({
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  if (value.trim() && !disabled && !submitting) on_submit();
+                  if (value.trim() && !disabled && !busy) on_submit();
                 }
               }}
               placeholder={placeholder}
@@ -286,18 +286,16 @@ export function AgentComposer({
                 className="rounded-full"
                 disabled={
                   disabled ||
-                  preparing_attachments ||
+                  submitting ||
                   (pending ? !on_cancel : !value.trim())
                 }
                 aria-label={pending && on_cancel ? "停止助手" : "发送指令"}
                 onClick={pending && on_cancel ? on_cancel : undefined}
               >
-                {submitting ? (
-                  pending && on_cancel ? (
-                    <Square />
-                  ) : (
-                    <Spinner />
-                  )
+                {pending && on_cancel ? (
+                  <Square />
+                ) : submitting ? (
+                  <Spinner />
                 ) : (
                   <ArrowUp />
                 )}
