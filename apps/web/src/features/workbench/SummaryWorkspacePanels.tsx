@@ -1,5 +1,13 @@
 import { Component, lazy, Suspense, type ReactNode } from "react";
-import { CircleX, Code2, Download, Eye, FileText, Save } from "lucide-react";
+import {
+  CircleX,
+  Code2,
+  Download,
+  Eye,
+  FileText,
+  Save,
+  type LucideIcon,
+} from "lucide-react";
 
 import { AiModelSelect } from "@/components/AiModelSelect";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
@@ -617,20 +625,25 @@ function ConflictVersion({
 export function SummaryEmpty({
   title,
   description,
+  icon: Icon = FileText,
+  action,
 }: {
   title: string;
   description: string;
+  icon?: LucideIcon;
+  action?: ReactNode;
 }) {
   return (
     <div className="flex h-full items-center justify-center p-4">
       <Empty className="max-w-md border">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <FileText />
+            <Icon aria-hidden="true" />
           </EmptyMedia>
           <EmptyTitle>{title}</EmptyTitle>
           <EmptyDescription>{description}</EmptyDescription>
         </EmptyHeader>
+        {action}
       </Empty>
     </div>
   );

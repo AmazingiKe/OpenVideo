@@ -60,6 +60,10 @@ AGENT_CHANGES_DIRECTORY_NAME = "agent-changes"
 AGENT_CHANGE_VERSION_PATTERN = "agent-version-*.json"
 
 
+class SummaryIndexReadError(RuntimeError):
+    """SQLite 投影无法从摘要业务文件恢复时阻止调用方继续使用不完整数据。"""
+
+
 class LibraryGeneratedStorageMixin:
     """集中保存总结与 Agent 运行产物，避免生命周期逻辑耦合数据库细节。"""
 
@@ -256,24 +260,27 @@ class LibraryGeneratedStorageMixin:
         for document in documents:
             self._validate_identifier(document.document_id, "document")
         asset_id = next(iter(asset_ids))
-        synchronize_asset(self._db(), self.assets_path, asset_id)
-        loaded = {
-            item.document_id: item for item in self.load_summary_documents(asset_id)
-        }
-        if any(document.document_id not in loaded for document in documents):
-            raise ValueError("总结 manifest 未包含全部新文档")
-        return [loaded[document.document_id] for document in documents]
+        with self._lock:
+            synchronize_asset(self._db(), self.assets_path, asset_id)
+            loaded = {
+                item.document_id: item for item in self.load_summary_documents(asset_id)
+            }
+            if any(document.document_id not in loaded for document in documents):
+                raise ValueError("总结 manifest 未包含全部新文档")
+            return [loaded[document.document_id] for document in documents]
 
     def load_summary_document(self, document_id: str) -> SummaryDocument | None:
         self._validate_identifier(document_id, "document")
-        row = (
-            self._db()
-            .execute(
-                "SELECT * FROM summary_documents WHERE document_id = ?", (document_id,)
+        with self._lock:
+            row = (
+                self._db()
+                .execute(
+                    "SELECT * FROM summary_documents WHERE document_id = ?",
+                    (document_id,),
+                )
+                .fetchone()
             )
-            .fetchone()
-        )
-        return self._summary_document_from_row(row) if row else None
+            return self._summary_document_from_row(row) if row else None
 
     def load_summary_documents(
         self,
@@ -287,19 +294,33 @@ class LibraryGeneratedStorageMixin:
             self._validate_identifier(version_id, "summary-version")
             where += " AND version_id = ?"
             parameters.append(version_id)
-        rows = (
-            self._db()
-            .execute(
-                f"SELECT * FROM summary_documents WHERE {where} "
-                "ORDER BY parent_document_id IS NOT NULL, position, created_at",
-                tuple(parameters),
+        with self._lock:
+            rows = (
+                self._db()
+                .execute(
+                    f"SELECT * FROM summary_documents WHERE {where} "
+                    "ORDER BY parent_document_id IS NOT NULL, position, created_at",
+                    tuple(parameters),
+                )
+                .fetchall()
             )
-            .fetchall()
-        )
-        return [self._summary_document_from_row(row) for row in rows]
+            return [self._summary_document_from_row(row) for row in rows]
 
     def load_summary_versions(self, asset_id: str) -> list[SummaryVersion]:
         self._validate_asset_id(asset_id)
+        with self._lock:
+            try:
+                return self._load_summary_versions_from_index(asset_id)
+            except (sqlite3.Error, TypeError, ValueError):
+                try:
+                    synchronize_asset(self._db(), self.assets_path, asset_id)
+                    return self._load_summary_versions_from_index(asset_id)
+                except (OSError, sqlite3.Error, TypeError, ValueError) as error:
+                    raise SummaryIndexReadError(
+                        "总结索引暂时无法恢复，请稍后重试"
+                    ) from error
+
+    def _load_summary_versions_from_index(self, asset_id: str) -> list[SummaryVersion]:
         rows = (
             self._db()
             .execute(
@@ -325,21 +346,23 @@ class LibraryGeneratedStorageMixin:
         content_digest: str | None = None,
         position: int | None = None,
     ) -> SummaryDocument | None:
-        document = self.load_summary_document(document_id)
-        if document is None:
-            return None
-        synchronize_asset(self._db(), self.assets_path, document.asset_id)
-        updated = self.load_summary_document(document_id)
-        if updated is None or updated.revision != expected_revision + 1:
-            return None
-        return updated
+        with self._lock:
+            document = self.load_summary_document(document_id)
+            if document is None:
+                return None
+            synchronize_asset(self._db(), self.assets_path, document.asset_id)
+            updated = self.load_summary_document(document_id)
+            if updated is None or updated.revision != expected_revision + 1:
+                return None
+            return updated
 
     def delete_summary_document(self, document_id: str) -> bool:
-        document = self.load_summary_document(document_id)
-        if document is None:
-            return False
-        synchronize_asset(self._db(), self.assets_path, document.asset_id)
-        return self.load_summary_document(document_id) is None
+        with self._lock:
+            document = self.load_summary_document(document_id)
+            if document is None:
+                return False
+            synchronize_asset(self._db(), self.assets_path, document.asset_id)
+            return self.load_summary_document(document_id) is None
 
     def save_agent_session(self, session: AgentSession) -> None:
         self._validate_identifier(session.session_id, "session")
@@ -883,15 +906,16 @@ class LibraryGeneratedStorageMixin:
 
     def save_summary_media(self, media: SummaryMediaArtifact) -> None:
         self._validate_identifier(media.media_id, "media")
-        asset_directory = self.asset_directory(media.asset_id)
-        manifest = load_version_manifest(asset_directory, media.version_id)
-        if any(item.media_id == media.media_id for item in manifest.media):
-            raise sqlite3.IntegrityError("总结媒体标识已存在")
-        write_version_manifest(
-            asset_directory,
-            manifest.model_copy(update={"media": [*manifest.media, media]}),
-        )
-        synchronize_asset(self._db(), self.assets_path, media.asset_id)
+        with self._lock:
+            asset_directory = self.asset_directory(media.asset_id)
+            manifest = load_version_manifest(asset_directory, media.version_id)
+            if any(item.media_id == media.media_id for item in manifest.media):
+                raise sqlite3.IntegrityError("总结媒体标识已存在")
+            write_version_manifest(
+                asset_directory,
+                manifest.model_copy(update={"media": [*manifest.media, media]}),
+            )
+            synchronize_asset(self._db(), self.assets_path, media.asset_id)
 
     def save_summary_illustration_job(self, job: SummaryIllustrationJob) -> None:
         self._validate_identifier(job.job_id, "summary-illustration-job")

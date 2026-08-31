@@ -3,7 +3,7 @@ from pathlib import Path
 import asyncio
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from openvideo.core.summary_models import (
@@ -27,6 +27,7 @@ from openvideo.summary_manager import (
     SummaryManager,
     SummaryNotFoundError,
     SummaryRevisionConflictError,
+    SummaryUnavailableError,
 )
 from openvideo.summary_illustration_manager import (
     SummaryIllustrationError,
@@ -52,6 +53,12 @@ def register_summary_routes(
     summary_manager: Callable[[], SummaryManager],
     illustration_manager: Callable[[], SummaryIllustrationManager],
 ) -> None:
+    @app.exception_handler(SummaryUnavailableError)
+    async def handle_summary_unavailable(
+        _request: Request, error: SummaryUnavailableError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(error)})
+
     @app.get("/api/summary-presets", response_model=list[SummaryPreset])
     def list_summary_presets() -> list[SummaryPreset]:
         return [preset.model_copy(deep=True) for preset in summary_presets()]

@@ -282,6 +282,35 @@ describe("SummaryWorkspace", () => {
     vi.mocked(subscribe_summary_documents).mockReturnValue(() => undefined);
   });
 
+  it("shows a retry state instead of treating a load failure as an empty project", async () => {
+    vi.mocked(list_summary_versions)
+      .mockRejectedValueOnce(
+        new ApiError("总结索引暂时无法恢复，请稍后重试", 503),
+      )
+      .mockResolvedValueOnce([SUMMARY_VERSION]);
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    expect(await screen.findByText("总结项目暂时无法加载")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "生成主文档" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
+
+    expect(
+      await screen.findByRole("textbox", { name: "可视化 Markdown" }),
+    ).toHaveValue("# 原内容\n");
+    expect(list_summary_versions).toHaveBeenCalledTimes(2);
+  });
+
   it("generates the document only after explicit confirmation", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([]);
     vi.mocked(generate_summary_documents).mockResolvedValue({

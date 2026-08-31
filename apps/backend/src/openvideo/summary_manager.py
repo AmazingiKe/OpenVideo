@@ -19,6 +19,7 @@ from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.event_analysis_models import EventAnalysisStatus
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
+from openvideo.core.library_generated_storage import SummaryIndexReadError
 from openvideo.core.library_index import synchronize_asset
 from openvideo.core.summary_files import (
     SUMMARY_ASSETS_DIRECTORY_NAME,
@@ -109,6 +110,10 @@ SummaryModelT = TypeVar("SummaryModelT", bound=BaseModel)
 
 class SummaryError(RuntimeError):
     """总结工作台请求无法在当前资料库状态下完成。"""
+
+
+class SummaryUnavailableError(RuntimeError):
+    """摘要查询投影无法恢复时向 API 暴露可重试状态，而不是伪装成资源不存在。"""
 
 
 class SummaryNotFoundError(SummaryError):
@@ -211,7 +216,10 @@ class SummaryManager:
 
     def versions(self, asset_id: str) -> list[SummaryVersion]:
         self._require_asset(asset_id)
-        return self.library.load_summary_versions(asset_id)
+        try:
+            return self.library.load_summary_versions(asset_id)
+        except SummaryIndexReadError as error:
+            raise SummaryUnavailableError(str(error)) from error
 
     def current_version(self, asset_id: str) -> SummaryVersion | None:
         versions = self.versions(asset_id)
@@ -225,19 +233,20 @@ class SummaryManager:
         )
 
     def select_version(self, asset_id: str, version_id: str) -> SummaryVersion:
-        version = self._require_version(asset_id, version_id)
-        asset_directory = self.library.asset_directory(asset_id)
-        root = load_root_manifest(asset_directory)
-        write_root_manifest(
-            asset_directory,
-            root.model_copy(
-                update={
-                    "current_version_id": version_id,
-                    "updated_at": datetime.now(UTC),
-                }
-            ),
-        )
-        return version
+        with self.library._lock:
+            version = self._require_version(asset_id, version_id)
+            asset_directory = self.library.asset_directory(asset_id)
+            root = load_root_manifest(asset_directory)
+            write_root_manifest(
+                asset_directory,
+                root.model_copy(
+                    update={
+                        "current_version_id": version_id,
+                        "updated_at": datetime.now(UTC),
+                    }
+                ),
+            )
+            return version
 
     def documents(
         self,
@@ -361,55 +370,57 @@ class SummaryManager:
             )
             for document in allocated
         ]
-        self._write_new_version(asset_id, version, documents)
-        self.library.create_summary_documents(documents)
-        return SummaryGenerationResult(
-            version=version,
-            documents=self.documents(asset_id, version_id),
-            context_capacity_unknown=capacity_unknown,
-        )
+        with self.library._lock:
+            self._write_new_version(asset_id, version, documents)
+            self.library.create_summary_documents(documents)
+            return SummaryGenerationResult(
+                version=version,
+                documents=self.documents(asset_id, version_id),
+                context_capacity_unknown=capacity_unknown,
+            )
 
     def create_child(
         self,
         parent_document_id: str,
         request: SummaryDocumentCreate,
     ) -> SummaryDocument:
-        parent = self._require_document(parent_document_id)
-        documents = self.documents(parent.asset_id, parent.version_id)
-        depths = summary_document_depths(documents)
-        if depths[parent.document_id] >= SUMMARY_DOCUMENT_MAX_DEPTH:
-            raise SummaryError("总结文档最多支持三级")
-        if len(documents) >= 100:
-            raise SummaryError("单个总结版本最多包含 100 篇文档")
-        children = [
-            document
-            for document in documents
-            if document.parent_document_id == parent.document_id
-        ]
-        document = self._prepare_document(
-            SummaryDocument(
-                document_id=f"document-{uuid7().hex}",
-                asset_id=parent.asset_id,
-                version_id=parent.version_id,
-                parent_document_id=parent.document_id,
-                title=request.title,
-                markdown=request.markdown,
-                position=len(children),
+        with self.library._lock:
+            parent = self._require_document(parent_document_id)
+            documents = self.documents(parent.asset_id, parent.version_id)
+            depths = summary_document_depths(documents)
+            if depths[parent.document_id] >= SUMMARY_DOCUMENT_MAX_DEPTH:
+                raise SummaryError("总结文档最多支持三级")
+            if len(documents) >= 100:
+                raise SummaryError("单个总结版本最多包含 100 篇文档")
+            children = [
+                document
+                for document in documents
+                if document.parent_document_id == parent.document_id
+            ]
+            document = self._prepare_document(
+                SummaryDocument(
+                    document_id=f"document-{uuid7().hex}",
+                    asset_id=parent.asset_id,
+                    version_id=parent.version_id,
+                    parent_document_id=parent.document_id,
+                    title=request.title,
+                    markdown=request.markdown,
+                    position=len(children),
+                )
             )
-        )
-        updated_documents = [*documents, document]
-        try:
-            self._write_document(document)
-            self._write_version_manifest(
-                parent.asset_id,
-                parent.version_id,
-                updated_documents,
-            )
-        except Exception:
-            self._document_path(document).unlink(missing_ok=True)
-            raise
-        self.library.create_summary_documents([document])
-        return self._require_document(document.document_id)
+            updated_documents = [*documents, document]
+            try:
+                self._write_document(document)
+                self._write_version_manifest(
+                    parent.asset_id,
+                    parent.version_id,
+                    updated_documents,
+                )
+            except Exception:
+                self._document_path(document).unlink(missing_ok=True)
+                raise
+            self.library.create_summary_documents([document])
+            return self._require_document(document.document_id)
 
     def duplicate_document(self, document_id: str) -> SummaryDocument:
         document = self._require_document(document_id)
@@ -428,42 +439,47 @@ class SummaryManager:
         document_id: str,
         request: SummaryDocumentUpdate,
     ) -> SummaryDocument:
-        document = self._require_document(document_id)
-        if document.revision != request.expected_revision:
-            raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
-        markdown = (
-            request.markdown if request.markdown is not None else document.markdown
-        )
-        updated = document.model_copy(
-            update={
-                "title": request.title if request.title is not None else document.title,
-                "markdown": markdown,
-                "position": request.position
-                if request.position is not None
-                else document.position,
-                "content_digest": markdown_digest(markdown),
-                "revision": document.revision + 1,
-                "updated_at": datetime.now(UTC),
-            }
-        )
-        documents = [
-            updated if item.document_id == document_id else item
-            for item in self.documents(document.asset_id, document.version_id)
-        ]
-        if request.markdown is not None:
-            self._write_document(updated)
-        self._write_version_manifest(document.asset_id, document.version_id, documents)
-        indexed = self.library.update_summary_document(
-            document_id,
-            request.expected_revision,
-            title=request.title,
-            relative_path=updated.relative_path,
-            content_digest=updated.content_digest,
-            position=request.position,
-        )
-        if indexed is None:
-            raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
-        return indexed
+        with self.library._lock:
+            document = self._require_document(document_id)
+            if document.revision != request.expected_revision:
+                raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
+            markdown = (
+                request.markdown if request.markdown is not None else document.markdown
+            )
+            updated = document.model_copy(
+                update={
+                    "title": request.title
+                    if request.title is not None
+                    else document.title,
+                    "markdown": markdown,
+                    "position": request.position
+                    if request.position is not None
+                    else document.position,
+                    "content_digest": markdown_digest(markdown),
+                    "revision": document.revision + 1,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            documents = [
+                updated if item.document_id == document_id else item
+                for item in self.documents(document.asset_id, document.version_id)
+            ]
+            if request.markdown is not None:
+                self._write_document(updated)
+            self._write_version_manifest(
+                document.asset_id, document.version_id, documents
+            )
+            indexed = self.library.update_summary_document(
+                document_id,
+                request.expected_revision,
+                title=request.title,
+                relative_path=updated.relative_path,
+                content_digest=updated.content_digest,
+                position=request.position,
+            )
+            if indexed is None:
+                raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
+            return indexed
 
     def apply_agent_edit(
         self,

@@ -119,6 +119,33 @@ def _save_summary(library: MediaLibrary) -> None:
     )
 
 
+def test_summary_versions_rebuild_invalid_index_projection(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    try:
+        _save_asset(library, _asset())
+        _save_summary(library)
+        with library._db():
+            library._db().execute(
+                "UPDATE summary_versions SET context_summary = ? WHERE version_id = ?",
+                ("invalid-json", VERSION_ID),
+            )
+
+        versions = library.load_summary_versions(ASSET_ID)
+
+        assert versions[0].context_summary.transcript_digest == "transcript"
+        stored = (
+            library._db()
+            .execute(
+                "SELECT context_summary FROM summary_versions WHERE version_id = ?",
+                (VERSION_ID,),
+            )
+            .fetchone()[0]
+        )
+        assert json.loads(stored)["marker_digest"] == "markers"
+    finally:
+        library.close()
+
+
 def test_download_events_survive_library_reopen(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     _save_asset(library, _asset())
@@ -252,9 +279,7 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     }
     assert "marker_tags" not in tables
     markers_file = json.loads(
-        (rebuilt.asset_directory(ASSET_ID) / "markers.json").read_text(
-            encoding="utf-8"
-        )
+        (rebuilt.asset_directory(ASSET_ID) / "markers.json").read_text(encoding="utf-8")
     )
     assert markers_file["format_version"] == 3
     assert set(markers_file["markers"][0]) == {

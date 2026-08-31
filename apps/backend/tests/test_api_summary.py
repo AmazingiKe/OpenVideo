@@ -26,6 +26,7 @@ from openvideo.core.summary_models import SummaryDocumentCreate
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.llm.model_profile import ModelLimits, ModelProfile
 from openvideo.settings import Settings
+from openvideo.summary_manager import SummaryManager, SummaryUnavailableError
 from openvideo.ui.api import create_app
 
 
@@ -224,6 +225,20 @@ def test_summary_presets_and_formal_context_exclude_focus_selection(
         for messages in captured
     )
     assert "不得把秒数解释成分钟" in captured[-1][0]["content"]
+
+
+def test_summary_index_failure_returns_retryable_service_error(
+    tmp_path: Path, monkeypatch
+):
+    def unavailable(_manager: SummaryManager, _asset_id: str):
+        raise SummaryUnavailableError("总结索引暂时无法恢复，请稍后重试")
+
+    monkeypatch.setattr(SummaryManager, "versions", unavailable)
+    with create_client(tmp_path) as client:
+        response = client.get(f"/api/media/assets/{ASSET_ID}/summary-versions")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "总结索引暂时无法恢复，请稍后重试"}
 
 
 def test_generation_appends_versions_and_history_remains_editable(

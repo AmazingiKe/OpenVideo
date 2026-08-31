@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCw, TriangleAlert } from "lucide-react";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
@@ -318,12 +320,22 @@ export function SummaryWorkspace({
   }, [presets]);
 
   useEffect(() => {
+    const background_project_error =
+      project_query.error && documents.length > 0
+        ? error_message(project_query.error)
+        : null;
     const resource_error =
       models_error ??
       (presets_query.error ? error_message(presets_query.error) : null) ??
-      (project_query.error ? error_message(project_query.error) : null);
+      background_project_error;
     if (resource_error) on_error?.(resource_error);
-  }, [models_error, on_error, presets_query.error, project_query.error]);
+  }, [
+    documents.length,
+    models_error,
+    on_error,
+    presets_query.error,
+    project_query.error,
+  ]);
 
   useEffect(() => {
     active_asset_id_ref.current = selected_asset_id;
@@ -651,6 +663,30 @@ export function SummaryWorkspace({
     }
   }
 
+  if (selected_asset && project_query.isError && documents.length === 0) {
+    return (
+      <SummaryEmpty
+        title="总结项目暂时无法加载"
+        description={error_message(project_query.error)}
+        icon={TriangleAlert}
+        action={
+          <Button
+            type="button"
+            variant="outline"
+            disabled={project_query.isFetching}
+            onClick={() => void project_query.refetch()}
+          >
+            {project_query.isFetching ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <RefreshCw data-icon="inline-start" />
+            )}
+            {project_query.isFetching ? "正在重试" : "重新加载"}
+          </Button>
+        }
+      />
+    );
+  }
   if (
     !selected_asset ||
     (project_query.isPending && documents.length === 0) ||
