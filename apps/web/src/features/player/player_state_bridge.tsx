@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 
 export type PlayerController = {
   current_time: () => number;
+  preview_seek: (seconds: number) => void;
   seek: (seconds: number) => void;
   toggle_playback: () => void;
   set_playback_rate: (rate: number) => void;
@@ -31,6 +32,9 @@ export function PlayerStateBridge({
     // remote 的引用会变化，播放器实例才是控制句柄生命周期的稳定边界。
     on_player_ready({
       current_time: () => player.currentTime,
+      preview_seek: (seconds: number) => {
+        player.currentTime = seconds;
+      },
       seek: (seconds: number) => remote.seek(seconds),
       toggle_playback: () => {
         if (player.paused) void remote.play();

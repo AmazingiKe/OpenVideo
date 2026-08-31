@@ -43,11 +43,14 @@ export function use_scrub_preview({
     if (requested_time === null) return;
     set_preview_time(requested_time);
     const video = video_ref.current;
-    if (!available_ref.current) {
+    if (
+      !available_ref.current ||
+      !video ||
+      video.readyState < HTMLMediaElement.HAVE_METADATA
+    ) {
       set_fallback_seek_request({ seconds: requested_time });
       return;
     }
-    if (!video || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
     if (video.seeking) return;
     const bounded_time = Number.isFinite(video.duration)
       ? Math.min(requested_time, video.duration)

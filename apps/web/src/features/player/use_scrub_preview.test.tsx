@@ -87,6 +87,27 @@ describe("use_scrub_preview", () => {
     expect(result.current.is_visible).toBe(false);
   });
 
+  it("falls back to the main player while proxy metadata is loading", () => {
+    const { result } = renderHook(() =>
+      use_scrub_preview({
+        src: "/scrub.mp4",
+        commit_timeout_milliseconds: 1_500,
+      }),
+    );
+    const video = document.createElement("video");
+    result.current.video_ref.current = video;
+
+    act(() => {
+      result.current.preview_to(8);
+      run_frame();
+    });
+
+    expect(result.current.fallback_seek_request).toEqual({ seconds: 8 });
+    expect(video.currentTime).toBe(0);
+    expect(result.current.preview_time).toBe(8);
+    expect(result.current.is_visible).toBe(false);
+  });
+
   it("waits for the current proxy seek before applying the latest request", () => {
     const { result } = renderHook(() =>
       use_scrub_preview({

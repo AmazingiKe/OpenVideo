@@ -43,6 +43,7 @@ export const Default: Story = {
 
 export const ScrubSubtitlePreview: Story = {
   args: {
+    scrub_src: DEMO_VIDEO_URL,
     subtitles: [
       {
         start_seconds: 0,

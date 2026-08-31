@@ -108,6 +108,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   ref,
 ) {
   // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
+  const preview_seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
   const seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
   const toggle_playback_fn_ref = useRef<(() => void) | null>(null);
   const set_playback_rate_fn_ref = useRef<((rate: number) => void) | null>(
@@ -144,7 +145,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   useEffect(() => {
     if (fallback_seek_request) {
-      seek_fn_ref.current?.(fallback_seek_request.seconds);
+      preview_seek_fn_ref.current?.(fallback_seek_request.seconds);
     }
   }, [fallback_seek_request]);
 
@@ -209,6 +210,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   const on_player_ready = useCallback((instance: PlayerController | null) => {
     current_time_fn_ref.current = instance ? instance.current_time : null;
+    preview_seek_fn_ref.current = instance ? instance.preview_seek : null;
     seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
     toggle_playback_fn_ref.current = instance
       ? () => instance.toggle_playback()
@@ -220,6 +222,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   const on_player_time_change = useCallback((seconds: number) => {
     const pending_seek = pending_seek_ref.current;
+    if (pending_seek === null && is_preview_active()) return;
     const is_waiting_for_seek =
       pending_seek !== null &&
       performance.now() - pending_seek.requested_at <
@@ -234,7 +237,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     pending_seek_ref.current = null;
     current_time_value_ref.current = seconds;
     on_time_change_ref.current?.(seconds);
-  }, []);
+  }, [is_preview_active]);
 
   const plyr_markers = markers.map((marker) => ({
     time: marker.start_seconds,

@@ -126,7 +126,7 @@ describe("Player", () => {
   it("keeps imperative timeline previews local until seek commit", () => {
     const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();
-    render(
+    const { rerender } = render(
       <Player
         ref={player_ref}
         src="/video.mp4"
@@ -139,6 +139,29 @@ describe("Player", () => {
 
     expect(player_ref.current?.current_time()).toBe(16);
     expect(on_time_change).not.toHaveBeenCalled();
+
+    media.store.currentTime = 13;
+    rerender(
+      <Player
+        ref={player_ref}
+        src="/video.mp4"
+        on_time_change={on_time_change}
+      />,
+    );
+    expect(player_ref.current?.current_time()).toBe(16);
+    expect(on_time_change).not.toHaveBeenCalled();
+  });
+
+  it("updates the main frame while the proxy video is still loading", async () => {
+    const player_ref = createRef<PlayerHandle>();
+    render(
+      <Player ref={player_ref} src="/video.mp4" scrub_src="/scrub.mp4" />,
+    );
+
+    act(() => player_ref.current?.preview_to(16));
+
+    await waitFor(() => expect(media.player.currentTime).toBe(16));
+    expect(media.remote.seek).not.toHaveBeenCalled();
   });
 
   it("ignores stale time events while an external seek is pending", () => {
