@@ -90,9 +90,9 @@ export const CompactControls: Story = {
 export const StrengthSelector: Story = {
   args: { thinking_mode: "auto" },
   play: async ({ canvas, canvasElement, userEvent }) => {
-    await userEvent.click(
-      canvas.getByRole("button", { name: "思考强度：自动" }),
-    );
+    const trigger = canvas.getByRole("button", { name: "思考强度：自动" });
+    await expect(trigger).toHaveTextContent("自动");
+    await userEvent.click(trigger);
     const page = within(canvasElement.ownerDocument.body);
     const popover = page.getByRole("dialog", { name: "思考强度" });
     await expect(popover).toHaveTextContent("5.6 Sol");
@@ -108,9 +108,9 @@ export const RetrievalPermissions: Story = {
     scope_pinned: true,
   },
   play: async ({ canvas, canvasElement, userEvent }) => {
-    await userEvent.click(
-      canvas.getByRole("button", { name: "检索范围：资料库" }),
-    );
+    const trigger = canvas.getByRole("button", { name: "检索范围：资料库" });
+    await expect(trigger).toHaveTextContent("资料库");
+    await userEvent.click(trigger);
     const page = within(canvasElement.ownerDocument.body);
     const popover = page.getByRole("dialog", { name: "检索与权限" });
     await expect(

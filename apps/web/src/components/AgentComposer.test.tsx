@@ -113,8 +113,10 @@ describe("AgentComposer", () => {
     expect(screen.getByRole("button", { name: "添加上下文" })).toBeVisible();
     expect(
       screen.getByRole("button", { name: "检索范围：资料库" }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "思考强度：高" })).toBeVisible();
+    ).toHaveTextContent("资料库");
+    expect(
+      screen.getByRole("button", { name: "思考强度：高" }),
+    ).toHaveTextContent("高");
     expect(screen.getByRole("button", { name: "发送指令" })).toBeEnabled();
   });
 

@@ -353,7 +353,7 @@ function RetrievalScopeControl({
           className="rounded-full"
           aria-label={`检索范围：${selected_option.label}`}
         >
-          <span>检索范围</span>
+          <span>{selected_option.label}</span>
           <ChevronDown data-icon="inline-end" />
         </Button>
       </PopoverTrigger>
@@ -532,7 +532,7 @@ function ThinkingModeControl({
           className="rounded-full"
           aria-label={`思考强度：${selected_option.label}`}
         >
-          <span>选择强度</span>
+          <span>{selected_option.label}</span>
           <ChevronDown data-icon="inline-end" />
         </Button>
       </PopoverTrigger>
