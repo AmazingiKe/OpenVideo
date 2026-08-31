@@ -1,7 +1,41 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 
+import { unknown_model_profile, type AiModelSummary } from "@/shared/types";
 import { AgentComposer } from "./AgentComposer";
+
+const MODEL_ID = "model-019c012345677abc8123456789abcdef";
+const SECONDARY_MODEL_ID = "model-019c012345677abc8123456789abcdee";
+const MODEL: AiModelSummary = {
+  model_id: MODEL_ID,
+  name: "5.6 Sol",
+  litellm_model: "openai/gpt-5.6-sol",
+  input_modalities: ["text", "image"],
+  capabilities: {
+    tools: "auto",
+    reasoning: "auto",
+    vision: "auto",
+    structured_output: "auto",
+    streaming_tools: "auto",
+    reasoning_tools: "auto",
+    tool_choice_auto: "auto",
+    tool_choice_required: "auto",
+    tool_choice_named: "auto",
+    parallel_tools: "auto",
+    vision_tools: "auto",
+  },
+  profile: unknown_model_profile("openai", "gpt-5.6-sol"),
+};
+const MODELS: AiModelSummary[] = [
+  MODEL,
+  {
+    ...MODEL,
+    model_id: SECONDARY_MODEL_ID,
+    name: "5.6 Terra",
+    litellm_model: "openai/gpt-5.6-terra",
+    profile: unknown_model_profile("openai", "gpt-5.6-terra"),
+  },
+];
 
 const meta = {
   title: "Assistant/AgentComposer",
@@ -10,6 +44,9 @@ const meta = {
     value: "",
     on_change: fn(),
     on_submit: fn(),
+    models: MODELS,
+    model_id: MODEL_ID,
+    on_model_change: fn(),
     thinking_mode: "auto",
     on_thinking_mode_change: fn(),
     thinking_modes_enabled: true,
@@ -23,7 +60,6 @@ const meta = {
     attachments: [],
     on_remove_attachment: fn(),
     placeholder: "随心输入",
-    selected_model_name: "5.6 Sol",
   },
   decorators: [
     (Story) => (
@@ -76,11 +112,11 @@ export const CompactControls: Story = {
   },
   play: async ({ canvas, canvasElement, userEvent }) => {
     const trigger = canvas.getByRole("button", {
-      name: "思考强度：自动",
+      name: "模型与思考强度：5.6 Sol，自动",
     });
     await userEvent.click(trigger);
     const page = within(canvasElement.ownerDocument.body);
-    const popover = page.getByRole("dialog", { name: "思考强度" });
+    const popover = page.getByRole("dialog", { name: "模型与思考强度" });
     const slider = within(popover).getByRole("slider", { name: "思考强度" });
     await expect(slider).toHaveAttribute("data-disabled");
     await expect(slider).toHaveAttribute("aria-valuetext", "自动");
@@ -90,12 +126,24 @@ export const CompactControls: Story = {
 export const StrengthSelector: Story = {
   args: { thinking_mode: "auto" },
   play: async ({ canvas, canvasElement, userEvent }) => {
-    const trigger = canvas.getByRole("button", { name: "思考强度：自动" });
-    await expect(trigger).toHaveTextContent("自动");
+    const trigger = canvas.getByRole("button", {
+      name: "模型与思考强度：5.6 Sol，自动",
+    });
+    await expect(trigger).toHaveTextContent("5.6 Sol自动");
     await userEvent.click(trigger);
     const page = within(canvasElement.ownerDocument.body);
-    const popover = page.getByRole("dialog", { name: "思考强度" });
+    const popover = page.getByRole("dialog", { name: "模型与思考强度" });
     await expect(popover).toHaveTextContent("5.6 Sol");
+    const model_select = within(popover).getByRole("combobox", {
+      name: "执行模型",
+    });
+    await userEvent.click(model_select);
+    await userEvent.click(
+      await page.findByRole("option", { name: /5\.6 Terra/ }),
+    );
+    await expect(meta.args.on_model_change).toHaveBeenCalledWith(
+      SECONDARY_MODEL_ID,
+    );
     await expect(
       within(popover).getByRole("slider", { name: "思考强度" }),
     ).toHaveAttribute("aria-valuetext", "自动");

@@ -195,6 +195,7 @@ export function AgentPanel({
   );
 
   const panel_title = title ?? "助手";
+  const task_input_mode = definition?.definition.input_mode === "task";
 
   async function submit_current(content_override?: string) {
     const submitted = await submit(content_override, visible_attachments);
@@ -244,7 +245,12 @@ export function AgentPanel({
             <Badge variant="outline">未开始</Badge>
           )}
         </div>
-        <div className="grid min-w-0 grid-cols-2 gap-2">
+        <div
+          className={cn(
+            "grid min-w-0 gap-2",
+            task_input_mode ? "grid-cols-2" : "grid-cols-1",
+          )}
+        >
           <Field>
             <FieldLabel htmlFor={`${agent_id}-agent-session`}>
               历史会话
@@ -277,13 +283,15 @@ export function AgentPanel({
               </SelectContent>
             </Select>
           </Field>
-          <AiModelSelect
-            id={`${agent_id}-agent-model`}
-            label="执行模型"
-            models={compatible_models}
-            value={model_id}
-            on_change={set_model_id}
-          />
+          {task_input_mode ? (
+            <AiModelSelect
+              id={`${agent_id}-agent-model`}
+              label="执行模型"
+              models={compatible_models}
+              value={model_id}
+              on_change={set_model_id}
+            />
+          ) : null}
         </div>
         <Badge className="w-fit" variant="secondary">
           {retrieval_scope === "library" ? "资料库范围" : "当前视频"}
@@ -503,7 +511,7 @@ export function AgentPanel({
         </MessageScrollerProvider>
       </CardContent>
       <CardFooter className="block p-0">
-        {definition?.definition.input_mode === "task" ? (
+        {task_input_mode ? (
           <div className="flex items-center justify-end gap-2 border-t p-4">
             {pending && active_run ? (
               <Button
@@ -534,10 +542,9 @@ export function AgentPanel({
             preparing_attachments={preparing_attachments}
             disabled={!definition?.available || !model_id}
             placeholder={placeholder ?? "输入消息；运行时仍可编辑下一条草稿"}
-            selected_model_name={
-              compatible_models.find((model) => model.model_id === model_id)
-                ?.name
-            }
+            models={compatible_models}
+            model_id={model_id}
+            on_model_change={set_model_id}
             thinking_mode={thinking_mode}
             on_thinking_mode_change={set_thinking_mode}
             thinking_modes_enabled={thinking_modes_enabled}

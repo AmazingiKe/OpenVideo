@@ -14,6 +14,31 @@ import {
   MessageScrollerViewport,
 } from "./ui/message-scroller";
 import { cn } from "@/lib/utils";
+import { unknown_model_profile, type AiModelSummary } from "@/shared/types";
+
+const MODEL_ID = "model-019c012345677abc8123456789abcdef";
+const MODELS: AiModelSummary[] = [
+  {
+    model_id: MODEL_ID,
+    name: "5.6 Sol",
+    litellm_model: "openai/gpt-5.6-sol",
+    input_modalities: ["text", "image"],
+    capabilities: {
+      tools: "auto",
+      reasoning: "auto",
+      vision: "auto",
+      structured_output: "auto",
+      streaming_tools: "auto",
+      reasoning_tools: "auto",
+      tool_choice_auto: "auto",
+      tool_choice_required: "auto",
+      tool_choice_named: "auto",
+      parallel_tools: "auto",
+      vision_tools: "auto",
+    },
+    profile: unknown_model_profile("openai", "gpt-5.6-sol"),
+  },
+];
 
 const meta = {
   title: "Components/Chat",
@@ -45,6 +70,9 @@ export const Conversation: Story = {
         value=""
         on_change={fn()}
         on_submit={fn()}
+        models={MODELS}
+        model_id={MODEL_ID}
+        on_model_change={fn()}
         thinking_mode="auto"
         on_thinking_mode_change={fn()}
         thinking_modes_enabled={false}
@@ -79,6 +107,9 @@ export const Streaming: Story = {
         on_submit={fn()}
         on_cancel={fn()}
         pending
+        models={MODELS}
+        model_id={MODEL_ID}
+        on_model_change={fn()}
         thinking_mode="auto"
         on_thinking_mode_change={fn()}
         thinking_modes_enabled={false}

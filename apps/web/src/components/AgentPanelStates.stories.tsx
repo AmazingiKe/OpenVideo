@@ -131,10 +131,14 @@ export const Empty: Story = {
     await expect(
       canvas.getByRole("textbox", { name: "助手指令" }),
     ).toBeEnabled();
-    const model_select = canvas.getByRole("combobox", { name: "执行模型" });
+    const execution_control = canvas.getByRole("button", {
+      name: "模型与思考强度：在线工具模型，自动",
+    });
+    await userEvent.click(execution_control);
+    const page = within(canvasElement.ownerDocument.body);
+    const model_select = page.getByRole("combobox", { name: "执行模型" });
     await expect(model_select).toHaveTextContent("在线工具模型");
     await userEvent.click(model_select);
-    const page = within(canvasElement.ownerDocument.body);
     await userEvent.click(
       await page.findByRole("option", { name: /备用工具模型/ }),
     );

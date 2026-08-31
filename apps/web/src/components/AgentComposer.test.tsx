@@ -1,8 +1,33 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { unknown_model_profile, type AiModelSummary } from "@/shared/types";
 import { AgentComposer } from "./AgentComposer";
 import { AGENT_CONTEXT_ATTACHMENT_MIME } from "./agent_context";
+
+const MODEL_ID = "model-019c012345677abc8123456789abcdef";
+const MODELS: AiModelSummary[] = [
+  {
+    model_id: MODEL_ID,
+    name: "5.6 Sol",
+    litellm_model: "openai/gpt-5.6-sol",
+    input_modalities: ["text", "image"],
+    capabilities: {
+      tools: "auto",
+      reasoning: "auto",
+      vision: "auto",
+      structured_output: "auto",
+      streaming_tools: "auto",
+      reasoning_tools: "auto",
+      tool_choice_auto: "auto",
+      tool_choice_required: "auto",
+      tool_choice_named: "auto",
+      parallel_tools: "auto",
+      vision_tools: "auto",
+    },
+    profile: unknown_model_profile("openai", "gpt-5.6-sol"),
+  },
+];
 
 describe("AgentComposer", () => {
   it("shows an explicit removable time-range attachment", () => {
@@ -12,6 +37,9 @@ describe("AgentComposer", () => {
         value="分析这一段"
         on_change={vi.fn()}
         on_submit={vi.fn()}
+        models={MODELS}
+        model_id={MODEL_ID}
+        on_model_change={vi.fn()}
         thinking_mode="auto"
         on_thinking_mode_change={vi.fn()}
         thinking_modes_enabled={false}
@@ -45,6 +73,9 @@ describe("AgentComposer", () => {
         value="问题"
         on_change={vi.fn()}
         on_submit={vi.fn()}
+        models={MODELS}
+        model_id={MODEL_ID}
+        on_model_change={vi.fn()}
         thinking_mode="auto"
         on_thinking_mode_change={vi.fn()}
         thinking_modes_enabled={false}
@@ -59,7 +90,7 @@ describe("AgentComposer", () => {
     );
 
     const thinking_mode_trigger = screen.getByRole("button", {
-      name: "思考强度：自动",
+      name: "模型与思考强度：5.6 Sol，自动",
     });
     fireEvent.click(thinking_mode_trigger);
     const thinking_mode_slider = screen.getByRole("slider", {
@@ -94,6 +125,9 @@ describe("AgentComposer", () => {
         value="问题"
         on_change={vi.fn()}
         on_submit={vi.fn()}
+        models={MODELS}
+        model_id={MODEL_ID}
+        on_model_change={vi.fn()}
         thinking_mode="complex"
         on_thinking_mode_change={vi.fn()}
         thinking_modes_enabled
@@ -115,8 +149,10 @@ describe("AgentComposer", () => {
       screen.getByRole("button", { name: "检索范围：资料库" }),
     ).toHaveTextContent("资料库");
     expect(
-      screen.getByRole("button", { name: "思考强度：高" }),
-    ).toHaveTextContent("高");
+      screen.getByRole("button", {
+        name: "模型与思考强度：5.6 Sol，高",
+      }),
+    ).toHaveTextContent("5.6 Sol高");
     expect(screen.getByRole("button", { name: "发送指令" })).toBeEnabled();
   });
 
@@ -127,6 +163,9 @@ describe("AgentComposer", () => {
         value="问题"
         on_change={vi.fn()}
         on_submit={vi.fn()}
+        models={MODELS}
+        model_id={MODEL_ID}
+        on_model_change={vi.fn()}
         thinking_mode="auto"
         on_thinking_mode_change={on_thinking_mode_change}
         thinking_modes_enabled
@@ -140,7 +179,11 @@ describe("AgentComposer", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "思考强度：自动" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "模型与思考强度：5.6 Sol，自动",
+      }),
+    );
     fireEvent.keyDown(screen.getByRole("slider", { name: "思考强度" }), {
       key: "ArrowRight",
     });
@@ -156,6 +199,9 @@ describe("AgentComposer", () => {
         value="问题"
         on_change={vi.fn()}
         on_submit={vi.fn()}
+        models={MODELS}
+        model_id={MODEL_ID}
+        on_model_change={vi.fn()}
         thinking_mode="auto"
         on_thinking_mode_change={vi.fn()}
         thinking_modes_enabled
@@ -195,6 +241,9 @@ describe("AgentComposer", () => {
         value="问题"
         on_change={vi.fn()}
         on_submit={vi.fn()}
+        models={MODELS}
+        model_id={MODEL_ID}
+        on_model_change={vi.fn()}
         thinking_mode="auto"
         on_thinking_mode_change={vi.fn()}
         thinking_modes_enabled

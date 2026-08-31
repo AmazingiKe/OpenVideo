@@ -10,6 +10,7 @@ import {
 import { useId, useState, type DragEvent, type FormEvent } from "react";
 
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
+import { AiModelSelect } from "@/components/AiModelSelect";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -35,6 +36,7 @@ import type {
   AgentPermissionMode,
   AgentRetrievalScope,
   AgentThinkingMode,
+  AiModelSummary,
 } from "@/shared/types";
 import {
   AGENT_CONTEXT_ATTACHMENT_MIME,
@@ -90,7 +92,9 @@ export function AgentComposer({
   pending = false,
   preparing_attachments = false,
   placeholder = "描述希望如何处理当前内容…",
-  selected_model_name = "当前模型",
+  models,
+  model_id,
+  on_model_change,
   thinking_mode,
   on_thinking_mode_change,
   thinking_modes_enabled,
@@ -115,7 +119,9 @@ export function AgentComposer({
   pending?: boolean;
   preparing_attachments?: boolean;
   placeholder?: string;
-  selected_model_name?: string;
+  models: AiModelSummary[];
+  model_id: string | null;
+  on_model_change: (model_id: string | null) => void;
   thinking_mode: AgentThinkingMode;
   on_thinking_mode_change: (mode: AgentThinkingMode) => void;
   thinking_modes_enabled: boolean;
@@ -233,9 +239,11 @@ export function AgentComposer({
               />
             </div>
             <div className="flex min-w-0 items-center justify-end gap-1">
-              <ThinkingModeControl
+              <ModelThinkingControl
                 control_id={control_id}
-                selected_model_name={selected_model_name}
+                models={models}
+                model_id={model_id}
+                on_model_change={on_model_change}
                 thinking_mode={thinking_mode}
                 on_thinking_mode_change={on_thinking_mode_change}
                 thinking_modes_enabled={thinking_modes_enabled}
@@ -505,15 +513,19 @@ function RetrievalScopeControl({
   );
 }
 
-function ThinkingModeControl({
+function ModelThinkingControl({
   control_id,
-  selected_model_name,
+  models,
+  model_id,
+  on_model_change,
   thinking_mode,
   on_thinking_mode_change,
   thinking_modes_enabled,
 }: {
   control_id: string;
-  selected_model_name: string;
+  models: AiModelSummary[];
+  model_id: string | null;
+  on_model_change: (model_id: string | null) => void;
   thinking_mode: AgentThinkingMode;
   on_thinking_mode_change: (mode: AgentThinkingMode) => void;
   thinking_modes_enabled: boolean;
@@ -522,6 +534,8 @@ function ThinkingModeControl({
     (option) => option.value === thinking_mode,
   );
   const selected_option = THINKING_MODE_OPTIONS[selected_index];
+  const selected_model_name =
+    models.find((model) => model.model_id === model_id)?.name ?? "没有可用模型";
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -529,10 +543,14 @@ function ThinkingModeControl({
           type="button"
           variant="secondary"
           size="sm"
-          className="rounded-full"
-          aria-label={`思考强度：${selected_option.label}`}
+          className="max-w-40 rounded-full"
+          aria-label={`模型与思考强度：${selected_model_name}，${selected_option.label}`}
         >
-          <span>{selected_option.label}</span>
+          <Zap data-icon="inline-start" />
+          <span className="truncate">{selected_model_name}</span>
+          <span className="shrink-0 text-muted-foreground">
+            {selected_option.label}
+          </span>
           <ChevronDown data-icon="inline-end" />
         </Button>
       </PopoverTrigger>
@@ -541,22 +559,26 @@ function ThinkingModeControl({
         align="end"
         sideOffset={8}
         className="w-72 gap-4 rounded-3xl p-4"
-        aria-label="思考强度"
+        aria-label="模型与思考强度"
       >
         <PopoverHeader>
-          <PopoverTitle className="sr-only">思考强度</PopoverTitle>
-          <div className="flex min-w-0 items-center gap-2">
-            <Zap className="size-4 shrink-0 text-primary" aria-hidden="true" />
-            <span className="truncate font-medium">{selected_model_name}</span>
-            <span className="ml-auto shrink-0 text-primary" aria-live="polite">
+          <PopoverTitle className="sr-only">模型与思考强度</PopoverTitle>
+        </PopoverHeader>
+        <AiModelSelect
+          id={`${control_id}-execution-model`}
+          label="执行模型"
+          models={models}
+          value={model_id}
+          on_change={on_model_change}
+        />
+        <Separator />
+        <Field className="gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <FieldLabel id={`${control_id}-thinking-mode`}>思考强度</FieldLabel>
+            <span className="text-sm text-primary" aria-live="polite">
               {selected_option.label}
             </span>
           </div>
-        </PopoverHeader>
-        <Field className="gap-2">
-          <FieldLabel className="sr-only" id={`${control_id}-thinking-mode`}>
-            思考强度
-          </FieldLabel>
           <Slider
             min={0}
             max={THINKING_MODE_OPTIONS.length - 1}
