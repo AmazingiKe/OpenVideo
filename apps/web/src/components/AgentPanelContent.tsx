@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -103,7 +104,8 @@ type TimelineItem =
       retrieval_scope?: AgentRetrievalScope;
       context_attachments?: AgentContextAttachment[];
     }
-  | { type: "tools"; id: string; events: AgentEvent[] };
+  | { type: "tools"; id: string; events: AgentEvent[] }
+  | { type: "context"; id: string; content: string };
 
 export function build_agent_timeline(
   events: AgentEvent[],
@@ -162,115 +164,138 @@ export function build_agent_timeline(
         const previous_index = previous.events.findIndex(
           (item) => String(item.payload.call_id ?? item.event_id) === call_id,
         );
-        if (previous_index >= 0) previous.events[previous_index] = event;
-        else previous.events.push(event);
+        if (previous_index >= 0) {
+          const previous_event = previous.events[previous_index];
+          previous.events[previous_index] = {
+            ...event,
+            payload: { ...previous_event.payload, ...event.payload },
+          };
+        } else previous.events.push(event);
       } else {
         items.push({ type: "tools", id: event.event_id, events: [event] });
       }
+    } else if (event.event_type === "context.compressed") {
+      items.push({
+        type: "context",
+        id: event.event_id,
+        content: "已整理较早的对话内容",
+      });
     }
   }
   return items;
 }
 
 export function AgentToolActivity({ events }: { events: AgentEvent[] }) {
-  const groups = group_tool_events(events);
-  const failed_count = events.filter(
-    (event) => event.payload.stage === "failed",
-  ).length;
-  const running_count = events.filter(
-    (event) => event.payload.stage === "started",
-  ).length;
-  const first_tool_name = tool_label(groups[0]?.events[0]);
-  const activity_summary =
-    groups.length === 1 && events.length === 1
-      ? first_tool_name
-      : groups.length === 1
-        ? `${first_tool_name} × ${events.length}`
-        : `${first_tool_name}等 ${groups.length} 类 · ${events.length} 次`;
+  const failed_call_ids = events
+    .filter((event) => event.payload.stage === "failed")
+    .map((event) => String(event.payload.call_id ?? event.event_id));
   return (
-    <Accordion type="single" collapsible>
-      <AccordionItem value="tool-activity">
-        <AccordionTrigger className="py-2">
-          <Wrench />
-          <span className="min-w-0 flex-1 truncate">
-            工具活动 · {activity_summary}
-          </span>
-          <Badge variant={failed_count > 0 ? "destructive" : "outline"}>
-            {failed_count > 0
-              ? `${failed_count} 项失败`
-              : running_count > 0
-                ? "调用中"
-                : "已完成"}
-          </Badge>
-        </AccordionTrigger>
-        <AccordionContent>
-          <ul className="flex flex-col" aria-label="工具调用详情">
-            {groups.map((group) => (
-              <AgentToolCall key={group.name} events={group.events} />
-            ))}
-          </ul>
-        </AccordionContent>
-      </AccordionItem>
+    <Accordion
+      type="multiple"
+      defaultValue={failed_call_ids}
+      aria-label="工具调用"
+      className="gap-0.5"
+    >
+      {events.map((event) => (
+        <AgentToolCall
+          key={String(event.payload.call_id ?? event.event_id)}
+          event={event}
+        />
+      ))}
     </Accordion>
   );
 }
 
-type AgentToolEventGroup = {
-  name: string;
-  events: AgentEvent[];
-};
-
-export function group_tool_events(events: AgentEvent[]): AgentToolEventGroup[] {
-  const groups = new Map<string, AgentEvent[]>();
-  for (const event of events) {
-    const name = String(event.payload.name ?? "tool");
-    const existing = groups.get(name);
-    if (existing) existing.push(event);
-    else groups.set(name, [event]);
-  }
-  return Array.from(groups, ([name, grouped_events]) => ({
-    name,
-    events: grouped_events,
-  }));
+function AgentToolCall({ event }: { event: AgentEvent }) {
+  const call_id = String(event.payload.call_id ?? event.event_id);
+  const stage = String(event.payload.stage ?? "completed");
+  const failed = stage === "failed";
+  const running = stage === "started";
+  const arguments_value = event.payload.arguments;
+  const result = event.payload.result;
+  return (
+    <AccordionItem
+      value={call_id}
+      className={
+        failed
+          ? "border-destructive/40 bg-transparent shadow-none"
+          : "border-0 bg-transparent shadow-none"
+      }
+    >
+      <AccordionTrigger className="min-w-0 rounded-md px-2 py-1.5 text-xs font-normal hover:bg-surface-hover-strong data-[state=open]:bg-surface-muted">
+        {running ? (
+          <Spinner className="shrink-0 text-muted-foreground" />
+        ) : failed ? (
+          <CircleX className="shrink-0 text-destructive" />
+        ) : (
+          <CheckCircle2 className="shrink-0 text-muted-foreground" />
+        )}
+        <span className="min-w-0 truncate text-foreground">
+          {tool_label(event)}
+        </span>
+        <span
+          className={
+            failed
+              ? "min-w-0 flex-1 truncate text-right text-destructive"
+              : "min-w-0 flex-1 truncate text-right text-muted-foreground"
+          }
+        >
+          {tool_result_summary(event)}
+        </span>
+      </AccordionTrigger>
+      <AccordionContent className="grid gap-2 px-2 pt-1 pb-2 text-xs">
+        {arguments_value !== undefined ? (
+          <ToolData label="参数" value={arguments_value} />
+        ) : null}
+        {result !== undefined ? <ToolData label="结果" value={result} /> : null}
+      </AccordionContent>
+    </AccordionItem>
+  );
 }
 
-function AgentToolCall({ events }: { events: AgentEvent[] }) {
-  const latest_event = events.at(-1);
-  const failed = events.some((event) => event.payload.stage === "failed");
-  const running = events.some((event) => event.payload.stage === "started");
-  const result = latest_event?.payload.result;
+function ToolData({ label, value }: { label: string; value: unknown }) {
   return (
-    <li className="flex min-w-0 items-start gap-2 border-b py-2 last:border-b-0">
-      {running ? (
-        <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      ) : failed ? (
-        <CircleX className="mt-0.5 size-4 shrink-0 text-destructive" />
-      ) : (
-        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium">
-            {tool_label(latest_event)}
-            {events.length > 1 ? ` × ${events.length}` : ""}
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {failed ? "失败" : running ? "调用中" : "完成"}
-          </span>
-        </div>
-        {result !== undefined ? (
-          <details className="mt-1">
-            <summary className="cursor-pointer text-xs text-muted-foreground">
-              查看返回数据
-            </summary>
-            <pre className="mt-2 max-h-56 overflow-auto rounded-md bg-muted p-3 text-xs">
-              {JSON.stringify(result, null, 2)}
-            </pre>
-          </details>
-        ) : null}
-      </div>
-    </li>
+    <div className="grid gap-1">
+      <span className="text-muted-foreground">{label}</span>
+      <pre className="max-h-56 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    </div>
   );
+}
+
+function tool_result_summary(event: AgentEvent): string {
+  const stage = String(event.payload.stage ?? "completed");
+  if (stage === "started") return "调用中";
+  const result = event.payload.result;
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const record = result as Record<string, unknown>;
+    const message = record.message ?? record.summary;
+    if (typeof message === "string" && message.trim()) return message;
+    for (const key of [
+      "items",
+      "results",
+      "evidence",
+      "markers",
+      "documents",
+    ]) {
+      const value = record[key];
+      if (Array.isArray(value)) return `${value.length} 项`;
+    }
+    for (const key of [
+      "count",
+      "total",
+      "matched_count",
+      "result_count",
+      "matches",
+      "frames",
+      "changes",
+    ]) {
+      const value = record[key];
+      if (typeof value === "number") return `${value} 项`;
+    }
+  }
+  return stage === "failed" ? "调用失败" : "已完成";
 }
 
 function tool_label(event: AgentEvent | undefined): string {

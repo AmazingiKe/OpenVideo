@@ -64,6 +64,7 @@ from openvideo.core.agent_runtime_models import (
     AgentArtifactStatus,
     AgentCapability,
     AgentChangeVersion,
+    AgentContextCompressionResult,
     AgentContextAttachmentKind,
     AgentDefinition,
     AgentDefinitionAvailability,
@@ -127,7 +128,12 @@ from openvideo.tools.summary_media import GIF_MAX_DURATION_SECONDS
 from openvideo.tools.transcript_correction import LiteLlmTranscriptCorrector
 from openvideo.tools.vision import LiteLlmVision
 from openvideo.llm.agno_executor import AgnoAgentExecutor
+from openvideo.llm.agno_session_context import (
+    AGNO_CONTEXT_DATABASE_FILE_NAME,
+    AgnoSessionContext,
+)
 from openvideo.llm.capability_resolver import CapabilityResolver
+from openvideo.llm.model_factory import create_agent_model
 from openvideo.llm.model_profile import CapabilityName, ModelProfile, Support
 
 
@@ -215,6 +221,9 @@ class AgentService:
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._run_event_signals: dict[str, asyncio.Event] = {}
         self.store = AgentSessionStore(library, self._notify_run_event)
+        self.agno_session_context = AgnoSessionContext(
+            library.library_path / AGNO_CONTEXT_DATABASE_FILE_NAME
+        )
         self._tasks: dict[str, asyncio.Task[AgentRun]] = {}
         self._semantic_index_task: asyncio.Task[EvidenceIndexStatus] | None = None
         self._closing = False
@@ -268,6 +277,57 @@ class AgentService:
             runs=self.library.load_agent_runs(session_id),
             events=self.library.load_agent_events(session_id),
             artifacts=self.library.load_agent_artifacts(session_id=session_id),
+        )
+
+    async def compact_context(
+        self,
+        session_id: str,
+    ) -> AgentContextCompressionResult:
+        session = self._require_session(session_id)
+        runs = self.library.load_agent_runs(session_id)
+        if any(run.stage not in TERMINAL_AGENT_RUN_STAGES for run in runs):
+            raise AgentConflictError("当前会话仍在运行，完成后再压缩上下文")
+        model_id = next(
+            (
+                run.model_id
+                for run in reversed(runs)
+                if self.settings.ai_model(run.model_id) is not None
+            ),
+            None,
+        )
+        if model_id is None:
+            model_id = self._role_model_ids()[AgentModelRole.FAST]
+        model = self.settings.ai_model(model_id) if model_id is not None else None
+        if model is None:
+            raise AgentServiceError("没有可用于压缩上下文的模型", "model_not_found")
+        profile = self.capability_resolver.resolve(model)
+        await self.agno_session_context.ensure_session(
+            session_id,
+            session.agent_id,
+            self.store.historical_messages(session_id),
+        )
+        compressed = await self.agno_session_context.compact_session(
+            session_id,
+            create_agent_model(
+                model,
+                profile,
+                reasoning_enabled=False,
+            ),
+        )
+        if not compressed:
+            return AgentContextCompressionResult(
+                compressed=False,
+                message="当前对话内容还不需要整理",
+            )
+        self.store.append(
+            session_id,
+            None,
+            AgentEventType.CONTEXT_COMPRESSED,
+            {"status": "completed", "trigger": "manual"},
+        )
+        return AgentContextCompressionResult(
+            compressed=True,
+            message="已整理较早的对话内容",
         )
 
     async def create_run(self, session_id: str, request: AgentRunCreate) -> AgentRun:
@@ -369,7 +429,7 @@ class AgentService:
         runtime = AgentRuntime(
             self.store,
             tool_registry,
-            AgnoAgentExecutor(),
+            AgnoAgentExecutor(self.agno_session_context),
             completion_payload_builder=context.completion_payload,
             artifact_processor=lambda artifacts: self._process_run_artifacts(
                 context, artifacts
@@ -786,6 +846,7 @@ class AgentService:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         if self._semantic_index_task is not None:
             await asyncio.gather(self._semantic_index_task, return_exceptions=True)
+        await self.agno_session_context.close()
 
     def refresh_index(self) -> None:
         """证据来源提交后立即安排新代际，避免依赖界面轮询触发。"""

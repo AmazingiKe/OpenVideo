@@ -13,6 +13,7 @@ from openvideo.core.agent_runtime_models import (
     AgentArtifact,
     AgentArtifactApprovalRequest,
     AgentChangeVersion,
+    AgentContextCompressionResult,
     AgentDefinitionAvailability,
     AgentIndexStatus,
     AgentRun,
@@ -66,6 +67,18 @@ def register_agent_routes(
     def get_agent_session(session_id: str) -> AgentSessionState:
         try:
             return agent_service().session_state(session_id)
+        except AgentServiceError as error:
+            raise agent_http_error(error) from error
+
+    @app.post(
+        "/api/agent-sessions/{session_id}/compact-context",
+        response_model=AgentContextCompressionResult,
+    )
+    async def compact_agent_session_context(
+        session_id: str,
+    ) -> AgentContextCompressionResult:
+        try:
+            return await agent_service().compact_context(session_id)
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 

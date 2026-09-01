@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -44,7 +43,6 @@ from openvideo.llm.model_profile import CapabilityName, ModelProfile, Support
 MAX_AGENT_TOOL_CALLS = 6
 AGENT_RUN_TIMEOUT_SECONDS = 180
 AGENT_TOOL_TIMEOUT_SECONDS = 60
-MAX_CONTEXT_CHARACTERS = 48_000
 
 
 class AgentRuntimeError(RuntimeError):
@@ -112,7 +110,7 @@ class AgentEventRepository(Protocol):
 
 
 class AgentSessionStore:
-    """持久化事件既服务 SSE 恢复，也派生下一轮模型上下文。"""
+    """持久化业务事件并在首次启用 Agno 时提供旧会话迁移材料。"""
 
     def __init__(
         self,
@@ -141,9 +139,16 @@ class AgentSessionStore:
             session_id, after_sequence=after_sequence
         )
 
-    def model_context(self, session_id: str) -> list[dict[str, Any]]:
+    def historical_messages(
+        self,
+        session_id: str,
+        *,
+        exclude_run_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         for event in self.events(session_id):
+            if event.run_id == exclude_run_id:
+                continue
             payload = event.payload
             if event.event_type == AgentEventType.RUN_STATUS and payload.get("input"):
                 messages.append({"role": "user", "content": str(payload["input"])})
@@ -360,7 +365,6 @@ class AgentRuntime:
         max_tool_calls: int = MAX_AGENT_TOOL_CALLS,
         run_timeout_seconds: float = AGENT_RUN_TIMEOUT_SECONDS,
         tool_timeout_seconds: float = AGENT_TOOL_TIMEOUT_SECONDS,
-        max_context_characters: int = MAX_CONTEXT_CHARACTERS,
         routing_ms: int = 0,
         model_role: AgentModelRole | None = None,
         display_content: str | None = None,
@@ -402,6 +406,11 @@ class AgentRuntime:
                 **(input_metadata or {}),
             },
         )
+        history_user_content = (
+            display_content.strip()
+            if display_content is not None
+            else user_content.strip()
+        ) or "执行当前任务。"
         try:
             return await asyncio.wait_for(
                 self._run_agent(
@@ -410,10 +419,10 @@ class AgentRuntime:
                     profile,
                     definition,
                     user_content,
+                    history_user_content,
                     cancel_event,
                     max_tool_calls,
                     tool_timeout_seconds,
-                    max_context_characters,
                 ),
                 timeout=run_timeout_seconds,
             )
@@ -470,30 +479,28 @@ class AgentRuntime:
         profile: ModelProfile,
         definition: AgentDefinition,
         current_user_content: str,
+        history_user_content: str,
         cancel_event: asyncio.Event,
         max_tool_calls: int,
         tool_timeout_seconds: float,
-        max_context_characters: int,
     ) -> AgentRun:
         self._raise_if_cancelled(cancel_event)
-        messages = self.store.model_context(run.session_id)
-        for index in range(len(messages) - 1, -1, -1):
-            if messages[index].get("role") == "user":
-                messages[index] = {
-                    **messages[index],
-                    "content": current_user_content,
-                }
-                break
-        messages = self._compress_context(run, messages, max_context_characters)
+        historical_messages = self.store.historical_messages(
+            run.session_id,
+            exclude_run_id=run.run_id,
+        )
         result = await self.executor.run(
             model,
             profile,
             definition,
-            messages,
+            [{"role": "user", "content": history_user_content}],
             self.registry,
             lambda event: self._append_executor_event(run, event),
             max_tool_calls=max_tool_calls,
             tool_timeout_seconds=tool_timeout_seconds,
+            historical_messages=historical_messages,
+            run_context=current_user_content,
+            session_id=run.session_id,
         )
         self._raise_if_cancelled(cancel_event)
         tracker = self._metric_trackers[run.run_id]
@@ -595,30 +602,6 @@ class AgentRuntime:
                     "result": event.result,
                 },
             )
-
-    def _compress_context(
-        self,
-        run: AgentRun,
-        messages: list[dict[str, Any]],
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        lengths = [len(json.dumps(message, ensure_ascii=False)) for message in messages]
-        if sum(lengths) <= limit:
-            return messages
-        kept: list[dict[str, Any]] = []
-        remaining = limit
-        for message, length in reversed(list(zip(messages, lengths, strict=True))):
-            if length > remaining:
-                break
-            kept.insert(0, message)
-            remaining -= length
-        self.store.append(
-            run.session_id,
-            run.run_id,
-            AgentEventType.CONTEXT_COMPRESSED,
-            {"removed_message_count": len(messages) - len(kept)},
-        )
-        return kept
 
     def _raise_if_cancelled(self, cancel_event: asyncio.Event) -> None:
         if cancel_event.is_set():

@@ -18,6 +18,7 @@ import { use_agent_panel } from "./use_agent_panel";
 
 const api = vi.hoisted(() => ({
   cancel_agent_run: vi.fn(),
+  compact_agent_session_context: vi.fn(),
   create_agent_run: vi.fn(),
   create_agent_session: vi.fn(),
   get_agent_run: vi.fn(),
@@ -132,6 +133,10 @@ describe("use_agent_panel", () => {
     api.create_agent_run.mockResolvedValue(RUN);
     api.stream_unified_agent_run.mockResolvedValue(undefined);
     api.get_agent_run.mockResolvedValue(FINAL_RUN);
+    api.compact_agent_session_context.mockResolvedValue({
+      compressed: true,
+      message: "已整理较早的对话内容",
+    });
   });
 
   it("submits slash-command metadata through the native conversation", async () => {
@@ -170,5 +175,27 @@ describe("use_agent_panel", () => {
     await waitFor(() =>
       expect(on_artifact_change).toHaveBeenCalledWith(ARTIFACT),
     );
+  });
+
+  it("refreshes the active conversation after manual context compression", async () => {
+    const { result } = renderHook(() =>
+      use_agent_panel({
+        agent_id: "marker",
+        asset_id: ASSET_ID,
+        context: {},
+        models: [MODEL],
+        task_input: {},
+        default_thinking_mode: "auto",
+      }),
+    );
+
+    await waitFor(() => expect(result.current.state).toEqual(INITIAL_STATE));
+    await act(() => result.current.compact_context());
+
+    expect(api.compact_agent_session_context).toHaveBeenCalledWith(
+      SESSION.session_id,
+    );
+    await waitFor(() => expect(result.current.state).toEqual(FINAL_STATE));
+    expect(result.current.compacting_context).toBe(false);
   });
 });

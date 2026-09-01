@@ -22,3 +22,4 @@
 | [0007](./0007-progressive-summary-illustration.md) | 采用渐进式首次总结配图与分层画面选择 | 已接受 |
 | [0008](./0008-video-scoped-agent-focus.md) | 采用视频级 Agent 会话与逐轮聚焦上下文 | 已接受 |
 | [0009](./0009-virtualized-library-browser-interactions.md) | 采用虚拟化、可视框选与无障碍拖放重构视频库浏览器 | 已接受 |
+| [0010](./0010-agno-session-context-and-compact-tool-activity.md) | 采用 Agno 会话上下文与紧凑工具活动展示 | 已接受 |

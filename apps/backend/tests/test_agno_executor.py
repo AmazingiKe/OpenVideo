@@ -19,6 +19,7 @@ from openvideo.core.agent_runtime_models import (
 )
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.llm.agno_executor import AgnoAgentExecutor
+from openvideo.llm.agno_session_context import AgnoSessionContext
 from openvideo.llm.events import LlmAgentEventType
 from openvideo.llm.errors import TransientProviderRequestError
 from openvideo.llm.model_profile import ModelCapabilities, ModelProfile, Support
@@ -92,6 +93,85 @@ async def test_transient_failure_retries_before_any_event(monkeypatch):
     assert result.retry_count == 1
     assert attempts == 2
     assert delays == [1.0]
+
+
+@pytest.mark.asyncio
+async def test_executor_delegates_session_history_and_compression_to_agno(
+    monkeypatch,
+    tmp_path,
+):
+    captured_agent = None
+    captured_input = None
+
+    def arun(self, input, **_options):
+        nonlocal captured_agent, captured_input
+        captured_agent = self
+        captured_input = input
+
+        async def events():
+            yield RunContentEvent(content="连续回答")
+            yield RunCompletedEvent(content="连续回答")
+
+        return events()
+
+    monkeypatch.setattr(Agent, "arun", arun)
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="echo",
+            description="回显",
+            parameters_model=EchoInput,
+            handler=lambda parameters: {"ok": True, "text": parameters.text},
+        )
+    )
+    definition = chat_definition().model_copy(
+        update={
+            "tools": [
+                AgentToolDescriptor(
+                    name="echo",
+                    description="回显",
+                )
+            ]
+        }
+    )
+    session_context = AgnoSessionContext(tmp_path / "agent-context.sqlite3")
+
+    await AgnoAgentExecutor(session_context).run(
+        online_model(),
+        text_profile(),
+        definition,
+        [{"role": "user", "content": "继续"}],
+        registry,
+        lambda _event: None,
+        max_tool_calls=4,
+        tool_timeout_seconds=5,
+        historical_messages=[
+            {"role": "user", "content": "上一问"},
+            {"role": "assistant", "content": "上一答"},
+        ],
+        run_context="<当前聚焦状态>只属于本轮</当前聚焦状态>",
+        session_id="session-test",
+    )
+    imported_session = await session_context.database.get_session("session-test")
+    await session_context.close()
+
+    assert captured_agent is not None
+    assert captured_agent.db is session_context.database
+    assert captured_agent.session_id == "session-test"
+    assert captured_agent.add_history_to_context is True
+    assert captured_agent.num_history_runs == 3
+    assert captured_agent.enable_session_summaries is True
+    assert captured_agent.add_session_summary_to_context is True
+    assert captured_agent.compress_tool_results is True
+    assert captured_agent.max_tool_calls_from_history == 3
+    assert captured_input[0].content == "继续"
+    assert captured_agent.additional_input[0].add_to_agent_memory is False
+    assert "只属于本轮" in captured_agent.additional_input[0].content
+    assert imported_session is not None
+    assert [message.content for message in imported_session.get_messages()] == [
+        "上一问",
+        "上一答",
+    ]
 
 
 @pytest.mark.asyncio

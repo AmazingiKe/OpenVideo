@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
   cancel_agent_run,
+  compact_agent_session_context,
   create_agent_run,
   create_agent_session,
   get_agent_run,
@@ -96,6 +97,7 @@ export function use_agent_panel({
   const [connection_message, set_connection_message] = useState<string | null>(
     null,
   );
+  const [compacting_context, set_compacting_context] = useState(false);
   const [error, set_error] = useState<string | null>(null);
   const [restored_scope_key, set_restored_scope_key] = useState<string | null>(
     null,
@@ -135,6 +137,7 @@ export function use_agent_panel({
     set_retrieval_scope("current_asset");
     set_scope_pinned(false);
     set_submission(null);
+    set_compacting_context(false);
     submission_ref.current = false;
     run_sequence_ref.current.clear();
     set_error(null);
@@ -262,6 +265,7 @@ export function use_agent_panel({
     }
     submission_ref.current = true;
     set_error(null);
+    set_connection_message(null);
     set_stream_text("");
     set_stream_complete(false);
     set_last_content(content);
@@ -421,6 +425,24 @@ export function use_agent_panel({
     }
   }
 
+  async function compact_context() {
+    if (!state || pending || compacting_context) return;
+    set_compacting_context(true);
+    set_error(null);
+    set_connection_message(null);
+    try {
+      const result = await compact_agent_session_context(
+        state.session.session_id,
+      );
+      set_state(await get_agent_session(state.session.session_id));
+      if (!result.compressed) set_connection_message(result.message);
+    } catch (caught) {
+      set_error(error_message(caught));
+    } finally {
+      set_compacting_context(false);
+    }
+  }
+
   async function resolve_artifact(
     artifact: AgentArtifact,
     action: "approve" | "reject" | "undo",
@@ -467,6 +489,8 @@ export function use_agent_panel({
     active_run,
     artifacts: state?.artifacts ?? [],
     cancel_run,
+    compact_context,
+    compacting_context,
     compatible_models,
     connection_message,
     complete_stream,

@@ -157,6 +157,7 @@ const FAILED_TOOL_EVENT: AgentEvent = {
   sequence: 4,
   event_type: "tool.status",
   payload: {
+    call_id: "tool-01890f4c7a2b7cc298c4dc0c0c07398f",
     name: "inspect_frames",
     stage: "failed",
     result: { ok: false, error_code: "vision_unavailable" },
@@ -210,12 +211,64 @@ export const ToolActivity: Story = {
   ),
   play: async ({ canvas, userEvent }) => {
     const trigger = canvas.getByRole("button", {
-      name: /工具活动 · 检索视频证据等 3 项/,
+      name: /检索视频证据.*6 项/,
     });
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
-    await userEvent.click(trigger);
-    await expect(canvas.getByText("生成标记变更预览")).toBeVisible();
+    trigger.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await expect(canvas.getByText("结果")).toBeVisible();
   },
+};
+
+export const ToolRunning: Story = {
+  render: () => (
+    <AgentToolActivity
+      events={[
+        {
+          ...FAILED_TOOL_EVENT,
+          payload: {
+            call_id: "tool-01890f4c7a2b7cc298c4dc0c0c073993",
+            name: "search_evidence",
+            stage: "started",
+            arguments: { query: "解释透视投影", scope: "current_asset" },
+          },
+        },
+      ]}
+    />
+  ),
+};
+
+export const ToolActivityNarrow: Story = {
+  render: () => (
+    <div className="w-[360px] max-w-full">
+      <AgentToolActivity
+        events={[
+          {
+            ...FAILED_TOOL_EVENT,
+            payload: {
+              call_id: "tool-01890f4c7a2b7cc298c4dc0c0c073994",
+              name: "read_summary_document",
+              stage: "completed",
+              arguments: { document_id: "document-long-example" },
+              result: {
+                summary:
+                  "已读取《第三章：透视投影与视锥体结构》并保留完整原始结果供按需查看",
+              },
+            },
+          },
+        ]}
+      />
+    </div>
+  ),
+};
+
+export const ToolActivityDark: Story = {
+  render: () => (
+    <div className="dark bg-background p-4 text-foreground">
+      <AgentToolActivity events={[FAILED_TOOL_EVENT]} />
+    </div>
+  ),
 };
 
 export const DisconnectedRecovery: Story = {

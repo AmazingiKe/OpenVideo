@@ -1,4 +1,11 @@
-import { Bot, Database, MessageCirclePlus, ShieldCheck } from "lucide-react";
+import {
+  Bot,
+  Database,
+  Ellipsis,
+  MessageCirclePlus,
+  Minimize2,
+  ShieldCheck,
+} from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { use_optional_task_manager } from "@/app/task_manager";
@@ -22,6 +29,12 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Card,
   CardContent,
@@ -162,6 +175,8 @@ export function AgentPanel({
     active_run,
     artifacts,
     cancel_run,
+    compact_context,
+    compacting_context,
     compatible_models,
     complete_stream,
     connection_message,
@@ -354,7 +369,7 @@ export function AgentPanel({
               size="icon-sm"
               aria-label="新建对话"
               title={busy ? "任务运行中，暂时无法新建对话" : "新建对话"}
-              disabled={busy || restoring}
+              disabled={busy || restoring || compacting_context}
               onClick={() => {
                 start_new_conversation();
                 set_dismissed_attachment_ids(new Set());
@@ -363,6 +378,25 @@ export function AgentPanel({
             >
               <MessageCirclePlus />
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="会话操作"
+                  disabled={!state || busy || restoring || compacting_context}
+                >
+                  {compacting_context ? <Spinner /> : <Ellipsis />}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => void compact_context()}>
+                  <Minimize2 />
+                  压缩上下文
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         {task_input_mode ? (
@@ -505,8 +539,12 @@ export function AgentPanel({
                           ) : null}
                         </MessageContent>
                       </Message>
-                    ) : (
+                    ) : item.type === "tools" ? (
                       <AgentToolActivity events={item.events} />
+                    ) : (
+                      <Marker variant="separator">
+                        <MarkerContent>{item.content}</MarkerContent>
+                      </Marker>
                     )}
                   </MessageScrollerItem>
                 ))}

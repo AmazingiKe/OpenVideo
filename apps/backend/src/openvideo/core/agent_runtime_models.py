@@ -498,3 +498,8 @@ class AgentSessionState(BaseModel):
     runs: list[AgentRun] = Field(default_factory=list)
     events: list[AgentEvent] = Field(default_factory=list)
     artifacts: list[AgentArtifact] = Field(default_factory=list)
+
+
+class AgentContextCompressionResult(BaseModel):
+    compressed: bool
+    message: str

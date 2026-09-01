@@ -122,6 +122,7 @@ class FakeExecutor:
         self.result = result
         self.events = events or []
         self.messages: list[list[dict[str, Any]]] = []
+        self.options: list[dict[str, Any]] = []
 
     async def run(
         self,
@@ -134,6 +135,7 @@ class FakeExecutor:
         **_options,
     ):
         self.messages.append(messages)
+        self.options.append(_options)
         for event in self.events:
             on_event(event)
         return self.result
@@ -395,6 +397,29 @@ async def test_capability_unknown_does_not_block_agent():
 
     assert finished.stage == "complete"
     assert len(executor.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_persists_visible_message_and_keeps_focus_context_ephemeral():
+    _, _, executor, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(content="连续回答"),
+        tools_support=Support.UNKNOWN,
+    )
+    run_context = "<用户请求>继续</用户请求><当前聚焦状态>本轮片段</当前聚焦状态>"
+
+    finished = await runtime.run(
+        run,
+        model,
+        profile,
+        definition,
+        run_context,
+        display_content="继续",
+    )
+
+    assert finished.stage == "complete"
+    assert executor.messages == [[{"role": "user", "content": "继续"}]]
+    assert executor.options[0]["run_context"] == run_context
+    assert executor.options[0]["session_id"] == run.session_id
 
 
 @pytest.mark.asyncio

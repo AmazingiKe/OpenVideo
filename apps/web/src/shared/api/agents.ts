@@ -1,5 +1,6 @@
 import type {
   AgentArtifact,
+  AgentContextCompressionResult,
   AgentContextAttachment,
   AgentDefinitionAvailability,
   AgentEventType,
@@ -55,6 +56,16 @@ export function get_agent_session(
   return request_json(`/api/agent-sessions/${encodeURIComponent(session_id)}`, {
     signal,
   });
+}
+
+export function compact_agent_session_context(
+  session_id: string,
+  signal?: AbortSignal,
+): Promise<AgentContextCompressionResult> {
+  return request_json(
+    `/api/agent-sessions/${encodeURIComponent(session_id)}/compact-context`,
+    { method: "POST", signal },
+  );
 }
 
 export function create_agent_run(

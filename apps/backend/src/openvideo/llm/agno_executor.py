@@ -23,6 +23,11 @@ from agno.tools.function import Function
 from openvideo.core.agent_runtime_models import AgentDefinition, AgentMode, AgentToolCall
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
+from openvideo.llm.agno_session_context import (
+    AGNO_HISTORY_RUN_COUNT,
+    AGNO_HISTORY_TOOL_CALL_LIMIT,
+    AgnoSessionContext,
+)
 from openvideo.llm.errors import (
     FeatureCombinationUnsupportedError,
     MAX_PROVIDER_REQUEST_RETRIES,
@@ -81,11 +86,17 @@ class AgentExecutor(Protocol):
         *,
         max_tool_calls: int,
         tool_timeout_seconds: float,
+        historical_messages: list[dict[str, Any]] | None = None,
+        run_context: str | None = None,
+        session_id: str | None = None,
     ) -> AgentExecutionResult: ...
 
 
 class AgnoAgentExecutor:
     """Agno 独占 Provider 消息、流式工具拼包和模型工具循环。"""
+
+    def __init__(self, session_context: AgnoSessionContext | None = None) -> None:
+        self.session_context = session_context
 
     async def run(
         self,
@@ -98,7 +109,16 @@ class AgnoAgentExecutor:
         *,
         max_tool_calls: int,
         tool_timeout_seconds: float,
+        historical_messages: list[dict[str, Any]] | None = None,
+        run_context: str | None = None,
+        session_id: str | None = None,
     ) -> AgentExecutionResult:
+        if self.session_context is not None and session_id is not None:
+            await self.session_context.ensure_session(
+                session_id,
+                definition.agent_id,
+                historical_messages or [],
+            )
         required_tool_chain = self._required_tool_chain(definition)
         recovery_reserve = min(
             len(required_tool_chain),
@@ -114,6 +134,8 @@ class AgnoAgentExecutor:
             max_tool_calls=max_tool_calls - recovery_reserve,
             tool_timeout_seconds=tool_timeout_seconds,
             reasoning_enabled=False,
+            run_context=run_context,
+            session_id=session_id,
         )
         missing_tools = definition.required_tools - first_result.successful_tools
         remaining_tool_calls = max_tool_calls - first_result.tool_call_count
@@ -126,11 +148,13 @@ class AgnoAgentExecutor:
             first_result.successful_tools,
             profile,
         )
-        recovery_messages = [*messages]
-        if first_result.content:
-            recovery_messages.append(
-                {"role": "assistant", "content": first_result.content}
-            )
+        recovery_messages: list[dict[str, Any]] = []
+        if session_id is None or self.session_context is None:
+            recovery_messages = [*messages]
+            if first_result.content:
+                recovery_messages.append(
+                    {"role": "assistant", "content": first_result.content}
+                )
         recovery_messages.append(
             {
                 "role": "user",
@@ -148,6 +172,8 @@ class AgnoAgentExecutor:
             tool_timeout_seconds=tool_timeout_seconds,
             reasoning_enabled=False,
             forced_tool_name=forced_tool_name,
+            run_context=run_context,
+            session_id=session_id,
         )
         return AgentExecutionResult(
             content=recovery_result.content or first_result.content,
@@ -228,6 +254,8 @@ class AgnoAgentExecutor:
         tool_timeout_seconds: float,
         reasoning_enabled: bool,
         forced_tool_name: str | None = None,
+        run_context: str | None = None,
+        session_id: str | None = None,
     ) -> AgentExecutionResult:
         priority = (
             ModelRequestPriority.FOREGROUND
@@ -255,6 +283,8 @@ class AgnoAgentExecutor:
                         tool_timeout_seconds=tool_timeout_seconds,
                         reasoning_enabled=reasoning_enabled,
                         forced_tool_name=forced_tool_name,
+                        run_context=run_context,
+                        session_id=session_id,
                     )
                 return result.model_copy(
                     update={"retry_count": result.retry_count + attempt}
@@ -278,6 +308,8 @@ class AgnoAgentExecutor:
         tool_timeout_seconds: float,
         reasoning_enabled: bool,
         forced_tool_name: str | None = None,
+        run_context: str | None = None,
+        session_id: str | None = None,
     ) -> AgentExecutionResult:
         tool_result_cache: dict[str, str] = {}
         agno_tools = self._tools(
@@ -300,6 +332,17 @@ class AgnoAgentExecutor:
                 if agno_tools
                 else definition.prompt
             ),
+            additional_input=(
+                [
+                    Message(
+                        role="system",
+                        content=run_context,
+                        add_to_agent_memory=False,
+                    )
+                ]
+                if run_context
+                else None
+            ),
             tools=agno_tools,
             tool_choice=(
                 agent_tool_choice(
@@ -311,6 +354,24 @@ class AgnoAgentExecutor:
                 else None
             ),
             tool_call_limit=max_tool_calls,
+            db=(
+                self.session_context.database
+                if self.session_context is not None and session_id is not None
+                else None
+            ),
+            session_id=session_id,
+            add_history_to_context=(
+                self.session_context is not None and session_id is not None
+            ),
+            num_history_runs=AGNO_HISTORY_RUN_COUNT,
+            max_tool_calls_from_history=AGNO_HISTORY_TOOL_CALL_LIMIT,
+            enable_session_summaries=(
+                self.session_context is not None and session_id is not None
+            ),
+            add_session_summary_to_context=(
+                self.session_context is not None and session_id is not None
+            ),
+            compress_tool_results=bool(agno_tools),
             retries=0,
             telemetry=False,
         )

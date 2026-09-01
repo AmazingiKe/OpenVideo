@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { build_agent_timeline, group_tool_events } from "./AgentPanelContent";
+import { build_agent_timeline } from "./AgentPanelContent";
 import type { AgentEvent, AgentRun } from "@/shared/types";
 
 describe("build_agent_timeline", () => {
@@ -52,31 +52,62 @@ describe("build_agent_timeline", () => {
       metrics: { total_ms: 3_000 },
     });
   });
-});
 
-describe("group_tool_events", () => {
-  it("collapses repeated tool rows while preserving the first-seen order", () => {
+  it("preserves tool call order and merges arguments into the final state", () => {
     const events = [
       event(1, "tool.status", {
         name: "search_evidence",
         call_id: "call-1",
-        stage: "completed",
+        stage: "started",
+        arguments: { query: "透视" },
       }),
       event(2, "tool.status", {
-        name: "search_evidence",
+        name: "inspect_frames",
         call_id: "call-2",
         stage: "completed",
       }),
       event(3, "tool.status", {
-        name: "inspect_frames",
-        call_id: "call-3",
+        name: "search_evidence",
+        call_id: "call-1",
         stage: "completed",
+        result: { matches: 6 },
       }),
     ];
 
-    expect(group_tool_events(events)).toEqual([
-      { name: "search_evidence", events: events.slice(0, 2) },
-      { name: "inspect_frames", events: events.slice(2) },
+    expect(build_agent_timeline(events)).toEqual([
+      {
+        type: "tools",
+        id: "event-1",
+        events: [
+          expect.objectContaining({
+            payload: {
+              name: "search_evidence",
+              call_id: "call-1",
+              stage: "completed",
+              arguments: { query: "透视" },
+              result: { matches: 6 },
+            },
+          }),
+          events[1],
+        ],
+      },
+    ]);
+  });
+
+  it("adds a quiet timeline marker after manual context compression", () => {
+    expect(
+      build_agent_timeline([
+        event(1, "context.compressed", {
+          status: "completed",
+          trigger: "manual",
+        }),
+      ]),
+    ).toEqual([
+      {
+        type: "context",
+        id: "event-1",
+        content: "已整理较早的对话内容",
+      },
     ]);
   });
 });

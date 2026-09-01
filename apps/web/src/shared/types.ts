@@ -902,6 +902,11 @@ export type AgentSessionState = {
   artifacts: AgentArtifact[];
 };
 
+export type AgentContextCompressionResult = {
+  compressed: boolean;
+  message: string;
+};
+
 export type AgentTaskSnapshot = {
   run: AgentRun;
   session_title: string;

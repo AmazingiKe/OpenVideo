@@ -30,6 +30,8 @@ dependencies = [
   "torch==2.11.0",
   "torchaudio==2.11.0",
   "agno[anthropic,google,mistral]>=2.5,<3",
+  "aiosqlite>=0.20,<1",
+  "sqlalchemy>=2,<3",
   "pyyaml>=6.0,<7",
   "pillow>=11.3,<13",
 ]
