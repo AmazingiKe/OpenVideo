@@ -53,6 +53,7 @@ class ModelResource:
 
     repository: str
     directory: Path
+    modelscope_repository: str | None = None
 
 
 @dataclass(frozen=True)

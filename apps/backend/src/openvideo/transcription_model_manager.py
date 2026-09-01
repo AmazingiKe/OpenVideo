@@ -33,6 +33,8 @@ QWEN_FORCED_ALIGNER_REPOSITORY = "Qwen/Qwen3-ForcedAligner-0.6B"
 QWEN_FORCED_ALIGNER_DIRECTORY_NAME = "forced-aligner-0.6b"
 SENSEVOICE_VAD_REPOSITORY = "funasr/fsmn-vad"
 SENSEVOICE_VAD_DIRECTORY_NAME = "fsmn-vad"
+SENSEVOICE_MODELSCOPE_REPOSITORY = "iic/SenseVoiceSmall"
+SENSEVOICE_VAD_MODELSCOPE_REPOSITORY = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
 _MODEL_DOWNLOAD_LOCK = RLock()
 
 
@@ -257,6 +259,11 @@ def transcription_model_resources(
             descriptor.engine,
             descriptor.model,
         ),
+        modelscope_repository=(
+            SENSEVOICE_MODELSCOPE_REPOSITORY
+            if descriptor.engine == TranscriptionEngine.SENSEVOICE
+            else None
+        ),
     )
     if descriptor.engine == TranscriptionEngine.QWEN3_ASR:
         companion = ModelResource(
@@ -276,6 +283,7 @@ def transcription_model_resources(
                 descriptor.engine,
                 SENSEVOICE_VAD_DIRECTORY_NAME,
             ),
+            modelscope_repository=SENSEVOICE_VAD_MODELSCOPE_REPOSITORY,
         )
         return main_resource, companion
     return (main_resource,)

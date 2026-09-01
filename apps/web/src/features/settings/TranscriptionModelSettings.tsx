@@ -294,7 +294,8 @@ export function TranscriptionModelSettings({
             本地模型
           </h3>
           <p className="text-sm text-muted-foreground">
-            模型文件直接从标注的官方仓库下载到模型目录。扩展引擎仍需安装运行适配器才能执行转录。
+            默认自动选择国内 ModelScope 或海外 Hugging
+            Face，失败时切换备用源。扩展引擎仍需安装运行适配器才能执行转录。
           </p>
         </div>
         <ul

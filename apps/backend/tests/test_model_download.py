@@ -1,5 +1,6 @@
 import json
 import time
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from openvideo.model_download import (
     _validate_resource_files,
     ResolvedModelResource,
     _resolve_fastest_source,
+    _resolve_modelscope_resource_files,
     download_model_resources,
 )
 
@@ -46,6 +48,37 @@ def test_auto_source_uses_the_first_responsive_official_mirror(
     resolved = _resolve_fastest_source(resource)
 
     assert resolved.source == ModelSource.HUGGINGFACE
+
+
+def test_modelscope_resolution_uses_its_source_specific_repository(
+    tmp_path: Path,
+    monkeypatch,
+):
+    requested_repositories: list[str] = []
+
+    class FakeHubApi:
+        def get_model_files(self, repository, **_kwargs):
+            requested_repositories.append(repository)
+            return [{"Path": "model.bin", "Size": 5}]
+
+    modelscope_api = import_module("modelscope.hub.api")
+    monkeypatch.setattr(modelscope_api, "HubApi", FakeHubApi)
+    resource = ModelResource(
+        repository="huggingface/model",
+        directory=tmp_path / "model",
+        modelscope_repository="modelscope/model",
+    )
+
+    files = _resolve_modelscope_resource_files(resource)
+
+    assert requested_repositories == ["modelscope/model"]
+    assert files == (
+        ModelResourceFile(
+            filename="model.bin",
+            file_size=5,
+            revision="master",
+        ),
+    )
 
 
 def test_download_failure_switches_source_and_keeps_one_verified_install(

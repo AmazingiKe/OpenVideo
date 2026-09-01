@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
   fireEvent,
@@ -8,7 +9,9 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
+  download_transcription_model,
   get_formula_model,
   get_preferences,
   get_transcription_model_download,
@@ -18,7 +21,7 @@ import {
   test_ai_model,
   update_preferences,
 } from "@/shared/api";
-import { unknown_model_profile } from "@/shared/types";
+import { unknown_model_profile, type AiModelSummary } from "@/shared/types";
 import { SettingsPage } from "./SettingsPage";
 
 vi.mock("@/app/library", () => ({
@@ -53,6 +56,21 @@ vi.mock("@/shared/api", () => ({
   test_ai_model: vi.fn(),
   update_preferences: vi.fn(),
 }));
+
+function render_settings_page() {
+  const query_client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  const rendered = render(
+    <QueryClientProvider client={query_client}>
+      <SettingsPage />
+    </QueryClientProvider>,
+  );
+  return { ...rendered, query_client };
+}
 
 const preferences = {
   tools_directory: null,
@@ -173,7 +191,7 @@ afterEach(cleanup);
 
 describe("SettingsPage", () => {
   it("loads preferences and marks environment-managed fields read-only", async () => {
-    render(<SettingsPage />);
+    render_settings_page();
     expect(
       screen.getByRole("heading", { name: "配置 OpenVideo 工作环境" }),
     ).toBeInTheDocument();
@@ -199,7 +217,7 @@ describe("SettingsPage", () => {
   });
 
   it("auto-saves editable settings through the preferences API", async () => {
-    render(<SettingsPage />);
+    render_settings_page();
     const models_directory = await screen.findByLabelText("模型目录");
     fireEvent.change(models_directory, { target: { value: "D:\\Models" } });
     await waitFor(() =>
@@ -215,7 +233,7 @@ describe("SettingsPage", () => {
   });
 
   it("auto-saves the optional overseas download proxy", async () => {
-    render(<SettingsPage />);
+    render_settings_page();
     const download_proxy = await screen.findByLabelText(/海外平台下载代理/);
     fireEvent.change(download_proxy, {
       target: { value: "http://127.0.0.1:7890" },
@@ -231,7 +249,7 @@ describe("SettingsPage", () => {
   });
 
   it("shows safe Agent defaults and saves explicit permission changes", async () => {
-    render(<SettingsPage />);
+    render_settings_page();
 
     expect(
       await screen.findByRole("heading", { name: "助手偏好" }),
@@ -252,7 +270,7 @@ describe("SettingsPage", () => {
   });
 
   it("shows future transcription engines without enabling unavailable models", async () => {
-    render(<SettingsPage />);
+    render_settings_page();
 
     expect(await screen.findByText("Qwen3-ASR 1.7B")).toBeInTheDocument();
     const model_list = screen.getByRole("list", {
@@ -264,7 +282,28 @@ describe("SettingsPage", () => {
   });
 
   it("adds a LiteLLM model configuration and auto-saves it", async () => {
-    render(<SettingsPage />);
+    const probed_profile = unknown_model_profile(
+      "anthropic",
+      "claude-sonnet-4-5",
+    );
+    vi.mocked(list_ai_models).mockImplementation(async () => {
+      const saved_model = vi.mocked(update_preferences).mock.calls.at(-1)?.[0]
+        .ai_models?.[0];
+      return saved_model
+        ? [
+            {
+              model_id: saved_model.model_id,
+              name: saved_model.name,
+              litellm_model: saved_model.litellm_model,
+              input_modalities: saved_model.input_modalities,
+              capabilities: saved_model.capabilities,
+              profile: probed_profile,
+            },
+          ]
+        : [];
+    });
+    const { query_client } = render_settings_page();
+    const invalidate_queries = vi.spyOn(query_client, "invalidateQueries");
     await screen.findByText("尚未配置 AI 模型");
     fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
     const dialog = screen.getByRole("dialog", { name: "添加 AI 模型" });
@@ -300,10 +339,25 @@ describe("SettingsPage", () => {
         expect.any(AbortSignal),
       ),
     );
+    await waitFor(() =>
+      expect(
+        query_client.getQueryData<AiModelSummary[]>(
+          RESOURCE_QUERY_KEYS.ai_models,
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          litellm_model: "anthropic/claude-sonnet-4-5",
+          profile: probed_profile,
+        }),
+      ]),
+    );
+    expect(invalidate_queries).toHaveBeenCalledWith({
+      queryKey: RESOURCE_QUERY_KEYS.agent_definitions,
+    });
   });
 
   it("rejects local LLM providers before saving", async () => {
-    render(<SettingsPage />);
+    render_settings_page();
     await screen.findByText("尚未配置 AI 模型");
     fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
     const dialog = screen.getByRole("dialog", { name: "添加 AI 模型" });
@@ -321,7 +375,23 @@ describe("SettingsPage", () => {
   });
 
   it("tests an unsaved AI model and displays its latency", async () => {
-    render(<SettingsPage />);
+    const probed_profile = unknown_model_profile("openai", "test-model");
+    probed_profile.capabilities.tools = "yes";
+    vi.mocked(test_ai_model).mockResolvedValue({
+      available: true,
+      latency_ms: 86,
+      message: "模型响应正常",
+      capabilities: {
+        text: {
+          support: "yes",
+          source: "runtime_probe",
+          tested: true,
+          message: "文本响应正常",
+        },
+      },
+      profile: probed_profile,
+    });
+    const { query_client } = render_settings_page();
     await screen.findByText("尚未配置 AI 模型");
     fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
     const dialog = screen.getByRole("dialog", { name: "添加 AI 模型" });
@@ -339,5 +409,60 @@ describe("SettingsPage", () => {
     );
     expect(await screen.findByText("可用")).toBeInTheDocument();
     expect(screen.getByText("延迟 86 ms")).toBeInTheDocument();
+    expect(
+      query_client.getQueryData<AiModelSummary[]>(
+        RESOURCE_QUERY_KEYS.ai_models,
+      )?.[0]?.profile.capabilities.tools,
+    ).toBe("yes");
+  });
+
+  it("invalidates shared transcription resources after a download completes", async () => {
+    vi.mocked(download_transcription_model).mockResolvedValue({
+      job_id: "job-0198f10e3f9871239c79000000000001",
+      engine: "faster-whisper",
+      model: "base",
+      stage: "downloading",
+      progress_percent: 10,
+      downloaded_bytes: 100,
+      total_bytes: 1000,
+      message: "正在下载",
+      error_message: null,
+      created_at: "2026-08-31T10:00:00Z",
+      updated_at: "2026-08-31T10:00:00Z",
+    });
+    vi.mocked(get_transcription_model_download).mockResolvedValue({
+      job_id: "job-0198f10e3f9871239c79000000000001",
+      engine: "faster-whisper",
+      model: "base",
+      stage: "complete",
+      progress_percent: 100,
+      downloaded_bytes: 1000,
+      total_bytes: 1000,
+      message: "下载完成",
+      error_message: null,
+      created_at: "2026-08-31T10:00:00Z",
+      updated_at: "2026-08-31T10:00:01Z",
+    });
+    const { query_client } = render_settings_page();
+    const invalidate_queries = vi.spyOn(query_client, "invalidateQueries");
+    const model_list = await screen.findByRole("list", {
+      name: "本地转录模型列表",
+    });
+    const base_model = within(model_list)
+      .getAllByRole("listitem")
+      .find((item) => within(item).queryByText("Whisper Base"));
+    expect(base_model).toBeDefined();
+
+    fireEvent.click(
+      within(base_model as HTMLElement).getByRole("button", { name: "下载" }),
+    );
+
+    await waitFor(
+      () =>
+        expect(invalidate_queries).toHaveBeenCalledWith({
+          queryKey: RESOURCE_QUERY_KEYS.transcription_resources,
+        }),
+      { timeout: 2_000 },
+    );
   });
 });

@@ -173,7 +173,7 @@ def _resolve_modelscope_resource_files(
     from modelscope.hub.api import HubApi
 
     raw_files = HubApi().get_model_files(
-        resource.repository,
+        _modelscope_repository(resource),
         revision="master",
         recursive=True,
     )
@@ -223,7 +223,7 @@ def _download_resolved_resource(
     def download() -> None:
         if resolved.source == ModelSource.MODELSCOPE:
             _modelscope_snapshot_download(
-                model_id=resolved.resource.repository,
+                model_id=_modelscope_repository(resolved.resource),
                 revision=resolved.files[0].revision,
                 local_dir=str(resolved.resource.directory),
             )
@@ -337,6 +337,10 @@ def _modelscope_snapshot_download(
     )
 
 
+def _modelscope_repository(resource: ModelResource) -> str:
+    return resource.modelscope_repository or resource.repository
+
+
 def _write_resource_manifest(resolved: ResolvedModelResource) -> None:
     manifest_path = resolved.resource.directory / MODEL_MANIFEST_FILE_NAME
     temporary_manifest_path = manifest_path.with_suffix(".tmp")
@@ -344,6 +348,11 @@ def _write_resource_manifest(resolved: ResolvedModelResource) -> None:
         json.dumps(
             {
                 "repository": resolved.resource.repository,
+                "source_repository": (
+                    _modelscope_repository(resolved.resource)
+                    if resolved.source == ModelSource.MODELSCOPE
+                    else resolved.resource.repository
+                ),
                 "source": resolved.source.value,
                 "revision": resolved.files[0].revision,
                 "installed_at": datetime.now(UTC).isoformat(),

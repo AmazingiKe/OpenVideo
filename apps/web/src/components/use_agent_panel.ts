@@ -1,5 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
   cancel_agent_run,
   compact_agent_session_context,
@@ -73,9 +75,17 @@ export function use_agent_panel({
     () => (asset_id ? agent_scope_key(agent_id, asset_id) : "no-asset"),
     [agent_id, asset_id],
   );
-  const [definition, set_definition] = useState<
-    Awaited<ReturnType<typeof list_agent_definitions>>[number] | null
-  >(null);
+  const definitions_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.agent_definitions,
+    queryFn: ({ signal }) => list_agent_definitions(signal),
+  });
+  const definition = useMemo(
+    () =>
+      definitions_query.data?.find(
+        (item) => item.definition.agent_id === agent_id,
+      ) ?? null,
+    [agent_id, definitions_query.data],
+  );
   const [sessions, set_sessions] = useState<AgentSession[]>([]);
   const [state, set_state] = useState<AgentSessionState | null>(null);
   const [model_id, set_model_id] = useState<string | null>(null);
@@ -127,7 +137,6 @@ export function use_agent_panel({
   useEffect(() => {
     const controller = new AbortController();
     connection_ref.current?.abort();
-    set_definition(null);
     set_sessions([]);
     set_state(null);
     set_active_run(null);
@@ -154,14 +163,10 @@ export function use_agent_panel({
 
   async function restore_panel(asset: string, signal: AbortSignal) {
     try {
-      const [definitions, loaded_sessions] = await Promise.all([
-        list_agent_definitions(signal),
-        list_agent_sessions({ agent_id, asset_id: asset }, signal),
-      ]);
-      const next_definition = definitions.find(
-        (item) => item.definition.agent_id === agent_id,
+      const loaded_sessions = await list_agent_sessions(
+        { agent_id, asset_id: asset },
+        signal,
       );
-      set_definition(next_definition ?? null);
       set_sessions(loaded_sessions);
       if (!loaded_sessions[0]) return;
       const restored = await get_agent_session(
@@ -496,7 +501,9 @@ export function use_agent_panel({
     complete_stream,
     definition,
     draft,
-    error,
+    error:
+      error ??
+      (definitions_query.error ? error_message(definitions_query.error) : null),
     events: state?.events ?? [],
     follow_run,
     last_content,

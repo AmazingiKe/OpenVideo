@@ -1,6 +1,9 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
   DEFAULT_MODEL_CAPABILITY_OVERRIDES,
   unknown_model_profile,
@@ -113,6 +116,11 @@ const MODEL: AiModelSummary = {
   capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
   profile: unknown_model_profile("openai", "test"),
 };
+const UPDATED_MODEL: AiModelSummary = {
+  ...MODEL,
+  model_id: "model-2",
+  name: "更新后的测试模型",
+};
 const COMMAND: AgentCommand = {
   name: "处理全部字幕",
   label: "处理全部字幕",
@@ -121,6 +129,20 @@ const COMMAND: AgentCommand = {
   instruction_input_key: "correction_instruction",
   instruction_required: true,
 };
+
+function create_query_wrapper() {
+  const query_client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return {
+    query_client,
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={query_client}>
+        {children}
+      </QueryClientProvider>
+    ),
+  };
+}
 
 describe("use_agent_panel", () => {
   beforeEach(() => {
@@ -141,17 +163,20 @@ describe("use_agent_panel", () => {
 
   it("submits slash-command metadata through the native conversation", async () => {
     const on_artifact_change = vi.fn();
-    const { result } = renderHook(() =>
-      use_agent_panel({
-        agent_id: "marker",
-        asset_id: ASSET_ID,
-        commands: [COMMAND],
-        context: {},
-        models: [MODEL],
-        on_artifact_change,
-        task_input: { source: "timeline" },
-        default_thinking_mode: "auto",
-      }),
+    const { wrapper } = create_query_wrapper();
+    const { result } = renderHook(
+      () =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          commands: [COMMAND],
+          context: {},
+          models: [MODEL],
+          on_artifact_change,
+          task_input: { source: "timeline" },
+          default_thinking_mode: "auto",
+        }),
+      { wrapper },
     );
 
     await waitFor(() => expect(result.current.model_id).toBe("model-1"));
@@ -177,16 +202,56 @@ describe("use_agent_panel", () => {
     );
   });
 
-  it("refreshes the active conversation after manual context compression", async () => {
-    const { result } = renderHook(() =>
-      use_agent_panel({
-        agent_id: "marker",
-        asset_id: ASSET_ID,
-        context: {},
-        models: [MODEL],
-        task_input: {},
-        default_thinking_mode: "auto",
+  it("refreshes assistant compatibility when definitions are invalidated", async () => {
+    const updated_definition: AgentDefinitionAvailability = {
+      ...DEFINITION,
+      compatible_model_ids: [UPDATED_MODEL.model_id],
+    };
+    api.list_agent_definitions
+      .mockResolvedValueOnce([DEFINITION])
+      .mockResolvedValueOnce([updated_definition]);
+    api.list_agent_sessions.mockResolvedValue([]);
+    const { query_client, wrapper } = create_query_wrapper();
+    const { result, rerender } = renderHook(
+      ({ models }) =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          context: {},
+          models,
+          task_input: {},
+          default_thinking_mode: "auto",
+        }),
+      { initialProps: { models: [MODEL] }, wrapper },
+    );
+
+    await waitFor(() => expect(result.current.model_id).toBe(MODEL.model_id));
+    rerender({ models: [UPDATED_MODEL] });
+    await act(() =>
+      query_client.invalidateQueries({
+        queryKey: RESOURCE_QUERY_KEYS.agent_definitions,
       }),
+    );
+
+    await waitFor(() =>
+      expect(result.current.model_id).toBe(UPDATED_MODEL.model_id),
+    );
+    expect(api.list_agent_definitions).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes the active conversation after manual context compression", async () => {
+    const { wrapper } = create_query_wrapper();
+    const { result } = renderHook(
+      () =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          context: {},
+          models: [MODEL],
+          task_input: {},
+          default_thinking_mode: "auto",
+        }),
+      { wrapper },
     );
 
     await waitFor(() => expect(result.current.state).toEqual(INITIAL_STATE));

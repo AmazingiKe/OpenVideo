@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
   AudioLines,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { use_library } from "@/app/library";
+import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { PageHeader } from "@/components/PageHeader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -51,7 +53,9 @@ import {
   update_preferences,
 } from "@/shared/api";
 import type {
+  AiModelConfiguration,
   AiModelSummary,
+  AiModelTestResult,
   FormulaModelState,
   Preferences,
   TranscriptionModelDescriptor,
@@ -63,6 +67,7 @@ const SETTINGS_SAVE_DELAY_MS = 500;
 
 export function SettingsPage() {
   const { library, set_library } = use_library();
+  const query_client = useQueryClient();
   const [preferences, set_preferences] = useState<Preferences | null>(null);
   const [transcription_models, set_transcription_models] = useState<
     TranscriptionModelDescriptor[]
@@ -91,12 +96,17 @@ export function SettingsPage() {
         set_transcription_models(models);
         set_formula_model(loaded_formula_model);
         set_ai_model_summaries(ai_models);
+        query_client.setQueryData(
+          RESOURCE_QUERY_KEYS.preferences,
+          loaded_preferences,
+        );
+        query_client.setQueryData(RESOURCE_QUERY_KEYS.ai_models, ai_models);
       })
       .catch((error: unknown) => {
         if (!is_abort_error(error)) set_message(error_message(error));
       });
     return () => controller.abort();
-  }, []);
+  }, [query_client]);
 
   useEffect(() => {
     if (preferences === null || preferences === saved_preferences_ref.current)
@@ -116,9 +126,21 @@ export function SettingsPage() {
         },
         controller.signal,
       )
-        .then(async () => {
+        .then(async (saved_preferences) => {
           saved_preferences_ref.current = preferences;
-          set_ai_model_summaries(await list_ai_models(controller.signal));
+          query_client.setQueryData(
+            RESOURCE_QUERY_KEYS.preferences,
+            saved_preferences,
+          );
+          void query_client.invalidateQueries({
+            queryKey: RESOURCE_QUERY_KEYS.agent_definitions,
+          });
+          const ai_models = await list_ai_models(controller.signal);
+          set_ai_model_summaries(ai_models);
+          query_client.setQueryData(RESOURCE_QUERY_KEYS.ai_models, ai_models);
+          await query_client.invalidateQueries({
+            queryKey: RESOURCE_QUERY_KEYS.transcription_resources,
+          });
         })
         .catch((error: unknown) => {
           if (!is_abort_error(error)) set_message(error_message(error));
@@ -129,7 +151,7 @@ export function SettingsPage() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [preferences]);
+  }, [preferences, query_client]);
 
   function update_field(field: EditableField, value: string) {
     set_preferences((current) =>
@@ -164,6 +186,45 @@ export function SettingsPage() {
           }
         : current,
     );
+  }
+
+  async function test_and_refresh_ai_model(
+    model: AiModelConfiguration,
+  ): Promise<AiModelTestResult> {
+    const result = await test_ai_model(model);
+    const summary = ai_model_summary(model, result);
+    set_ai_model_summaries((current) =>
+      replace_ai_model_summary(current, summary),
+    );
+    query_client.setQueryData<AiModelSummary[]>(
+      RESOURCE_QUERY_KEYS.ai_models,
+      (current = []) => replace_ai_model_summary(current, summary),
+    );
+    void query_client.invalidateQueries({
+      queryKey: RESOURCE_QUERY_KEYS.agent_definitions,
+    });
+    return result;
+  }
+
+  function update_transcription_model(
+    updated_model: TranscriptionModelDescriptor,
+  ) {
+    set_transcription_models((current) =>
+      current.map((model) =>
+        model.engine === updated_model.engine &&
+        model.model === updated_model.model
+          ? updated_model
+          : model,
+      ),
+    );
+    if (
+      updated_model.installation_status === "installed" ||
+      updated_model.installation_status === "failed"
+    ) {
+      void query_client.invalidateQueries({
+        queryKey: RESOURCE_QUERY_KEYS.transcription_resources,
+      });
+    }
   }
 
   return (
@@ -266,16 +327,7 @@ export function SettingsPage() {
                   current ? { ...current, default_transcription } : current,
                 )
               }
-              on_model_change={(updated_model) =>
-                set_transcription_models((current) =>
-                  current.map((model) =>
-                    model.engine === updated_model.engine &&
-                    model.model === updated_model.model
-                      ? updated_model
-                      : model,
-                  ),
-                )
-              }
+              on_model_change={update_transcription_model}
             />
           </SettingsCard>
           {formula_model ? (
@@ -318,7 +370,7 @@ export function SettingsPage() {
                 ]),
               )}
               managed={preferences.managed_fields.includes("ai_models")}
-              on_test_model={test_ai_model}
+              on_test_model={test_and_refresh_ai_model}
               on_change={update_ai_models}
             />
           </SettingsCard>
@@ -364,6 +416,33 @@ function retained_model_id(
   return model_id !== null && available_model_ids.has(model_id)
     ? model_id
     : null;
+}
+
+function ai_model_summary(
+  model: AiModelConfiguration,
+  result: AiModelTestResult,
+): AiModelSummary {
+  return {
+    model_id: model.model_id,
+    name: model.name,
+    litellm_model: model.litellm_model,
+    input_modalities: model.input_modalities,
+    capabilities: model.capabilities,
+    profile: result.profile,
+  };
+}
+
+function replace_ai_model_summary(
+  summaries: AiModelSummary[],
+  updated_summary: AiModelSummary,
+): AiModelSummary[] {
+  const summary_exists = summaries.some(
+    (summary) => summary.model_id === updated_summary.model_id,
+  );
+  if (!summary_exists) return [...summaries, updated_summary];
+  return summaries.map((summary) =>
+    summary.model_id === updated_summary.model_id ? updated_summary : summary,
+  );
 }
 
 function DirectoryPreferenceInput({

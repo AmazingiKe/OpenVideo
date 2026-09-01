@@ -16,7 +16,9 @@ from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
 from openvideo.transcription_model_manager import (
     QWEN_FORCED_ALIGNER_REPOSITORY,
+    SENSEVOICE_MODELSCOPE_REPOSITORY,
     SENSEVOICE_VAD_REPOSITORY,
+    SENSEVOICE_VAD_MODELSCOPE_REPOSITORY,
     TranscriptionModelDownloadError,
     download_transcription_model,
     is_transcription_model_installed,
@@ -174,6 +176,19 @@ def test_sensevoice_download_only_fetches_missing_vad(
     assert downloaded_repositories == [SENSEVOICE_VAD_REPOSITORY]
     assert progress[-1] == (100, 100)
     assert is_transcription_model_installed(descriptor, tmp_path) is True
+
+
+def test_sensevoice_resources_use_official_modelscope_repositories(tmp_path: Path):
+    descriptor = find_transcription_model(
+        TranscriptionEngine.SENSEVOICE,
+        "sensevoice-small",
+    )
+    assert descriptor is not None
+
+    main_resource, vad_resource = transcription_model_resources(descriptor, tmp_path)
+
+    assert main_resource.modelscope_repository == SENSEVOICE_MODELSCOPE_REPOSITORY
+    assert vad_resource.modelscope_repository == SENSEVOICE_VAD_MODELSCOPE_REPOSITORY
 
 
 def test_qwen_models_share_one_forced_aligner_directory(tmp_path: Path):
