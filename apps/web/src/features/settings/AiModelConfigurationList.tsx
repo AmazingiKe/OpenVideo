@@ -58,7 +58,10 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { model_id } from "@/shared/identifiers";
-import { online_ai_model_error } from "@/shared/online_ai_models";
+import {
+  ai_model_name,
+  online_ai_model_error,
+} from "@/shared/online_ai_models";
 import {
   AI_INPUT_MODALITIES,
   DEFAULT_MODEL_CAPABILITY_OVERRIDES,
@@ -210,7 +213,7 @@ export function AiModelConfigurationList({
             </EmptyMedia>
             <EmptyTitle>尚未配置 AI 模型</EmptyTitle>
             <EmptyDescription>
-              添加在线 LiteLLM API 后，助手会按已验证能力自动分配模型角色。
+              添加在线 AI 模型 API 后，助手会按已验证能力自动分配模型角色。
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -231,7 +234,7 @@ export function AiModelConfigurationList({
                   <CardHeader>
                     <CardTitle>{model.name}</CardTitle>
                     <CardDescription className="font-mono break-all">
-                      {model.litellm_model}
+                      {ai_model_name(model.litellm_model)}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-3">
@@ -364,7 +367,7 @@ function AiModelConfigurationDialog({
             {mode === "add" ? "添加 AI 模型" : "编辑 AI 模型"}
           </DialogTitle>
           <DialogDescription>
-            配置在线 LiteLLM API、连接凭据和模型支持的输入模态。
+            配置在线 AI 模型 API、连接凭据和模型支持的输入模态。
           </DialogDescription>
         </DialogHeader>
         <Alert variant={configuration_error ? "destructive" : "default"}>
@@ -396,17 +399,20 @@ function AiModelConfigurationDialog({
             </Field>
             <Field>
               <FieldLabel htmlFor={`${field_prefix}-model`}>
-                LiteLLM 模型
+                模型名称
               </FieldLabel>
               <Input
                 id={`${field_prefix}-model`}
-                value={model.litellm_model}
+                value={ai_model_name(model.litellm_model)}
                 onChange={(event) =>
                   update_model({ litellm_model: event.target.value })
                 }
-                placeholder="例如：anthropic/claude-sonnet-4-5"
+                placeholder="例如：deepseek-v4-flash-vision-exp"
                 required
               />
+              <FieldDescription>
+                只填写服务商提供的模型名称，供应商识别由程序自动处理。
+              </FieldDescription>
             </Field>
           </div>
           <Field>

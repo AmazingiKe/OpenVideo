@@ -1,3 +1,4 @@
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -6,7 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { ai_model_name } from "@/shared/online_ai_models";
 import type { AiModelSummary } from "@/shared/types";
 
 const NO_AI_MODEL_VALUE = "no-ai-model";
@@ -53,7 +54,7 @@ export function AiModelSelect({
             ) : null}
             {models.map((model) => (
               <SelectItem key={model.model_id} value={model.model_id}>
-                {model.name} · {model.litellm_model}
+                {model.name} · {ai_model_name(model.litellm_model)}
               </SelectItem>
             ))}
           </SelectGroup>

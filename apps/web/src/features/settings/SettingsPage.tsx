@@ -352,7 +352,7 @@ export function SettingsPage() {
           <SettingsCard
             icon={Bot}
             title="AI 模型"
-            description="集中配置在线 LiteLLM API，任务执行时只引用模型标识。"
+            description="集中配置在线 AI 模型 API，任务执行时只引用模型标识。"
           >
             <Alert>
               <Info aria-hidden="true" />

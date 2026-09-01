@@ -167,16 +167,13 @@ export const AddDialog: Story = {
     await expect(dialog).toBeInTheDocument();
     await expect(within(dialog).getByLabelText("显示名称")).toHaveFocus();
     await userEvent.type(within(dialog).getByLabelText("显示名称"), "视觉模型");
-    await userEvent.type(
-      within(dialog).getByLabelText("LiteLLM 模型"),
-      "openai/gpt-5",
-    );
+    await userEvent.type(within(dialog).getByLabelText("模型名称"), "gpt-5");
     await userEvent.click(within(dialog).getByRole("button", { name: "图片" }));
     await userEvent.click(
       within(dialog).getByRole("button", { name: "确认添加" }),
     );
     await expect(canvas.getByText("视觉模型")).toBeInTheDocument();
-    await expect(canvas.getByText("openai/gpt-5")).toBeInTheDocument();
+    await expect(canvas.getByText("gpt-5")).toBeInTheDocument();
     await expect(canvas.getByText("图片")).toBeInTheDocument();
   },
 };

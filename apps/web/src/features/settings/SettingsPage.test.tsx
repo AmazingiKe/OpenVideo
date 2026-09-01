@@ -310,8 +310,8 @@ describe("SettingsPage", () => {
     fireEvent.change(within(dialog).getByLabelText("显示名称"), {
       target: { value: "视觉分析模型" },
     });
-    fireEvent.change(within(dialog).getByLabelText("LiteLLM 模型"), {
-      target: { value: "anthropic/claude-sonnet-4-5" },
+    fireEvent.change(within(dialog).getByLabelText("模型名称"), {
+      target: { value: "claude-sonnet-4-5" },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "图片" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "音频" }));
@@ -320,7 +320,7 @@ describe("SettingsPage", () => {
     const model_list = screen.getByRole("list", { name: "AI 模型列表" });
     expect(within(model_list).getByText("视觉分析模型")).toBeInTheDocument();
     expect(
-      within(model_list).getByText("anthropic/claude-sonnet-4-5"),
+      within(model_list).getByText("claude-sonnet-4-5"),
     ).toBeInTheDocument();
     expect(within(model_list).getByText("图片")).toBeInTheDocument();
     expect(within(model_list).getByText("音频")).toBeInTheDocument();
@@ -331,7 +331,7 @@ describe("SettingsPage", () => {
           ai_models: [
             expect.objectContaining({
               model_id: expect.stringMatching(/^model-[0-9a-f]{32}$/),
-              litellm_model: "anthropic/claude-sonnet-4-5",
+              litellm_model: "claude-sonnet-4-5",
               input_modalities: ["text", "image", "audio"],
             }),
           ],
@@ -346,7 +346,7 @@ describe("SettingsPage", () => {
         ),
       ).toEqual([
         expect.objectContaining({
-          litellm_model: "anthropic/claude-sonnet-4-5",
+          litellm_model: "claude-sonnet-4-5",
           profile: probed_profile,
         }),
       ]),
@@ -364,7 +364,7 @@ describe("SettingsPage", () => {
     fireEvent.change(within(dialog).getByLabelText("显示名称"), {
       target: { value: "本地模型" },
     });
-    fireEvent.change(within(dialog).getByLabelText("LiteLLM 模型"), {
+    fireEvent.change(within(dialog).getByLabelText("模型名称"), {
       target: { value: "ollama/qwen2.5-vl" },
     });
 
@@ -398,14 +398,14 @@ describe("SettingsPage", () => {
     fireEvent.change(within(dialog).getByLabelText("显示名称"), {
       target: { value: "测试模型" },
     });
-    fireEvent.change(within(dialog).getByLabelText("LiteLLM 模型"), {
-      target: { value: "openai/test-model" },
+    fireEvent.change(within(dialog).getByLabelText("模型名称"), {
+      target: { value: "test-model" },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "确认添加" }));
     fireEvent.click(screen.getByRole("button", { name: "测试" }));
 
     expect(test_ai_model).toHaveBeenCalledWith(
-      expect.objectContaining({ litellm_model: "openai/test-model" }),
+      expect.objectContaining({ litellm_model: "test-model" }),
     );
     expect(await screen.findByText("可用")).toBeInTheDocument();
     expect(screen.getByText("延迟 86 ms")).toBeInTheDocument();

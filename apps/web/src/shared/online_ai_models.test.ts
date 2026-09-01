@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { online_ai_model_error } from "@/shared/online_ai_models";
+import {
+  ai_model_name,
+  online_ai_model_error,
+} from "@/shared/online_ai_models";
 import {
   DEFAULT_MODEL_CAPABILITY_OVERRIDES,
   type AiModelConfiguration,
@@ -49,5 +52,17 @@ describe("online_ai_model_error", () => {
         model("openai/custom", "https://192.168.1.20:1234/v1"),
       ),
     ).toMatch(/本机或局域网地址/);
+  });
+});
+
+describe("ai_model_name", () => {
+  it("hides internal provider routes from user-facing model names", () => {
+    expect(ai_model_name("deepseek/deepseek-v4-flash-vision-exp")).toBe(
+      "deepseek-v4-flash-vision-exp",
+    );
+    expect(ai_model_name("openrouter/anthropic/claude-sonnet-4-5")).toBe(
+      "anthropic/claude-sonnet-4-5",
+    );
+    expect(ai_model_name("custom-model")).toBe("custom-model");
   });
 });

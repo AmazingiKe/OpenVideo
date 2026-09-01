@@ -174,6 +174,43 @@ def test_model_configuration_migrates_legacy_vision_capability():
     assert "supports_vision" not in migrated_model.model_dump()
 
 
+@pytest.mark.parametrize(
+    ("model_name", "api_base", "expected_route"),
+    [
+        (
+            "deepseek-v4-flash-vision-exp",
+            None,
+            "deepseek/deepseek-v4-flash-vision-exp",
+        ),
+        ("claude-sonnet-4-5", None, "anthropic/claude-sonnet-4-5"),
+        ("custom-model", "https://api.openai.com/v1", "openai/custom-model"),
+        ("custom-model", "https://models.example.com/v1", "custom-model"),
+        (
+            "deepseek/deepseek-v4-flash-vision-exp",
+            None,
+            "deepseek/deepseek-v4-flash-vision-exp",
+        ),
+        (
+            "anthropic/claude-sonnet-4-5",
+            "https://openrouter.ai/api/v1",
+            "openrouter/anthropic/claude-sonnet-4-5",
+        ),
+    ],
+)
+def test_model_configuration_resolves_internal_provider_route(
+    model_name: str,
+    api_base: str | None,
+    expected_route: str,
+):
+    configured_model = AiModelConfiguration(
+        name="测试模型",
+        litellm_model=model_name,
+        api_base=api_base,
+    )
+
+    assert configured_model.litellm_model == expected_route
+
+
 def test_model_configuration_requires_text_and_unique_modalities():
     with pytest.raises(ValidationError, match="要求支持文本输入"):
         AiModelConfiguration.model_validate(

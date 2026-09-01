@@ -8,6 +8,20 @@ const LOCAL_MODEL_PROVIDERS = new Set([
   "ollama_chat",
   "vllm",
 ]);
+const MODEL_ROUTE_PROVIDERS = new Set([
+  "anthropic",
+  "dashscope",
+  "deepseek",
+  "gemini",
+  "google",
+  "mistral",
+  "openai",
+  "openai-compatible",
+  "openrouter",
+  "qwen",
+  "xai",
+  ...LOCAL_MODEL_PROVIDERS,
+]);
 const LOOPBACK_HOST_NAMES = new Set([
   "0.0.0.0",
   "::",
@@ -57,4 +71,15 @@ export function online_ai_model_error(
 
 export function is_online_ai_model(model: AiModelConfiguration): boolean {
   return online_ai_model_error(model) === null;
+}
+
+export function ai_model_name(litellm_model: string): string {
+  const [provider, ...model_parts] = litellm_model.split("/");
+  if (
+    model_parts.length === 0 ||
+    !MODEL_ROUTE_PROVIDERS.has(provider.toLowerCase())
+  ) {
+    return litellm_model;
+  }
+  return model_parts.join("/");
 }

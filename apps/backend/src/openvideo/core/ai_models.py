@@ -36,6 +36,46 @@ LOCAL_MODEL_PROVIDERS = frozenset(
     }
 )
 LOOPBACK_HOST_NAMES = frozenset({"localhost", "localhost.localdomain"})
+MODEL_ROUTE_PROVIDERS = frozenset(
+    {
+        "anthropic",
+        "dashscope",
+        "deepseek",
+        "gemini",
+        "google",
+        "mistral",
+        "openai",
+        "openai-compatible",
+        "openrouter",
+        "qwen",
+        "xai",
+        *LOCAL_MODEL_PROVIDERS,
+    }
+)
+API_HOST_PROVIDERS = (
+    ("api.deepseek.com", "deepseek"),
+    ("api.openai.com", "openai"),
+    ("api.anthropic.com", "anthropic"),
+    ("generativelanguage.googleapis.com", "gemini"),
+    ("openrouter.ai", "openrouter"),
+    ("dashscope.aliyuncs.com", "qwen"),
+    ("api.x.ai", "xai"),
+    ("api.mistral.ai", "mistral"),
+)
+MODEL_NAME_PROVIDERS = (
+    ("deepseek-", "deepseek"),
+    ("claude-", "anthropic"),
+    ("gemini-", "gemini"),
+    ("qwen", "qwen"),
+    ("gpt-", "openai"),
+    ("chatgpt-", "openai"),
+    ("o1", "openai"),
+    ("o3", "openai"),
+    ("o4", "openai"),
+    ("grok-", "xai"),
+    ("mistral-", "mistral"),
+    ("codestral-", "mistral"),
+)
 
 InputModality = Literal["text", "image", "audio", "video"]
 
@@ -93,7 +133,7 @@ class AiModelConfiguration(BaseModel):
     def normalize_required_text(cls, value: str) -> str:
         normalized_value = value.strip()
         if not normalized_value:
-            raise ValueError("模型名称与 LiteLLM 模型不能为空")
+            raise ValueError("显示名称与模型名称不能为空")
         return normalized_value
 
     @field_validator("api_key", "api_base", "api_version")
@@ -103,6 +143,13 @@ class AiModelConfiguration(BaseModel):
             return None
         normalized_value = value.strip()
         return normalized_value or None
+
+    @model_validator(mode="after")
+    def resolve_internal_model_route(self) -> "AiModelConfiguration":
+        """设置页只填写服务商模型名，运行时路由前缀由配置统一推导。"""
+
+        self.litellm_model = model_route(self.litellm_model, self.api_base)
+        return self
 
     @field_validator("input_modalities")
     @classmethod
@@ -170,3 +217,50 @@ def online_api_configuration_error(model: AiModelConfiguration) -> str | None:
 
 def is_online_api_model(model: AiModelConfiguration) -> bool:
     return online_api_configuration_error(model) is None
+
+
+def model_route(model_name: str, api_base: str | None) -> str:
+    """供应商前缀是内部路由细节，不要求用户在模型名称中重复填写。"""
+
+    normalized_name = model_name.strip()
+    routed_provider, separator, _ = normalized_name.partition("/")
+    api_provider = _provider_from_api_base(api_base)
+    if api_provider is not None:
+        if separator and routed_provider.casefold() == api_provider:
+            return normalized_name
+        return f"{api_provider}/{normalized_name}"
+    if separator and routed_provider.casefold() in MODEL_ROUTE_PROVIDERS:
+        return normalized_name
+    normalized_casefold = normalized_name.casefold()
+    provider = next(
+        (
+            candidate_provider
+            for prefix, candidate_provider in MODEL_NAME_PROVIDERS
+            if normalized_casefold.startswith(prefix)
+        ),
+        None,
+    )
+    if provider is not None:
+        return f"{provider}/{normalized_name}"
+    return normalized_name if api_base is not None else f"openai/{normalized_name}"
+
+
+def _provider_from_api_base(api_base: str | None) -> str | None:
+    if api_base is None:
+        return None
+    try:
+        hostname = urlsplit(api_base).hostname
+    except ValueError:
+        return None
+    if hostname is None:
+        return None
+    normalized_hostname = hostname.casefold().rstrip(".")
+    return next(
+        (
+            provider
+            for suffix, provider in API_HOST_PROVIDERS
+            if normalized_hostname == suffix
+            or normalized_hostname.endswith(f".{suffix}")
+        ),
+        None,
+    )
