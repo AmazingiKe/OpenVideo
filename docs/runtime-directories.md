@@ -5,17 +5,17 @@ OpenVideo 将第三方工具、本地模型和业务资料库分开管理。所�
 ```text
 OpenVideo/
 └─ runtime/
-   ├─ tools/
-   │  └─ ffmpeg/
-   │     └─ bin/
-   │        ├─ ffmpeg.exe
-   │        └─ ffprobe.exe
+   ├─ models/
+   │  ├─ faster-whisper/
+   │  ├─ qwen3-asr/
+   │  └─ sensevoice/
+   └─ tools/
+      └─ ffmpeg/
+         └─ bin/
+            ├─ ffmpeg.exe
+            └─ ffprobe.exe
 
 系统用户配置目录/OpenVideo/
-├─ models/
-│  ├─ faster-whisper/
-│  ├─ qwen3-asr/
-│  └─ sensevoice/
 └─ retrieval-models/
    ├─ qwen3-embedding-0.6b/
    └─ qwen3-reranker-0.6b/
@@ -29,9 +29,9 @@ FFmpeg 与 FFprobe 是第三方本地可执行程序，负责下载后的合并�
 
 ## 本地模型
 
-没有平台字幕时，应用会使用设置页保存的默认转录方案，也允许工作台按任务覆盖模型。Faster Whisper、Qwen3-ASR 与 SenseVoice 分别保存在系统用户配置目录的 `OpenVideo/models/faster-whisper/`、`qwen3-asr/` 和 `sensevoice/` 子目录。
+没有平台字幕时，应用会使用设置页保存的默认转录方案，也允许工作台按任务覆盖模型。Faster Whisper、Qwen3-ASR 与 SenseVoice 分别保存在项目的 `runtime/models/faster-whisper/`、`qwen3-asr/` 和 `sensevoice/` 子目录。
 
-转录模型目录与任务选项共用统一引擎接口。设置页可以选择其他模型根目录，环境变量 `OPENVIDEO_MODELS_DIRECTORY` 也可以固定该目录；留空时始终使用系统用户配置目录，不在项目 `runtime` 中创建模型缓存。
+转录模型目录与任务选项共用统一引擎接口。设置页可以选择其他模型根目录，环境变量 `OPENVIDEO_MODELS_DIRECTORY` 也可以固定该目录；留空时始终使用项目 `runtime/models` 目录。
 
 神经嵌入与重排模型由 OpenVideo 统一选择，按需保存到系统用户配置目录的 `OpenVideo/retrieval-models/`。用户不需要配置这两个模型，也不需要启动独立向量服务。
 

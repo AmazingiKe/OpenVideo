@@ -99,11 +99,11 @@ def test_download_proxy_is_normalized_and_validated():
         Preferences(download_proxy="127.0.0.1:7890")
 
 
-def test_default_tools_use_runtime_and_models_use_user_configuration():
+def test_default_tools_and_models_use_runtime():
     settings = Settings()
 
     assert settings.ffmpeg_bin_dir == DEFAULT_TOOLS_DIRECTORY / "ffmpeg" / "bin"
-    assert DEFAULT_MODELS_DIRECTORY == OPENVIDEO_CONFIG_DIRECTORY / "models"
+    assert DEFAULT_MODELS_DIRECTORY == PROJECT_ROOT / "runtime" / "models"
     assert settings.models_root_directory == DEFAULT_MODELS_DIRECTORY
     assert settings.transcription_model_directory(
         TranscriptionEngine.FASTER_WHISPER

@@ -142,12 +142,12 @@ OpenVideo 明确区分应用配置、开发运行文件和业务资料库。
 ```text
 %LOCALAPPDATA%/OpenVideo/          # Windows 用户配置目录
 ├─ preferences.json               # 应用偏好与模型配置
-├─ models/                        # ASR、公式与视觉检索模型
 ├─ retrieval-models/              # 文本嵌入与重排模型
 └─ browser-login/                 # OpenVideo 独立登录浏览器数据
 
 OpenVideo/runtime/                 # 项目内可丢弃的开发运行文件
 ├─ tools/ffmpeg/bin/
+├─ models/                        # ASR、公式和视觉模型
 └─ logs/dev/
 
 用户选择的资料库/                  # 可携带业务数据，不允许位于项目目录内
@@ -178,7 +178,7 @@ OpenVideo/runtime/                 # 项目内可丢弃的开发运行文件
 | `OPENVIDEO_FFMPEG_PATH`      | 继续查找工具目录和 `PATH`         | FFmpeg 完整路径                                                |
 | `OPENVIDEO_FFPROBE_PATH`     | 继续查找工具目录和 `PATH`         | FFprobe 完整路径                                               |
 | `OPENVIDEO_TOOLS_DIRECTORY`  | `<项目>/runtime/tools`            | 第三方工具根目录                                               |
-| `OPENVIDEO_MODELS_DIRECTORY` | `%LOCALAPPDATA%/OpenVideo/models` | ASR、公式和视觉模型根目录                                      |
+| `OPENVIDEO_MODELS_DIRECTORY` | `<项目>/runtime/models`           | ASR、公式和视觉模型根目录                                      |
 | `OPENVIDEO_DOWNLOAD_PROXY`   | 空                                | YouTube 下载使用的 HTTP、HTTPS 或 SOCKS 代理；国内平台保持直连 |
 | `OPENVIDEO_AI_MODELS`        | 使用设置页保存值                  | LiteLLM 在线模型配置 JSON；设置后模型列表由环境托管            |
 | `OPENVIDEO_CORS_ORIGINS`     | 两个本机 Vite 来源                | 允许访问 API 的来源，多个值用逗号分隔                          |
