@@ -290,14 +290,14 @@ def probe_source(
 ) -> PlaylistProbe:
     """先补全平台独有的合集信息，再回退到 yt-dlp 的通用列表探测。"""
     if platform == SourcePlatform.BILIBILI and source_video_id:
-        collection_probe = probe_bilibili_collection(source_video_id)
-        if collection_probe is not None:
-            return collection_probe
+        bilibili_probe = probe_bilibili_video(source_video_id)
+        if bilibili_probe is not None:
+            return bilibili_probe
     return probe_playlist(source_url, platform, cookie_source, download_proxy)
 
 
-def probe_bilibili_collection(source_video_id: str) -> PlaylistProbe | None:
-    """Bilibili 的合集和分P都不完整暴露在 URL 中，需要详情接口补齐可选条目。"""
+def probe_bilibili_video(source_video_id: str) -> PlaylistProbe | None:
+    """Bilibili 的单视频、合集和分P统一从详情接口取得，减少重复的平台探测。"""
     bvid = bilibili_base_video_id(source_video_id)
     try:
         response = httpx.get(
@@ -326,7 +326,7 @@ def probe_bilibili_collection(source_video_id: str) -> PlaylistProbe | None:
         entries = _bilibili_page_entries(data, bvid)
         title = _optional_text(data.get("title"))
     if len(entries) < 2:
-        return None
+        return _bilibili_single_video_probe(data, bvid)
     total_count = len(entries)
     visible_entries = entries[:PLAYLIST_PROBE_LIMIT]
     return PlaylistProbe(
@@ -335,6 +335,25 @@ def probe_bilibili_collection(source_video_id: str) -> PlaylistProbe | None:
         entries=visible_entries,
         truncated=total_count > len(visible_entries),
         total_count=total_count,
+    )
+
+
+def _bilibili_single_video_probe(data: dict, bvid: str) -> PlaylistProbe:
+    owner = data.get("owner")
+    owner_data = owner if isinstance(owner, dict) else {}
+    entry = PlaylistEntry(
+        source_video_id=bvid,
+        url=build_bilibili_video_url(bvid),
+        title=_optional_text(data.get("title")),
+        duration_seconds=_optional_float(data.get("duration")),
+        uploader=_optional_text(owner_data.get("name")),
+    )
+    return PlaylistProbe(
+        is_playlist=False,
+        title=None,
+        entries=[entry],
+        truncated=False,
+        total_count=1,
     )
 
 

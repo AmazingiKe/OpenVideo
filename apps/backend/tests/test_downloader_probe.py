@@ -267,3 +267,53 @@ def test_bilibili_multipart_probe_returns_downloadable_parts(monkeypatch):
     assert probe.entries[1].duration_seconds == 3588
     assert probe.entries[1].uploader == "GAMES-Webinar"
     assert request_arguments["params"] == {"bvid": "BV1X7411F744"}
+
+
+def test_bilibili_single_video_probe_uses_view_api_without_yt_dlp(monkeypatch):
+    payload = {
+        "code": 0,
+        "data": {
+            "bvid": "BV1L54y147zi",
+            "title": "【算法】二叉树的动画介绍（AVL树）",
+            "duration": 260,
+            "owner": {"name": "从0开始数"},
+            "pages": [
+                {
+                    "page": 1,
+                    "part": "【算法】二叉树的动画介绍（AVL树）",
+                    "duration": 260,
+                }
+            ],
+        },
+    }
+
+    def get_bilibili_view(*args, **kwargs):
+        return httpx.Response(
+            200,
+            json=payload,
+            request=httpx.Request("GET", "https://api.bilibili.com/x/web-interface/view"),
+        )
+
+    def reject_yt_dlp_fallback(*args, **kwargs):
+        raise AssertionError("单个 Bilibili 视频不应再次调用 yt-dlp 探测")
+
+    monkeypatch.setattr(downloader.httpx, "get", get_bilibili_view)
+    monkeypatch.setattr(downloader, "probe_playlist", reject_yt_dlp_fallback)
+
+    probe = probe_source(
+        "https://www.bilibili.com/video/BV1L54y147zi",
+        SourcePlatform.BILIBILI,
+        "BV1L54y147zi",
+    )
+
+    assert probe.is_playlist is False
+    assert probe.total_count == 1
+    assert probe.entries == [
+        downloader.PlaylistEntry(
+            source_video_id="BV1L54y147zi",
+            url="https://www.bilibili.com/video/BV1L54y147zi",
+            title="【算法】二叉树的动画介绍（AVL树）",
+            duration_seconds=260,
+            uploader="从0开始数",
+        )
+    ]
