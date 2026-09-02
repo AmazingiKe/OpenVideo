@@ -1,11 +1,12 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(SCRIPT_DIRECTORY, "..");
-const LOG_DIRECTORY = join(PROJECT_ROOT, "runtime", "logs", "dev");
+const LOG_DIRECTORY = join(tmpdir(), "OpenVideo", "logs", "dev");
 const IS_WINDOWS = process.platform === "win32";
 const BACKEND_HOST = "127.0.0.1";
 const BACKEND_PORT = "38471";

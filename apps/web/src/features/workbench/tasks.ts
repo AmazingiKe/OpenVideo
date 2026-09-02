@@ -1,5 +1,3 @@
-import type { DownloadEvent } from "@/shared/types";
-
 export type TaskRecord = {
   task_id: string;
   task_type: "download" | "transcription" | "agent" | "index";
@@ -10,7 +8,6 @@ export type TaskRecord = {
   error_message: string | null;
   created_at: string;
   name: string;
-  events: DownloadEvent[];
   resume_available?: boolean;
 };
 

@@ -204,28 +204,20 @@ def test_download_folder_assignment_defaults_and_preserves_duplicates(
         first = client.post(
             "/api/downloads",
             json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ],
+                "source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"],
                 "folder_id": courses["folder_id"],
             },
         )
         duplicate = client.post(
             "/api/downloads",
             json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ],
+                "source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"],
                 "folder_id": archive["folder_id"],
             },
         )
         uncategorized = client.post(
             "/api/downloads",
-            json={
-                "source_urls": [
-                    "https://www.youtube.com/watch?v=BaW_jenozKc"
-                ]
-            },
+            json={"source_urls": ["https://www.youtube.com/watch?v=BaW_jenozKc"]},
         )
         assets = client.get("/api/media/assets").json()
 
@@ -246,9 +238,7 @@ def test_download_persists_selected_video_quality(monkeypatch, tmp_path):
         response = client.post(
             "/api/downloads",
             json={
-                "source_urls": [
-                    "https://www.youtube.com/watch?v=BaW_jenozKc"
-                ],
+                "source_urls": ["https://www.youtube.com/watch?v=BaW_jenozKc"],
                 "video_quality": "1080p",
             },
         )
@@ -270,18 +260,14 @@ def test_playlist_download_automatically_creates_and_reuses_folder(
         first = client.post(
             "/api/downloads",
             json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ],
+                "source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"],
                 "automatic_folder_name": "课程/第一季",
             },
         )
         second = client.post(
             "/api/downloads",
             json={
-                "source_urls": [
-                    "https://www.youtube.com/watch?v=BaW_jenozKc"
-                ],
+                "source_urls": ["https://www.youtube.com/watch?v=BaW_jenozKc"],
                 "automatic_folder_name": "课程/第一季",
             },
         )
@@ -302,11 +288,7 @@ def test_existing_ready_download_moves_to_requested_folder(monkeypatch, tmp_path
     with TestClient(app) as client:
         created = client.post(
             "/api/downloads",
-            json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ]
-            },
+            json={"source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"]},
         ).json()[0]
         app.state.download_manager._fail(created["job_id"], "模拟原任务已结束")
         asset = app.state.library.get(created["asset_id"])
@@ -320,9 +302,7 @@ def test_existing_ready_download_moves_to_requested_folder(monkeypatch, tmp_path
         repeated = client.post(
             "/api/downloads",
             json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ],
+                "source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"],
                 "folder_id": folder["folder_id"],
                 "assign_folder": True,
             },
@@ -341,22 +321,14 @@ def test_failed_download_reuses_asset_for_a_new_job(monkeypatch, tmp_path):
     with TestClient(app) as client:
         first_response = client.post(
             "/api/downloads",
-            json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ]
-            },
+            json={"source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"]},
         )
         first_job = first_response.json()[0]
         app.state.download_manager._fail(first_job["job_id"], "测试下载失败")
 
         retry_response = client.post(
             "/api/downloads",
-            json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ]
-            },
+            json={"source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"]},
         )
         assets = client.get("/api/media/assets").json()
 
@@ -370,43 +342,6 @@ def test_failed_download_reuses_asset_for_a_new_job(monkeypatch, tmp_path):
     assert assets[0]["error_message"] is None
 
 
-def test_failed_download_can_be_retried_by_job_id(monkeypatch, tmp_path):
-    monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
-    app = api.create_app(Settings(library_path=tmp_path))
-
-    with TestClient(app) as client:
-        first_job = client.post(
-            "/api/downloads",
-            json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ],
-                "video_quality": "720p",
-            },
-        ).json()[0]
-        app.state.download_manager._fail(first_job["job_id"], "测试下载失败")
-
-        retry_response = client.post(
-            f"/api/downloads/{first_job['job_id']}/retry"
-        )
-        invalid_response = client.post(
-            f"/api/downloads/{retry_response.json()['job_id']}/retry"
-        )
-        missing_response = client.post(
-            "/api/downloads/job-019c0000000070008000000000000000/retry"
-        )
-
-    retry_job = retry_response.json()
-    assert retry_response.status_code == 202
-    assert retry_job["job_id"] != first_job["job_id"]
-    assert retry_job["asset_id"] == first_job["asset_id"]
-    assert retry_job["video_quality"] == "720p"
-    assert retry_job["stage"] == "pending"
-    assert invalid_response.status_code == 409
-    assert invalid_response.json()["detail"] == "只有失败的下载任务可以重新下载"
-    assert missing_response.status_code == 404
-
-
 def test_interrupted_download_can_be_retried_after_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(download_manager.DownloadManager, "start", lambda *_: None)
     settings = Settings(library_path=tmp_path)
@@ -415,11 +350,7 @@ def test_interrupted_download_can_be_retried_after_restart(monkeypatch, tmp_path
     with TestClient(app) as client:
         first_response = client.post(
             "/api/downloads",
-            json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ]
-            },
+            json={"source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"]},
         )
         first_job = first_response.json()[0]
 
@@ -427,11 +358,7 @@ def test_interrupted_download_can_be_retried_after_restart(monkeypatch, tmp_path
     with TestClient(restarted_app) as client:
         retry_response = client.post(
             "/api/downloads",
-            json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ]
-            },
+            json={"source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"]},
         )
         history = client.get("/api/downloads?limit=50").json()
         assets = client.get("/api/media/assets").json()
@@ -461,11 +388,7 @@ def test_asset_delete_keeps_files_when_a_related_task_cannot_stop(
     with TestClient(app) as client:
         created = client.post(
             "/api/downloads",
-            json={
-                "source_urls": [
-                    "https://www.bilibili.com/video/BV1xx411c7mD"
-                ]
-            },
+            json={"source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"]},
         ).json()[0]
         asset_directory = tmp_path / "assets" / created["asset_id"]
         app.state.download_manager.cancel_assets = AsyncMock(return_value=False)
@@ -478,7 +401,7 @@ def test_asset_delete_keeps_files_when_a_related_task_cannot_stop(
     assert asset_directory.is_dir()
 
 
-def test_download_history_restores_title_and_events_after_restart(
+def test_download_history_restores_title_without_exposing_logs_after_restart(
     monkeypatch,
     tmp_path,
 ):
@@ -526,28 +449,7 @@ def test_download_history_restores_title_and_events_after_restart(
 
     assert created_response.status_code == 202
     assert task_response.json()["name"] == "Blender 角色绑定完整教程"
-    messages = [event["message"] for event in task_response.json()["events"]]
-    assert "已识别视频：Blender 角色绑定完整教程" in messages
-    assert task_response.json()["events"][-1]["error_message"] == "测试下载失败"
-    reading_events = [
-        event
-        for event in task_response.json()["events"]
-        if event["message"] == "正在读取视频信息"
-    ]
-    assert len(reading_events) == 1
-    assert reading_events[0]["stage"] == "reading_metadata"
-    identified_event = next(
-        event
-        for event in task_response.json()["events"]
-        if event["message"] == "已识别视频：Blender 角色绑定完整教程"
-    )
-    assert identified_event["stage"] == "reading_metadata"
-    downloading_event = next(
-        event
-        for event in task_response.json()["events"]
-        if event["message"] == "正在下载视频和音频"
-    )
-    assert downloading_event["stage"] == "downloading"
+    assert "events" not in task_response.json()
 
     restarted_app = api.create_app(settings)
     with TestClient(restarted_app) as client:
@@ -556,7 +458,7 @@ def test_download_history_restores_title_and_events_after_restart(
     assert history_response.status_code == 200
     assert history_response.json()[0]["job_id"] == job_id
     assert history_response.json()[0]["name"] == "Blender 角色绑定完整教程"
-    assert history_response.json()[0]["events"] == task_response.json()["events"]
+    assert "events" not in history_response.json()[0]
 
 
 @pytest.mark.asyncio
@@ -603,6 +505,7 @@ async def test_initialization_start_failure_does_not_rollback_completed_download
         "probe_media",
         lambda *_: MediaProbe(20, 1920, 1080, "h264", "aac"),
     )
+
     def fail_initialization(_asset_id: str) -> None:
         raise RuntimeError("模拟后台初始化启动失败")
 
@@ -824,9 +727,7 @@ def test_platform_account_can_login_in_a_dedicated_browser(monkeypatch, tmp_path
     )
 
     with TestClient(app) as client:
-        created_response = client.post(
-            "/api/download-accounts/douyin/login-sessions"
-        )
+        created_response = client.post("/api/download-accounts/douyin/login-sessions")
         login_id = created_response.json()["login_id"]
         session_response = created_response
         for _ in range(20):
@@ -866,9 +767,7 @@ def test_dedicated_browser_login_can_be_cancelled(tmp_path):
     )
 
     with TestClient(app) as client:
-        created_response = client.post(
-            "/api/download-accounts/bilibili/login-sessions"
-        )
+        created_response = client.post("/api/download-accounts/bilibili/login-sessions")
         assert capture_started.wait(timeout=1)
         deleted_response = client.delete(
             "/api/download-account-login-sessions/"

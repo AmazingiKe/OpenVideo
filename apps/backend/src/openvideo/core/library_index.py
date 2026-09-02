@@ -57,7 +57,6 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     _ensure_visual_index_schema(connection)
     _ensure_agent_permission_grant_schema(connection)
     _ensure_download_quality_schema(connection)
-    _ensure_download_event_schema(connection)
     _migrate_transcript_agent_sessions(connection)
     synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
@@ -434,23 +433,6 @@ def open_index_connection(database_path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _ensure_download_event_schema(connection: sqlite3.Connection) -> None:
-    """事件日志独立增量建表，避免升级查询投影时删除已有任务历史。"""
-
-    with connection:
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS download_events ("
-            "event_id TEXT PRIMARY KEY, "
-            "job_id TEXT NOT NULL REFERENCES download_jobs(job_id) ON DELETE CASCADE, "
-            "stage TEXT NOT NULL, progress_percent REAL NOT NULL, "
-            "message TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL)"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS download_events_job_created_index "
-            "ON download_events(job_id, created_at)"
-        )
-
-
 def _migrate_transcript_agent_sessions(connection: sqlite3.Connection) -> None:
     """字幕处理已并入视频对话，旧会话迁移后仍可继续原生对话。"""
 
@@ -630,12 +612,6 @@ CREATE TABLE download_jobs (
     progress_percent REAL NOT NULL, message TEXT NOT NULL,
     error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
-CREATE TABLE download_events (
-    event_id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL REFERENCES download_jobs(job_id) ON DELETE CASCADE,
-    stage TEXT NOT NULL, progress_percent REAL NOT NULL, message TEXT NOT NULL,
-    error_message TEXT, created_at TEXT NOT NULL
-);
 CREATE TABLE analysis_jobs (
     job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, strategy TEXT NOT NULL,
@@ -775,7 +751,6 @@ CREATE INDEX markers_asset_time_index ON markers(asset_id, start_seconds);
 CREATE INDEX event_analyses_asset_created_index ON event_analyses(asset_id, created_at DESC);
 CREATE INDEX event_analyses_marker_index ON event_analyses(marker_id, created_at DESC);
 CREATE INDEX event_analyses_selection_index ON event_analyses(selection_id, created_at DESC);
-CREATE INDEX download_events_job_created_index ON download_events(job_id, created_at);
 CREATE UNIQUE INDEX summary_documents_root_asset_index ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);
 CREATE INDEX summary_illustration_jobs_asset_created_index ON summary_illustration_jobs(asset_id, created_at DESC);

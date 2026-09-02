@@ -17,7 +17,6 @@ import {
   get_agent_index_status,
   list_downloads,
   list_agent_tasks,
-  request_download_retry,
   resume_agent_run,
   transcribe_asset,
 } from "@/shared/api";
@@ -49,7 +48,6 @@ type TaskManager = {
     urls: string[],
     destination?: DownloadDestination,
   ) => Promise<DownloadJob[]>;
-  retry_download: (job_id: string) => Promise<DownloadJob>;
   start_transcription: (
     asset_id: string,
     options: TranscriptionOptions,
@@ -98,7 +96,6 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         error_message: job.error_message,
         created_at: job.created_at,
         name: job.name,
-        events: job.events,
       });
     },
     [record_task],
@@ -115,7 +112,6 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         error_message: job.error_message,
         created_at: job.created_at,
         name: "素材转录",
-        events: [],
       });
     },
     [record_task],
@@ -260,17 +256,6 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [track_download_jobs, with_download_controller],
   );
 
-  const retry_download = useCallback(
-    (job_id: string) =>
-      with_download_controller(async (controller) => {
-        const job = await request_download_retry(job_id, controller.signal);
-        const [final_job] = await track_download_jobs([job], controller);
-        if (!final_job) throw new Error("重新下载任务未返回结果");
-        return final_job;
-      }),
-    [track_download_jobs, with_download_controller],
-  );
-
   const start_transcription = useCallback(
     async (asset_id: string, options: TranscriptionOptions) => {
       transcription_controller_ref.current?.abort();
@@ -327,7 +312,6 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       task_records,
       index_status,
       start_downloads,
-      retry_download,
       resume_agent_task,
       start_transcription,
       is_transcription_running: (asset_id) =>
@@ -339,7 +323,6 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       active_transcriptions,
       index_status,
       start_downloads,
-      retry_download,
       resume_agent_task,
       start_transcription,
       task_records,
@@ -388,7 +371,6 @@ function agent_task_record(snapshot: AgentTaskSnapshot): TaskRecord {
     error_message: run.error_message,
     created_at: run.created_at,
     name: snapshot.session_title,
-    events: [],
     resume_available: snapshot.resume_available,
   };
 }
@@ -416,7 +398,6 @@ function index_task_record(status: AgentIndexStatus): TaskRecord {
     error_message: status.error_message,
     created_at: status.updated_at,
     name: status.asset_id ? "当前视频证据索引" : "资料库证据索引",
-    events: [],
   };
 }
 

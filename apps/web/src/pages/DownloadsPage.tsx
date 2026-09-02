@@ -47,7 +47,7 @@ const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/;
 
 export function DownloadsPage() {
   const query_client = useQueryClient();
-  const { task_records, start_downloads, retry_download } = use_task_manager();
+  const { start_downloads } = use_task_manager();
   const health_query = useQuery({
     queryKey: RESOURCE_QUERY_KEYS.download_health,
     queryFn: ({ signal }) => get_health(signal),
@@ -69,9 +69,6 @@ export function DownloadsPage() {
     useState<DownloadFolderSelection>(undefined);
   const [video_quality, set_video_quality] = useState<DownloadQuality>("best");
   const [is_submitting, set_is_submitting] = useState(false);
-  const [retrying_download_task_id, set_retrying_download_task_id] = useState<
-    string | null
-  >(null);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [video_import_state, set_video_import_state] =
     useState<VideoImportState>({ stage: "idle" });
@@ -185,24 +182,6 @@ export function DownloadsPage() {
           message: error_message(error),
         });
       }
-    }
-  }
-
-  async function retry_failed_download(task_id: string) {
-    set_retrying_download_task_id(task_id);
-    set_page_error(null);
-    try {
-      const final_job = await retry_download(task_id);
-      if (final_job.stage === "failed") {
-        set_page_error(final_job.error_message ?? "重新下载失败");
-        await refresh_download_accounts();
-      }
-    } catch (error) {
-      if (!is_abort_error(error)) set_page_error(error_message(error));
-    } finally {
-      set_retrying_download_task_id((current) =>
-        current === task_id ? null : current,
-      );
     }
   }
 
@@ -391,7 +370,6 @@ export function DownloadsPage() {
   return (
     <DownloadWorkspace
       health={health}
-      task_records={task_records}
       source_url={source_url}
       probe_result={probe_result}
       selected_urls={selected_urls}
@@ -403,7 +381,6 @@ export function DownloadsPage() {
           ?.source_video_id ?? null
       }
       is_submitting={is_submitting}
-      retrying_download_task_id={retrying_download_task_id}
       error={
         page_error ??
         resource_error(health_query.error) ??
@@ -421,7 +398,6 @@ export function DownloadsPage() {
       on_target_folder_change={set_target_folder_id}
       on_video_quality_change={set_video_quality}
       on_start_download={() => void start_selected_downloads()}
-      on_retry_download={(task_id) => void retry_failed_download(task_id)}
       on_save_download_account={save_platform_account}
       on_login_download_account={login_platform_account}
       on_cancel_download_account_login={cancel_platform_account_login}

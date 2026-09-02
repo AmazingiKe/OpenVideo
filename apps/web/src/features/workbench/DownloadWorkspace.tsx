@@ -27,7 +27,6 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { DownloadActivity } from "@/features/downloads/DownloadActivity";
 import { DownloadAccountsCard } from "@/features/downloads/DownloadAccountsCard";
 import { DownloadSelection } from "@/features/downloads/DownloadSelection";
 import {
@@ -44,11 +43,9 @@ import type {
   ProbeResponse,
   SourcePlatform,
 } from "@/shared/types";
-import type { TaskRecord } from "@/features/workbench/tasks";
 
 type DownloadWorkspaceProps = {
   health: HealthResponse | null;
-  task_records: TaskRecord[];
   source_url: string;
   probe_result: ProbeResponse | null;
   selected_urls: Set<string>;
@@ -57,7 +54,6 @@ type DownloadWorkspaceProps = {
   video_quality: DownloadQuality;
   current_source_video_id: string | null;
   is_submitting: boolean;
-  retrying_download_task_id: string | null;
   error: string | null;
   download_accounts: DownloadAccount[];
   account_loading_platform: SourcePlatform | null;
@@ -70,7 +66,6 @@ type DownloadWorkspaceProps = {
   on_target_folder_change: (folder_id: DownloadFolderSelection) => void;
   on_video_quality_change: (quality: DownloadQuality) => void;
   on_start_download: () => void;
-  on_retry_download: (task_id: string) => void;
   on_save_download_account: (
     platform: SourcePlatform,
     cookie: string,
@@ -89,7 +84,6 @@ type DownloadWorkspaceProps = {
 
 export function DownloadWorkspace({
   health,
-  task_records,
   source_url,
   probe_result,
   selected_urls,
@@ -98,7 +92,6 @@ export function DownloadWorkspace({
   video_quality,
   current_source_video_id,
   is_submitting,
-  retrying_download_task_id,
   error,
   download_accounts,
   account_loading_platform,
@@ -111,7 +104,6 @@ export function DownloadWorkspace({
   on_target_folder_change,
   on_video_quality_change,
   on_start_download,
-  on_retry_download,
   on_save_download_account,
   on_login_download_account,
   on_cancel_download_account_login,
@@ -121,9 +113,6 @@ export function DownloadWorkspace({
   on_video_drop,
   on_invalid_video_drop,
 }: DownloadWorkspaceProps) {
-  const download_tasks = task_records.filter(
-    (task) => task.task_type === "download",
-  );
   const dependencies_ready = Boolean(
     health?.dependencies.yt_dlp && health.dependencies.ffmpeg,
   );
@@ -272,11 +261,6 @@ export function DownloadWorkspace({
           />
         ) : null}
       </Card>
-      <DownloadActivity
-        tasks={download_tasks}
-        retrying_task_id={retrying_download_task_id}
-        on_retry={on_retry_download}
-      />
     </section>
   );
 }

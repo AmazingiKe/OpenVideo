@@ -13,7 +13,6 @@ const TASKS: TaskRecord[] = [
     error_message: null,
     created_at: "2026-08-29T10:00:00Z",
     name: "分析角色动作",
-    events: [],
   },
   {
     task_id: "run-019c012345677abc8123456789abcdee",
@@ -24,7 +23,6 @@ const TASKS: TaskRecord[] = [
     error_message: null,
     created_at: "2026-08-29T09:00:00Z",
     name: "整理镜头标记",
-    events: [],
     resume_available: true,
   },
   {
@@ -36,7 +34,6 @@ const TASKS: TaskRecord[] = [
     error_message: null,
     created_at: "2026-08-29T08:00:00Z",
     name: "产品演示视频",
-    events: [],
   },
 ];
 

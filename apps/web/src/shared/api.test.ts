@@ -22,7 +22,6 @@ import {
   media_url,
   probe_backend,
   probe_source,
-  request_download_retry,
   save_download_account,
   select_directory,
   test_ai_model,
@@ -248,7 +247,6 @@ describe("api client", () => {
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
         name: "测试视频",
-        events: [],
       },
     ];
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -289,35 +287,6 @@ describe("api client", () => {
     expect(fetch_mock).toHaveBeenCalledWith("/api/downloads?limit=50", {
       signal: undefined,
     });
-  });
-
-  it("requests a retry for a failed download task", async () => {
-    const response = {
-      job_id: "job-0198d12345677890abcdef1234567891",
-      asset_id: "asset-1",
-      stage: "pending",
-      progress_percent: 0,
-      message: "等待开始",
-      error_message: null,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-      name: "测试视频",
-      events: [],
-    };
-    const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(response), {
-        status: 202,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-    await expect(
-      request_download_retry("job-0198d12345677890abcdef1234567890"),
-    ).resolves.toEqual(response);
-    expect(fetch_mock).toHaveBeenCalledWith(
-      "/api/downloads/job-0198d12345677890abcdef1234567890/retry",
-      { method: "POST", signal: undefined },
-    );
   });
 
   it("manages the saved Douyin download account", async () => {

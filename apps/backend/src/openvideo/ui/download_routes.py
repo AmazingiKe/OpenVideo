@@ -143,9 +143,7 @@ def register_download_routes(
             if job.stage != DownloadStage.COMPLETE:
                 manager.start(job.job_id)
         return [
-            task
-            for job in jobs
-            if (task := manager.get_task(job.job_id)) is not None
+            task for job in jobs if (task := manager.get_task(job.job_id)) is not None
         ]
 
     @app.get("/api/downloads", response_model=list[DownloadTask])
@@ -164,26 +162,6 @@ def register_download_routes(
         task = require_manager(get_manager()).get_task(job_id)
         if not task:
             raise HTTPException(status_code=404, detail="下载任务不存在")
-        return task
-
-    @app.post(
-        "/api/downloads/{job_id}/retry",
-        response_model=DownloadTask,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def retry_download(job_id: str) -> DownloadTask:
-        manager = require_manager(get_manager())
-        try:
-            job = manager.retry(job_id)
-        except LookupError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        if job.stage != DownloadStage.COMPLETE:
-            manager.start(job.job_id)
-        task = manager.get_task(job.job_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="重新下载任务不存在")
         return task
 
 

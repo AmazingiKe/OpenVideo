@@ -90,7 +90,6 @@ vi.mock("./shared/api", () => ({
   probe_backend: vi.fn(),
   probe_source: vi.fn(),
   prepare_visual_index: vi.fn(),
-  request_download_retry: vi.fn(),
   rename_folder: vi.fn(),
   save_download_account: vi.fn(),
   select_directory: vi.fn(),

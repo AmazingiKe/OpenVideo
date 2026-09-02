@@ -44,7 +44,6 @@ describe("TaskCenter", () => {
             error_message: null,
             created_at: "2026-08-29T10:00:00Z",
             name: "资料库证据索引",
-            events: [],
           },
         ]}
         on_resume={vi.fn()}
@@ -73,7 +72,6 @@ function task_record(stage: string, resume_available: boolean): TaskRecord {
     created_at:
       stage === "running" ? "2026-08-29T10:00:00Z" : "2026-08-29T09:00:00Z",
     name: stage === "running" ? "分析角色动作" : "整理镜头标记",
-    events: [],
     resume_available,
   };
 }

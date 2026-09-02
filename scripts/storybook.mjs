@@ -1,12 +1,13 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(SCRIPT_DIRECTORY, "..");
 const WEB_DIRECTORY = join(PROJECT_ROOT, "apps", "web");
-const LOG_DIRECTORY = join(PROJECT_ROOT, "runtime", "logs", "dev");
+const LOG_DIRECTORY = join(tmpdir(), "OpenVideo", "logs", "dev");
 const STORYBOOK_LOG_PATH = join(LOG_DIRECTORY, "storybook.log");
 const IS_WINDOWS = process.platform === "win32";
 const STORYBOOK_PACKAGE_PATH = join(

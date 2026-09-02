@@ -78,6 +78,5 @@ function task_record(task_id: string, created_at: string): TaskRecord {
     error_message: null,
     created_at,
     name: task_id,
-    events: [],
   };
 }

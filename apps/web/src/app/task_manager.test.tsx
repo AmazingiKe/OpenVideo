@@ -22,7 +22,6 @@ import {
   list_agent_tasks,
   list_assets,
   list_downloads,
-  request_download_retry,
   resume_agent_run,
 } from "@/shared/api";
 import type {
@@ -38,7 +37,6 @@ vi.mock("@/shared/api", () => ({
   get_agent_index_status: vi.fn(),
   list_agent_tasks: vi.fn(),
   list_downloads: vi.fn(),
-  request_download_retry: vi.fn(),
   resume_agent_run: vi.fn(),
   list_assets: vi.fn(),
   get_analysis: vi.fn(),
@@ -119,42 +117,6 @@ describe("TaskManagerProvider", () => {
       await screen.findByText("Blender 角色绑定完整教程"),
     ).toBeInTheDocument();
     expect(list_downloads).toHaveBeenCalledWith(50, expect.any(AbortSignal));
-  });
-
-  it("creates and tracks a retry download task", async () => {
-    vi.useFakeTimers();
-    vi.mocked(list_downloads).mockResolvedValue([]);
-    vi.mocked(request_download_retry).mockResolvedValue(
-      download_job("downloading"),
-    );
-    vi.mocked(get_download).mockResolvedValue(download_job("complete"));
-    vi.mocked(list_assets).mockResolvedValue([]);
-
-    render(
-      <MemoryRouter>
-        <ApplicationQueryProvider>
-          <AssetCatalogProvider>
-            <TaskManagerProvider>
-              <RetryStarter />
-              <TaskStatus />
-            </TaskManagerProvider>
-          </AssetCatalogProvider>
-        </ApplicationQueryProvider>
-      </MemoryRouter>,
-    );
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "重新下载" }));
-      await Promise.resolve();
-    });
-    await act(async () => vi.advanceTimersByTimeAsync(1000));
-
-    expect(request_download_retry).toHaveBeenCalledWith(
-      "job-0123456789abcdef0123456789abcdef",
-      expect.any(AbortSignal),
-    );
-    expect(get_download).toHaveBeenCalledOnce();
-    expect(screen.getByText("complete")).toBeInTheDocument();
   });
 
   it("loads global agent tasks and resumes an interrupted run", async () => {
@@ -285,20 +247,6 @@ function TaskStatus() {
   );
 }
 
-function RetryStarter() {
-  const { retry_download } = use_task_manager();
-  return (
-    <button
-      type="button"
-      onClick={() =>
-        void retry_download("job-0123456789abcdef0123456789abcdef")
-      }
-    >
-      重新下载
-    </button>
-  );
-}
-
 function AgentResumeStarter() {
   const { resume_agent_task } = use_task_manager();
   return (
@@ -349,7 +297,6 @@ function download_job(
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     name,
-    events: [],
   };
 }
 

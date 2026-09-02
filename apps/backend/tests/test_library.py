@@ -6,7 +6,7 @@ from threading import Barrier
 
 import pytest
 
-from openvideo.core.download_models import DownloadEvent, DownloadJob, DownloadStage
+from openvideo.core.download_models import DownloadJob, DownloadStage
 from openvideo.core.library import InvalidLibraryError, MediaLibrary
 from openvideo.core.media_models import (
     MediaAsset,
@@ -85,9 +85,7 @@ def _save_summary(library: MediaLibrary) -> None:
         content_digest=markdown_digest(markdown),
     )
     asset_directory = library.asset_directory(ASSET_ID)
-    atomic_write_text(
-        resolve_summary_path(asset_directory, "index.md"), markdown
-    )
+    atomic_write_text(resolve_summary_path(asset_directory, "index.md"), markdown)
     write_summary_manifest(
         asset_directory, build_summary_manifest(project, [document], [])
     )
@@ -163,7 +161,7 @@ def test_summary_documents_rebuild_from_manifest_projection(tmp_path: Path):
         library.close()
 
 
-def test_download_events_survive_library_reopen(tmp_path: Path):
+def test_download_jobs_survive_library_reopen(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     _save_asset(library, _asset())
     job = DownloadJob(
@@ -173,14 +171,12 @@ def test_download_events_survive_library_reopen(tmp_path: Path):
         progress_percent=100,
         message="下载完成",
     )
-    event = DownloadEvent.capture(job)
-    library.save_download_job(job, event)
+    library.save_download_job(job)
     library.close()
 
     reopened = MediaLibrary.open(tmp_path)
 
     assert reopened.list_download_jobs(1) == [job]
-    assert reopened.list_download_events(JOB_ID) == [event]
     reopened.close()
 
 

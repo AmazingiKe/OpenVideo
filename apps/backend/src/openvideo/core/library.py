@@ -11,7 +11,7 @@ from uuid import UUID
 import portalocker
 from pydantic import BaseModel
 
-from openvideo.core.download_models import DownloadEvent, DownloadJob, DownloadStage
+from openvideo.core.download_models import DownloadJob, DownloadStage
 from openvideo.core.agent_checkpoint_store import open_agent_checkpoint_database
 from openvideo.core.identifiers import is_uuid7, uuid7
 from openvideo.core.folder_models import (
@@ -480,24 +480,10 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         )
         return MediaAsset.model_validate(dict(row)) if row else None
 
-    def save_download_job(
-        self,
-        job: DownloadJob,
-        event: DownloadEvent | None = None,
-    ) -> None:
-        if event is not None and event.job_id != job.job_id:
-            raise ValueError("下载事件与任务不匹配")
+    def save_download_job(self, job: DownloadJob) -> None:
         values = job.model_dump(mode="json")
         with self._lock, self._db():
             self._upsert_runtime_model("download_jobs", values, transaction=False)
-            if event is not None:
-                event_values = event.model_dump(mode="json")
-                columns = tuple(event_values)
-                self._db().execute(
-                    f"INSERT INTO download_events ({', '.join(columns)}) "
-                    f"VALUES ({', '.join('?' for _ in columns)})",
-                    tuple(event_values[column] for column in columns),
-                )
 
     def get_download_job(self, job_id: str) -> DownloadJob | None:
         row = (
@@ -515,19 +501,6 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
             parameters = (limit,)
         rows = self._db().execute(statement, parameters).fetchall()
         return [DownloadJob.model_validate(dict(row)) for row in rows]
-
-    def list_download_events(self, job_id: str) -> list[DownloadEvent]:
-        self._validate_identifier(job_id, "job")
-        rows = (
-            self._db()
-            .execute(
-                "SELECT * FROM download_events WHERE job_id = ? "
-                "ORDER BY created_at, event_id",
-                (job_id,),
-            )
-            .fetchall()
-        )
-        return [DownloadEvent.model_validate(dict(row)) for row in rows]
 
     def asset_directory(self, asset_id: str) -> Path:
         self._validate_asset_id(asset_id)
@@ -719,7 +692,7 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
                     "updated_at": now,
                 }
             )
-            self.save_download_job(job, DownloadEvent.capture(job))
+            self.save_download_job(job)
         interrupted = {
             MediaAssetStatus.PENDING,
             MediaAssetStatus.DOWNLOADING,

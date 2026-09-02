@@ -5,8 +5,6 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from openvideo.core.identifiers import uuid7
-
 
 class DownloadStage(StrEnum):
     PENDING = "pending"
@@ -41,38 +39,7 @@ class DownloadJob(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class DownloadEvent(BaseModel):
-    """下载事件保留阶段语义变化，避免高频进度采样淹没可诊断信息。"""
-
-    event_id: str
-    job_id: str
-    stage: DownloadStage
-    progress_percent: float
-    message: str
-    error_message: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-    @classmethod
-    def capture(
-        cls,
-        job: DownloadJob,
-        *,
-        message: str | None = None,
-    ) -> "DownloadEvent":
-        """为一次有意义的状态变化生成可独立持久化的不可变快照。"""
-
-        return cls(
-            event_id=f"event-{uuid7().hex}",
-            job_id=job.job_id,
-            stage=job.stage,
-            progress_percent=job.progress_percent,
-            message=message if message is not None else job.message,
-            error_message=job.error_message,
-        )
-
-
 class DownloadTask(DownloadJob):
-    """下载任务聚合素材标题与历史事件，供任务列表恢复和诊断使用。"""
+    """下载任务附带素材标题，供后台状态通知识别对应内容。"""
 
     name: str
-    events: list[DownloadEvent] = Field(default_factory=list)

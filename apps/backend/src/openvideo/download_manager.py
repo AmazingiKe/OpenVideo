@@ -5,7 +5,6 @@ import logging
 from threading import RLock
 
 from openvideo.core.download_models import (
-    DownloadEvent,
     DownloadJob,
     DownloadQuality,
     DownloadStage,
@@ -107,7 +106,8 @@ class DownloadManager:
             video_quality=video_quality,
         )
         self.library.save(asset)
-        self.library.save_download_job(job, DownloadEvent.capture(job))
+        self.library.save_download_job(job)
+        self._log_job_status(job)
         with self._lock:
             self._jobs[job_id] = job
             self._active_job_id_by_asset_id[asset.asset_id] = job_id
@@ -126,27 +126,6 @@ class DownloadManager:
             for source in sources
         ]
 
-    def retry(self, job_id: str) -> DownloadJob:
-        """失败任务保留原历史并创建新任务，素材来源与归档位置保持不变。"""
-        failed_job = self.get(job_id)
-        if failed_job is None:
-            raise LookupError("下载任务不存在")
-        if failed_job.stage != DownloadStage.FAILED:
-            raise ValueError("只有失败的下载任务可以重新下载")
-        asset = self.library.get(failed_job.asset_id)
-        if asset is None:
-            raise LookupError("下载任务对应的媒体资源不存在")
-        source = SourceMatch(
-            platform=asset.source_platform,
-            normalized_url=asset.source_url,
-            source_video_id=asset.source_video_id,
-            is_playlist=False,
-        )
-        return self.create(
-            source,
-            asset.folder_id,
-            video_quality=failed_job.video_quality,
-        )
     def start(self, job_id: str) -> None:
         with self._lock:
             current = self._tasks.get(job_id)
@@ -348,11 +327,8 @@ class DownloadManager:
             if not current_job or current_job.stage in TERMINAL_DOWNLOAD_STAGES:
                 return
             current_job.updated_at = datetime.now(UTC)
-            event = DownloadEvent.capture(
-                current_job,
-                message=f"已识别视频：{metadata.title}",
-            )
-            self.library.save_download_job(current_job, event)
+            self.library.save_download_job(current_job)
+            self._log_job_status(current_job, f"已识别视频：{metadata.title}")
 
     def _update_job(
         self,
@@ -376,8 +352,9 @@ class DownloadManager:
             job.message = message
             job.error_message = error_message
             job.updated_at = datetime.now(UTC)
-            event = DownloadEvent.capture(job) if semantic_change else None
-            self.library.save_download_job(job, event)
+            self.library.save_download_job(job)
+            if semantic_change:
+                self._log_job_status(job)
 
     def _fail(self, job_id: str, message: str) -> None:
         job = self.get(job_id)
@@ -418,7 +395,8 @@ class DownloadManager:
             progress_percent=100,
             message="该视频已在媒体库中",
         )
-        self.library.save_download_job(job, DownloadEvent.capture(job))
+        self.library.save_download_job(job)
+        self._log_job_status(job)
         with self._lock:
             self._jobs[job.job_id] = job
         return job.model_copy(deep=True)
@@ -428,5 +406,17 @@ class DownloadManager:
         return DownloadTask(
             **job.model_dump(),
             name=asset.title if asset else job.message,
-            events=self.library.list_download_events(job.job_id),
+        )
+
+    @staticmethod
+    def _log_job_status(job: DownloadJob, message: str | None = None) -> None:
+        """状态历史只进入运行日志，避免把诊断明细持久化到资料库。"""
+
+        LOGGER.info(
+            "下载任务 %s：stage=%s progress=%.1f message=%s error=%s",
+            job.job_id,
+            job.stage,
+            job.progress_percent,
+            message or job.message,
+            job.error_message or "无",
         )
