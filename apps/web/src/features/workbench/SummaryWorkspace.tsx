@@ -41,7 +41,6 @@ import type {
   AgentArtifact,
   AiModelSummary,
   MediaAsset,
-  MediaSegment,
   SummaryDetail,
   SummaryDocument,
   SummaryIllustrationJob,
@@ -56,7 +55,6 @@ const TERMINAL_ILLUSTRATION_STAGES = new Set(["complete", "failed"]);
 
 type SummaryWorkspaceProps = {
   selected_asset: MediaAsset | null;
-  segments: MediaSegment[];
   transcript: Transcript | null;
   on_error?: (message: string | null) => void;
 };

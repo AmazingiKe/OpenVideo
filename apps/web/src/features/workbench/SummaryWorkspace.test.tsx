@@ -152,7 +152,6 @@ vi.mock("@/shared/api", async (import_original) => {
     create_summary_child: vi.fn(),
     duplicate_summary_document: vi.fn(),
     create_summary_export: vi.fn(),
-    create_summary_media: vi.fn(),
     delete_summary_document: vi.fn(),
     generate_summary_documents: vi.fn(),
     list_ai_models: vi.fn(),
@@ -315,7 +314,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -345,7 +343,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -377,7 +374,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -395,7 +391,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -426,7 +421,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -487,7 +481,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -518,7 +511,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -559,7 +551,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -592,7 +583,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -612,7 +602,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -647,7 +636,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -680,7 +668,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -728,7 +715,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -764,7 +750,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -791,7 +776,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -817,7 +801,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );
@@ -855,7 +838,6 @@ describe("SummaryWorkspace", () => {
     render(
       <SummaryWorkspace
         selected_asset={ASSET}
-        segments={[]}
         transcript={TRANSCRIPT}
       />,
     );

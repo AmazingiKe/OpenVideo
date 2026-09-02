@@ -294,10 +294,8 @@ class LibraryGeneratedStorageMixin:
             )
             return [self._summary_document_from_row(row) for row in rows]
 
-    def update_summary_document_placements(
-        self, documents: list[SummaryDocument]
-    ) -> None:
-        """将已提交到清单的树结构同步到查询投影，避免重建整个素材索引。"""
+    def update_summary_documents(self, documents: list[SummaryDocument]) -> None:
+        """将已提交到清单的文档变化同步到查询投影，避免重建整个素材索引。"""
 
         if not documents:
             return
@@ -319,12 +317,16 @@ class LibraryGeneratedStorageMixin:
             if {row["document_id"] for row in rows} != document_ids:
                 raise ValueError("总结文档索引缺失")
             self._db().executemany(
-                "UPDATE summary_documents SET parent_document_id = ?, position = ?, "
-                "revision = ?, updated_at = ? "
+                "UPDATE summary_documents SET parent_document_id = ?, title = ?, "
+                "relative_path = ?, content_digest = ?, position = ?, revision = ?, "
+                "updated_at = ? "
                 "WHERE document_id = ? AND asset_id = ?",
                 [
                     (
                         document.parent_document_id,
+                        document.title,
+                        document.relative_path,
+                        document.content_digest,
                         document.position,
                         document.revision,
                         document.updated_at.isoformat(),
@@ -334,31 +336,6 @@ class LibraryGeneratedStorageMixin:
                     for document in documents
                 ],
             )
-
-    def update_summary_document(
-        self,
-        document_id: str,
-        *,
-        title: str | None = None,
-        relative_path: str | None = None,
-        content_digest: str | None = None,
-        position: int | None = None,
-    ) -> SummaryDocument | None:
-        with self._lock:
-            document = self.load_summary_document(document_id)
-            if document is None:
-                return None
-            synchronize_asset(self._db(), self.assets_path, document.asset_id)
-            updated = self.load_summary_document(document_id)
-            return updated
-
-    def delete_summary_document(self, document_id: str) -> bool:
-        with self._lock:
-            document = self.load_summary_document(document_id)
-            if document is None:
-                return False
-            synchronize_asset(self._db(), self.assets_path, document.asset_id)
-            return self.load_summary_document(document_id) is None
 
     def save_agent_session(self, session: AgentSession) -> None:
         self._validate_identifier(session.session_id, "session")

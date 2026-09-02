@@ -23,8 +23,7 @@ const SUMMARY_EDITOR_MIN_HEIGHT_PX = 320;
 export function SummaryPage() {
   const { selected_asset, selected_asset_id } = use_asset_catalog();
   const { preferences, set_summary_media_expanded } = use_local_preferences();
-  const { segments, transcript, analysis_error } =
-    use_asset_analysis(selected_asset_id);
+  const { transcript, analysis_error } = use_asset_analysis(selected_asset_id);
   const [page_error, set_page_error] = useState<string | null>(null);
   const media_panel_ref = useRef<PanelImperativeHandle>(null);
   const media_available = Boolean(selected_asset?.playback_url);
@@ -85,7 +84,6 @@ export function SummaryPage() {
           <SummaryWorkspace
             key={selected_asset_id ?? "no-selected-asset"}
             selected_asset={selected_asset}
-            segments={segments}
             transcript={transcript}
             on_error={set_page_error}
           />

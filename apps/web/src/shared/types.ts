@@ -621,8 +621,8 @@ export type SummaryGenerationResult = {
   context_capacity_unknown: boolean;
   illustration_job: SummaryIllustrationJob | null;
 };
-export type SummaryIllustrationConfidence = "high" | "medium" | "low";
-export type SummaryIllustrationStage =
+type SummaryIllustrationConfidence = "high" | "medium" | "low";
+type SummaryIllustrationStage =
   | "pending"
   | "planning"
   | "retrieving"

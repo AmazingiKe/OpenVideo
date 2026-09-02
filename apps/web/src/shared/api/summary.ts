@@ -132,7 +132,7 @@ export function move_summary_document(
 
 export function update_summary_document(
   document_id: string,
-  patch: { title?: string; markdown?: string; position?: number },
+  patch: { title?: string; markdown?: string },
   metadata: SummarySaveMetadata,
   signal?: AbortSignal,
 ): Promise<SummaryDocument> {

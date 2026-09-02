@@ -88,7 +88,6 @@ class SummaryDocumentUpdate(BaseModel):
     client_sequence: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=200)
     markdown: str | None = None
-    position: int | None = Field(default=None, ge=0)
 
 
 class SummaryDocumentMove(BaseModel):

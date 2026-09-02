@@ -418,9 +418,6 @@ class SummaryManager:
                     if request.title is not None
                     else document.title,
                     "markdown": markdown,
-                    "position": request.position
-                    if request.position is not None
-                    else document.position,
                     "content_digest": markdown_digest(markdown),
                     "revision": document.revision + 1,
                     "updated_at": datetime.now(UTC),
@@ -440,16 +437,8 @@ class SummaryManager:
                 completed_at=datetime.now(UTC),
             )
             self._write_manifest(document.asset_id, documents, operation=operation)
-            indexed = self.library.update_summary_document(
-                document_id,
-                title=request.title,
-                relative_path=updated.relative_path,
-                content_digest=updated.content_digest,
-                position=request.position,
-            )
-            if indexed is None:
-                raise SummaryNotFoundError("总结文档不存在")
-            return indexed
+            self.library.update_summary_documents([updated])
+            return updated
 
     def apply_agent_edit(
         self,
@@ -735,10 +724,10 @@ class SummaryManager:
             ]
             try:
                 self._write_manifest(document.asset_id, moved_documents)
-                self.library.update_summary_document_placements(next_placements)
+                self.library.update_summary_documents(next_placements)
             except Exception:
                 atomic_write_bytes(manifest_path, manifest_snapshot)
-                self.library.update_summary_document_placements(previous_placements)
+                self.library.update_summary_documents(previous_placements)
                 raise
             return self.documents(document.asset_id)
 
@@ -878,18 +867,15 @@ class SummaryManager:
             request.insert_after,
             f"![{request.caption}]({markdown_path})",
         )
-        try:
-            updated = self.update_document(
-                document.document_id,
-                SummaryDocumentUpdate(
-                    operation_id=f"summary-operation-{uuid7().hex}",
-                    client_id=f"summary-client-{uuid7().hex}",
-                    client_sequence=1,
-                    markdown=updated_markdown,
-                ),
-            )
-        except SummaryRevisionConflictError:
-            raise SummaryRevisionConflictError("媒体已生成，但文档版本发生冲突")
+        updated = self.update_document(
+            document.document_id,
+            SummaryDocumentUpdate(
+                operation_id=f"summary-operation-{uuid7().hex}",
+                client_id=f"summary-client-{uuid7().hex}",
+                client_sequence=1,
+                markdown=updated_markdown,
+            ),
+        )
         self.library.save_summary_media(artifact)
         return artifact, updated
 

@@ -199,7 +199,6 @@ const meta = {
   args: {
     selected_asset: ASSET,
     transcript: TRANSCRIPT,
-    segments: [],
   },
   beforeEach() {
     const original_fetch = window.fetch;

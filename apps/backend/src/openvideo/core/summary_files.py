@@ -23,7 +23,6 @@ SUMMARY_DIRECTORY_NAME = "summary"
 SUMMARY_OUTPUT_DIRECTORY_NAME = "summary_output"
 SUMMARY_ASSETS_DIRECTORY_NAME = "assets"
 SUMMARY_DOCUMENTS_DIRECTORY_NAME = "docs"
-SUMMARY_SESSION_DIRECTORY_NAME = ".session"
 SUMMARY_INDEX_FILE_NAME = "index.md"
 SUMMARY_MANIFEST_FILE_NAME = "manifest.json"
 SUMMARY_MANIFEST_FORMAT_VERSION = 3
@@ -81,14 +80,6 @@ def document_relative_path(document: SummaryDocument) -> str:
 
 def markdown_digest(markdown: str) -> str:
     return hashlib.sha256(markdown.encode("utf-8")).hexdigest()
-
-
-def file_digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def summary_directory(asset_directory: Path) -> Path:

@@ -337,6 +337,44 @@ def test_summary_save_is_idempotent_and_rejects_old_client_sequences(
     assert latest.json()["markdown"] == "# 第二次保存\n"
 
 
+def test_summary_save_updates_only_document_projection(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+    with create_client(tmp_path) as client:
+        generated = generate(client)
+        root = next(
+            item
+            for item in generated["documents"]
+            if item["parent_document_id"] is None
+        )
+
+        def fail_full_reindex(*_args, **_kwargs):
+            raise AssertionError("保存当前笔记不应重建素材索引")
+
+        monkeypatch.setattr(
+            "openvideo.summary_manager.synchronize_asset", fail_full_reindex
+        )
+        response = client.patch(
+            f"/api/summary-documents/{root['document_id']}",
+            json={
+                **save_metadata(1),
+                "title": "局部保存",
+                "markdown": "# 局部保存\n",
+            },
+        )
+        reloaded = client.get(
+            f"/api/media/assets/{ASSET_ID}/summary-documents"
+        ).json()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["title"] == "局部保存"
+    assert response.json()["markdown"] == "# 局部保存\n"
+    assert reloaded[0]["title"] == "局部保存"
+    assert reloaded[0]["markdown"] == "# 局部保存\n"
+
+
 def test_three_level_document_tree_supports_duplicate_move_and_subtree_delete(
     tmp_path: Path,
     monkeypatch,
