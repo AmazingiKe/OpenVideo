@@ -113,6 +113,7 @@ def test_saves_subtitle_settings_in_the_asset_configuration(tmp_path: Path):
                 "font_size": "large",
                 "position": "raised",
                 "background": "solid",
+                "offset_milliseconds": 150,
             },
         )
         asset_response = client.get(f"/api/media/assets/{ASSET_ID}")
@@ -123,6 +124,7 @@ def test_saves_subtitle_settings_in_the_asset_configuration(tmp_path: Path):
         "font_size": "large",
         "position": "raised",
         "background": "solid",
+        "offset_milliseconds": 150,
     }
     assert response.status_code == 200
     assert response.json() == expected_settings

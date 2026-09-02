@@ -9,6 +9,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -38,6 +39,9 @@ type SubtitleSettingsControlProps = {
   on_export: () => void;
 };
 
+const SUBTITLE_OFFSET_STEP_MILLISECONDS = 50;
+const SUBTITLE_OFFSET_LIMIT_MILLISECONDS = 600_000;
+
 export function SubtitleSettingsControl({
   settings,
   has_subtitles,
@@ -51,6 +55,7 @@ export function SubtitleSettingsControl({
   const font_size_label_id = useId();
   const position_label_id = useId();
   const background_label_id = useId();
+  const offset_input_id = useId();
   const controls_disabled =
     !has_subtitles || settings_pending || export_pending;
 
@@ -144,6 +149,76 @@ export function SubtitleSettingsControl({
               <ToggleGroupItem value="solid">实底</ToggleGroupItem>
             </ToggleGroup>
           </Field>
+
+          <Field data-disabled={controls_disabled || undefined}>
+            <FieldLabel htmlFor={offset_input_id}>时间偏移（毫秒）</FieldLabel>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={controls_disabled}
+                onClick={() =>
+                  on_change({
+                    ...settings,
+                    offset_milliseconds: bounded_subtitle_offset(
+                      settings.offset_milliseconds -
+                        SUBTITLE_OFFSET_STEP_MILLISECONDS,
+                    ),
+                  })
+                }
+              >
+                -50ms
+              </Button>
+              <Input
+                id={offset_input_id}
+                className="min-w-0 text-center tabular-nums"
+                type="number"
+                step={SUBTITLE_OFFSET_STEP_MILLISECONDS}
+                min={-SUBTITLE_OFFSET_LIMIT_MILLISECONDS}
+                max={SUBTITLE_OFFSET_LIMIT_MILLISECONDS}
+                value={settings.offset_milliseconds}
+                disabled={controls_disabled}
+                onChange={(event) => {
+                  const value = event.currentTarget.valueAsNumber;
+                  if (!Number.isFinite(value)) return;
+                  on_change({
+                    ...settings,
+                    offset_milliseconds: bounded_subtitle_offset(value),
+                  });
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={controls_disabled}
+                onClick={() =>
+                  on_change({
+                    ...settings,
+                    offset_milliseconds: bounded_subtitle_offset(
+                      settings.offset_milliseconds +
+                        SUBTITLE_OFFSET_STEP_MILLISECONDS,
+                    ),
+                  })
+                }
+              >
+                +50ms
+              </Button>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={controls_disabled || settings.offset_milliseconds === 0}
+              onClick={() => on_change({ ...settings, offset_milliseconds: 0 })}
+            >
+              恢复为零
+            </Button>
+            <FieldDescription>
+              仅校准播放时字幕显示，不修改标记和原始转写。
+            </FieldDescription>
+          </Field>
         </FieldGroup>
 
         <FieldDescription className="flex items-center gap-1.5">
@@ -200,5 +275,14 @@ export function SubtitleSettingsControl({
         ) : null}
       </PopoverContent>
     </Popover>
+  );
+}
+
+function bounded_subtitle_offset(offset_milliseconds: number) {
+  return Math.round(
+    Math.min(
+      SUBTITLE_OFFSET_LIMIT_MILLISECONDS,
+      Math.max(-SUBTITLE_OFFSET_LIMIT_MILLISECONDS, offset_milliseconds),
+    ),
   );
 }

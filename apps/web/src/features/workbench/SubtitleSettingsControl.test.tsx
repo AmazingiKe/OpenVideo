@@ -27,6 +27,7 @@ describe("SubtitleSettingsControl", () => {
       font_size: "large",
       position: "bottom",
       background: "shadow",
+      offset_milliseconds: 0,
     });
   });
 

@@ -51,13 +51,14 @@ class SubtitleBackground(StrEnum):
 
 
 class SubtitleDisplaySettings(BaseModel):
-    """播放器与烧录导出共享同一组有限预设，保证预览结果可稳定复现。"""
+    """单视频字幕显示状态独立保存，偏移不修改原始转写时间。"""
 
     model_config = ConfigDict(extra="forbid")
 
     font_size: SubtitleFontSize = SubtitleFontSize.MEDIUM
     position: SubtitlePosition = SubtitlePosition.BOTTOM
     background: SubtitleBackground = SubtitleBackground.SHADOW
+    offset_milliseconds: int = Field(default=0, ge=-600_000, le=600_000)
 
 
 class VideoConfiguration(BaseModel):

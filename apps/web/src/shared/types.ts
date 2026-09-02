@@ -420,6 +420,7 @@ export type SubtitleDisplaySettings = {
   font_size: SubtitleFontSize;
   position: SubtitlePosition;
   background: SubtitleBackground;
+  offset_milliseconds: number;
 };
 
 export type SubtitleExportResult = {
