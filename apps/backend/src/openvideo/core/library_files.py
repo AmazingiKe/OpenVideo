@@ -31,8 +31,7 @@ from openvideo.core.summary_files import (
     SUMMARY_MANIFEST_FILE_NAME,
     atomic_write_text,
     document_relative_path,
-    load_root_manifest,
-    load_version_manifest,
+    load_summary_manifest,
     markdown_digest,
     read_markdown,
     summary_document_depths,
@@ -40,7 +39,6 @@ from openvideo.core.summary_files import (
 from openvideo.core.summary_models import (
     SummaryDocument,
     SummaryMediaArtifact,
-    SummaryVersion,
 )
 from openvideo.core.transcription_models import Transcript, TranscriptionMetadata
 
@@ -92,7 +90,6 @@ class AssetFileBundle:
     markers: list[MediaMarker]
     focus_selection: FocusSelection | None
     event_analyses: list[EventAnalysis]
-    summary_versions: list[SummaryVersion]
     summary_documents: list[SummaryDocument]
     summary_media: list[SummaryMediaArtifact]
     digest: str
@@ -404,7 +401,7 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
             "有效事件分析的目标快照与当前范围标记或焦点选区不一致",
         )
 
-    versions, documents, media = _load_summary(
+    documents, media = _load_summary(
         asset_directory, asset_id, assets_root.parent, tracked_paths
     )
     digest = _business_digest(asset_directory, tracked_paths)
@@ -415,7 +412,6 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
         markers=markers,
         focus_selection=focus_selection,
         event_analyses=event_analyses,
-        summary_versions=versions,
         summary_documents=documents,
         summary_media=media,
         digest=digest,
@@ -449,16 +445,16 @@ def _load_summary(
     asset_id: str,
     library_root: Path,
     tracked_paths: list[Path],
-) -> tuple[list[SummaryVersion], list[SummaryDocument], list[SummaryMediaArtifact]]:
+) -> tuple[list[SummaryDocument], list[SummaryMediaArtifact]]:
     manifest_path = (
         asset_directory / SUMMARY_DIRECTORY_NAME / SUMMARY_MANIFEST_FILE_NAME
     )
     if not manifest_path.exists():
         tracked_paths.append(manifest_path)
-        return [], [], []
+        return [], []
     tracked_paths.append(manifest_path)
     try:
-        root_manifest = load_root_manifest(asset_directory)
+        manifest = load_summary_manifest(asset_directory)
     except (OSError, ValueError):
         _raise_issue(
             asset_id,
@@ -467,7 +463,7 @@ def _load_summary(
             "invalid_summary_manifest",
             "总结 manifest 无效或无法读取",
         )
-    if root_manifest.asset_id != asset_id:
+    if manifest.asset_id != asset_id:
         _raise_issue(
             asset_id,
             manifest_path,
@@ -477,149 +473,98 @@ def _load_summary(
         )
     documents: list[SummaryDocument] = []
     media: list[SummaryMediaArtifact] = []
-    all_document_ids: set[str] = set()
-    for version in root_manifest.versions:
-        version_manifest_path = (
-            asset_directory
-            / SUMMARY_DIRECTORY_NAME
-            / version.relative_path
-            / SUMMARY_MANIFEST_FILE_NAME
+    document_ids = {item.document_id for item in manifest.documents}
+    if (
+        len(document_ids) != len(manifest.documents)
+        or manifest.root_document_id not in document_ids
+    ):
+        _raise_issue(
+            asset_id,
+            manifest_path,
+            library_root,
+            "invalid_summary_manifest",
+            "总结文档标识重复或缺少主文档",
         )
-        tracked_paths.append(version_manifest_path)
-        try:
-            version_manifest = load_version_manifest(
-                asset_directory, version.version_id
+    tree_documents = [
+        SummaryDocument(**item.model_dump(), asset_id=asset_id, markdown="")
+        for item in manifest.documents
+    ]
+    try:
+        summary_document_depths(tree_documents)
+        root_document = next(
+            item for item in tree_documents if item.parent_document_id is None
+        )
+        if root_document.document_id != manifest.root_document_id:
+            raise ValueError("主文档标识与文档树不一致")
+    except ValueError:
+        _raise_issue(
+            asset_id,
+            manifest_path,
+            library_root,
+            "invalid_summary_manifest",
+            "总结文档树无效或超过三级",
+        )
+    for item in manifest.documents:
+        document = SummaryDocument(
+            **item.model_dump(),
+            asset_id=asset_id,
+            markdown="",
+        )
+        if item.relative_path != document_relative_path(document):
+            _raise_issue(
+                asset_id,
+                manifest_path,
+                library_root,
+                "unsafe_path",
+                "总结文档路径不符合固定契约",
             )
+        markdown_path = asset_directory / SUMMARY_DIRECTORY_NAME / Path(item.relative_path)
+        tracked_paths.append(markdown_path)
+        try:
+            markdown = read_markdown(asset_directory, item.relative_path)
         except (OSError, ValueError):
             _raise_issue(
                 asset_id,
-                version_manifest_path,
+                markdown_path,
                 library_root,
-                "invalid_summary_manifest",
-                "总结版本 manifest 无效或无法读取",
+                "invalid_summary_document",
+                "总结 Markdown 缺失、无效或无法读取",
             )
-        if version_manifest.asset_id != asset_id or version_manifest.version != version:
-            _raise_issue(
-                asset_id,
-                version_manifest_path,
-                library_root,
-                "cross_asset_reference",
-                "总结版本不属于当前素材或根 manifest",
+        digest = markdown_digest(markdown)
+        revision = item.revision + 1 if digest != item.content_digest else item.revision
+        documents.append(
+            document.model_copy(
+                update={
+                    "markdown": markdown,
+                    "content_digest": digest,
+                    "revision": revision,
+                }
             )
-        document_ids = {item.document_id for item in version_manifest.documents}
+        )
+    expected_media_prefix = f"{SUMMARY_DIRECTORY_NAME}/assets/"
+    for artifact in manifest.media:
         if (
-            len(document_ids) != len(version_manifest.documents)
-            or all_document_ids.intersection(document_ids)
-            or version_manifest.root_document_id not in document_ids
+            artifact.asset_id != asset_id
+            or artifact.document_id not in document_ids
+            or not artifact.relative_path.startswith(expected_media_prefix)
         ):
             _raise_issue(
                 asset_id,
-                version_manifest_path,
+                manifest_path,
                 library_root,
-                "invalid_summary_manifest",
-                "总结文档标识重复或缺少主文档",
+                "cross_asset_reference",
+                "总结媒体引用了其他素材或文档",
             )
-        all_document_ids.update(document_ids)
-        tree_documents = [
-            SummaryDocument(
-                **item.model_dump(),
-                asset_id=asset_id,
-                markdown="",
-            )
-            for item in version_manifest.documents
-        ]
-        try:
-            summary_document_depths(tree_documents)
-            root_document = next(
-                item for item in tree_documents if item.parent_document_id is None
-            )
-            if root_document.document_id != version_manifest.root_document_id:
-                raise ValueError("主文档标识与文档树不一致")
-        except ValueError:
-            _raise_issue(
-                asset_id,
-                version_manifest_path,
-                library_root,
-                "invalid_summary_manifest",
-                "总结文档树无效或超过三级",
-            )
-        for item in version_manifest.documents:
-            if item.version_id != version.version_id:
-                _raise_issue(
-                    asset_id,
-                    version_manifest_path,
-                    library_root,
-                    "cross_asset_reference",
-                    "总结文档引用了其他版本",
-                )
-            expected_path = document_relative_path(
-                SummaryDocument(**item.model_dump(), asset_id=asset_id, markdown="")
-            )
-            if item.relative_path != expected_path:
-                _raise_issue(
-                    asset_id,
-                    version_manifest_path,
-                    library_root,
-                    "unsafe_path",
-                    "总结文档路径不符合固定契约",
-                )
-            markdown_path = (
-                asset_directory
-                / SUMMARY_DIRECTORY_NAME
-                / version.relative_path
-                / Path(item.relative_path)
-            )
-            tracked_paths.append(markdown_path)
-            try:
-                markdown = read_markdown(
-                    asset_directory, version.version_id, item.relative_path
-                )
-            except (OSError, ValueError):
-                _raise_issue(
-                    asset_id,
-                    markdown_path,
-                    library_root,
-                    "invalid_summary_document",
-                    "总结 Markdown 缺失、无效或无法读取",
-                )
-            digest = markdown_digest(markdown)
-            revision = (
-                item.revision + 1 if digest != item.content_digest else item.revision
-            )
-            documents.append(
-                SummaryDocument(
-                    **item.model_dump(exclude={"content_digest", "revision"}),
-                    asset_id=asset_id,
-                    markdown=markdown,
-                    content_digest=digest,
-                    revision=revision,
-                )
-            )
-        for artifact in version_manifest.media:
-            expected_prefix = f"{SUMMARY_DIRECTORY_NAME}/{version.relative_path}/"
-            if (
-                artifact.asset_id != asset_id
-                or artifact.version_id != version.version_id
-                or artifact.document_id not in document_ids
-                or not artifact.relative_path.startswith(expected_prefix)
-            ):
-                _raise_issue(
-                    asset_id,
-                    version_manifest_path,
-                    library_root,
-                    "cross_asset_reference",
-                    "总结媒体引用了其他素材、版本或文档",
-                )
-            _validate_asset_reference(
-                asset_directory,
-                artifact.relative_path,
-                asset_id,
-                library_root,
-                require_file=True,
-            )
-            tracked_paths.append(asset_directory / artifact.relative_path)
-            media.append(artifact)
-    return root_manifest.versions, documents, media
+        _validate_asset_reference(
+            asset_directory,
+            artifact.relative_path,
+            asset_id,
+            library_root,
+            require_file=True,
+        )
+        tracked_paths.append(asset_directory / artifact.relative_path)
+        media.append(artifact)
+    return documents, media
 
 
 def _read_optional_asset_model(

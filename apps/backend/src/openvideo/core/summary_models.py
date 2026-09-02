@@ -31,9 +31,12 @@ class SummaryContextSummary(BaseModel):
     event_analysis_digest: str
 
 
-class SummaryVersion(BaseModel):
-    version_id: str
+class SummaryProject(BaseModel):
+    """描述素材唯一的当前笔记及最近一次生成依据。"""
+
     asset_id: str
+    revision: int = Field(default=1, ge=1)
+    root_document_id: str
     preset_id: str
     preset_version: int = Field(ge=1)
     user_input: str | None = None
@@ -41,14 +44,13 @@ class SummaryVersion(BaseModel):
     detail: SummaryDetail
     output_language: str
     context_summary: SummaryContextSummary
-    relative_path: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class SummaryDocument(BaseModel):
     document_id: str
     asset_id: str
-    version_id: str
     parent_document_id: str | None = None
     title: str = Field(min_length=1, max_length=200)
     markdown: str = ""
@@ -69,7 +71,7 @@ class SummaryGenerationRequest(BaseModel):
 
 
 class SummaryGenerationResult(BaseModel):
-    version: SummaryVersion
+    project: SummaryProject
     documents: list[SummaryDocument]
     context_capacity_unknown: bool = False
     illustration_job: "SummaryIllustrationJob | None" = None
@@ -81,7 +83,9 @@ class SummaryDocumentCreate(BaseModel):
 
 
 class SummaryDocumentUpdate(BaseModel):
-    expected_revision: int = Field(ge=1)
+    operation_id: str = Field(pattern=r"^summary-operation-[0-9a-f]{32}$")
+    client_id: str = Field(pattern=r"^summary-client-[0-9a-f]{32}$")
+    client_sequence: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=200)
     markdown: str | None = None
     position: int | None = Field(default=None, ge=0)
@@ -169,7 +173,7 @@ class SummaryIllustrationJob(BaseModel):
 
     job_id: str
     asset_id: str
-    version_id: str
+    project_revision: int = Field(ge=1)
     planning_model_id: str
     vision_model_id: str | None = None
     stage: SummaryIllustrationStage = SummaryIllustrationStage.PENDING
@@ -214,7 +218,6 @@ class SummaryMediaProvenance(BaseModel):
 class SummaryMediaArtifact(BaseModel):
     media_id: str
     asset_id: str
-    version_id: str
     document_id: str
     media_type: SummaryMediaType
     relative_path: str
@@ -235,7 +238,6 @@ class SummaryMediaArtifact(BaseModel):
 class SummaryExportResult(BaseModel):
     export_id: str
     relative_path: str
-    version_id: str
     file_name: str
     size_bytes: int = Field(ge=0)
     exported_at: datetime

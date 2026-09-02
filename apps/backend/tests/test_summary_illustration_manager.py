@@ -34,12 +34,8 @@ def test_first_summary_inserts_only_vision_verified_frame(tmp_path: Path, monkey
         job = _wait_for_job(client, result["illustration_job"]["job_id"])
         documents = client.get(
             f"/api/media/assets/{ASSET_ID}/summary-documents",
-            params={"version_id": result["version"]["version_id"]},
         ).json()
-        media = client.app.state.library.load_summary_media(
-            ASSET_ID,
-            result["version"]["version_id"],
-        )
+        media = client.app.state.library.load_summary_media(ASSET_ID)
 
     assert job["stage"] == "complete"
     assert job["inserted_count"] == 1, json.dumps(job, ensure_ascii=False)
@@ -63,7 +59,6 @@ def test_medium_confidence_keeps_text_and_records_skip(tmp_path: Path, monkeypat
         job = _wait_for_job(client, result["illustration_job"]["job_id"])
         documents = client.get(
             f"/api/media/assets/{ASSET_ID}/summary-documents",
-            params={"version_id": result["version"]["version_id"]},
         ).json()
 
     assert job["stage"] == "complete"
@@ -151,7 +146,7 @@ def test_evidence_retrieval_ignores_overwide_analysis_window(
             SummaryIllustrationJob(
                 job_id="summary-illustration-job-test",
                 asset_id=ASSET_ID,
-                version_id="summary-version-test",
+                project_revision=1,
                 planning_model_id=MODEL_ID,
             ),
             SummaryIllustrationSlot(

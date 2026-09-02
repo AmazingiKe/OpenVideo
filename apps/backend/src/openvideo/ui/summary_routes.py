@@ -3,7 +3,7 @@ from pathlib import Path
 import asyncio
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from openvideo.core.summary_models import (
@@ -18,7 +18,6 @@ from openvideo.core.summary_models import (
     SummaryMediaArtifact,
     SummaryMediaCreate,
     SummaryPreset,
-    SummaryVersion,
 )
 from openvideo.core.summary_presets import summary_presets
 from openvideo.summary_manager import (
@@ -27,7 +26,6 @@ from openvideo.summary_manager import (
     SummaryManager,
     SummaryNotFoundError,
     SummaryRevisionConflictError,
-    SummaryUnavailableError,
 )
 from openvideo.summary_illustration_manager import (
     SummaryIllustrationError,
@@ -44,47 +42,14 @@ class SummaryMediaCreateResponse(BaseModel):
     document: SummaryDocument
 
 
-class SummaryVersionSelectRequest(BaseModel):
-    version_id: str
-
-
 def register_summary_routes(
     app: FastAPI,
     summary_manager: Callable[[], SummaryManager],
     illustration_manager: Callable[[], SummaryIllustrationManager],
 ) -> None:
-    @app.exception_handler(SummaryUnavailableError)
-    async def handle_summary_unavailable(
-        _request: Request, error: SummaryUnavailableError
-    ) -> JSONResponse:
-        return JSONResponse(status_code=503, content={"detail": str(error)})
-
     @app.get("/api/summary-presets", response_model=list[SummaryPreset])
     def list_summary_presets() -> list[SummaryPreset]:
         return [preset.model_copy(deep=True) for preset in summary_presets()]
-
-    @app.get(
-        "/api/media/assets/{asset_id}/summary-versions",
-        response_model=list[SummaryVersion],
-    )
-    def list_summary_versions(asset_id: str) -> list[SummaryVersion]:
-        try:
-            return summary_manager().versions(asset_id)
-        except SummaryError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.patch(
-        "/api/media/assets/{asset_id}/summary-current-version",
-        response_model=SummaryVersion,
-    )
-    def select_summary_version(
-        asset_id: str,
-        request: SummaryVersionSelectRequest,
-    ) -> SummaryVersion:
-        try:
-            return summary_manager().select_version(asset_id, request.version_id)
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get(
         "/api/media/assets/{asset_id}/summary-documents",
@@ -92,10 +57,9 @@ def register_summary_routes(
     )
     def list_summary_documents(
         asset_id: str,
-        version_id: str | None = None,
     ) -> list[SummaryDocument]:
         try:
-            return summary_manager().documents(asset_id, version_id)
+            return summary_manager().documents(asset_id)
         except SummaryError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -158,7 +122,7 @@ def register_summary_routes(
             try:
                 job = illustration_manager().create(
                     asset_id,
-                    result.version.version_id,
+                    result.project.revision,
                     request.ai_model_id,
                 )
                 illustration_manager().start(job.job_id)
@@ -183,13 +147,13 @@ def register_summary_routes(
         return job
 
     @app.get(
-        "/api/summary-versions/{version_id}/illustration-job",
+        "/api/media/assets/{asset_id}/summary-illustration-job",
         response_model=SummaryIllustrationJob | None,
     )
-    def get_version_illustration_job(
-        version_id: str,
+    def get_asset_illustration_job(
+        asset_id: str,
     ) -> SummaryIllustrationJob | None:
-        return illustration_manager().latest_for_version(version_id)
+        return illustration_manager().latest_for_asset(asset_id)
 
     @app.post(
         "/api/summary-documents/{parent_document_id}/children",
@@ -217,8 +181,6 @@ def register_summary_routes(
     ) -> SummaryDocument:
         try:
             return summary_manager().update_document(document_id, request)
-        except SummaryRevisionConflictError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -310,10 +272,9 @@ def register_summary_routes(
     )
     def export_summary(
         asset_id: str,
-        version_id: str | None = None,
     ) -> SummaryExportResult:
         try:
-            return summary_manager().export(asset_id, version_id)
+            return summary_manager().export(asset_id)
         except SummaryNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except SummaryError as error:

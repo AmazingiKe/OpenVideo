@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 import posixpath
 import re
 import shutil
@@ -19,7 +18,6 @@ from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.event_analysis_models import EventAnalysisStatus
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.library_generated_storage import SummaryIndexReadError
 from openvideo.core.library_index import synchronize_asset
 from openvideo.core.summary_files import (
     SUMMARY_ASSETS_DIRECTORY_NAME,
@@ -27,20 +25,18 @@ from openvideo.core.summary_files import (
     SUMMARY_DIRECTORY_NAME,
     SUMMARY_MANIFEST_FILE_NAME,
     SUMMARY_OUTPUT_DIRECTORY_NAME,
-    SummaryRootManifest,
+    SummaryManifest,
+    SummaryManifestOperation,
     atomic_write_bytes,
     atomic_write_text,
-    build_version_manifest,
+    build_summary_manifest,
     document_relative_path,
-    load_root_manifest,
-    load_version_manifest,
+    load_summary_manifest,
     markdown_digest,
+    project_from_manifest,
     resolve_summary_path,
-    resolve_version_path,
     summary_document_depths,
-    version_relative_directory,
-    write_root_manifest,
-    write_version_manifest,
+    write_summary_manifest,
 )
 from openvideo.core.summary_models import (
     SummaryContextSummary,
@@ -56,7 +52,7 @@ from openvideo.core.summary_models import (
     SummaryMediaCreate,
     SummaryMediaProvenance,
     SummaryMediaType,
-    SummaryVersion,
+    SummaryProject,
 )
 from openvideo.core.summary_presets import require_summary_preset
 from openvideo.core.transcription_models import TranscriptSegment
@@ -110,10 +106,6 @@ SummaryModelT = TypeVar("SummaryModelT", bound=BaseModel)
 
 class SummaryError(RuntimeError):
     """总结工作台请求无法在当前资料库状态下完成。"""
-
-
-class SummaryUnavailableError(RuntimeError):
-    """摘要查询投影无法恢复时向 API 暴露可重试状态，而不是伪装成资源不存在。"""
 
 
 class SummaryNotFoundError(SummaryError):
@@ -207,61 +199,33 @@ class SummaryBody(BaseModel):
 
 
 class SummaryManager:
-    """维护多版本文档、媒体、导出与生成路径白名单。"""
+    """维护素材唯一的当前笔记、媒体、导出与生成路径白名单。"""
 
     def __init__(self, library: MediaLibrary, settings: Settings) -> None:
         self.library = library
         self.settings = settings
         self.capability_resolver = CapabilityResolver()
 
-    def versions(self, asset_id: str) -> list[SummaryVersion]:
+    def project(self, asset_id: str) -> SummaryProject | None:
         self._require_asset(asset_id)
-        try:
-            return self.library.load_summary_versions(asset_id)
-        except SummaryIndexReadError as error:
-            raise SummaryUnavailableError(str(error)) from error
-
-    def current_version(self, asset_id: str) -> SummaryVersion | None:
-        versions = self.versions(asset_id)
-        if not versions:
-            return None
-        root = load_root_manifest(self.library.asset_directory(asset_id))
-        return next(
-            version
-            for version in versions
-            if version.version_id == root.current_version_id
+        manifest_path = resolve_summary_path(
+            self.library.asset_directory(asset_id),
+            SUMMARY_MANIFEST_FILE_NAME,
         )
-
-    def select_version(self, asset_id: str, version_id: str) -> SummaryVersion:
-        with self.library._lock:
-            version = self._require_version(asset_id, version_id)
-            asset_directory = self.library.asset_directory(asset_id)
-            root = load_root_manifest(asset_directory)
-            write_root_manifest(
-                asset_directory,
-                root.model_copy(
-                    update={
-                        "current_version_id": version_id,
-                        "updated_at": datetime.now(UTC),
-                    }
-                ),
-            )
-            return version
+        if not manifest_path.is_file():
+            return None
+        return project_from_manifest(
+            load_summary_manifest(self.library.asset_directory(asset_id))
+        )
 
     def documents(
         self,
         asset_id: str,
-        version_id: str | None = None,
     ) -> list[SummaryDocument]:
         self._require_asset(asset_id)
-        resolved_version_id = version_id
-        if resolved_version_id is None:
-            version = self.current_version(asset_id)
-            if version is None:
-                return []
-            resolved_version_id = version.version_id
-        self._require_version(asset_id, resolved_version_id)
-        return self.library.load_summary_documents(asset_id, resolved_version_id)
+        if self.project(asset_id) is None:
+            return []
+        return self.library.load_summary_documents(asset_id)
 
     def generate(
         self,
@@ -277,20 +241,6 @@ class SummaryManager:
         except ValueError as error:
             raise SummaryError(str(error)) from error
         context, context_summary = self._formal_context(asset_id)
-        version_id = f"summary-version-{uuid7().hex}"
-        version = SummaryVersion(
-            version_id=version_id,
-            asset_id=asset_id,
-            preset_id=preset.preset_id,
-            preset_version=preset.version,
-            user_input=request.user_input.strip() if request.user_input else None,
-            ai_model_id=request.ai_model_id,
-            detail=request.detail,
-            output_language=request.output_language,
-            context_summary=context_summary,
-            relative_path=version_relative_directory(version_id),
-        )
-
         plan_messages = _plan_messages(
             asset.title,
             context,
@@ -316,14 +266,13 @@ class SummaryManager:
         except (LlmCompletionError, ValidationError, ValueError) as error:
             raise SummaryError(f"总结文档规划无效：{error}") from error
 
-        allocated = _allocate_documents(asset_id, version_id, plan)
+        allocated = _allocate_documents(asset_id, plan)
         allowed_paths = {document.relative_path: document for document in allocated}
         body_messages = _body_messages(
             asset.title,
             context,
             preset.prompt,
             request,
-            version,
             allocated,
         )
         output_tokens = SUMMARY_OUTPUT_TOKENS[request.detail]
@@ -371,11 +320,23 @@ class SummaryManager:
             for document in allocated
         ]
         with self.library._lock:
-            self._write_new_version(asset_id, version, documents)
+            project = self._project_for_generation(
+                asset_id,
+                next(
+                    document.document_id
+                    for document in documents
+                    if document.parent_document_id is None
+                ),
+                preset.preset_id,
+                preset.version,
+                request,
+                context_summary,
+            )
+            self._write_project(project, documents)
             self.library.create_summary_documents(documents)
             return SummaryGenerationResult(
-                version=version,
-                documents=self.documents(asset_id, version_id),
+                project=project,
+                documents=self.documents(asset_id),
                 context_capacity_unknown=capacity_unknown,
             )
 
@@ -386,12 +347,12 @@ class SummaryManager:
     ) -> SummaryDocument:
         with self.library._lock:
             parent = self._require_document(parent_document_id)
-            documents = self.documents(parent.asset_id, parent.version_id)
+            documents = self.documents(parent.asset_id)
             depths = summary_document_depths(documents)
             if depths[parent.document_id] >= SUMMARY_DOCUMENT_MAX_DEPTH:
                 raise SummaryError("总结文档最多支持三级")
             if len(documents) >= 100:
-                raise SummaryError("单个总结版本最多包含 100 篇文档")
+                raise SummaryError("单个笔记最多包含 100 篇文档")
             children = [
                 document
                 for document in documents
@@ -401,7 +362,6 @@ class SummaryManager:
                 SummaryDocument(
                     document_id=f"document-{uuid7().hex}",
                     asset_id=parent.asset_id,
-                    version_id=parent.version_id,
                     parent_document_id=parent.document_id,
                     title=request.title,
                     markdown=request.markdown,
@@ -411,11 +371,7 @@ class SummaryManager:
             updated_documents = [*documents, document]
             try:
                 self._write_document(document)
-                self._write_version_manifest(
-                    parent.asset_id,
-                    parent.version_id,
-                    updated_documents,
-                )
+                self._write_manifest(parent.asset_id, updated_documents)
             except Exception:
                 self._document_path(document).unlink(missing_ok=True)
                 raise
@@ -441,8 +397,18 @@ class SummaryManager:
     ) -> SummaryDocument:
         with self.library._lock:
             document = self._require_document(document_id)
-            if document.revision != request.expected_revision:
-                raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
+            manifest = load_summary_manifest(
+                self.library.asset_directory(document.asset_id)
+            )
+            if any(
+                item.operation_id == request.operation_id
+                for item in manifest.recent_operations
+            ):
+                return document
+            if request.client_sequence <= manifest.client_sequences.get(
+                request.client_id, 0
+            ):
+                return document
             markdown = (
                 request.markdown if request.markdown is not None else document.markdown
             )
@@ -462,23 +428,27 @@ class SummaryManager:
             )
             documents = [
                 updated if item.document_id == document_id else item
-                for item in self.documents(document.asset_id, document.version_id)
+                for item in self.documents(document.asset_id)
             ]
             if request.markdown is not None:
                 self._write_document(updated)
-            self._write_version_manifest(
-                document.asset_id, document.version_id, documents
+            operation = SummaryManifestOperation(
+                operation_id=request.operation_id,
+                client_id=request.client_id,
+                client_sequence=request.client_sequence,
+                document_id=document_id,
+                completed_at=datetime.now(UTC),
             )
+            self._write_manifest(document.asset_id, documents, operation=operation)
             indexed = self.library.update_summary_document(
                 document_id,
-                request.expected_revision,
                 title=request.title,
                 relative_path=updated.relative_path,
                 content_digest=updated.content_digest,
                 position=request.position,
             )
             if indexed is None:
-                raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
+                raise SummaryNotFoundError("总结文档不存在")
             return indexed
 
     def apply_agent_edit(
@@ -488,13 +458,13 @@ class SummaryManager:
         markdown: str,
         suggested_children: list[SummaryDocumentCreate],
     ) -> tuple[SummaryDocument, list[SummaryDocument]]:
-        """把正文与新增子文档作为同一业务版本提交，失败时恢复全部文件。"""
+        """把正文与新增子文档作为一次原子修改提交。"""
 
         with self.library._lock:
             document = self._require_document(document_id)
             if document.revision != expected_revision:
                 raise SummaryRevisionConflictError("文档版本冲突，请重新加载后再保存")
-            documents = self.documents(document.asset_id, document.version_id)
+            documents = self.documents(document.asset_id)
             now = datetime.now(UTC)
             updated = document
             markdown_changed = markdown != document.markdown
@@ -519,7 +489,6 @@ class SummaryManager:
                     SummaryDocument(
                         document_id=f"document-{uuid7().hex}",
                         asset_id=updated.asset_id,
-                        version_id=updated.version_id,
                         parent_document_id=root_id,
                         title=request.title,
                         markdown=request.markdown,
@@ -533,10 +502,8 @@ class SummaryManager:
                 for item in documents
             ] + children
             asset_directory = self.library.asset_directory(updated.asset_id)
-            manifest_path = resolve_version_path(
-                asset_directory,
-                updated.version_id,
-                SUMMARY_MANIFEST_FILE_NAME,
+            manifest_path = resolve_summary_path(
+                asset_directory, SUMMARY_MANIFEST_FILE_NAME
             )
             changed_paths = [manifest_path, self._document_path(updated)] + [
                 self._document_path(child) for child in children
@@ -550,14 +517,11 @@ class SummaryManager:
                     self._write_document(updated)
                 for child in children:
                     self._write_document(child)
-                manifest = load_version_manifest(
+                manifest = load_summary_manifest(asset_directory)
+                write_summary_manifest(
                     asset_directory,
-                    updated.version_id,
-                )
-                write_version_manifest(
-                    asset_directory,
-                    build_version_manifest(
-                        manifest.version,
+                    build_summary_manifest(
+                        self._next_project(manifest),
                         committed_documents,
                         manifest.media,
                     ),
@@ -594,13 +558,13 @@ class SummaryManager:
         remove_media_ids: list[str],
         restored_revision: int | None = None,
     ) -> SummaryDocument:
-        """撤销整个 Agent 版本；目标有后续修改时由调用方拒绝而不覆盖。"""
+        """撤销整个 Agent 修改；目标有后续修改时拒绝覆盖。"""
 
         with self.library._lock:
             document = self._require_document(document_id)
             if document.revision != expected_revision:
                 raise SummaryRevisionConflictError("文档版本冲突，不能覆盖后续修改")
-            documents = self.documents(document.asset_id, document.version_id)
+            documents = self.documents(document.asset_id)
             removable_documents = [
                 item for item in documents if item.document_id in remove_document_ids
             ]
@@ -608,9 +572,8 @@ class SummaryManager:
                 remove_document_ids
             ):
                 raise SummaryRevisionConflictError("新增子文档已变化，不能整批撤销")
-            manifest = load_version_manifest(
-                self.library.asset_directory(document.asset_id),
-                document.version_id,
+            manifest = load_summary_manifest(
+                self.library.asset_directory(document.asset_id)
             )
             removable_media = [
                 item for item in manifest.media if item.media_id in remove_media_ids
@@ -635,10 +598,8 @@ class SummaryManager:
                 item for item in manifest.media if item.media_id not in remove_media_ids
             ]
             asset_directory = self.library.asset_directory(document.asset_id)
-            manifest_path = resolve_version_path(
-                asset_directory,
-                document.version_id,
-                SUMMARY_MANIFEST_FILE_NAME,
+            manifest_path = resolve_summary_path(
+                asset_directory, SUMMARY_MANIFEST_FILE_NAME
             )
             removed_paths = [
                 self._document_path(item) for item in removable_documents
@@ -654,10 +615,10 @@ class SummaryManager:
             }
             try:
                 self._write_document(restored)
-                write_version_manifest(
+                write_summary_manifest(
                     asset_directory,
-                    build_version_manifest(
-                        manifest.version,
+                    build_summary_manifest(
+                        self._next_project(manifest),
                         remaining_documents,
                         remaining_media,
                     ),
@@ -693,12 +654,9 @@ class SummaryManager:
             if document.parent_document_id is None:
                 raise SummaryError("主文档不能移动")
             parent = self._require_document(request.parent_document_id)
-            if (
-                parent.asset_id != document.asset_id
-                or parent.version_id != document.version_id
-            ):
-                raise SummaryError("目标父文档不属于当前总结版本")
-            documents = self.documents(document.asset_id, document.version_id)
+            if parent.asset_id != document.asset_id:
+                raise SummaryError("目标父文档不属于当前笔记")
+            documents = self.documents(document.asset_id)
             depths = summary_document_depths(documents)
             subtree_ids = _summary_subtree_ids(documents, document.document_id)
             if parent.document_id in subtree_ids:
@@ -758,18 +716,12 @@ class SummaryManager:
                 )
 
             asset_directory = self.library.asset_directory(document.asset_id)
-            manifest_path = resolve_version_path(
-                asset_directory,
-                document.version_id,
-                SUMMARY_MANIFEST_FILE_NAME,
+            manifest_path = resolve_summary_path(
+                asset_directory, SUMMARY_MANIFEST_FILE_NAME
             )
             manifest_snapshot = manifest_path.read_bytes()
             try:
-                self._write_version_manifest(
-                    document.asset_id,
-                    document.version_id,
-                    moved_documents,
-                )
+                self._write_manifest(document.asset_id, moved_documents)
                 synchronize_asset(
                     self.library._db(),
                     self.library.assets_path,
@@ -783,18 +735,17 @@ class SummaryManager:
                     document.asset_id,
                 )
                 raise
-            return self.documents(document.asset_id, document.version_id)
+            return self.documents(document.asset_id)
 
     def delete_document(self, document_id: str) -> None:
         with self.library._lock:
             document = self._require_document(document_id)
             if document.parent_document_id is None:
                 raise ValueError("主文档不能单独删除")
-            documents = self.documents(document.asset_id, document.version_id)
+            documents = self.documents(document.asset_id)
             removed_ids = _summary_subtree_ids(documents, document_id)
-            manifest = load_version_manifest(
-                self.library.asset_directory(document.asset_id),
-                document.version_id,
+            manifest = load_summary_manifest(
+                self.library.asset_directory(document.asset_id)
             )
             removed_documents = [
                 item for item in documents if item.document_id in removed_ids
@@ -813,10 +764,8 @@ class SummaryManager:
                 document.parent_document_id,
             )
             asset_directory = self.library.asset_directory(document.asset_id)
-            manifest_path = resolve_version_path(
-                asset_directory,
-                document.version_id,
-                SUMMARY_MANIFEST_FILE_NAME,
+            manifest_path = resolve_summary_path(
+                asset_directory, SUMMARY_MANIFEST_FILE_NAME
             )
             removed_paths = [
                 self._document_path(item) for item in removed_documents
@@ -829,10 +778,10 @@ class SummaryManager:
                 for path in [manifest_path, *removed_paths]
             }
             try:
-                write_version_manifest(
+                write_summary_manifest(
                     asset_directory,
-                    build_version_manifest(
-                        manifest.version,
+                    build_summary_manifest(
+                        self._next_project(manifest),
                         remaining_documents,
                         remaining_media,
                     ),
@@ -885,15 +834,11 @@ class SummaryManager:
             raise SummaryError("视频文件不存在")
         media_id = f"media-{uuid7().hex}"
         suffix = ".jpg" if request.media_type == SummaryMediaType.IMAGE else ".gif"
-        version = self._require_version(asset.asset_id, document.version_id)
-        version_media_path = f"{SUMMARY_ASSETS_DIRECTORY_NAME}/{media_id}{suffix}"
-        relative_path = (
-            f"{SUMMARY_DIRECTORY_NAME}/{version.relative_path}/{version_media_path}"
-        )
-        output_path = resolve_version_path(
+        media_path = f"{SUMMARY_ASSETS_DIRECTORY_NAME}/{media_id}{suffix}"
+        relative_path = f"{SUMMARY_DIRECTORY_NAME}/{media_path}"
+        output_path = resolve_summary_path(
             self.library.asset_directory(asset.asset_id),
-            version.version_id,
-            version_media_path,
+            media_path,
         )
         try:
             generate_summary_media(
@@ -910,7 +855,6 @@ class SummaryManager:
         artifact = SummaryMediaArtifact(
             media_id=media_id,
             asset_id=asset.asset_id,
-            version_id=document.version_id,
             document_id=document.document_id,
             media_type=request.media_type,
             relative_path=relative_path,
@@ -933,7 +877,9 @@ class SummaryManager:
             updated = self.update_document(
                 document.document_id,
                 SummaryDocumentUpdate(
-                    expected_revision=document.revision,
+                    operation_id=f"summary-operation-{uuid7().hex}",
+                    client_id=f"summary-client-{uuid7().hex}",
+                    client_sequence=1,
                     markdown=updated_markdown,
                 ),
             )
@@ -945,34 +891,29 @@ class SummaryManager:
     def export(
         self,
         asset_id: str,
-        version_id: str | None = None,
     ) -> SummaryExportResult:
         asset = self._require_asset(asset_id)
-        version = (
-            self._require_version(asset_id, version_id)
-            if version_id
-            else self.current_version(asset_id)
-        )
-        if version is None:
-            raise SummaryNotFoundError("请先生成总结版本")
-        documents = self.documents(asset_id, version.version_id)
+        project = self.project(asset_id)
+        if project is None:
+            raise SummaryNotFoundError("请先生成笔记")
+        documents = self.documents(asset_id)
         root = next(
             (document for document in documents if document.parent_document_id is None),
             None,
         )
         if root is None:
-            raise SummaryNotFoundError("总结版本缺少主文档")
-        media = self.library.load_summary_media(asset_id, version.version_id)
+            raise SummaryNotFoundError("笔记缺少主文档")
+        media = self.library.load_summary_media(asset_id)
         exported_at = datetime.now().astimezone()
         export_manifest = {
-            "format_version": 2,
+            "format_version": 3,
             "asset": {
                 "asset_id": asset.asset_id,
                 "title": asset.title,
                 "source_url": asset.source_url,
                 "source_platform": asset.source_platform.value,
             },
-            "version": version.model_dump(mode="json"),
+            "project": project.model_dump(mode="json"),
             "root_document_id": root.document_id,
             "documents": [
                 document.model_dump(mode="json", exclude={"markdown"})
@@ -994,11 +935,10 @@ class SummaryManager:
             )
         export_id = f"export-{uuid7().hex}"
         timestamp = exported_at.strftime(EXPORT_FILE_NAME_TIME_FORMAT)[:-3]
-        file_name = f"summary-{timestamp}-{version.version_id}-{export_id}.zip"
+        file_name = f"summary-{timestamp}-{export_id}.zip"
         output_directory = (
             self.library.asset_directory(asset_id)
             / SUMMARY_OUTPUT_DIRECTORY_NAME
-            / version.version_id
         )
         if output_directory.is_symlink():
             raise SummaryError("总结导出目录不能是符号链接")
@@ -1007,7 +947,6 @@ class SummaryManager:
         atomic_write_bytes(output_path, content)
         return SummaryExportResult(
             export_id=export_id,
-            version_id=version.version_id,
             relative_path=output_path.relative_to(
                 self.library.asset_directory(asset_id)
             ).as_posix(),
@@ -1109,67 +1048,106 @@ class SummaryManager:
             raise SummaryCapacityError(stage, required_tokens, context_tokens)
         return context_tokens is None or max_output_tokens is None
 
-    def _write_new_version(
+    def _write_project(
         self,
-        asset_id: str,
-        version: SummaryVersion,
+        project: SummaryProject,
         documents: list[SummaryDocument],
     ) -> None:
-        asset_directory = self.library.asset_directory(asset_id)
-        target = resolve_summary_path(asset_directory, version.relative_path)
-        temporary = target.with_name(f".{version.version_id}.creating")
+        asset_directory = self.library.asset_directory(project.asset_id)
+        target = resolve_summary_path(asset_directory, SUMMARY_MANIFEST_FILE_NAME).parent
+        temporary = target.with_name(f".{target.name}.creating")
+        if temporary.exists() and not temporary.is_symlink():
+            shutil.rmtree(temporary)
         temporary.mkdir(parents=True, exist_ok=False)
         try:
             for document in documents:
                 path = temporary / document.relative_path
                 atomic_write_text(path, document.markdown)
-            manifest = build_version_manifest(version, documents, [])
+            manifest = build_summary_manifest(project, documents, [])
             atomic_write_text(
                 temporary / SUMMARY_MANIFEST_FILE_NAME,
                 manifest.model_dump_json(indent=2),
             )
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(temporary, target)
-            root_path = resolve_summary_path(
-                asset_directory,
-                SUMMARY_MANIFEST_FILE_NAME,
-            )
-            if root_path.exists():
-                root = load_root_manifest(asset_directory)
-                root = root.model_copy(
-                    update={
-                        "current_version_id": version.version_id,
-                        "versions": [*root.versions, version],
-                        "updated_at": datetime.now(UTC),
-                    }
-                )
-            else:
-                root = SummaryRootManifest(
-                    asset_id=asset_id,
-                    current_version_id=version.version_id,
-                    versions=[version],
-                )
-            write_root_manifest(asset_directory, root)
+            backup = target.with_name(f".{target.name}.replaced")
+            if backup.exists() and not backup.is_symlink():
+                shutil.rmtree(backup)
+            if target.exists():
+                target.replace(backup)
+            temporary.replace(target)
+            if backup.exists():
+                shutil.rmtree(backup, ignore_errors=True)
         except Exception:
-            if target.is_dir() and not target.is_symlink():
-                shutil.rmtree(target)
+            backup = target.with_name(f".{target.name}.replaced")
+            if not target.exists() and backup.exists():
+                backup.replace(target)
             raise
         finally:
             if temporary.is_dir():
                 shutil.rmtree(temporary)
 
-    def _write_version_manifest(
+    def _write_manifest(
         self,
         asset_id: str,
-        version_id: str,
         documents: list[SummaryDocument],
+        *,
+        operation: SummaryManifestOperation | None = None,
     ) -> None:
         asset_directory = self.library.asset_directory(asset_id)
-        manifest = load_version_manifest(asset_directory, version_id)
-        media = self.library.load_summary_media(asset_id, version_id)
-        write_version_manifest(
+        manifest = load_summary_manifest(asset_directory)
+        media = self.library.load_summary_media(asset_id)
+        operations = manifest.recent_operations
+        client_sequences = manifest.client_sequences
+        if operation is not None:
+            operations = [*operations, operation]
+            client_sequences = {
+                **client_sequences,
+                operation.client_id: operation.client_sequence,
+            }
+        write_summary_manifest(
             asset_directory,
-            build_version_manifest(manifest.version, documents, media),
+            build_summary_manifest(
+                self._next_project(manifest),
+                documents,
+                media,
+                recent_operations=operations,
+                client_sequences=client_sequences,
+            ),
+        )
+
+    def _project_for_generation(
+        self,
+        asset_id: str,
+        root_document_id: str,
+        preset_id: str,
+        preset_version: int,
+        request: SummaryGenerationRequest,
+        context_summary: SummaryContextSummary,
+    ) -> SummaryProject:
+        current = self.project(asset_id)
+        now = datetime.now(UTC)
+        return SummaryProject(
+            asset_id=asset_id,
+            revision=current.revision + 1 if current is not None else 1,
+            root_document_id=root_document_id,
+            preset_id=preset_id,
+            preset_version=preset_version,
+            user_input=request.user_input.strip() if request.user_input else None,
+            ai_model_id=request.ai_model_id,
+            detail=request.detail,
+            output_language=request.output_language,
+            context_summary=context_summary,
+            created_at=current.created_at if current is not None else now,
+            updated_at=now,
+        )
+
+    @staticmethod
+    def _next_project(manifest: SummaryManifest) -> SummaryProject:
+        project = project_from_manifest(manifest)
+        return project.model_copy(
+            update={
+                "revision": project.revision + 1,
+                "updated_at": datetime.now(UTC),
+            }
         )
 
     def _prepare_document(self, document: SummaryDocument) -> SummaryDocument:
@@ -1184,9 +1162,8 @@ class SummaryManager:
         )
 
     def _document_path(self, document: SummaryDocument) -> Path:
-        return resolve_version_path(
+        return resolve_summary_path(
             self.library.asset_directory(document.asset_id),
-            document.version_id,
             document.relative_path,
         )
 
@@ -1217,23 +1194,8 @@ class SummaryManager:
             raise SummaryNotFoundError("总结文档不存在")
         return document
 
-    def _require_version(self, asset_id: str, version_id: str) -> SummaryVersion:
-        version = next(
-            (
-                item
-                for item in self.library.load_summary_versions(asset_id)
-                if item.version_id == version_id
-            ),
-            None,
-        )
-        if version is None:
-            raise SummaryNotFoundError("总结版本不存在")
-        return version
-
-
 def _allocate_documents(
     asset_id: str,
-    version_id: str,
     plan: SummaryPlan,
 ) -> list[SummaryDocument]:
     identifiers = {item.key: f"document-{uuid7().hex}" for item in plan.documents}
@@ -1246,7 +1208,6 @@ def _allocate_documents(
         document = SummaryDocument(
             document_id=identifiers[item.key],
             asset_id=asset_id,
-            version_id=version_id,
             parent_document_id=parent_id,
             title=item.title,
             position=position,
@@ -1337,7 +1298,6 @@ def _body_messages(
     context: str,
     preset_prompt: str,
     request: SummaryGenerationRequest,
-    version: SummaryVersion,
     documents: list[SummaryDocument],
 ) -> list[dict[str, str]]:
     path_table = [
@@ -1369,9 +1329,7 @@ def _body_messages(
             "role": "user",
             "content": (
                 _generation_control(asset_title, context, preset_prompt, request)
-                + "\n\n<当前版本目录>\n"
-                + version.relative_path
-                + "\n</当前版本目录>\n\n<允许路径表>\n"
+                + "\n\n<允许路径表>\n"
                 + json.dumps(path_table, ensure_ascii=False)
                 + "\n</允许路径表>"
             ),

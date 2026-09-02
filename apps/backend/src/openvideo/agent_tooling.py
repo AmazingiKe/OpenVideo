@@ -98,7 +98,7 @@ class ReadSummaryDocumentInput(BaseModel):
 
 
 class ListSummaryDocumentsInput(BaseModel):
-    version_id: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
 
 class ProposeSummaryEditInput(BaseModel):

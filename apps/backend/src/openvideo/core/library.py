@@ -664,7 +664,6 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         values = dict(row)
         markdown = read_markdown(
             self.asset_directory(values["asset_id"]),
-            values["version_id"],
             values["relative_path"],
         )
         return SummaryDocument.model_validate({**values, "markdown": markdown})

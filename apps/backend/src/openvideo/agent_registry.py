@@ -85,7 +85,6 @@ def build_run_content(
     stable_session_context.pop("scope_key", None)
     if definition.agent_id == "summary":
         stable_session_context.pop("document_id", None)
-        stable_session_context.pop("version_id", None)
     references = {
         key: task_metadata.pop(key)
         for key in AGENT_REFERENCE_INPUT_KEYS

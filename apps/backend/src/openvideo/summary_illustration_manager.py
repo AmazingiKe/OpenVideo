@@ -118,26 +118,19 @@ class SummaryIllustrationManager:
     def create(
         self,
         asset_id: str,
-        version_id: str,
+        project_revision: int,
         planning_model_id: str,
     ) -> SummaryIllustrationJob:
-        version = next(
-            (
-                item
-                for item in self.library.load_summary_versions(asset_id)
-                if item.version_id == version_id
-            ),
-            None,
-        )
-        if version is None:
-            raise SummaryIllustrationError("总结版本不存在，无法创建配图任务")
-        existing = self.library.load_summary_illustration_jobs(version_id=version_id)
-        if existing:
+        project = self.summary_manager.project(asset_id)
+        if project is None or project.revision != project_revision:
+            raise SummaryIllustrationError("当前笔记已变化，无法创建配图任务")
+        existing = self.library.load_summary_illustration_jobs(asset_id=asset_id)
+        if existing and existing[0].project_revision == project_revision:
             return existing[0]
         job = SummaryIllustrationJob(
             job_id=f"summary-illustration-job-{uuid7().hex}",
             asset_id=asset_id,
-            version_id=version_id,
+            project_revision=project_revision,
             planning_model_id=planning_model_id,
             vision_model_id=self._vision_model_id(),
         )
@@ -156,8 +149,8 @@ class SummaryIllustrationManager:
                     self._jobs[job_id] = job
         return job.model_copy(deep=True) if job is not None else None
 
-    def latest_for_version(self, version_id: str) -> SummaryIllustrationJob | None:
-        jobs = self.library.load_summary_illustration_jobs(version_id=version_id)
+    def latest_for_asset(self, asset_id: str) -> SummaryIllustrationJob | None:
+        jobs = self.library.load_summary_illustration_jobs(asset_id=asset_id)
         return jobs[0] if jobs else None
 
     def start(self, job_id: str) -> None:
@@ -283,12 +276,10 @@ class SummaryIllustrationManager:
         model = self.settings.ai_model(job.planning_model_id)
         if model is None:
             raise SummaryIllustrationError("总结所用模型已不可用")
-        version = next(
-            item
-            for item in self.library.load_summary_versions(job.asset_id)
-            if item.version_id == job.version_id
-        )
-        documents = self.library.load_summary_documents(job.asset_id, job.version_id)
+        project = self.summary_manager.project(job.asset_id)
+        if project is None or project.revision != job.project_revision:
+            raise SummaryIllustrationError("当前笔记已变化，配图任务不再适用")
+        documents = self.library.load_summary_documents(job.asset_id)
         document_payload = [
             {
                 "document_id": document.document_id,
@@ -298,7 +289,7 @@ class SummaryIllustrationManager:
             }
             for document in documents
         ]
-        slot_limit = DETAIL_SLOT_LIMITS[version.detail]
+        slot_limit = DETAIL_SLOT_LIMITS[project.detail]
         messages = [
             {
                 "role": "system",
@@ -316,7 +307,7 @@ class SummaryIllustrationManager:
             {
                 "role": "user",
                 "content": (
-                    f"最多规划 {slot_limit} 张图。输出语言：{version.output_language}。"
+                    f"最多规划 {slot_limit} 张图。输出语言：{project.output_language}。"
                     "\n\n<最终文档树>\n"
                     + json.dumps(document_payload, ensure_ascii=False)
                     + "\n</最终文档树>"
@@ -498,12 +489,12 @@ class SummaryIllustrationManager:
         latest_document = self.library.load_summary_document(slot.document_id)
         if (
             latest_document is None
-            or latest_document.version_id != job.version_id
+            or latest_document.asset_id != job.asset_id
             or latest_document.markdown.count(slot.target_excerpt) != 1
         ):
             self._skip_slot(job_id, slot_id, "文档已修改，无法唯一确认原插入位置")
             return
-        existing_media = self.library.load_summary_media(job.asset_id, job.version_id)
+        existing_media = self.library.load_summary_media(job.asset_id)
         if any(
             media.origin == SummaryMediaOrigin.AUTOMATIC
             and media.document_id == slot.document_id

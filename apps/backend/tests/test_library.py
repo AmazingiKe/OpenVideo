@@ -16,19 +16,17 @@ from openvideo.core.media_models import (
     SourcePlatform,
 )
 from openvideo.core.summary_files import (
-    SummaryRootManifest,
     atomic_write_text,
-    build_version_manifest,
+    build_summary_manifest,
     markdown_digest,
-    resolve_version_path,
-    write_root_manifest,
-    write_version_manifest,
+    resolve_summary_path,
+    write_summary_manifest,
 )
 from openvideo.core.summary_models import (
     SummaryContextSummary,
     SummaryDocument,
     SummaryMediaArtifact,
-    SummaryVersion,
+    SummaryProject,
 )
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
@@ -39,7 +37,6 @@ MARKER_ID = "marker-01890f4c7a2b7cc298c4dc0c0c07398f"
 SEGMENT_ID = "segment-01890f4c7a2b7cc298c4dc0c0c07398f"
 DOCUMENT_ID = "document-01890f4c7a2b7cc298c4dc0c0c07398f"
 MEDIA_ID = "media-01890f4c7a2b7cc298c4dc0c0c07398f"
-VERSION_ID = "summary-version-01890f4c7a2b7cc298c4dc0c0c07398f"
 JOB_ID = "job-01890f4c7a2b7cc298c4dc0c0c07398f"
 CONCURRENT_READER_COUNT = 2
 CONCURRENT_READ_ITERATIONS = 1_000
@@ -65,9 +62,9 @@ def _save_asset(library: MediaLibrary, asset: MediaAsset) -> None:
 
 def _save_summary(library: MediaLibrary) -> None:
     markdown = "# 用户总结\n"
-    version = SummaryVersion(
-        version_id=VERSION_ID,
+    project = SummaryProject(
         asset_id=ASSET_ID,
+        root_document_id=DOCUMENT_ID,
         preset_id="knowledge_notes",
         preset_version=1,
         ai_model_id="model-1",
@@ -78,12 +75,10 @@ def _save_summary(library: MediaLibrary) -> None:
             marker_digest="markers",
             event_analysis_digest="events",
         ),
-        relative_path=f"versions/{VERSION_ID}",
     )
     document = SummaryDocument(
         document_id=DOCUMENT_ID,
         asset_id=ASSET_ID,
-        version_id=VERSION_ID,
         title="用户总结",
         markdown=markdown,
         relative_path="index.md",
@@ -91,21 +86,13 @@ def _save_summary(library: MediaLibrary) -> None:
     )
     asset_directory = library.asset_directory(ASSET_ID)
     atomic_write_text(
-        resolve_version_path(asset_directory, VERSION_ID, "index.md"), markdown
+        resolve_summary_path(asset_directory, "index.md"), markdown
     )
-    write_version_manifest(
-        asset_directory, build_version_manifest(version, [document], [])
-    )
-    write_root_manifest(
-        asset_directory,
-        SummaryRootManifest(
-            asset_id=ASSET_ID,
-            current_version_id=VERSION_ID,
-            versions=[version],
-        ),
+    write_summary_manifest(
+        asset_directory, build_summary_manifest(project, [document], [])
     )
     library.create_summary_documents([document])
-    media_relative_path = f"summary/versions/{VERSION_ID}/assets/{MEDIA_ID}.jpg"
+    media_relative_path = f"summary/assets/{MEDIA_ID}.jpg"
     media_path = asset_directory / media_relative_path
     media_path.parent.mkdir(parents=True, exist_ok=True)
     media_path.write_bytes(b"image")
@@ -113,7 +100,6 @@ def _save_summary(library: MediaLibrary) -> None:
         SummaryMediaArtifact(
             media_id=MEDIA_ID,
             asset_id=ASSET_ID,
-            version_id=VERSION_ID,
             document_id=DOCUMENT_ID,
             media_type="image",
             relative_path=media_relative_path,
@@ -155,29 +141,24 @@ def test_concurrent_asset_reads_return_consistent_rows(tmp_path: Path):
     assert failures == []
 
 
-def test_summary_versions_rebuild_invalid_index_projection(tmp_path: Path):
+def test_summary_documents_rebuild_from_manifest_projection(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     try:
         _save_asset(library, _asset())
         _save_summary(library)
         with library._db():
             library._db().execute(
-                "UPDATE summary_versions SET context_summary = ? WHERE version_id = ?",
-                ("invalid-json", VERSION_ID),
+                "UPDATE summary_documents SET title = ? WHERE document_id = ?",
+                ("损坏标题", DOCUMENT_ID),
             )
-
-        versions = library.load_summary_versions(ASSET_ID)
-
-        assert versions[0].context_summary.transcript_digest == "transcript"
-        stored = (
-            library._db()
-            .execute(
-                "SELECT context_summary FROM summary_versions WHERE version_id = ?",
-                (VERSION_ID,),
+            library._db().execute(
+                "UPDATE index_states SET content_digest = ? WHERE asset_id = ?",
+                ("invalid", ASSET_ID),
             )
-            .fetchone()[0]
-        )
-        assert json.loads(stored)["marker_digest"] == "markers"
+        library.close()
+        library = MediaLibrary.open(tmp_path)
+
+        assert library.load_summary_documents(ASSET_ID)[0].title == "用户总结"
     finally:
         library.close()
 

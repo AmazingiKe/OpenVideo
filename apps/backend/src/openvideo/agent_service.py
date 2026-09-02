@@ -150,7 +150,6 @@ AGENT_RUN_INTENT_KEY = "intent"
 AGENT_RUN_EDIT_INTENT = "edit"
 AGENT_RUN_TRANSCRIPT_EDIT_INTENT = "transcript_edit"
 AGENT_DOCUMENT_ID_KEY = "document_id"
-AGENT_VERSION_ID_KEY = "version_id"
 SUMMARY_RUN_ILLUSTRATE_INTENT = "illustrate"
 MARKER_EVIDENCE_TOOL_NAMES = frozenset({"search_evidence", "inspect_frames"})
 SUMMARY_CHAT_TOOL_NAMES = frozenset(
@@ -1316,32 +1315,18 @@ class AgentService:
     ) -> None:
         if session.agent_id != SUMMARY_AGENT_ID:
             return
-        references: list[tuple[object, object]] = [
-            (
-                request.task_input.get(AGENT_DOCUMENT_ID_KEY),
-                request.task_input.get(AGENT_VERSION_ID_KEY),
-            )
-        ]
+        references: list[object] = [request.task_input.get(AGENT_DOCUMENT_ID_KEY)]
         if request.focus_context and request.focus_context.document:
-            references.append(
-                (
-                    request.focus_context.document.document_id,
-                    request.focus_context.document.version_id,
-                )
-            )
-        for document_id, version_id in references:
-            if document_id is None and version_id is None:
-                continue
+            references.append(request.focus_context.document.document_id)
+        for document_id in references:
             if document_id is None:
-                raise AgentConflictError("总结请求缺少文档标识")
+                continue
             try:
                 document = self.library.load_summary_document(str(document_id))
             except ValueError as error:
                 raise AgentConflictError("总结请求引用的文档无效") from error
             if document is None or document.asset_id != session.asset_id:
                 raise AgentConflictError("总结请求引用的文档不属于当前视频")
-            if version_id is not None and document.version_id != version_id:
-                raise AgentConflictError("总结请求引用的文档版本不一致")
 
     def _summary_run_definition(
         self,
@@ -1876,18 +1861,12 @@ class AgentService:
     def _list_summary_documents(
         self, context: AgentRunContext, parameters: ListSummaryDocumentsInput
     ) -> dict[str, Any]:
-        try:
-            documents = self.library.load_summary_documents(
-                context.session.asset_id, parameters.version_id
-            )
-        except ValueError:
-            return {"ok": False, "error": "总结版本标识无效"}
+        documents = self.library.load_summary_documents(context.session.asset_id)
         return {
             "ok": True,
             "documents": [
                 {
                     "document_id": document.document_id,
-                    "version_id": document.version_id,
                     "parent_document_id": document.parent_document_id,
                     "index": index,
                     "position": document.position,
@@ -1945,7 +1924,6 @@ class AgentService:
             SUMMARY_ARTIFACT_TYPE,
             {
                 "document_id": document.document_id,
-                "version_id": document.version_id,
                 "base_revision": document.revision,
                 "original_markdown": document.markdown,
                 "proposed_markdown": parameters.proposed_markdown,
@@ -2014,9 +1992,7 @@ class AgentService:
         duplicate = any(
             artifact.document_id == document.document_id
             and abs(artifact.start_seconds - parameters.start_seconds) < 1
-            for artifact in self.library.load_summary_media(
-                document.asset_id, document.version_id
-            )
+            for artifact in self.library.load_summary_media(document.asset_id)
         )
         if duplicate:
             return {"ok": False, "error": "该时间点附近已经存在总结媒体"}
@@ -2043,7 +2019,6 @@ class AgentService:
             SUMMARY_MEDIA_ARTIFACT_TYPE,
             {
                 "document_id": document.document_id,
-                "version_id": document.version_id,
                 "base_revision": document.revision,
                 "media": media.model_dump(mode="json"),
                 "reason": parameters.reason,
@@ -2200,8 +2175,8 @@ class AgentService:
     def _approve_summary_artifact(self, artifact: AgentArtifact) -> dict[str, Any]:
         payload = artifact.payload
         document = self.library.load_summary_document(payload["document_id"])
-        if document is None or document.version_id != payload["version_id"]:
-            raise AgentConflictError("总结文档不存在或不属于原版本")
+        if document is None or document.asset_id != artifact.asset_id:
+            raise AgentConflictError("总结文档不存在或不属于当前笔记")
         base_revision = payload["base_revision"]
         if artifact.result_type == SUMMARY_MEDIA_ARTIFACT_TYPE:
             media = SummaryMediaCreate.model_validate(payload["media"])

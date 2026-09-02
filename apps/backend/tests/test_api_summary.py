@@ -14,6 +14,7 @@ from openvideo.core.event_analysis_models import (
     FocusSelectionEventAnalysisTarget,
     MarkerEventAnalysisTarget,
 )
+from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import (
     MediaAsset,
@@ -26,7 +27,6 @@ from openvideo.core.summary_models import SummaryDocumentCreate
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.llm.model_profile import ModelLimits, ModelProfile
 from openvideo.settings import Settings
-from openvideo.summary_manager import SummaryManager, SummaryUnavailableError
 from openvideo.ui.api import create_app
 
 
@@ -137,6 +137,14 @@ def create_client(tmp_path: Path) -> TestClient:
     )
 
 
+def save_metadata(client_sequence: int, *, client_id: str | None = None) -> dict:
+    return {
+        "operation_id": f"summary-operation-{uuid7().hex}",
+        "client_id": client_id or f"summary-client-{uuid7().hex}",
+        "client_sequence": client_sequence,
+    }
+
+
 def install_generation_mocks(
     monkeypatch, captured: list[list[dict[str, str]]] | None = None
 ):
@@ -216,7 +224,9 @@ def test_summary_presets_and_formal_context_exclude_focus_selection(
         "复习教练",
         "教程编写",
     ]
-    assert generated["version"]["version_id"].startswith("summary-version-")
+    assert generated["project"]["root_document_id"] in {
+        item["document_id"] for item in generated["documents"]
+    }
     assert all(
         "正式标记分析" in messages[1]["content"]
         and "焦点选区分析" not in messages[1]["content"]
@@ -227,21 +237,19 @@ def test_summary_presets_and_formal_context_exclude_focus_selection(
     assert "不得把秒数解释成分钟" in captured[-1][0]["content"]
 
 
-def test_summary_index_failure_returns_retryable_service_error(
-    tmp_path: Path, monkeypatch
-):
-    def unavailable(_manager: SummaryManager, _asset_id: str):
-        raise SummaryUnavailableError("总结索引暂时无法恢复，请稍后重试")
-
-    monkeypatch.setattr(SummaryManager, "versions", unavailable)
+def test_summary_version_routes_are_removed(tmp_path: Path):
     with create_client(tmp_path) as client:
-        response = client.get(f"/api/media/assets/{ASSET_ID}/summary-versions")
+        versions = client.get(f"/api/media/assets/{ASSET_ID}/summary-versions")
+        selection = client.patch(
+            f"/api/media/assets/{ASSET_ID}/summary-current-version",
+            json={"version_id": "removed"},
+        )
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": "总结索引暂时无法恢复，请稍后重试"}
+    assert versions.status_code == 404
+    assert selection.status_code == 404
 
 
-def test_generation_appends_versions_and_history_remains_editable(
+def test_generation_atomically_replaces_the_current_project(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -249,30 +257,84 @@ def test_generation_appends_versions_and_history_remains_editable(
     with create_client(tmp_path) as client:
         first = generate(client)
         second = generate(client)
-        versions = client.get(f"/api/media/assets/{ASSET_ID}/summary-versions").json()
         first_root = next(
             item for item in first["documents"] if item["parent_document_id"] is None
         )
-        updated = client.patch(
+        stale_update = client.patch(
             f"/api/summary-documents/{first_root['document_id']}",
-            json={"expected_revision": 1, "markdown": "# 历史版本仍可编辑\n"},
-        )
-        selected = client.patch(
-            f"/api/media/assets/{ASSET_ID}/summary-current-version",
-            json={"version_id": first["version"]["version_id"]},
+            json={
+                **save_metadata(1),
+                "markdown": "# 旧笔记不应可编辑\n",
+            },
         )
         current_documents = client.get(
             f"/api/media/assets/{ASSET_ID}/summary-documents"
         ).json()
 
-    assert len(versions) == 2
-    assert first["version"]["version_id"] != second["version"]["version_id"]
-    assert updated.status_code == 200
-    assert selected.json()["version_id"] == first["version"]["version_id"]
-    assert current_documents[0]["version_id"] == first["version"]["version_id"]
+    assert first["project"]["revision"] == 1
+    assert second["project"]["revision"] == 2
+    assert stale_update.status_code == 404
+    assert {item["document_id"] for item in current_documents} == {
+        item["document_id"] for item in second["documents"]
+    }
     summary_root = tmp_path / "assets" / ASSET_ID / "summary"
     assert (summary_root / "manifest.json").is_file()
-    assert len(list((summary_root / "versions").iterdir())) == 2
+    assert not (summary_root / "versions").exists()
+    assert (summary_root / "index.md").is_file()
+
+
+def test_summary_save_is_idempotent_and_rejects_old_client_sequences(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+    client_id = f"summary-client-{uuid7().hex}"
+    operation_id = f"summary-operation-{uuid7().hex}"
+    with create_client(tmp_path) as client:
+        generated = generate(client)
+        root = next(
+            item
+            for item in generated["documents"]
+            if item["parent_document_id"] is None
+        )
+        endpoint = f"/api/summary-documents/{root['document_id']}"
+        first = client.patch(
+            endpoint,
+            json={
+                "operation_id": operation_id,
+                "client_id": client_id,
+                "client_sequence": 1,
+                "markdown": "# 第一次保存\n",
+            },
+        )
+        duplicate = client.patch(
+            endpoint,
+            json={
+                "operation_id": operation_id,
+                "client_id": client_id,
+                "client_sequence": 1,
+                "markdown": "# 重复请求不应覆盖\n",
+            },
+        )
+        stale = client.patch(
+            endpoint,
+            json={
+                **save_metadata(1, client_id=client_id),
+                "markdown": "# 旧序列不应覆盖\n",
+            },
+        )
+        latest = client.patch(
+            endpoint,
+            json={
+                **save_metadata(2, client_id=client_id),
+                "markdown": "# 第二次保存\n",
+            },
+        )
+
+    assert first.status_code == 200
+    assert duplicate.json()["markdown"] == "# 第一次保存\n"
+    assert stale.json()["markdown"] == "# 第一次保存\n"
+    assert latest.json()["markdown"] == "# 第二次保存\n"
 
 
 def test_three_level_document_tree_supports_duplicate_move_and_subtree_delete(
@@ -357,7 +419,7 @@ def test_agent_summary_batch_restores_all_files_when_manifest_commit_fails(
             raise OSError("清单提交失败")
 
         monkeypatch.setattr(
-            "openvideo.summary_manager.write_version_manifest",
+            "openvideo.summary_manager.write_summary_manifest",
             fail_manifest_commit,
         )
         with pytest.raises(OSError, match="清单提交失败"):
@@ -369,7 +431,7 @@ def test_agent_summary_batch_restores_all_files_when_manifest_commit_fails(
             )
 
         restored = manager.library.load_summary_document(root["document_id"])
-        documents = manager.documents(ASSET_ID, root["version_id"])
+        documents = manager.documents(ASSET_ID)
 
     assert restored is not None
     assert restored.markdown == root["markdown"]
@@ -676,7 +738,7 @@ def test_generation_normalizes_decimal_evidence_ranges(
     )
 
 
-def test_legacy_single_summary_migrates_once(tmp_path: Path):
+def test_legacy_summary_is_not_migrated(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
     library.save(
         MediaAsset(
@@ -721,19 +783,11 @@ def test_legacy_single_summary_migrates_once(tmp_path: Path):
     root_manifest_path = summary_directory / "manifest.json"
     root_manifest_path.write_text(legacy_manifest, encoding="utf-8")
 
-    migrated = MediaLibrary.open(tmp_path)
-    first_version_id = migrated.load_summary_versions(ASSET_ID)[0].version_id
-    assert migrated.load_summary_documents(ASSET_ID)[0].markdown == markdown
-    migrated.close()
-    root_manifest_path.write_text(legacy_manifest, encoding="utf-8")
     reopened = MediaLibrary.open(tmp_path)
     try:
-        assert (
-            reopened.load_summary_versions(ASSET_ID)[0].version_id == first_version_id
-        )
-        assert json.loads(root_manifest_path.read_text("utf-8"))["format_version"] == 2
-        assert len(list((summary_directory / "versions").iterdir())) == 1
-        assert not (summary_directory / "index.md").exists()
+        assert reopened.load_summary_documents(ASSET_ID) == []
+        assert json.loads(root_manifest_path.read_text("utf-8"))["format_version"] == 1
+        assert (summary_directory / "index.md").is_file()
     finally:
         reopened.close()
 
@@ -785,20 +839,18 @@ def test_known_output_capacity_error_is_structured(tmp_path: Path, monkeypatch):
     assert response.json()["context_tokens"] == 4_000
 
 
-def test_each_version_exports_independently(tmp_path: Path, monkeypatch):
+def test_export_reads_only_the_current_project(tmp_path: Path, monkeypatch):
     install_generation_mocks(monkeypatch)
     with create_client(tmp_path) as client:
-        first = generate(client)
-        second = generate(client)
-        exported = client.post(
-            f"/api/media/assets/{ASSET_ID}/summary-exports",
-            params={"version_id": first["version"]["version_id"]},
-        )
+        generate(client)
+        current = generate(client)
+        exported = client.post(f"/api/media/assets/{ASSET_ID}/summary-exports")
 
     assert exported.status_code == 201
     payload = exported.json()
-    assert payload["version_id"] == first["version"]["version_id"]
-    assert payload["version_id"] != second["version"]["version_id"]
+    assert "version_id" not in payload
     path = tmp_path / "assets" / ASSET_ID / payload["relative_path"]
     with zipfile.ZipFile(path) as archive:
         assert {"index.md", "manifest.json"} <= set(archive.namelist())
+        export_manifest = json.loads(archive.read("manifest.json"))
+        assert export_manifest["project"]["revision"] == current["project"]["revision"]

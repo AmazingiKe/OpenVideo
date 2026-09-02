@@ -47,21 +47,16 @@ from openvideo.core.library_index import (
     synchronize_asset,
 )
 from openvideo.core.library_files import atomic_write_model
-from openvideo.core.summary_files import load_version_manifest, write_version_manifest
+from openvideo.core.summary_files import load_summary_manifest, write_summary_manifest
 from openvideo.core.summary_models import (
     SummaryDocument,
     SummaryIllustrationJob,
     SummaryMediaArtifact,
-    SummaryVersion,
 )
 from openvideo.core.visual_index_models import VisualIndexStatus
 
 AGENT_CHANGES_DIRECTORY_NAME = "agent-changes"
 AGENT_CHANGE_VERSION_PATTERN = "agent-version-*.json"
-
-
-class SummaryIndexReadError(RuntimeError):
-    """SQLite 投影无法从摘要业务文件恢复时阻止调用方继续使用不完整数据。"""
 
 
 class LibraryGeneratedStorageMixin:
@@ -285,61 +280,23 @@ class LibraryGeneratedStorageMixin:
     def load_summary_documents(
         self,
         asset_id: str,
-        version_id: str | None = None,
     ) -> list[SummaryDocument]:
         self._validate_asset_id(asset_id)
-        where = "asset_id = ?"
-        parameters = [asset_id]
-        if version_id is not None:
-            self._validate_identifier(version_id, "summary-version")
-            where += " AND version_id = ?"
-            parameters.append(version_id)
         with self._lock:
             rows = (
                 self._db()
                 .execute(
-                    f"SELECT * FROM summary_documents WHERE {where} "
+                    "SELECT * FROM summary_documents WHERE asset_id = ? "
                     "ORDER BY parent_document_id IS NOT NULL, position, created_at",
-                    tuple(parameters),
+                    (asset_id,),
                 )
                 .fetchall()
             )
             return [self._summary_document_from_row(row) for row in rows]
 
-    def load_summary_versions(self, asset_id: str) -> list[SummaryVersion]:
-        self._validate_asset_id(asset_id)
-        with self._lock:
-            try:
-                return self._load_summary_versions_from_index(asset_id)
-            except (sqlite3.Error, TypeError, ValueError):
-                try:
-                    synchronize_asset(self._db(), self.assets_path, asset_id)
-                    return self._load_summary_versions_from_index(asset_id)
-                except (OSError, sqlite3.Error, TypeError, ValueError) as error:
-                    raise SummaryIndexReadError(
-                        "总结索引暂时无法恢复，请稍后重试"
-                    ) from error
-
-    def _load_summary_versions_from_index(self, asset_id: str) -> list[SummaryVersion]:
-        rows = (
-            self._db()
-            .execute(
-                "SELECT * FROM summary_versions WHERE asset_id = ? ORDER BY created_at DESC",
-                (asset_id,),
-            )
-            .fetchall()
-        )
-        versions: list[SummaryVersion] = []
-        for row in rows:
-            values = dict(row)
-            values["context_summary"] = json.loads(values["context_summary"])
-            versions.append(SummaryVersion.model_validate(values))
-        return versions
-
     def update_summary_document(
         self,
         document_id: str,
-        expected_revision: int,
         *,
         title: str | None = None,
         relative_path: str | None = None,
@@ -352,8 +309,6 @@ class LibraryGeneratedStorageMixin:
                 return None
             synchronize_asset(self._db(), self.assets_path, document.asset_id)
             updated = self.load_summary_document(document_id)
-            if updated is None or updated.revision != expected_revision + 1:
-                return None
             return updated
 
     def delete_summary_document(self, document_id: str) -> bool:
@@ -908,10 +863,10 @@ class LibraryGeneratedStorageMixin:
         self._validate_identifier(media.media_id, "media")
         with self._lock:
             asset_directory = self.asset_directory(media.asset_id)
-            manifest = load_version_manifest(asset_directory, media.version_id)
+            manifest = load_summary_manifest(asset_directory)
             if any(item.media_id == media.media_id for item in manifest.media):
                 raise sqlite3.IntegrityError("总结媒体标识已存在")
-            write_version_manifest(
+            write_summary_manifest(
                 asset_directory,
                 manifest.model_copy(update={"media": [*manifest.media, media]}),
             )
@@ -944,7 +899,6 @@ class LibraryGeneratedStorageMixin:
         self,
         *,
         asset_id: str | None = None,
-        version_id: str | None = None,
     ) -> list[SummaryIllustrationJob]:
         clauses: list[str] = []
         parameters: list[str] = []
@@ -952,10 +906,6 @@ class LibraryGeneratedStorageMixin:
             self._validate_asset_id(asset_id)
             clauses.append("asset_id = ?")
             parameters.append(asset_id)
-        if version_id is not None:
-            self._validate_identifier(version_id, "summary-version")
-            clauses.append("version_id = ?")
-            parameters.append(version_id)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = (
             self._db()
@@ -980,19 +930,12 @@ class LibraryGeneratedStorageMixin:
     def load_summary_media(
         self,
         asset_id: str,
-        version_id: str | None = None,
     ) -> list[SummaryMediaArtifact]:
-        where = "asset_id = ?"
-        parameters = [asset_id]
-        if version_id is not None:
-            self._validate_identifier(version_id, "summary-version")
-            where += " AND version_id = ?"
-            parameters.append(version_id)
         rows = (
             self._db()
             .execute(
-                f"SELECT * FROM summary_media WHERE {where} ORDER BY created_at",
-                tuple(parameters),
+                "SELECT * FROM summary_media WHERE asset_id = ? ORDER BY created_at",
+                (asset_id,),
             )
             .fetchall()
         )

@@ -25,7 +25,7 @@ from openvideo.core.summary_files import summary_document_depths
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 22
+DATABASE_VERSION = 23
 DISABLED_SQLITE_STATEMENT_CACHE_SIZE = 0
 VIDEO_AGENT_ID = "marker"
 LEGACY_TRANSCRIPT_AGENT_ID = "transcript_correction"
@@ -292,22 +292,14 @@ def replace_asset_projection(
             ],
         )
 
-    document_ids = {document.document_id for document in bundle.summary_documents}
-    connection.execute(
-        "DELETE FROM summary_versions WHERE asset_id = ?", (asset.asset_id,)
+    document_depths = (
+        summary_document_depths(bundle.summary_documents)
+        if bundle.summary_documents
+        else {}
     )
-    for version in bundle.summary_versions:
-        values = version.model_dump(mode="json", exclude={"context_summary"})
-        values["context_summary"] = version.context_summary.model_dump_json()
-        _insert_model(connection, "summary_versions", values)
-    document_depths: dict[str, int] = {}
-    for version in bundle.summary_versions:
-        version_documents = [
-            document
-            for document in bundle.summary_documents
-            if document.version_id == version.version_id
-        ]
-        document_depths.update(summary_document_depths(version_documents))
+    connection.execute(
+        "DELETE FROM summary_documents WHERE asset_id = ?", (asset.asset_id,)
+    )
     for document in sorted(
         bundle.summary_documents,
         key=lambda item: (document_depths[item.document_id], item.position),
@@ -323,15 +315,6 @@ def replace_asset_projection(
             f"ON CONFLICT(document_id) DO UPDATE SET {document_updates}",
             tuple(document_values[column] for column in document_columns),
         )
-    _delete_missing(
-        connection,
-        "summary_documents",
-        "document_id",
-        "asset_id",
-        asset.asset_id,
-        document_ids,
-    )
-
     connection.execute(
         "DELETE FROM summary_media WHERE asset_id = ?", (asset.asset_id,)
     )
@@ -719,18 +702,10 @@ CREATE TABLE segment_markers (segment_id TEXT NOT NULL REFERENCES timeline_segme
 CREATE TABLE analysis_job_capabilities (job_id TEXT NOT NULL REFERENCES analysis_jobs(job_id) ON DELETE CASCADE, capability TEXT NOT NULL, PRIMARY KEY(job_id, capability));
 CREATE TABLE summary_documents (
     document_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    version_id TEXT NOT NULL REFERENCES summary_versions(version_id) ON DELETE CASCADE,
     parent_document_id TEXT REFERENCES summary_documents(document_id) ON DELETE CASCADE,
     title TEXT NOT NULL, relative_path TEXT NOT NULL, content_digest TEXT NOT NULL,
     position INTEGER NOT NULL, revision INTEGER NOT NULL, created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-);
-CREATE TABLE summary_versions (
-    version_id TEXT PRIMARY KEY,
-    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    preset_id TEXT NOT NULL, preset_version INTEGER NOT NULL, user_input TEXT,
-    ai_model_id TEXT NOT NULL, detail TEXT NOT NULL, output_language TEXT NOT NULL,
-    context_summary TEXT NOT NULL, relative_path TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE agent_sessions (
     session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
@@ -766,7 +741,6 @@ CREATE TABLE agent_artifacts (
 );
 CREATE TABLE summary_media (
     media_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    version_id TEXT NOT NULL REFERENCES summary_versions(version_id) ON DELETE CASCADE,
     document_id TEXT NOT NULL REFERENCES summary_documents(document_id) ON DELETE CASCADE,
     media_type TEXT NOT NULL, relative_path TEXT NOT NULL, caption TEXT NOT NULL,
     start_seconds REAL NOT NULL, end_seconds REAL, origin TEXT NOT NULL,
@@ -777,7 +751,7 @@ CREATE TABLE summary_media (
 CREATE TABLE summary_illustration_jobs (
     job_id TEXT PRIMARY KEY,
     asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-    version_id TEXT NOT NULL REFERENCES summary_versions(version_id) ON DELETE CASCADE,
+    project_revision INTEGER NOT NULL,
     planning_model_id TEXT NOT NULL, vision_model_id TEXT, stage TEXT NOT NULL,
     progress_percent REAL NOT NULL, message TEXT NOT NULL, slots TEXT NOT NULL,
     inserted_count INTEGER NOT NULL, skipped_count INTEGER NOT NULL,
@@ -802,10 +776,9 @@ CREATE INDEX event_analyses_asset_created_index ON event_analyses(asset_id, crea
 CREATE INDEX event_analyses_marker_index ON event_analyses(marker_id, created_at DESC);
 CREATE INDEX event_analyses_selection_index ON event_analyses(selection_id, created_at DESC);
 CREATE INDEX download_events_job_created_index ON download_events(job_id, created_at);
-CREATE UNIQUE INDEX summary_documents_root_version_index ON summary_documents(version_id) WHERE parent_document_id IS NULL;
-CREATE INDEX summary_versions_asset_created_index ON summary_versions(asset_id, created_at DESC);
+CREATE UNIQUE INDEX summary_documents_root_asset_index ON summary_documents(asset_id) WHERE parent_document_id IS NULL;
 CREATE INDEX summary_documents_parent_position_index ON summary_documents(parent_document_id, position);
-CREATE INDEX summary_illustration_jobs_version_created_index ON summary_illustration_jobs(version_id, created_at DESC);
+CREATE INDEX summary_illustration_jobs_asset_created_index ON summary_illustration_jobs(asset_id, created_at DESC);
 CREATE INDEX agent_sessions_updated_index ON agent_sessions(updated_at DESC);
 CREATE INDEX agent_sessions_asset_agent_index ON agent_sessions(asset_id, agent_id, updated_at DESC);
 CREATE UNIQUE INDEX agent_permission_grants_scope_index ON agent_permission_grants(session_id, capability, resource_scope, resource_id, scope);

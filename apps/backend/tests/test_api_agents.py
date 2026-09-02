@@ -699,7 +699,7 @@ def test_nonempty_chat_content_includes_task_session_and_selection_context():
     content = build_run_content(
         definition,
         request,
-        {"document_id": "document-current", "version_id": "version-current"},
+        {"document_id": "document-current"},
     )
 
     assert "<用户请求>\n解释选中段落\n</用户请求>" in content
@@ -708,7 +708,6 @@ def test_nonempty_chat_content_includes_task_session_and_selection_context():
     assert "聚焦也不是编辑授权" in content
     assert '"label": "时间线 · 第 2 章"' in content
     assert '"document_id": "document-current"' in content
-    assert '"version_id": "version-current"' in content
     assert '"intent": "chat"' in content
     assert '"thinking_mode": "complex"' in content
     assert '"retrieval_scope": "current_asset"' in content
@@ -722,7 +721,6 @@ def test_summary_run_accepts_another_document_in_the_same_video():
     document = SummaryDocument(
         document_id="document-b",
         asset_id=ASSET_ID,
-        version_id="summary-version-b",
         title="第二章",
     )
     service = AgentService.__new__(AgentService)
@@ -734,26 +732,22 @@ def test_summary_run_accepts_another_document_in_the_same_video():
     session = SimpleNamespace(
         agent_id="summary",
         asset_id=ASSET_ID,
-        context={"document_id": "document-a", "version_id": "version-a"},
+        context={"document_id": "document-a"},
     )
     request = AgentRunCreate(
         request_key=f"request-{uuid7().hex}",
         ai_model_id=MODEL_ID,
         content="查看第二章",
-        task_input={
-            "document_id": document.document_id,
-            "version_id": document.version_id,
-        },
+        task_input={"document_id": document.document_id},
     )
 
     service._validate_run_binding(session, request)
 
 
-def test_summary_run_rejects_a_mismatched_document_version():
+def test_summary_run_rejects_a_document_from_another_video():
     document = SummaryDocument(
         document_id="document-b",
-        asset_id=ASSET_ID,
-        version_id="summary-version-b",
+        asset_id="01890f4c-7a2b-7cc2-98c4-dc0c0c073990",
         title="第二章",
     )
     service = AgentService.__new__(AgentService)
@@ -763,13 +757,10 @@ def test_summary_run_rejects_a_mismatched_document_version():
         request_key=f"request-{uuid7().hex}",
         ai_model_id=MODEL_ID,
         content="查看第二章",
-        task_input={
-            "document_id": document.document_id,
-            "version_id": "summary-version-other",
-        },
+        task_input={"document_id": document.document_id},
     )
 
-    with pytest.raises(AgentConflictError, match="文档版本不一致"):
+    with pytest.raises(AgentConflictError, match="不属于当前视频"):
         service._validate_run_binding(session, request)
 
 
@@ -777,21 +768,19 @@ def test_summary_tools_list_and_read_any_chapter_in_the_current_video():
     first = SummaryDocument(
         document_id="document-a",
         asset_id=ASSET_ID,
-        version_id="summary-version-a",
         title="第一章",
         position=0,
     )
     second = SummaryDocument(
         document_id="document-b",
         asset_id=ASSET_ID,
-        version_id="summary-version-a",
         title="第二章",
         position=1,
     )
     documents = {item.document_id: item for item in (first, second)}
     service = AgentService.__new__(AgentService)
     service.library = SimpleNamespace(
-        load_summary_documents=lambda asset_id, _version_id: (
+        load_summary_documents=lambda asset_id: (
             [first, second] if asset_id == ASSET_ID else []
         ),
         load_summary_document=lambda document_id: documents.get(document_id),
@@ -801,9 +790,7 @@ def test_summary_tools_list_and_read_any_chapter_in_the_current_video():
         evidence=RunEvidenceState(),
     )
 
-    listing = service._list_summary_documents(
-        context, ListSummaryDocumentsInput(version_id=first.version_id)
-    )
+    listing = service._list_summary_documents(context, ListSummaryDocumentsInput())
     read_result = service._read_summary(
         context, SimpleNamespace(document_id=second.document_id)
     )
@@ -1905,10 +1892,10 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
             )
         )
         context = SimpleNamespace(
-            session=SimpleNamespace(
-                asset_id=ASSET_ID,
-                context={"version_id": document["version_id"]},
-            ),
+                session=SimpleNamespace(
+                    asset_id=ASSET_ID,
+                    context={},
+                ),
             evidence=evidence_state,
             create_artifact=create_artifact,
         )

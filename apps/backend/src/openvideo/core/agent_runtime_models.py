@@ -266,7 +266,6 @@ class AgentContextAttachment(BaseModel):
     asset_id: str
     label: str = Field(min_length=1, max_length=200)
     reference_id: str | None = Field(default=None, min_length=1, max_length=200)
-    version_id: str | None = Field(default=None, min_length=1, max_length=200)
     start_seconds: float | None = Field(default=None, ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
     snapshot_text: str | None = Field(default=None, max_length=100_000)
@@ -343,7 +342,6 @@ class AgentFocusDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     document_id: str
-    version_id: str
     parent_document_id: str | None = None
     index: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=200)
