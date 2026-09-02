@@ -31,7 +31,6 @@ function document(document_id: string, title: string): SummaryDocument {
   return {
     document_id,
     asset_id: "asset-1",
-    version_id: "summary-version-1",
     parent_document_id: null,
     title,
     markdown: `# ${title}`,

@@ -21,7 +21,6 @@ export function summary_agent_focus(
     label: `${surface_label} · 第 ${document_index} 章 · ${selected_document.title}`,
     document: {
       document_id: selected_document.document_id,
-      version_id: selected_document.version_id,
       parent_document_id: selected_document.parent_document_id,
       index: document_index,
       title: selected_document.title,

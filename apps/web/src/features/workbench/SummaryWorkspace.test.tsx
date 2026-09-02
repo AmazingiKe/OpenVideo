@@ -18,7 +18,6 @@ import {
   list_ai_models,
   list_summary_documents,
   list_summary_presets,
-  list_summary_versions,
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
@@ -29,13 +28,19 @@ import type {
   AiModelSummary,
   MediaAsset,
   SummaryDocument,
-  SummaryVersion,
+  SummaryProject,
   Transcript,
 } from "@/shared/types";
 import {
   DEFAULT_MODEL_CAPABILITY_OVERRIDES,
   unknown_model_profile,
 } from "@/shared/types";
+import {
+  delete_other_summary_drafts,
+  load_latest_summary_draft,
+  save_summary_draft,
+  summary_draft_content_digest,
+} from "@/features/summary/summary_draft_storage";
 import { SummaryWorkspace } from "./SummaryWorkspace";
 
 const global_assistant_state = vi.hoisted(() => ({
@@ -153,10 +158,23 @@ vi.mock("@/shared/api", async (import_original) => {
     list_ai_models: vi.fn(),
     list_summary_documents: vi.fn(),
     list_summary_presets: vi.fn(),
-    list_summary_versions: vi.fn(),
     move_summary_document: vi.fn(),
     subscribe_summary_documents: vi.fn(),
     update_summary_document: vi.fn(),
+  };
+});
+
+vi.mock("@/features/summary/summary_draft_storage", async (import_original) => {
+  const actual =
+    await import_original<
+      typeof import("@/features/summary/summary_draft_storage")
+    >();
+  return {
+    ...actual,
+    delete_other_summary_drafts: vi.fn(),
+    delete_summary_draft: vi.fn(),
+    load_latest_summary_draft: vi.fn(),
+    save_summary_draft: vi.fn(),
   };
 });
 
@@ -203,7 +221,6 @@ const TRANSCRIPT: Transcript = {
 const DOCUMENT: SummaryDocument = {
   document_id: "document-01890f4c7a2b7cc298c4dc0c0c07398f",
   asset_id: ASSET.asset_id,
-  version_id: "summary-version-01890f4c7a2b7cc298c4dc0c0c07398f",
   parent_document_id: null,
   title: "课程总结",
   markdown: "# 原内容\n",
@@ -225,9 +242,10 @@ const CHILD_DOCUMENT: SummaryDocument = {
   position: 1,
 };
 
-const SUMMARY_VERSION: SummaryVersion = {
-  version_id: DOCUMENT.version_id,
+const SUMMARY_PROJECT: SummaryProject = {
   asset_id: ASSET.asset_id,
+  revision: 1,
+  root_document_id: DOCUMENT.document_id,
   preset_id: "knowledge_notes",
   preset_version: 1,
   user_input: null,
@@ -239,8 +257,8 @@ const SUMMARY_VERSION: SummaryVersion = {
     marker_digest: "markers",
     event_analysis_digest: "events",
   },
-  relative_path: `summary/versions/${DOCUMENT.version_id}`,
   created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
 };
 
 const SUMMARY_MODEL: AiModelSummary = {
@@ -265,8 +283,11 @@ describe("SummaryWorkspace", () => {
         removeEventListener: vi.fn(),
       })),
     });
+    Object.defineProperty(navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
     vi.mocked(list_ai_models).mockResolvedValue([SUMMARY_MODEL]);
-    vi.mocked(list_summary_versions).mockResolvedValue([SUMMARY_VERSION]);
     vi.mocked(list_summary_presets).mockResolvedValue([
       {
         preset_id: "knowledge_notes",
@@ -280,15 +301,17 @@ describe("SummaryWorkspace", () => {
     vi.mocked(list_agent_definitions).mockResolvedValue([]);
     vi.mocked(list_agent_sessions).mockResolvedValue([]);
     vi.mocked(subscribe_summary_documents).mockReturnValue(() => undefined);
+    vi.mocked(load_latest_summary_draft).mockResolvedValue(null);
+    vi.mocked(save_summary_draft).mockResolvedValue(undefined);
+    vi.mocked(delete_other_summary_drafts).mockResolvedValue(undefined);
   });
 
   it("shows a retry state instead of treating a load failure as an empty project", async () => {
-    vi.mocked(list_summary_versions)
+    vi.mocked(list_summary_documents)
       .mockRejectedValueOnce(
         new ApiError("总结索引暂时无法恢复，请稍后重试", 503),
       )
-      .mockResolvedValueOnce([SUMMARY_VERSION]);
-    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+      .mockResolvedValueOnce([DOCUMENT]);
 
     render(
       <SummaryWorkspace
@@ -308,13 +331,13 @@ describe("SummaryWorkspace", () => {
     expect(
       await screen.findByRole("textbox", { name: "可视化 Markdown" }),
     ).toHaveValue("# 原内容\n");
-    expect(list_summary_versions).toHaveBeenCalledTimes(2);
+    expect(list_summary_documents).toHaveBeenCalledTimes(2);
   });
 
   it("generates the document only after explicit confirmation", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([]);
     vi.mocked(generate_summary_documents).mockResolvedValue({
-      version: SUMMARY_VERSION,
+      project: SUMMARY_PROJECT,
       documents: [DOCUMENT],
       context_capacity_unknown: false,
       illustration_job: null,
@@ -346,7 +369,7 @@ describe("SummaryWorkspace", () => {
   it("reports an unknown model capacity after a successful attempt", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([]);
     vi.mocked(generate_summary_documents).mockResolvedValue({
-      version: SUMMARY_VERSION,
+      project: SUMMARY_PROJECT,
       documents: [DOCUMENT],
       context_capacity_unknown: true,
       illustration_job: null,
@@ -367,7 +390,33 @@ describe("SummaryWorkspace", () => {
     ).toHaveTextContent("模型容量未知");
   });
 
-  it("auto-saves markdown with the expected revision", async () => {
+  it("requires confirmation before opening regeneration settings", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    fireEvent.pointerDown(
+      await screen.findByRole("button", { name: "笔记工具" }),
+      { button: 0, ctrlKey: false },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "重新生成" }));
+    expect(
+      screen.getByRole("alertdialog", { name: "重新生成当前笔记？" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "继续配置" }));
+    expect(
+      await screen.findByRole("dialog", { name: "重新生成当前笔记" }),
+    ).toHaveTextContent("会替换当前笔记");
+  });
+
+  it("auto-saves markdown with client sequencing metadata", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
     vi.mocked(update_summary_document).mockResolvedValue({
       ...DOCUMENT,
@@ -388,33 +437,83 @@ describe("SummaryWorkspace", () => {
     });
     fireEvent.change(editor, { target: { value: "# 新内容\n" } });
 
+    await waitFor(() =>
+      expect(save_summary_draft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          asset_id: ASSET.asset_id,
+          document_id: DOCUMENT.document_id,
+          markdown: "# 新内容\n",
+        }),
+      ),
+    );
     await waitFor(
       () =>
         expect(update_summary_document).toHaveBeenCalledWith(
           DOCUMENT.document_id,
-          1,
           { markdown: "# 新内容\n", title: "课程总结" },
+          expect.objectContaining({
+            operation_id: expect.stringMatching(/^summary-operation-/),
+            client_id: expect.stringMatching(/^summary-client-/),
+            client_sequence: expect.any(Number),
+          }),
         ),
       { timeout: 2_000 },
     );
-    expect(await screen.findByText("已保存")).toBeInTheDocument();
+    await waitFor(() => expect(update_summary_document).toHaveBeenCalledOnce());
   });
 
-  it("keeps the local draft visible and retries from the remote revision", async () => {
-    const remote_document = {
+  it("restores the newest valid crash draft and then syncs it", async () => {
+    const recovered_markdown = "# 崩溃前最后输入\n";
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+    vi.mocked(load_latest_summary_draft).mockResolvedValue({
+      draft_id: "summary-draft-01890f4c7a2b7cc298c4dc0c0c073999",
+      asset_id: ASSET.asset_id,
+      document_id: DOCUMENT.document_id,
+      client_id: "summary-client-01890f4c7a2b7cc298c4dc0c0c073998",
+      title: DOCUMENT.title,
+      markdown: recovered_markdown,
+      updated_at: Date.now(),
+      content_digest: summary_draft_content_digest(
+        DOCUMENT.title,
+        recovered_markdown,
+      ),
+      confirmed_sequence: 0,
+    });
+    vi.mocked(update_summary_document).mockResolvedValue({
       ...DOCUMENT,
-      markdown: "# 远端内容\n",
+      markdown: recovered_markdown,
       revision: 2,
-    };
-    vi.mocked(list_summary_documents)
-      .mockResolvedValueOnce([DOCUMENT])
-      .mockResolvedValueOnce([remote_document]);
+    });
+
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("textbox", { name: "可视化 Markdown" }),
+    ).toHaveValue(recovered_markdown);
+    expect(screen.getByText("已恢复未保存内容")).toBeInTheDocument();
+    await waitFor(() => expect(update_summary_document).toHaveBeenCalled(), {
+      timeout: 2_000,
+    });
+    expect(delete_other_summary_drafts).toHaveBeenCalledWith(
+      ASSET.asset_id,
+      "summary-draft-01890f4c7a2b7cc298c4dc0c0c073999",
+    );
+  });
+
+  it("keeps the local draft visible and retries with the same operation", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
     vi.mocked(update_summary_document)
-      .mockRejectedValueOnce(new ApiError("版本冲突", 409))
+      .mockRejectedValueOnce(new TypeError("network unavailable"))
       .mockResolvedValueOnce({
-        ...remote_document,
+        ...DOCUMENT,
         markdown: "# 本地草稿\n",
-        revision: 3,
+        revision: 2,
       });
 
     render(
@@ -429,26 +528,83 @@ describe("SummaryWorkspace", () => {
       await screen.findByRole("textbox", { name: "可视化 Markdown" }),
       { target: { value: "# 本地草稿\n" } },
     );
-    expect(
-      await screen.findByRole(
-        "heading",
-        { name: "选择要保留的文档版本" },
-        { timeout: 2_500 },
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("# 本地草稿")).toHaveLength(2);
-    expect(screen.getByText("# 远端内容")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "保留本地草稿并覆盖" }));
     await waitFor(
-      () =>
-        expect(update_summary_document).toHaveBeenLastCalledWith(
-          DOCUMENT.document_id,
-          2,
-          { markdown: "# 本地草稿\n", title: DOCUMENT.title },
-        ),
-      { timeout: 2_000 },
+      () => expect(update_summary_document).toHaveBeenCalledTimes(2),
+      {
+        timeout: 3_000,
+      },
     );
+    const first_metadata = vi.mocked(update_summary_document).mock
+      .calls[0]?.[2];
+    const second_metadata = vi.mocked(update_summary_document).mock
+      .calls[1]?.[2];
+    expect(second_metadata).toEqual(first_metadata);
+    expect(
+      screen.getByRole("textbox", { name: "可视化 Markdown" }),
+    ).toHaveValue("# 本地草稿\n");
+  });
+
+  it("keeps editing offline and syncs immediately when the network returns", async () => {
+    Object.defineProperty(navigator, "onLine", {
+      configurable: true,
+      value: false,
+    });
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+    vi.mocked(update_summary_document)
+      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockResolvedValueOnce({
+        ...DOCUMENT,
+        markdown: "# 离线草稿\n",
+        revision: 2,
+      });
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "可视化 Markdown" }),
+      { target: { value: "# 离线草稿\n" } },
+    );
+    expect(
+      await screen.findByText("已保存在本机，暂未同步"),
+    ).toBeInTheDocument();
+
+    Object.defineProperty(navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+    window.dispatchEvent(new Event("online"));
+    await waitFor(() =>
+      expect(update_summary_document).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("flushes the queue with Ctrl+S and confirms the save", async () => {
+    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
+    vi.mocked(update_summary_document).mockResolvedValue({
+      ...DOCUMENT,
+      markdown: "# 手动保存\n",
+      revision: 2,
+    });
+    render(
+      <SummaryWorkspace
+        selected_asset={ASSET}
+        segments={[]}
+        transcript={TRANSCRIPT}
+      />,
+    );
+
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "可视化 Markdown" }),
+      { target: { value: "# 手动保存\n" } },
+    );
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+
+    expect(await screen.findByText("系统已保存")).toBeInTheDocument();
   });
 
   it("adds a selected summary passage as visible AI context", async () => {
@@ -544,13 +700,16 @@ describe("SummaryWorkspace", () => {
     );
 
     await waitFor(() =>
-      expect(update_summary_document).toHaveBeenCalledWith(
+      expect(update_summary_document).toHaveBeenLastCalledWith(
         DOCUMENT.document_id,
-        1,
         {
           markdown: "# 尚未自动保存的修改\n",
           title: DOCUMENT.title,
         },
+        expect.objectContaining({
+          operation_id: expect.stringMatching(/^summary-operation-/),
+          client_id: expect.stringMatching(/^summary-client-/),
+        }),
       ),
     );
     await waitFor(() => expect(editor).toHaveValue(CHILD_DOCUMENT.markdown));
@@ -675,7 +834,6 @@ describe("SummaryWorkspace", () => {
         label: "总结文档 · 第 1 章 · 课程总结",
         document: {
           document_id: DOCUMENT.document_id,
-          version_id: DOCUMENT.version_id,
           index: 1,
           title: DOCUMENT.title,
           revision: DOCUMENT.revision,
@@ -689,7 +847,6 @@ describe("SummaryWorkspace", () => {
     vi.mocked(create_summary_export).mockResolvedValue({
       export_id: "export-01890f4c7a2b7cc298c4dc0c0c07398f",
       relative_path: "summary_output/summary-test.zip",
-      version_id: DOCUMENT.version_id,
       file_name: "summary-test.zip",
       size_bytes: 128,
       exported_at: "2026-01-01T00:00:00+08:00",
@@ -708,10 +865,7 @@ describe("SummaryWorkspace", () => {
     expect(
       await screen.findByText(/summary_output\/summary-test\.zip/),
     ).toHaveTextContent("summary_output/summary-test.zip");
-    expect(create_summary_export).toHaveBeenCalledWith(
-      ASSET.asset_id,
-      SUMMARY_VERSION.version_id,
-    );
+    expect(create_summary_export).toHaveBeenCalledWith(ASSET.asset_id);
     expect(
       screen.queryByRole("link", { name: "导出 ZIP" }),
     ).not.toBeInTheDocument();

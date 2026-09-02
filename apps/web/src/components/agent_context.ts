@@ -65,8 +65,6 @@ export function parse_context_attachment(
       label: value.label,
       reference_id:
         typeof value.reference_id === "string" ? value.reference_id : undefined,
-      version_id:
-        typeof value.version_id === "string" ? value.version_id : undefined,
       start_seconds:
         typeof value.start_seconds === "number"
           ? value.start_seconds

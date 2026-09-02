@@ -14,26 +14,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  ApiError,
   create_summary_export,
   create_summary_child,
   delete_summary_document,
   duplicate_summary_document,
   generate_summary_documents,
+  get_asset_summary_illustration_job,
   get_summary_illustration_job,
-  get_version_summary_illustration_job,
   list_summary_documents,
   list_summary_presets,
   move_summary_document,
-  select_summary_version,
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
 import { error_message } from "@/shared/errors";
 import { use_compact_summary_layout } from "@/features/summary/use_compact_summary_layout";
+import { create_summary_save_metadata } from "@/features/summary/summary_save_metadata";
+import { use_summary_autosave } from "@/features/summary/use_summary_autosave";
 import {
   load_summary_project,
-  type SummaryProject,
+  type SummaryProjectSnapshot,
 } from "@/features/summary/load_summary_project";
 import { use_ai_models } from "@/features/workbench/use_processing_resources";
 import type {
@@ -45,19 +45,11 @@ import type {
   SummaryDocument,
   SummaryIllustrationJob,
   SummaryPreset,
-  SummaryVersion,
   Transcript,
 } from "@/shared/types";
-import {
-  DocumentConflictDialog,
-  SummaryEmpty,
-  SummaryGeneration,
-  type DocumentConflict,
-  type SaveStatus,
-} from "./SummaryWorkspacePanels";
+import { SummaryEmpty, SummaryGeneration } from "./SummaryWorkspacePanels";
 import { SummaryEditorLayout } from "./SummaryEditorLayout";
 
-const AUTO_SAVE_DELAY_MS = 1_000;
 const ILLUSTRATION_POLL_DELAY_MS = 750;
 const TERMINAL_ILLUSTRATION_STAGES = new Set(["complete", "failed"]);
 
@@ -68,10 +60,8 @@ type SummaryWorkspaceProps = {
   on_error?: (message: string | null) => void;
 };
 
-const EMPTY_SUMMARY_PROJECT: SummaryProject = {
+const EMPTY_SUMMARY_PROJECT: SummaryProjectSnapshot = {
   documents: [],
-  versions: [],
-  current_version_id: null,
 };
 
 export function SummaryWorkspace({
@@ -105,12 +95,6 @@ export function SummaryWorkspace({
   );
   const [is_generating, set_is_generating] = useState(false);
   const [detail, set_detail] = useState<SummaryDetail>("standard");
-  const [versions, set_versions] = useState<SummaryVersion[]>(
-    initial_project.versions,
-  );
-  const [current_version_id, set_current_version_id] = useState<string | null>(
-    initial_project.current_version_id,
-  );
   const [generation_preset_id, set_generation_preset_id] = useState("");
   const [generation_user_input, set_generation_user_input] = useState("");
   const [output_language, set_output_language] = useState("zh-CN");
@@ -123,10 +107,6 @@ export function SummaryWorkspace({
   const [generation_model_id, set_generation_model_id] = useState<
     string | null
   >(null);
-  const [draft_markdown, set_draft_markdown] = useState("");
-  const [draft_title, set_draft_title] = useState("");
-  const [dirty, set_dirty] = useState(false);
-  const [save_status, set_save_status] = useState<SaveStatus>("saved");
   const [editor_mode, set_editor_mode] = useState<"visual" | "source">(
     "visual",
   );
@@ -140,8 +120,6 @@ export function SummaryWorkspace({
   const [delete_target, set_delete_target] = useState<SummaryDocument | null>(
     null,
   );
-  const [document_conflict, set_document_conflict] =
-    useState<DocumentConflict | null>(null);
   const [reordering, set_reordering] = useState(false);
   const [export_pending, set_export_pending] = useState(false);
   const [export_relative_path, set_export_relative_path] = useState<
@@ -151,16 +129,8 @@ export function SummaryWorkspace({
   const active_asset_id_ref = useRef<string | null>(
     selected_asset?.asset_id ?? null,
   );
-  const active_document_id_ref = useRef<string | null>(null);
-  const active_document_revision_ref = useRef<number | null>(null);
-  const active_document_version_id_ref = useRef<string | null>(null);
-  const active_document_title_ref = useRef("");
-  const draft_markdown_ref = useRef("");
-  const draft_title_ref = useRef("");
-  const dirty_ref = useRef(false);
-  const save_promise_ref = useRef<Promise<boolean> | null>(null);
   const project_loaded_ref = useRef(project_query.data !== undefined);
-  const project_state_ref = useRef<SummaryProject>(initial_project);
+  const project_state_ref = useRef<SummaryProjectSnapshot>(initial_project);
 
   const selected_document = useMemo(
     () =>
@@ -171,130 +141,35 @@ export function SummaryWorkspace({
   );
   const root_document =
     documents.find((document) => document.parent_document_id === null) ?? null;
-
-  const update_dirty = useCallback((next_dirty: boolean) => {
-    dirty_ref.current = next_dirty;
-    set_dirty(next_dirty);
+  const handle_document_saved = useCallback((updated: SummaryDocument) => {
+    set_documents((current) =>
+      current.map((document) =>
+        document.document_id === updated.document_id ? updated : document,
+      ),
+    );
   }, []);
-
-  const activate_document = useCallback(
-    (document: SummaryDocument) => {
-      active_document_id_ref.current = document.document_id;
-      active_document_revision_ref.current = document.revision;
-      active_document_version_id_ref.current = document.version_id;
-      active_document_title_ref.current = document.title;
-      draft_markdown_ref.current = document.markdown;
-      draft_title_ref.current = document.title;
-      set_draft_markdown(document.markdown);
-      set_draft_title(document.title);
-      update_dirty(false);
-      set_save_status("saved");
-      set_document_conflict(null);
-      set_selection(null);
-    },
-    [update_dirty],
-  );
-
-  const save_active_draft = useCallback(async (): Promise<boolean> => {
-    const pending_save = save_promise_ref.current;
-    if (pending_save) return pending_save;
-    if (!dirty_ref.current) return true;
-
-    const document_id = active_document_id_ref.current;
-    const expected_revision = active_document_revision_ref.current;
-    if (!document_id || expected_revision === null) return false;
-
-    const markdown = draft_markdown_ref.current;
-    const draft_title = draft_title_ref.current;
-    const title = draft_title.trim() || active_document_title_ref.current;
-    set_save_status("saving");
-
-    const save_promise = update_summary_document(
-      document_id,
-      expected_revision,
-      {
-        markdown,
-        title,
-      },
-    )
-      .then((updated) => {
-        set_documents((current) =>
-          current.map((document) =>
-            document.document_id === updated.document_id ? updated : document,
-          ),
-        );
-        if (active_document_id_ref.current !== document_id) return true;
-
-        active_document_revision_ref.current = updated.revision;
-        active_document_title_ref.current = updated.title;
-        const current_title = draft_title_ref.current.trim() || updated.title;
-        const unchanged =
-          draft_markdown_ref.current === markdown && current_title === title;
-        if (unchanged && !draft_title.trim()) {
-          draft_title_ref.current = updated.title;
-          set_draft_title(updated.title);
-        }
-        update_dirty(!unchanged);
-        set_save_status(unchanged ? "saved" : "pending");
-        return true;
-      })
-      .catch(async (error: unknown) => {
-        if (active_document_id_ref.current === document_id) {
-          if (error instanceof ApiError && error.status === 409) {
-            set_save_status("conflict");
-            const asset_id = active_asset_id_ref.current;
-            const version_id = active_document_version_id_ref.current;
-            if (asset_id && version_id) {
-              try {
-                const loaded = await list_summary_documents(
-                  asset_id,
-                  version_id,
-                );
-                set_documents(loaded);
-                const remote_document = loaded.find(
-                  (document) => document.document_id === document_id,
-                );
-                if (remote_document) {
-                  set_document_conflict({
-                    local_markdown: markdown,
-                    local_title: title,
-                    remote_document,
-                  });
-                } else {
-                  set_save_status("failed");
-                  on_error?.(
-                    "文档已在其他位置删除，本地草稿仍保留在当前窗口。",
-                  );
-                }
-              } catch (load_error) {
-                set_save_status("failed");
-                on_error?.(error_message(load_error));
-              }
-            } else {
-              set_save_status("failed");
-            }
-          } else {
-            set_save_status("failed");
-          }
-        }
+  const handle_recovery_target = useCallback(
+    (document_id: string) => {
+      if (!documents.some((document) => document.document_id === document_id)) {
         return false;
-      })
-      .finally(() => {
-        if (save_promise_ref.current === save_promise) {
-          save_promise_ref.current = null;
-        }
-      });
-    save_promise_ref.current = save_promise;
-    return save_promise;
-  }, [on_error, update_dirty]);
+      }
+      set_selected_document_id(document_id);
+      return true;
+    },
+    [documents],
+  );
+  const autosave = use_summary_autosave({
+    asset_id: selected_asset_id,
+    document: selected_document,
+    on_document_saved: handle_document_saved,
+    on_recovery_target: handle_recovery_target,
+    on_local_draft_error: on_error,
+  });
+  const has_unsaved_changes = autosave.has_unsaved_changes;
 
   const load_documents = useCallback(
-    async (
-      asset_id: string,
-      version_id?: string | null,
-      signal?: AbortSignal,
-    ) => {
-      const loaded = await list_summary_documents(asset_id, version_id, signal);
+    async (asset_id: string, signal?: AbortSignal) => {
+      const loaded = await list_summary_documents(asset_id, signal);
       set_documents(loaded);
       set_selected_document_id((current) =>
         loaded.some((document) => document.document_id === current)
@@ -344,12 +219,9 @@ export function SummaryWorkspace({
     set_export_relative_path(null);
     set_export_pending(false);
     set_generation_open(false);
-    set_document_conflict(null);
     if (!selected_asset_id) {
       set_documents([]);
       set_selected_document_id(null);
-      set_versions([]);
-      set_current_version_id(null);
     }
   }, [selected_asset_id]);
 
@@ -358,8 +230,6 @@ export function SummaryWorkspace({
     if (!project) return;
     project_loaded_ref.current = true;
     set_documents(project.documents);
-    set_versions(project.versions);
-    set_current_version_id(project.current_version_id);
     set_selected_document_id((current) =>
       project.documents.some((document) => document.document_id === current)
         ? current
@@ -370,19 +240,19 @@ export function SummaryWorkspace({
   }, [project_query.data]);
 
   useEffect(() => {
-    if (!current_version_id) {
+    if (!selected_asset_id || documents.length === 0) {
       set_illustration_job(null);
       return;
     }
     const controller = new AbortController();
-    void get_version_summary_illustration_job(
-      current_version_id,
+    void get_asset_summary_illustration_job(
+      selected_asset_id,
       controller.signal,
     )
       .then((job) => set_illustration_job(job))
       .catch(() => undefined);
     return () => controller.abort();
-  }, [current_version_id]);
+  }, [documents.length, selected_asset_id]);
 
   useEffect(() => {
     if (
@@ -401,11 +271,9 @@ export function SummaryWorkspace({
           if (
             TERMINAL_ILLUSTRATION_STAGES.has(job.stage) &&
             active_asset_id_ref.current === job.asset_id &&
-            !dirty_ref.current
+            !has_unsaved_changes()
           ) {
-            set_documents(
-              await list_summary_documents(job.asset_id, job.version_id),
-            );
+            set_documents(await list_summary_documents(job.asset_id));
           }
         })
         .catch(() => undefined);
@@ -414,20 +282,18 @@ export function SummaryWorkspace({
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [illustration_job]);
+  }, [has_unsaved_changes, illustration_job]);
 
   useEffect(() => {
     project_state_ref.current = {
       documents,
-      versions,
-      current_version_id,
     };
-  }, [current_version_id, documents, versions]);
+  }, [documents]);
 
   useEffect(() => {
     return () => {
       if (!selected_asset_id || !project_loaded_ref.current) return;
-      query_client.setQueryData<SummaryProject>(
+      query_client.setQueryData<SummaryProjectSnapshot>(
         RESOURCE_QUERY_KEYS.summary_project(selected_asset_id),
         project_state_ref.current,
       );
@@ -437,7 +303,7 @@ export function SummaryWorkspace({
   useEffect(() => {
     if (!selected_asset) return;
     return subscribe_summary_documents(selected_asset.asset_id, (loaded) => {
-      if (dirty_ref.current) return;
+      if (has_unsaved_changes()) return;
       set_documents(loaded);
       set_selected_document_id((current) =>
         loaded.some((document) => document.document_id === current)
@@ -446,39 +312,7 @@ export function SummaryWorkspace({
               ?.document_id ?? null),
       );
     });
-  }, [selected_asset]);
-
-  useEffect(() => {
-    if (!selected_document) return;
-    const document_changed =
-      active_document_id_ref.current !== selected_document.document_id;
-    const revision_changed =
-      active_document_revision_ref.current !== selected_document.revision;
-    if (document_changed || (revision_changed && !dirty)) {
-      activate_document(selected_document);
-    }
-  }, [activate_document, dirty, selected_document]);
-
-  useEffect(() => {
-    if (
-      !selected_document ||
-      !dirty ||
-      save_status === "saving" ||
-      save_status === "conflict"
-    )
-      return;
-    const timeout = window.setTimeout(() => {
-      void save_active_draft();
-    }, AUTO_SAVE_DELAY_MS);
-    return () => window.clearTimeout(timeout);
-  }, [
-    dirty,
-    draft_markdown,
-    draft_title,
-    save_active_draft,
-    save_status,
-    selected_document,
-  ]);
+  }, [has_unsaved_changes, selected_asset]);
 
   async function select_document(document_id: string) {
     if (selected_document_id === document_id) {
@@ -490,17 +324,16 @@ export function SummaryWorkspace({
     );
     if (!target_document) return;
 
-    while (dirty_ref.current || save_promise_ref.current) {
-      if (!(await save_active_draft())) return;
-    }
-    activate_document(target_document);
+    await autosave.flush();
     set_selected_document_id(document_id);
+    set_selection(null);
     set_tree_sheet_open(false);
   }
 
   async function generate_documents() {
     if (!selected_asset || !generation_model_id || !generation_preset_id)
       return;
+    if (!(await autosave.flush())) return;
     set_is_generating(true);
     set_generation_notice(null);
     on_error?.(null);
@@ -514,8 +347,6 @@ export function SummaryWorkspace({
       });
       const generated = result.documents;
       set_documents(generated);
-      set_versions((current) => [result.version, ...current]);
-      set_current_version_id(result.version.version_id);
       set_illustration_job(result.illustration_job);
       set_generation_open(false);
       set_generation_notice(
@@ -535,12 +366,12 @@ export function SummaryWorkspace({
   }
 
   async function export_summary() {
-    if (!selected_asset || !current_version_id || export_pending) return;
+    if (!selected_asset || export_pending) return;
     const asset_id = selected_asset.asset_id;
     set_export_pending(true);
     on_error?.(null);
     try {
-      const result = await create_summary_export(asset_id, current_version_id);
+      const result = await create_summary_export(asset_id);
       if (active_asset_id_ref.current === asset_id) {
         set_export_relative_path(result.relative_path);
       }
@@ -550,24 +381,6 @@ export function SummaryWorkspace({
       if (active_asset_id_ref.current === asset_id) {
         set_export_pending(false);
       }
-    }
-  }
-
-  async function change_version(version_id: string) {
-    if (!selected_asset || version_id === current_version_id) return;
-    while (dirty_ref.current || save_promise_ref.current) {
-      if (!(await save_active_draft())) return;
-    }
-    try {
-      await select_summary_version(selected_asset.asset_id, version_id);
-      const loaded = await load_documents(selected_asset.asset_id, version_id);
-      set_current_version_id(version_id);
-      const root = loaded.find(
-        (document) => document.parent_document_id === null,
-      );
-      set_selected_document_id(root?.document_id ?? null);
-    } catch (error) {
-      on_error?.(error_message(error));
     }
   }
 
@@ -593,7 +406,7 @@ export function SummaryWorkspace({
     if (!delete_target || !selected_asset) return;
     try {
       await delete_summary_document(delete_target.document_id);
-      await load_documents(selected_asset.asset_id, current_version_id);
+      await load_documents(selected_asset.asset_id);
       set_delete_target(null);
     } catch (error) {
       on_error?.(error_message(error));
@@ -626,8 +439,8 @@ export function SummaryWorkspace({
 
   async function duplicate_document(document: SummaryDocument) {
     if (
-      document.document_id === active_document_id_ref.current &&
-      !(await save_active_draft())
+      document.document_id === selected_document_id &&
+      !(await autosave.flush())
     )
       return;
     try {
@@ -643,15 +456,15 @@ export function SummaryWorkspace({
   async function rename_document(document: SummaryDocument, title: string) {
     const next_title = title.trim();
     if (!next_title || next_title === document.title) return;
-    if (document.document_id === active_document_id_ref.current) {
-      change_title(next_title);
+    if (document.document_id === selected_document_id) {
+      autosave.change_title(next_title);
       return;
     }
     try {
       const updated = await update_summary_document(
         document.document_id,
-        document.revision,
         { title: next_title },
+        create_summary_save_metadata(),
       );
       set_documents((current) =>
         current.map((item) =>
@@ -725,50 +538,8 @@ export function SummaryWorkspace({
       (document) => document.document_id === editor_document_id,
     );
     if (active) {
-      active_document_id_ref.current = null;
       set_selected_document_id(active.document_id);
     }
-  }
-
-  function change_title(title: string) {
-    set_draft_title(title);
-    draft_title_ref.current = title;
-    update_dirty(true);
-    set_save_status("pending");
-  }
-
-  function change_markdown(markdown: string) {
-    set_draft_markdown(markdown);
-    draft_markdown_ref.current = markdown;
-    update_dirty(true);
-    set_save_status("pending");
-  }
-
-  function retry_save() {
-    set_save_status("pending");
-    update_dirty(true);
-  }
-
-  function keep_local_conflict() {
-    if (!document_conflict) return;
-    const remote = document_conflict.remote_document;
-    active_document_revision_ref.current = remote.revision;
-    active_document_title_ref.current = remote.title;
-    set_document_conflict(null);
-    set_save_status("pending");
-    update_dirty(true);
-  }
-
-  function use_remote_conflict() {
-    if (!document_conflict) return;
-    const remote = document_conflict.remote_document;
-    set_documents((current) =>
-      current.map((document) =>
-        document.document_id === remote.document_id ? remote : document,
-      ),
-    );
-    activate_document(remote);
-    set_document_conflict(null);
   }
 
   return (
@@ -778,8 +549,8 @@ export function SummaryWorkspace({
         create_child={() => void add_child()}
         delete_target={delete_target}
         documents={documents}
-        draft_markdown={draft_markdown}
-        draft_title={draft_title}
+        draft_markdown={autosave.markdown}
+        draft_title={autosave.title}
         editor_mode={editor_mode}
         export_pending={export_pending}
         export_relative_path={export_relative_path}
@@ -793,23 +564,20 @@ export function SummaryWorkspace({
         on_artifact_change={refresh_approved_artifact}
         on_delete_confirm={() => void remove_child()}
         on_export={() => void export_summary()}
-        on_markdown_change={change_markdown}
+        on_markdown_change={autosave.change_markdown}
         on_duplicate_document={(document) => void duplicate_document(document)}
         on_open_new_document={open_new_document}
         on_rename_document={(document, title) =>
           void rename_document(document, title)
         }
-        on_retry={retry_save}
-        on_title_change={change_title}
+        on_retry={autosave.retry}
+        on_title_change={autosave.change_title}
         remove_delete_target={() => set_delete_target(null)}
         reordering={reordering}
-        save_status={save_status}
+        save_status={autosave.status}
         selected_asset_id={editor_asset_id}
         selected_document={selected_document}
-        versions={versions}
-        current_version_id={current_version_id}
-        on_version_change={(version_id) => void change_version(version_id)}
-        on_generate_version={() => set_generation_open(true)}
+        on_regenerate={() => set_generation_open(true)}
         selection={selection}
         select_document={(document_id) => void select_document(document_id)}
         set_delete_target={set_delete_target}
@@ -842,11 +610,6 @@ export function SummaryWorkspace({
         on_output_language_change={set_output_language}
         is_generating={is_generating}
         on_generate={() => void generate_documents()}
-      />
-      <DocumentConflictDialog
-        conflict={document_conflict}
-        on_keep_local={keep_local_conflict}
-        on_use_remote={use_remote_conflict}
       />
     </>
   );
@@ -963,9 +726,9 @@ function SummaryGenerationDialog({
     <Dialog open={open} onOpenChange={on_open_change}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>生成新总结版本</DialogTitle>
+          <DialogTitle>重新生成当前笔记</DialogTitle>
           <DialogDescription>
-            新版本不会覆盖当前版本，生成后会自动切换。
+            重新生成会替换当前笔记。请确认现有内容已保存，再继续生成。
           </DialogDescription>
         </DialogHeader>
         <SummaryGeneration asset={asset} {...generation_props} compact />

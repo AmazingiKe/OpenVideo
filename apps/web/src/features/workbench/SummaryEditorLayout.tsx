@@ -1,4 +1,10 @@
-import { CircleCheck, FilePlus2, PanelLeft, PanelRight } from "lucide-react";
+import {
+  CircleCheck,
+  Ellipsis,
+  PanelLeft,
+  PanelRight,
+  RefreshCw,
+} from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
@@ -9,7 +15,24 @@ import { AgentContextSource } from "@/components/AgentContextSource";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -22,18 +45,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type {
   AgentArtifact,
   SummaryDocument,
   SummaryIllustrationJob,
-  SummaryVersion,
 } from "@/shared/types";
 import {
   DeleteDocumentDialog,
@@ -78,10 +93,7 @@ type SummaryEditorLayoutProps = {
   save_status: SaveStatus;
   selected_asset_id: string;
   selected_document: SummaryDocument;
-  versions: SummaryVersion[];
-  current_version_id: string | null;
-  on_version_change: (version_id: string) => void;
-  on_generate_version: () => void;
+  on_regenerate: () => void;
   selection: MarkdownSelection | null;
   select_document: (document_id: string) => void;
   set_delete_target: (document: SummaryDocument) => void;
@@ -122,10 +134,7 @@ export function SummaryEditorLayout({
   save_status,
   selected_asset_id,
   selected_document,
-  versions,
-  current_version_id,
-  on_version_change,
-  on_generate_version,
+  on_regenerate,
   selection,
   select_document,
   set_delete_target,
@@ -154,6 +163,7 @@ export function SummaryEditorLayout({
   const [target_heading_id, set_target_heading_id] = useState<string | null>(
     null,
   );
+  const [regenerate_confirm_open, set_regenerate_confirm_open] = useState(false);
   useEffect(() => {
     set_agent_context_attachments([]);
     set_active_heading_id(null);
@@ -172,7 +182,6 @@ export function SummaryEditorLayout({
       ),
       task_input: {
         document_id: selected_document.document_id,
-        version_id: selected_document.version_id,
         expected_revision: selected_document.revision,
         selection,
       },
@@ -268,26 +277,25 @@ export function SummaryEditorLayout({
       aria-label="Markdown 总结工作台"
     >
       <GlobalAssistantRegistration binding={assistant_binding} />
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
-        <Select
-          value={current_version_id ?? ""}
-          onValueChange={on_version_change}
-        >
-          <SelectTrigger className="w-full sm:w-72" aria-label="总结版本">
-            <SelectValue placeholder="选择总结版本" />
-          </SelectTrigger>
-          <SelectContent>
-            {versions.map((version, index) => (
-              <SelectItem key={version.version_id} value={version.version_id}>
-                版本 {versions.length - index} · {version.preset_id}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button type="button" size="sm" onClick={on_generate_version}>
-          <FilePlus2 data-icon="inline-start" aria-hidden="true" />
-          生成新版本
-        </Button>
+      <div className="flex shrink-0 justify-end border-b px-3 py-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="outline" size="sm">
+              <Ellipsis data-icon="inline-start" aria-hidden="true" />
+              笔记工具
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                onSelect={() => set_regenerate_confirm_open(true)}
+              >
+                <RefreshCw aria-hidden="true" />
+                重新生成
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {generation_notice ? (
         <div className="shrink-0 px-2 pt-2">
@@ -348,6 +356,25 @@ export function SummaryEditorLayout({
         }}
         on_confirm={on_delete_confirm}
       />
+      <AlertDialog
+        open={regenerate_confirm_open}
+        onOpenChange={set_regenerate_confirm_open}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>重新生成当前笔记？</AlertDialogTitle>
+            <AlertDialogDescription>
+              新内容会替换当前笔记。请确认现有编辑已经保存，再继续配置生成选项。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={on_regenerate}>
+              继续配置
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }
@@ -364,7 +391,6 @@ function summary_context_attachment(
     asset_id,
     label: `${document.title}选区`,
     reference_id: document.document_id,
-    version_id: document.version_id,
     snapshot_text: selection.text,
     selection_start: selection.start,
     selection_end: selection.end,

@@ -7,7 +7,7 @@ import { SummaryIllustrationProgress } from "./SummaryIllustrationProgress";
 const JOB: SummaryIllustrationJob = {
   job_id: "summary-illustration-job-0198dbf912347abc8123456789abcdef",
   asset_id: "0198dbf9-1234-7abc-8123-456789abcdef",
-  version_id: "summary-version-0198dbf912347abc8123456789abcdef",
+  project_revision: 1,
   planning_model_id: "model-0198dbf912347abc8123456789abcdef",
   vision_model_id: "model-0198dbf912347abc8123456789abcdee",
   stage: "validating",

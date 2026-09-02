@@ -78,13 +78,14 @@ const MarkdownSourceEditor = lazy(() =>
   })),
 );
 
-export type SaveStatus = "saved" | "pending" | "saving" | "failed" | "conflict";
-
-export type DocumentConflict = {
-  local_markdown: string;
-  local_title: string;
-  remote_document: SummaryDocument;
-};
+export type SaveStatus =
+  | "saved"
+  | "pending"
+  | "saving"
+  | "local_only"
+  | "failed"
+  | "recovered"
+  | "confirmed";
 
 export function SummaryGeneration({
   asset,
@@ -389,23 +390,26 @@ function SaveState({
 }) {
   const labels: Record<SaveStatus, string> = {
     saved: "已保存",
-    pending: "等待保存",
+    pending: "待同步",
     saving: "保存中",
+    local_only: "已保存在本机，暂未同步",
     failed: "保存失败",
-    conflict: "版本冲突",
+    recovered: "已恢复未保存内容",
+    confirmed: "系统已保存",
   };
   if (status === "failed") {
     return (
-      <Button type="button" variant="ghost" size="sm" onClick={on_retry}>
-        重试保存
-      </Button>
+      <div className="flex items-center gap-1" role="status">
+        <span className="text-sm text-destructive">保存失败，正在重试</span>
+        <Button type="button" variant="ghost" size="sm" onClick={on_retry}>
+          立即重试
+        </Button>
+      </div>
     );
   }
+  if (status === "saved" || status === "pending") return null;
   return (
-    <Badge
-      variant={status === "conflict" ? "destructive" : "secondary"}
-      role="status"
-    >
+    <Badge variant="secondary" role="status">
       {status === "saving" ? (
         <Spinner data-icon="inline-start" />
       ) : (
@@ -549,76 +553,6 @@ export function DeleteDocumentDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-export function DocumentConflictDialog({
-  conflict,
-  on_keep_local,
-  on_use_remote,
-}: {
-  conflict: DocumentConflict | null;
-  on_keep_local: () => void;
-  on_use_remote: () => void;
-}) {
-  return (
-    <Dialog open={conflict !== null}>
-      <DialogContent
-        className="max-h-[min(88vh,48rem)] sm:max-w-5xl"
-        showCloseButton={false}
-        onEscapeKeyDown={(event) => event.preventDefault()}
-        onPointerDownOutside={(event) => event.preventDefault()}
-      >
-        <DialogHeader>
-          <DialogTitle>选择要保留的文档版本</DialogTitle>
-          <DialogDescription>
-            保存期间检测到其他修改。本地草稿仍在当前窗口中，请对比后选择。
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid min-h-0 gap-3 md:grid-cols-2">
-          <ConflictVersion
-            label="本地草稿"
-            title={conflict?.local_title ?? ""}
-            markdown={conflict?.local_markdown ?? ""}
-          />
-          <ConflictVersion
-            label="已保存版本"
-            title={conflict?.remote_document.title ?? ""}
-            markdown={conflict?.remote_document.markdown ?? ""}
-          />
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={on_use_remote}>
-            使用已保存版本
-          </Button>
-          <Button type="button" onClick={on_keep_local}>
-            保留本地草稿并覆盖
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ConflictVersion({
-  label,
-  markdown,
-  title,
-}: {
-  label: string;
-  markdown: string;
-  title: string;
-}) {
-  return (
-    <section className="flex min-h-48 flex-col overflow-hidden rounded-lg border bg-muted/30">
-      <header className="border-b px-3 py-2">
-        <p className="text-xs font-medium text-muted-foreground">{label}</p>
-        <p className="truncate text-sm font-semibold">{title}</p>
-      </header>
-      <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap">
-        {markdown || "（空文档）"}
-      </pre>
-    </section>
   );
 }
 

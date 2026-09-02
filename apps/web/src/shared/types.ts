@@ -573,9 +573,10 @@ export type SummaryPreset = {
   minimum_context_tokens: number;
   version: number;
 };
-export type SummaryVersion = {
-  version_id: string;
+export type SummaryProject = {
   asset_id: string;
+  revision: number;
+  root_document_id: string;
   preset_id: string;
   preset_version: number;
   user_input: string | null;
@@ -587,13 +588,12 @@ export type SummaryVersion = {
     marker_digest: string;
     event_analysis_digest: string;
   };
-  relative_path: string;
   created_at: string;
+  updated_at: string;
 };
 export type SummaryDocument = {
   document_id: string;
   asset_id: string;
-  version_id: string;
   parent_document_id: string | null;
   title: string;
   markdown: string;
@@ -604,16 +604,20 @@ export type SummaryDocument = {
   created_at: string;
   updated_at: string;
 };
+export type SummarySaveMetadata = {
+  operation_id: string;
+  client_id: string;
+  client_sequence: number;
+};
 export type SummaryExportResult = {
   export_id: string;
   relative_path: string;
-  version_id: string;
   file_name: string;
   size_bytes: number;
   exported_at: string;
 };
 export type SummaryGenerationResult = {
-  version: SummaryVersion;
+  project: SummaryProject;
   documents: SummaryDocument[];
   context_capacity_unknown: boolean;
   illustration_job: SummaryIllustrationJob | null;
@@ -646,7 +650,7 @@ export type SummaryIllustrationSlot = {
 export type SummaryIllustrationJob = {
   job_id: string;
   asset_id: string;
-  version_id: string;
+  project_revision: number;
   planning_model_id: string;
   vision_model_id: string | null;
   stage: SummaryIllustrationStage;
@@ -701,7 +705,6 @@ export type AgentFocusContext = {
   };
   document?: {
     document_id: string;
-    version_id: string;
     parent_document_id: string | null;
     index: number;
     title: string;
@@ -778,7 +781,6 @@ export type AgentContextAttachment = {
   asset_id: string;
   label: string;
   reference_id?: string;
-  version_id?: string;
   start_seconds?: number;
   end_seconds?: number;
   snapshot_text?: string;

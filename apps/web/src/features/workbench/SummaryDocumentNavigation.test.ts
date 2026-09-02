@@ -20,7 +20,6 @@ function document(
   return {
     document_id,
     asset_id: "asset-1",
-    version_id: "version-1",
     parent_document_id,
     title: document_id,
     markdown: "",

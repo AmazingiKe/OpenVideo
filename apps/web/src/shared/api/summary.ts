@@ -5,7 +5,7 @@ import type {
   SummaryGenerationResult,
   SummaryIllustrationJob,
   SummaryPreset,
-  SummaryVersion,
+  SummarySaveMetadata,
 } from "../types";
 import { api_base_url, ApiError, request_json } from "./client";
 
@@ -13,14 +13,10 @@ const SUMMARY_DOCUMENTS_EVENT = "documents";
 
 export function list_summary_documents(
   asset_id: string,
-  version_id?: string | null,
   signal?: AbortSignal,
 ): Promise<SummaryDocument[]> {
-  const query = version_id
-    ? `?version_id=${encodeURIComponent(version_id)}`
-    : "";
   return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents${query}`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents`,
     { signal },
   );
 }
@@ -29,32 +25,6 @@ export function list_summary_presets(
   signal?: AbortSignal,
 ): Promise<SummaryPreset[]> {
   return request_json("/api/summary-presets", { signal });
-}
-
-export function list_summary_versions(
-  asset_id: string,
-  signal?: AbortSignal,
-): Promise<SummaryVersion[]> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-versions`,
-    { signal },
-  );
-}
-
-export function select_summary_version(
-  asset_id: string,
-  version_id: string,
-  signal?: AbortSignal,
-): Promise<SummaryVersion> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-current-version`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ version_id }),
-      signal,
-    },
-  );
 }
 
 export function subscribe_summary_documents(
@@ -107,12 +77,12 @@ export function get_summary_illustration_job(
   );
 }
 
-export function get_version_summary_illustration_job(
-  version_id: string,
+export function get_asset_summary_illustration_job(
+  asset_id: string,
   signal?: AbortSignal,
 ): Promise<SummaryIllustrationJob | null> {
   return request_json(
-    `/api/summary-versions/${encodeURIComponent(version_id)}/illustration-job`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-illustration-job`,
     { signal },
   );
 }
@@ -162,8 +132,8 @@ export function move_summary_document(
 
 export function update_summary_document(
   document_id: string,
-  expected_revision: number,
   patch: { title?: string; markdown?: string; position?: number },
+  metadata: SummarySaveMetadata,
   signal?: AbortSignal,
 ): Promise<SummaryDocument> {
   return request_json(
@@ -171,7 +141,7 @@ export function update_summary_document(
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ expected_revision, ...patch }),
+      body: JSON.stringify({ ...metadata, ...patch }),
       signal,
     },
   );
@@ -191,11 +161,10 @@ export async function delete_summary_document(
 
 export function create_summary_export(
   asset_id: string,
-  version_id: string,
   signal?: AbortSignal,
 ): Promise<SummaryExportResult> {
   return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-exports?version_id=${encodeURIComponent(version_id)}`,
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-exports`,
     { method: "POST", signal },
   );
 }

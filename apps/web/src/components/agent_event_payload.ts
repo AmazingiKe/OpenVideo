@@ -166,7 +166,6 @@ function parse_context_attachment(
     asset_id: value.asset_id,
     label: value.label,
     reference_id: optional_string(value.reference_id),
-    version_id: optional_string(value.version_id),
     start_seconds: optional_number(value.start_seconds),
     end_seconds: optional_number(value.end_seconds),
     snapshot_text: optional_string(value.snapshot_text),

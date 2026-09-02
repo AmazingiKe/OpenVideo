@@ -16,7 +16,6 @@ function document(
   return {
     document_id,
     asset_id: "asset-0198dbf112347abc8123456789abcdef",
-    version_id: "summary-version-0198dbfa12347abc8123456789abcdef",
     parent_document_id,
     title,
     markdown: "",
