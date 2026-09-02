@@ -16,10 +16,10 @@ describe("use_seek_preview", () => {
       use_seek_preview({ commit_timeout_milliseconds: 1_500 }),
     );
 
-    act(() => expect(result.current.preview_to(-2)).toBe(0));
+    act(() => expect(result.current.begin(-2)).toBe(0));
     expect(result.current.is_active()).toBe(true);
 
-    act(() => expect(result.current.preview_to(8)).toBe(8));
+    act(() => expect(result.current.begin(8)).toBe(8));
     expect(result.current.is_active()).toBe(true);
   });
 
@@ -29,12 +29,12 @@ describe("use_seek_preview", () => {
     );
 
     act(() => {
-      result.current.preview_to(8);
-      result.current.begin_seek_commit();
+      result.current.begin(8);
+      result.current.commit();
     });
     expect(result.current.is_active()).toBe(true);
 
-    act(() => result.current.confirm_seek());
+    act(() => result.current.confirm());
     expect(result.current.is_active()).toBe(false);
   });
 
@@ -44,8 +44,8 @@ describe("use_seek_preview", () => {
     );
 
     act(() => {
-      result.current.preview_to(8);
-      result.current.begin_seek_commit();
+      result.current.begin(8);
+      result.current.commit();
       vi.advanceTimersByTime(1_500);
     });
 

@@ -240,7 +240,10 @@ function render_timeline(options?: {
   let change_current_time: (current_time: number) => void = () => undefined;
   let refresh_parent: () => void = () => undefined;
   const callbacks = {
-    scrub_to: vi.fn(),
+    scrub_start: vi.fn(),
+    scrub_update: vi.fn(),
+    scrub_commit: vi.fn(),
+    scrub_cancel: vi.fn(),
     seek_to: vi.fn(),
     toggle_playback: vi.fn(),
     change_playback_rate: vi.fn(),
@@ -324,7 +327,10 @@ function render_timeline(options?: {
         selected_transcript_indices={selected_transcript_indices}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={null}
-        on_scrub={callbacks.scrub_to}
+        on_scrub_start={callbacks.scrub_start}
+        on_scrub_update={callbacks.scrub_update}
+        on_scrub_commit={callbacks.scrub_commit}
+        on_scrub_cancel={callbacks.scrub_cancel}
         on_seek={callbacks.seek_to}
         on_toggle_playback={callbacks.toggle_playback}
         on_playback_rate_change={callbacks.change_playback_rate}
@@ -973,7 +979,8 @@ describe("MediaTimeline", () => {
   });
 
   it("scrubs across the full ruler and commits the aligned time on release", () => {
-    const { result, scrub_to, seek_to } = render_timeline();
+    const { result, scrub_start, scrub_update, scrub_commit, seek_to } =
+      render_timeline();
     const ruler = screen.getByRole("slider", { name: "时间线播放头" });
     const playhead = result.container.querySelector<HTMLElement>(
       ".media_timeline_playhead",
@@ -1002,17 +1009,56 @@ describe("MediaTimeline", () => {
     });
     fireEvent.pointerMove(ruler, { clientX: 496, pointerId: 7 });
 
-    expect(scrub_to).toHaveBeenLastCalledWith(5.8);
+    expect(scrub_start).toHaveBeenCalledWith(4.8);
+    expect(scrub_update).toHaveBeenLastCalledWith(5.8);
     expect(seek_to).not.toHaveBeenCalled();
 
     fireEvent.pointerUp(ruler, { clientX: 576, pointerId: 7 });
-    expect(seek_to).toHaveBeenCalledWith(6.8);
+    expect(scrub_commit).toHaveBeenCalledWith(6.8);
     expect(playhead.style.transform).toBe("translate3d(560px, 0, 0)");
     expect(get_ruler_bounds).toHaveBeenCalledOnce();
     expect(ruler).toHaveAttribute("aria-valuenow", "6.8");
     expect(screen.getByLabelText("当前播放时间和总时长")).toHaveTextContent(
       "00:06 / 02:00",
     );
+  });
+
+  it("cancels lost pointer capture without committing a video seek", () => {
+    const { scrub_start, scrub_cancel, scrub_commit, seek_to } =
+      render_timeline();
+    const ruler = screen.getByRole("slider", { name: "时间线播放头" });
+    vi.spyOn(ruler, "getBoundingClientRect").mockReturnValue({
+      x: 16,
+      y: 0,
+      left: 16,
+      top: 0,
+      right: 816,
+      bottom: 32,
+      width: 800,
+      height: 32,
+      toJSON: () => undefined,
+    });
+    ruler.setPointerCapture = vi.fn();
+
+    fireEvent.pointerDown(ruler, {
+      button: 0,
+      clientX: 416,
+      pointerId: 7,
+    });
+    fireEvent.lostPointerCapture(ruler, { pointerId: 7 });
+
+    expect(scrub_start).toHaveBeenCalledWith(4.8);
+    expect(scrub_cancel).toHaveBeenCalledOnce();
+    expect(scrub_commit).not.toHaveBeenCalled();
+    expect(seek_to).not.toHaveBeenCalled();
+    expect(ruler).toHaveAttribute("aria-valuenow", "30.023");
+
+    fireEvent.pointerDown(ruler, {
+      button: 0,
+      clientX: 496,
+      pointerId: 8,
+    });
+    expect(scrub_start).toHaveBeenCalledTimes(2);
   });
 
   it("adds markers from the toolbar, shortcut, and marker row", async () => {

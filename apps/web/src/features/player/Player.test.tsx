@@ -129,7 +129,7 @@ describe("Player", () => {
     expect(media.remote.changePlaybackRate).toHaveBeenCalledWith(1.5);
   });
 
-  it("keeps imperative timeline previews local until seek commit", () => {
+  it("keeps the presented media clock unchanged until a scrub commits", () => {
     const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();
     const { rerender } = render(
@@ -141,9 +141,10 @@ describe("Player", () => {
     );
     on_time_change.mockClear();
 
-    act(() => player_ref.current?.preview_to(16));
+    act(() => player_ref.current?.begin_scrub(16));
+    act(() => player_ref.current?.update_scrub(16));
 
-    expect(player_ref.current?.current_time()).toBe(16);
+    expect(player_ref.current?.current_time()).toBe(12);
     expect(media.player.currentTime).toBe(12);
     expect(media.remote.seek).not.toHaveBeenCalled();
     expect(on_time_change).not.toHaveBeenCalled();
@@ -156,7 +157,7 @@ describe("Player", () => {
         on_time_change={on_time_change}
       />,
     );
-    expect(player_ref.current?.current_time()).toBe(16);
+    expect(player_ref.current?.current_time()).toBe(12);
     expect(on_time_change).not.toHaveBeenCalled();
   });
 
@@ -319,7 +320,7 @@ describe("Player", () => {
 
     expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
     expect(media.player.currentTime).toBe(12);
-    expect(player_ref.current?.current_time()).toBe(16);
+    expect(player_ref.current?.current_time()).toBe(12);
     expect(media.remote.seek).not.toHaveBeenCalled();
     expect(on_time_change).not.toHaveBeenCalled();
 
@@ -353,6 +354,20 @@ describe("Player", () => {
     act(() => media.events.seek_request?.(18));
     media.player.currentTime = 18;
     act(() => media.events.seeked?.());
+    expect(media.remote.play).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a lost scrub gesture without seeking the video", () => {
+    const player_ref = createRef<PlayerHandle>();
+    media.player.paused = false;
+    media.store.paused = false;
+    render(<Player ref={player_ref} src="/video.mp4" />);
+
+    act(() => player_ref.current?.begin_scrub(18));
+    act(() => player_ref.current?.cancel_scrub());
+
+    expect(media.remote.seek).not.toHaveBeenCalled();
+    expect(player_ref.current?.current_time()).toBe(12);
     expect(media.remote.play).toHaveBeenCalledOnce();
   });
 });

@@ -7,6 +7,8 @@ import { use_scrub_frame_preview } from "./use_scrub_frame_preview";
 const original_worker = globalThis.Worker;
 const original_offscreen_canvas = globalThis.OffscreenCanvas;
 const original_video_decoder = globalThis.VideoDecoder;
+const original_request_animation_frame = window.requestAnimationFrame;
+const original_cancel_animation_frame = window.cancelAnimationFrame;
 
 class MockWorker {
   static latest: MockWorker;
@@ -34,6 +36,11 @@ beforeEach(() => {
     configurable: true,
     value: class {},
   });
+  window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  }) as typeof window.requestAnimationFrame;
+  window.cancelAnimationFrame = vi.fn();
 });
 
 afterEach(() => {
@@ -49,16 +56,20 @@ afterEach(() => {
     configurable: true,
     value: original_video_decoder,
   });
+  window.requestAnimationFrame = original_request_animation_frame;
+  window.cancelAnimationFrame = original_cancel_animation_frame;
   vi.restoreAllMocks();
 });
 
 describe("use_scrub_frame_preview", () => {
-  it("keeps only the newest response and releases stale bitmaps", async () => {
+  it("renders completed frames from the active session in decode order", async () => {
     const first_bitmap = bitmap();
     const second_bitmap = bitmap();
     const on_frame = vi.fn();
+    const on_metrics = vi.fn();
     const { result, rerender, unmount } = renderHook(
-      ({ source_url }) => use_scrub_frame_preview(source_url, null),
+      ({ source_url }) =>
+        use_scrub_frame_preview(source_url, null, on_metrics),
       { initialProps: { source_url: "/video.mp4" } },
     );
 
@@ -76,18 +87,15 @@ describe("use_scrub_frame_preview", () => {
       expect.objectContaining({ time_seconds: 9 }),
     );
 
-    act(() =>
-      worker.onmessage?.(
-        frame_response(first_request.request_id, first_bitmap, 4),
-      ),
-    );
+    act(() => worker.onmessage?.(frame_response(first_request, first_bitmap, 4)));
     expect(first_bitmap.close).toHaveBeenCalledOnce();
     expect(on_frame).not.toHaveBeenCalled();
+    expect(on_metrics).toHaveBeenCalledWith(
+      expect.objectContaining({ requested_time_seconds: 4 }),
+    );
 
     act(() =>
-      worker.onmessage?.(
-        frame_response(second_request.request_id, second_bitmap, 8.96),
-      ),
+      worker.onmessage?.(frame_response(second_request, second_bitmap, 8.96)),
     );
     await waitFor(() => expect(result.current.status).toBe("ready"));
     expect(result.current.has_preview_frame).toBe(true);
@@ -119,14 +127,16 @@ function bitmap() {
 }
 
 function frame_response(
-  request_id: number,
+  request: { session_id: number; request_id: number; time_seconds: number },
   frame_bitmap: ImageBitmap,
   frame_time_seconds: number,
 ): MessageEvent<ScrubPreviewWorkerResponse> {
   return new MessageEvent("message", {
     data: {
       type: "frame",
-      request_id,
+      session_id: request.session_id,
+      request_id: request.request_id,
+      requested_time_seconds: request.time_seconds,
       frame_time_seconds,
       frame_duration_seconds: 0.04,
       decode_milliseconds: 12,
