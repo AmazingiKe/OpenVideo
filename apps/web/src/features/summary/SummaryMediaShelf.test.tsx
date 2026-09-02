@@ -10,7 +10,14 @@ const player_render = vi.hoisted(() => vi.fn());
 const player_pause = vi.hoisted(() => vi.fn());
 const player_toggle = vi.hoisted(() => vi.fn());
 
-vi.mock("@/shared/api", () => ({ media_url: (path: string) => path }));
+vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ setQueryData: vi.fn() }),
+}));
+
+vi.mock("@/shared/api", () => ({
+  ensure_thumbnail_storyboard: vi.fn(),
+  media_url: (path: string) => path,
+}));
 
 vi.mock("@/features/player/Player", () => ({
   Player: forwardRef<PlayerHandle, Record<string, unknown>>(function Player(

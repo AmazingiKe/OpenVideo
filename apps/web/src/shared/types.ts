@@ -520,7 +520,8 @@ export type MediaMarkerUpdate = Partial<
   Pick<MediaMarker, "start_seconds" | "end_seconds" | "importance">
 >;
 
-type ThumbnailStoryboard = {
+export type ThumbnailStoryboard = {
+  version: number;
   url: string;
   tile_width: number;
   tile_height: number;

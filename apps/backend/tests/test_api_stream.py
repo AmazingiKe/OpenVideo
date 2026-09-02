@@ -9,6 +9,7 @@ from openvideo.core.media_models import (
     SourcePlatform,
     SubtitleDisplaySettings,
 )
+from openvideo.core.thumbnails import ThumbnailStoryboard
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.settings import Settings
 from openvideo.ui import media_routes
@@ -32,6 +33,9 @@ def create_client(tmp_path: Path) -> TestClient:
             title="测试视频",
             status=MediaAssetStatus.READY,
             playback_path="playback.mp4",
+            duration_seconds=20,
+            width=1920,
+            height=1080,
         )
     )
     library.close()
@@ -103,6 +107,110 @@ def test_saves_subtitle_settings_in_the_asset_configuration(tmp_path: Path):
     configuration_path = tmp_path / "assets" / ASSET_ID / "video-config.json"
     assert configuration_path.is_file()
     assert '"subtitle_display"' in configuration_path.read_text(encoding="utf-8")
+
+
+def test_generates_a_storyboard_only_when_a_compatibility_browser_requests_it(
+    monkeypatch,
+    tmp_path: Path,
+):
+    generation_calls = []
+
+    def generate_storyboard(
+        _video_path,
+        media_directory,
+        duration_seconds,
+        source_width,
+        source_height,
+        _configured_ffmpeg_path,
+        _project_bin_dir,
+    ):
+        generation_calls.append((duration_seconds, source_width, source_height))
+        (media_directory / "scrub-storyboard-v2.jpg").write_bytes(b"storyboard")
+        return ThumbnailStoryboard(
+            sprite_path="scrub-storyboard-v2.jpg",
+            tile_width=640,
+            tile_height=360,
+            interval_seconds=5,
+            columns=10,
+            total_tiles=5,
+        )
+
+    monkeypatch.setattr(media_routes, "generate_thumbnail_sprite", generate_storyboard)
+
+    with create_client(tmp_path) as client:
+        first_response = client.post(
+            f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard"
+        )
+        second_response = client.post(
+            f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard"
+        )
+
+    assert first_response.status_code == 200
+    assert first_response.json()["url"] == (
+        f"/api/media/assets/{ASSET_ID}/thumbnail-sprite"
+    )
+    assert first_response.json()["version"] == 2
+    assert first_response.json()["tile_width"] == 640
+    assert second_response.status_code == 200
+    assert generation_calls == [(20, 1920, 1080)]
+
+
+def test_replaces_a_legacy_storyboard_when_a_compatibility_browser_requests_it(
+    monkeypatch,
+    tmp_path: Path,
+):
+    generation_calls = []
+
+    def generate_storyboard(
+        _video_path,
+        media_directory,
+        _duration_seconds,
+        _source_width,
+        _source_height,
+        _configured_ffmpeg_path,
+        _project_bin_dir,
+    ):
+        generation_calls.append(media_directory)
+        (media_directory / "scrub-storyboard-v2.jpg").write_bytes(b"current")
+        return ThumbnailStoryboard(
+            sprite_path="scrub-storyboard-v2.jpg",
+            tile_width=640,
+            tile_height=360,
+            interval_seconds=5,
+            columns=10,
+            total_tiles=5,
+        )
+
+    client = create_client(tmp_path)
+    client.close()
+    library = MediaLibrary.open(tmp_path)
+    asset = library.get(ASSET_ID)
+    assert asset is not None
+    legacy_directory = library.media_directory(ASSET_ID)
+    (legacy_directory / "thumbnails.jpg").write_bytes(b"legacy")
+    library.save(
+        asset.model_copy(
+            update={
+                "thumbnail_sprite_path": "media/thumbnails.jpg",
+                "thumbnail_tile_width": 640,
+                "thumbnail_tile_height": 360,
+                "thumbnail_interval_seconds": 5,
+                "thumbnail_columns": 10,
+                "thumbnail_total_tiles": 5,
+            }
+        )
+    )
+    library.close()
+    monkeypatch.setattr(media_routes, "generate_thumbnail_sprite", generate_storyboard)
+
+    with TestClient(create_app(Settings(library_path=tmp_path))) as client:
+        response = client.post(
+            f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["version"] == 2
+    assert len(generation_calls) == 1
 
 
 def test_exports_video_with_saved_subtitle_settings(monkeypatch, tmp_path: Path):

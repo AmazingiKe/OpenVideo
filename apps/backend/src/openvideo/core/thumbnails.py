@@ -1,11 +1,13 @@
 import math
 from dataclasses import dataclass
 
-SPRITE_TILE_WIDTH = 640
-SPRITE_TILE_HEIGHT = 360
+MAXIMUM_STORYBOARD_TILE_WIDTH = 640
+MAXIMUM_STORYBOARD_TILE_HEIGHT = 360
 SPRITE_COLUMNS = 10
-SPRITE_INTERVAL_SECONDS = 5
-SPRITE_FILE_NAME = "thumbnails.jpg"
+STORYBOARD_INTERVAL_SECONDS = 5
+MAXIMUM_STORYBOARD_TILES = 120
+STORYBOARD_VERSION = 2
+SPRITE_FILE_NAME = "scrub-storyboard-v2.jpg"
 
 
 @dataclass(frozen=True)
@@ -25,18 +27,49 @@ class ThumbnailTile:
     y: int
 
 
-def build_thumbnail_storyboard(duration_seconds: float) -> ThumbnailStoryboard | None:
-    """按固定间隔规划预览图拼板，供播放器在拖动时显示对应帧。"""
+def build_thumbnail_storyboard(
+    duration_seconds: float | None,
+    source_width: int | None = None,
+    source_height: int | None = None,
+) -> ThumbnailStoryboard | None:
+    """为不支持 WebCodecs 的浏览器规划有上限的响应式预览拼板。"""
     if not duration_seconds or duration_seconds <= 0:
         return None
-    total_tiles = int(duration_seconds // SPRITE_INTERVAL_SECONDS) + 1
+    uncapped_total_tiles = int(duration_seconds // STORYBOARD_INTERVAL_SECONDS) + 1
+    total_tiles = min(uncapped_total_tiles, MAXIMUM_STORYBOARD_TILES)
+    interval_seconds = (
+        STORYBOARD_INTERVAL_SECONDS
+        if total_tiles == uncapped_total_tiles
+        else duration_seconds / (total_tiles - 1)
+    )
+    tile_width, tile_height = storyboard_tile_dimensions(
+        source_width,
+        source_height,
+    )
     return ThumbnailStoryboard(
         sprite_path=SPRITE_FILE_NAME,
-        tile_width=SPRITE_TILE_WIDTH,
-        tile_height=SPRITE_TILE_HEIGHT,
-        interval_seconds=SPRITE_INTERVAL_SECONDS,
+        tile_width=tile_width,
+        tile_height=tile_height,
+        interval_seconds=interval_seconds,
         columns=SPRITE_COLUMNS,
         total_tiles=total_tiles,
+    )
+
+
+def storyboard_tile_dimensions(
+    source_width: int | None,
+    source_height: int | None,
+) -> tuple[int, int]:
+    """拼板按原始画面比例缩放，避免把竖屏或 4:3 视频强制拉成 16:9。"""
+    if not source_width or not source_height:
+        return MAXIMUM_STORYBOARD_TILE_WIDTH, MAXIMUM_STORYBOARD_TILE_HEIGHT
+    scale = min(
+        MAXIMUM_STORYBOARD_TILE_WIDTH / source_width,
+        MAXIMUM_STORYBOARD_TILE_HEIGHT / source_height,
+    )
+    return (
+        max(1, round(source_width * scale)),
+        max(1, round(source_height * scale)),
     )
 
 

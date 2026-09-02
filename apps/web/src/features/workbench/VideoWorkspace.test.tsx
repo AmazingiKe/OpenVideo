@@ -14,6 +14,7 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@/shared/api", () => ({
   create_subtitle_export: vi.fn(),
+  ensure_thumbnail_storyboard: vi.fn(),
   media_url: (path: string) => path,
   update_subtitle_settings: vi.fn(),
 }));

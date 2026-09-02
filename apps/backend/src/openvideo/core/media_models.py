@@ -110,6 +110,7 @@ class ThumbnailStoryboardTile(BaseModel):
 
 
 class ThumbnailStoryboardResponse(BaseModel):
+    version: int
     url: str
     tile_width: int
     tile_height: int

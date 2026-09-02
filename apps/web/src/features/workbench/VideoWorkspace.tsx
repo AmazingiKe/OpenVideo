@@ -13,6 +13,7 @@ import {
 import { Player, type PlayerHandle } from "@/features/player/Player";
 import { record_scrub_preview_metrics } from "@/features/player/scrub_preview_diagnostics";
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_settings";
+import { use_storyboard_fallback } from "@/features/player/use_storyboard_fallback";
 import {
   create_subtitle_export,
   media_url,
@@ -63,6 +64,8 @@ export const VideoWorkspace = memo(function VideoWorkspace({
   const [subtitle_error, set_subtitle_error] = useState<string | null>(null);
   const settings_request_version_ref = useRef(0);
   const saved_subtitle_settings_ref = useRef(subtitle_settings);
+  const { storyboard, ensure_fallback_storyboard } =
+    use_storyboard_fallback(asset);
 
   useEffect(() => {
     settings_request_version_ref.current += 1;
@@ -187,11 +190,12 @@ export const VideoWorkspace = memo(function VideoWorkspace({
                 start_seconds: marker.start_seconds,
                 label: format_marker_label(marker),
               }))}
-              thumbnails={player_storyboard(asset)}
+              thumbnails={storyboard}
               on_time_change={on_time_change}
               on_pause_change={on_pause_change}
               on_playback_rate_change={on_playback_rate_change}
               on_scrub_preview_metrics={record_scrub_preview_metrics}
+              on_scrub_preview_unavailable={ensure_fallback_storyboard}
             />
           </div>
         </div>
@@ -199,13 +203,3 @@ export const VideoWorkspace = memo(function VideoWorkspace({
     </section>
   );
 });
-
-function player_storyboard(asset: MediaAsset) {
-  if (!asset.thumbnail_storyboard) return null;
-  return {
-    url: media_url(asset.thumbnail_storyboard.url)!,
-    tile_width: asset.thumbnail_storyboard.tile_width,
-    tile_height: asset.thumbnail_storyboard.tile_height,
-    tiles: asset.thumbnail_storyboard.tiles,
-  };
-}

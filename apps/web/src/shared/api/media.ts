@@ -1,4 +1,8 @@
-import type { SubtitleDisplaySettings, SubtitleExportResult } from "../types";
+import type {
+  SubtitleDisplaySettings,
+  SubtitleExportResult,
+  ThumbnailStoryboard,
+} from "../types";
 import { api_base_url, request_json } from "./client";
 
 export function media_url(path: string): string;
@@ -29,6 +33,16 @@ export function create_subtitle_export(
 ): Promise<SubtitleExportResult> {
   return request_json(
     `/api/media/assets/${encodeURIComponent(asset_id)}/subtitle-exports`,
+    { method: "POST", signal },
+  );
+}
+
+export function ensure_thumbnail_storyboard(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<ThumbnailStoryboard> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/thumbnail-storyboard`,
     { method: "POST", signal },
   );
 }

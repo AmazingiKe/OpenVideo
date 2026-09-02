@@ -6,6 +6,7 @@ import { Player, type PlayerHandle } from "@/features/player/Player";
 import { format_precise_media_time } from "@/features/player/format_media_time";
 import { record_scrub_preview_metrics } from "@/features/player/scrub_preview_diagnostics";
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_settings";
+import { use_storyboard_fallback } from "@/features/player/use_storyboard_fallback";
 import { cn } from "@/lib/utils";
 import { media_url } from "@/shared/api";
 import type { MediaAsset, Transcript } from "@/shared/types";
@@ -27,6 +28,8 @@ export function SummaryMediaShelf({
   const [current_time, set_current_time] = useState(0);
   const [paused, set_paused] = useState(true);
   const [captions_enabled, set_captions_enabled] = useState(true);
+  const { storyboard, ensure_fallback_storyboard } =
+    use_storyboard_fallback(asset);
   const playable = Boolean(asset?.playback_url);
 
   useEffect(() => {
@@ -110,11 +113,12 @@ export function SummaryMediaShelf({
               asset.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS
             }
             captions_enabled={captions_enabled}
-            thumbnails={player_storyboard(asset)}
+            thumbnails={storyboard}
             on_time_change={set_current_time}
             on_pause_change={set_paused}
             on_captions_change={set_captions_enabled}
             on_scrub_preview_metrics={record_scrub_preview_metrics}
+            on_scrub_preview_unavailable={ensure_fallback_storyboard}
           />
         ) : (
           <div className="grid h-full place-items-center text-sm text-muted-foreground">
@@ -124,14 +128,4 @@ export function SummaryMediaShelf({
       </div>
     </section>
   );
-}
-
-function player_storyboard(asset: MediaAsset) {
-  if (!asset.thumbnail_storyboard) return null;
-  return {
-    url: media_url(asset.thumbnail_storyboard.url)!,
-    tile_width: asset.thumbnail_storyboard.tile_width,
-    tile_height: asset.thumbnail_storyboard.tile_height,
-    tiles: asset.thumbnail_storyboard.tiles,
-  };
 }

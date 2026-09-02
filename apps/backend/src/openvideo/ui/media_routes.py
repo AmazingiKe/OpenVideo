@@ -14,6 +14,7 @@ from openvideo.core.media_models import (
     MediaType,
     SubtitleDisplaySettings,
     SubtitleExportResult,
+    ThumbnailStoryboardResponse,
 )
 from openvideo.settings import Settings
 from openvideo.tools.subtitle_export import (
@@ -21,6 +22,8 @@ from openvideo.tools.subtitle_export import (
     SubtitleExportUnavailableError,
     export_subtitled_video,
 )
+from openvideo.core.thumbnails import STORYBOARD_VERSION
+from openvideo.tools.thumbnails import generate_thumbnail_sprite
 
 STREAM_CHUNK_SIZE = 1024 * 1024
 DEFAULT_VIDEO_MEDIA_TYPE = "video/mp4"
@@ -40,6 +43,8 @@ def register_media_routes(
     library: Callable[[], MediaLibrary],
     settings: Settings,
 ) -> None:
+    storyboard_locks: dict[str, asyncio.Lock] = {}
+
     @app.patch(
         "/api/media/assets/{asset_id}/subtitle-settings",
         response_model=SubtitleDisplaySettings,
@@ -153,6 +158,71 @@ def register_media_routes(
         if not thumbnail_file:
             raise HTTPException(status_code=404, detail="视频封面不存在")
         return FileResponse(thumbnail_file)
+
+    @app.post(
+        "/api/media/assets/{asset_id}/thumbnail-storyboard",
+        response_model=ThumbnailStoryboardResponse,
+    )
+    async def ensure_thumbnail_storyboard(
+        asset_id: str,
+    ) -> ThumbnailStoryboardResponse:
+        media_library = library()
+        asset = ready_asset(media_library, asset_id)
+        if asset.media_type != MediaType.VIDEO:
+            raise HTTPException(status_code=422, detail="只有视频支持拖动预览")
+        existing_storyboard = media_library.response_for(asset).thumbnail_storyboard
+        if (
+            existing_storyboard is not None
+            and existing_storyboard.version == STORYBOARD_VERSION
+        ):
+            return existing_storyboard
+
+        generation_lock = storyboard_locks.setdefault(asset_id, asyncio.Lock())
+        async with generation_lock:
+            asset = ready_asset(media_library, asset_id)
+            existing_storyboard = media_library.response_for(
+                asset
+            ).thumbnail_storyboard
+            if (
+                existing_storyboard is not None
+                and existing_storyboard.version == STORYBOARD_VERSION
+            ):
+                return existing_storyboard
+            media_file = media_library.resolve_asset_file(asset, asset.playback_path)
+            if media_file is None:
+                raise HTTPException(status_code=404, detail="视频文件不存在")
+            media_directory = media_library.media_directory(asset.asset_id)
+            storyboard = await asyncio.to_thread(
+                generate_thumbnail_sprite,
+                media_file,
+                media_directory,
+                asset.duration_seconds,
+                asset.width,
+                asset.height,
+                settings.ffmpeg_path,
+                settings.ffmpeg_bin_dir,
+            )
+            if storyboard is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="拖动预览图暂时无法生成",
+                )
+            sprite_file = media_directory / storyboard.sprite_path
+            asset.thumbnail_sprite_path = (
+                sprite_file.relative_to(
+                    media_library.asset_directory(asset.asset_id)
+                ).as_posix()
+            )
+            asset.thumbnail_tile_width = storyboard.tile_width
+            asset.thumbnail_tile_height = storyboard.tile_height
+            asset.thumbnail_interval_seconds = storyboard.interval_seconds
+            asset.thumbnail_columns = storyboard.columns
+            asset.thumbnail_total_tiles = storyboard.total_tiles
+            media_library.save(asset)
+            response = media_library.response_for(asset).thumbnail_storyboard
+            if response is None:
+                raise HTTPException(status_code=500, detail="拖动预览图保存失败")
+            return response
 
     @app.get("/api/media/assets/{asset_id}/thumbnail-sprite")
     def thumbnail_sprite(asset_id: str) -> FileResponse:

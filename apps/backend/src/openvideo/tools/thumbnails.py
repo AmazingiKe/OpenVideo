@@ -8,7 +8,7 @@ from openvideo.core.thumbnails import (
 )
 from openvideo.tools.media import resolve_tool
 
-SPRITE_GENERATION_TIMEOUT_SECONDS = 600
+SPRITE_GENERATION_TIMEOUT_SECONDS = 90
 SPRITE_JPEG_QUALITY = "4"
 
 
@@ -16,13 +16,21 @@ def generate_thumbnail_sprite(
     video_path: Path,
     asset_directory: Path,
     duration_seconds: float | None,
+    source_width: int | None,
+    source_height: int | None,
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None,
 ) -> ThumbnailStoryboard | None:
-    """用 ffmpeg 抽帧拼成精灵图；失败时返回 None，让播放器降级为无预览。"""
+    """仅为兼容浏览器生成受尺寸和帧数约束的响应式预览拼板。"""
     ffmpeg_path = resolve_tool(configured_ffmpeg_path, "ffmpeg", project_bin_dir)
     storyboard = (
-        build_thumbnail_storyboard(duration_seconds) if duration_seconds else None
+        build_thumbnail_storyboard(
+            duration_seconds,
+            source_width,
+            source_height,
+        )
+        if duration_seconds
+        else None
     )
     if not ffmpeg_path or not storyboard:
         return None
@@ -48,13 +56,16 @@ def generate_thumbnail_sprite(
         SPRITE_JPEG_QUALITY,
         str(sprite_file),
     ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=SPRITE_GENERATION_TIMEOUT_SECONDS,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=SPRITE_GENERATION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if (
         result.returncode != 0
         or not sprite_file.is_file()
