@@ -44,6 +44,7 @@ export function use_scrub_frame_preview(
     | ((frame_time_seconds: number, frame_duration_seconds: number) => void)
     | null
   >(null);
+  const [has_preview_frame, set_has_preview_frame] = useState(false);
   const [status, set_status] = useState<ScrubPreviewStatus>("idle");
   const [unavailable_reason, set_unavailable_reason] = useState<string | null>(
     null,
@@ -92,6 +93,7 @@ export function use_scrub_frame_preview(
               set_status("unavailable");
               return;
             }
+            set_has_preview_frame(true);
             set_status("ready");
             on_metrics_ref.current?.({
               mode: "storyboard",
@@ -115,6 +117,7 @@ export function use_scrub_frame_preview(
       const preview_width = response.bitmap.width;
       const preview_height = response.bitmap.height;
       draw_bitmap(canvas_ref.current, response.bitmap);
+      set_has_preview_frame(true);
       preview_quality_scale_ref.current = next_preview_quality_scale(
         preview_quality_scale_ref.current,
         response.decode_milliseconds,
@@ -157,6 +160,7 @@ export function use_scrub_frame_preview(
       source_url,
     } satisfies ScrubPreviewWorkerRequest);
     set_status((current) => (current === "unavailable" ? current : "idle"));
+    set_has_preview_frame(false);
     fallback_image_ref.current = null;
     preview_quality_scale_ref.current = 1;
   }, [source_url]);
@@ -201,6 +205,7 @@ export function use_scrub_frame_preview(
               set_status("unavailable");
               return;
             }
+            set_has_preview_frame(true);
             set_status("ready");
             on_metrics_ref.current?.({
               mode: "storyboard",
@@ -239,12 +244,14 @@ export function use_scrub_frame_preview(
     latest_request_id_ref.current += 1;
     frame_callback_ref.current = null;
     set_status((current) => (current === "unavailable" ? current : "idle"));
+    set_has_preview_frame(false);
   }, []);
 
   return {
     canvas_ref,
     request_frame,
     clear,
+    has_preview_frame,
     status,
     unavailable_reason,
   };

@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
-import { useLocation } from "react-router-dom";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { use_local_preferences } from "@/app/local_preferences";
-import { SUMMARY_ROUTE_PATH } from "@/app/workspace_routes";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -23,7 +21,6 @@ const SUMMARY_MEDIA_MAX_HEIGHT_PX = 360;
 const SUMMARY_EDITOR_MIN_HEIGHT_PX = 320;
 
 export function SummaryPage() {
-  const location = useLocation();
   const { selected_asset, selected_asset_id } = use_asset_catalog();
   const { preferences, set_summary_media_expanded } = use_local_preferences();
   const { segments, transcript, analysis_error } =
@@ -69,7 +66,6 @@ export function SummaryPage() {
           className="min-h-0 overflow-hidden"
         >
           <SummaryMediaShelf
-            active={location.pathname === SUMMARY_ROUTE_PATH}
             asset={selected_asset}
             expanded={media_expanded}
             on_expanded_change={change_media_expanded}

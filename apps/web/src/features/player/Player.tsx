@@ -154,7 +154,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     canvas_ref: scrub_preview_canvas_ref,
     request_frame: request_scrub_frame,
     clear: clear_scrub_preview,
-    status: scrub_preview_status,
+    has_preview_frame,
     unavailable_reason: scrub_preview_unavailable_reason,
   } = use_scrub_frame_preview(src, thumbnails, on_scrub_preview_metrics);
 
@@ -361,7 +361,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         <canvas
           ref={scrub_preview_canvas_ref}
           className="openvideo_scrub_preview"
-          data-active={scrub_preview_status === "ready" || undefined}
+          data-active={has_preview_frame || undefined}
           aria-hidden="true"
         />
         {captions_enabled ? (

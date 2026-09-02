@@ -45,7 +45,6 @@ describe("SummaryMediaShelf", () => {
     const on_expanded_change = vi.fn();
     render(
       <SummaryMediaShelf
-        active
         asset={create_asset()}
         expanded={false}
         on_expanded_change={on_expanded_change}
@@ -63,10 +62,9 @@ describe("SummaryMediaShelf", () => {
     expect(on_expanded_change).toHaveBeenCalledWith(true);
   });
 
-  it("reports precise time and pauses when the summary page becomes inactive", () => {
-    const view = render(
+  it("reports precise time in the media shelf", () => {
+    render(
       <SummaryMediaShelf
-        active
         asset={create_asset()}
         expanded
         on_expanded_change={vi.fn()}
@@ -80,17 +78,6 @@ describe("SummaryMediaShelf", () => {
     expect(screen.getByLabelText("解析视频当前时间")).toHaveTextContent(
       "00:01:05.432",
     );
-
-    view.rerender(
-      <SummaryMediaShelf
-        active={false}
-        asset={create_asset()}
-        expanded
-        on_expanded_change={vi.fn()}
-        transcript={null}
-      />,
-    );
-    expect(player_pause).toHaveBeenCalledOnce();
   });
 });
 

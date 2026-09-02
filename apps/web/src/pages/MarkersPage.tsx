@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
 import {
@@ -9,7 +9,7 @@ import {
 } from "@/app/global_assistant";
 import { use_local_preferences } from "@/app/local_preferences";
 import { use_task_manager } from "@/app/task_manager";
-import { MARKERS_ROUTE_PATH, marker_asset_path } from "@/app/workspace_routes";
+import { marker_asset_path } from "@/app/workspace_routes";
 import { use_asset_analysis } from "@/features/analysis/use_asset_analysis";
 import { use_transcription_resources } from "@/features/workbench/use_processing_resources";
 import { use_compact_markers_layout } from "@/features/markers/use_compact_markers_layout";
@@ -79,7 +79,6 @@ const TIMELINE_PANEL_MIN_HEIGHT_PX = 176;
 const TIMELINE_PANEL_MAX_HEIGHT_PERCENT = 65;
 
 export function MarkersPage() {
-  const location = useLocation();
   const navigate = useNavigate();
   const { selected_asset, selected_asset_id } = use_asset_catalog();
   const { start_transcription, is_transcription_running } = use_task_manager();
@@ -158,12 +157,6 @@ export function MarkersPage() {
       mounted_ref.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!location.pathname.startsWith(MARKERS_ROUTE_PATH)) {
-      player_ref.current?.pause();
-    }
-  }, [location.pathname]);
 
   useEffect(() => {
     set_current_time(0);

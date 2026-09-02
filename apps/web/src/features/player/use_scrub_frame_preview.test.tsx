@@ -90,10 +90,15 @@ describe("use_scrub_frame_preview", () => {
       ),
     );
     await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.has_preview_frame).toBe(true);
     expect(second_bitmap.close).toHaveBeenCalledOnce();
     expect(on_frame).toHaveBeenCalledWith(8.96, 0.04);
 
+    act(() => result.current.request_frame(12, 640, 360));
+    expect(result.current.has_preview_frame).toBe(true);
+
     rerender({ source_url: "/next-video.mp4" });
+    expect(result.current.has_preview_frame).toBe(false);
     expect(worker.postMessage).toHaveBeenCalledWith({
       type: "source-change",
       source_url: "/next-video.mp4",

@@ -11,7 +11,6 @@ import { media_url } from "@/shared/api";
 import type { MediaAsset, Transcript } from "@/shared/types";
 
 type SummaryMediaShelfProps = {
-  active: boolean;
   asset: MediaAsset | null;
   expanded: boolean;
   on_expanded_change: (expanded: boolean) => void;
@@ -19,7 +18,6 @@ type SummaryMediaShelfProps = {
 };
 
 export function SummaryMediaShelf({
-  active,
   asset,
   expanded,
   on_expanded_change,
@@ -36,10 +34,6 @@ export function SummaryMediaShelf({
     set_paused(true);
     set_captions_enabled(true);
   }, [asset?.asset_id]);
-
-  useEffect(() => {
-    if (!active) player_ref.current?.pause();
-  }, [active]);
 
   function toggle_captions() {
     player_ref.current?.toggle_captions();

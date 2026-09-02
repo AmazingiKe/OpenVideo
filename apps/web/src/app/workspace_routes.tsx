@@ -55,14 +55,16 @@ export const WORKSPACE_ROUTES: WorkspaceRoute[] = [
     path: MARKERS_ROUTE_PATH,
     component: lazy(load_markers_page),
     load_component: load_markers_page,
-    preserve_state_when_hidden: true,
+    // Vidstack 的 React 桥接层不能在 Activity 隐藏后重新挂载。
+    preserve_state_when_hidden: false,
   },
   {
     label: "解析",
     path: SUMMARY_ROUTE_PATH,
     component: lazy(load_summary_page),
     load_component: load_summary_page,
-    preserve_state_when_hidden: true,
+    // 解析页同样包含独立播放器，切换时必须完整销毁播放器实例。
+    preserve_state_when_hidden: false,
   },
 ];
 

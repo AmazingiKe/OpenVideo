@@ -25,7 +25,6 @@ export const Expanded: Story = {
 
 function story_args(expanded: boolean) {
   return {
-    active: true,
     asset: STORY_ASSETS[0],
     expanded,
     on_expanded_change: () => undefined,
@@ -38,7 +37,6 @@ function ShelfStory({ initial_expanded }: { initial_expanded: boolean }) {
   return (
     <div className={expanded ? "h-64" : "h-12"}>
       <SummaryMediaShelf
-        active
         asset={STORY_ASSETS[0]}
         expanded={expanded}
         on_expanded_change={set_expanded}

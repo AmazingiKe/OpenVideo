@@ -942,7 +942,7 @@ describe("App", () => {
     );
   });
 
-  it("keeps the shared player mounted while another workspace is active", async () => {
+  it("recreates an independent player after returning to its workspace", async () => {
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
       dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
@@ -969,7 +969,7 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "下载" }));
     await waitFor(() =>
-      expect(screen.getByTestId("player")).toBeInTheDocument(),
+      expect(screen.queryByTestId("player")).not.toBeInTheDocument(),
     );
 
     fireEvent.click(screen.getByRole("link", { name: "标记" }));
