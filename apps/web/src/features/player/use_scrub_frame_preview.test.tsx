@@ -9,6 +9,7 @@ const original_offscreen_canvas = globalThis.OffscreenCanvas;
 const original_video_decoder = globalThis.VideoDecoder;
 const original_request_animation_frame = window.requestAnimationFrame;
 const original_cancel_animation_frame = window.cancelAnimationFrame;
+const original_image = globalThis.Image;
 
 class MockWorker {
   static latest: MockWorker;
@@ -36,6 +37,10 @@ beforeEach(() => {
     configurable: true,
     value: class {},
   });
+  Object.defineProperty(globalThis, "Image", {
+    configurable: true,
+    value: MockImage,
+  });
   window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
     callback(0);
     return 1;
@@ -55,6 +60,10 @@ afterEach(() => {
   Object.defineProperty(globalThis, "VideoDecoder", {
     configurable: true,
     value: original_video_decoder,
+  });
+  Object.defineProperty(globalThis, "Image", {
+    configurable: true,
+    value: original_image,
   });
   window.requestAnimationFrame = original_request_animation_frame;
   window.cancelAnimationFrame = original_cancel_animation_frame;
@@ -114,7 +123,60 @@ describe("use_scrub_frame_preview", () => {
     expect(worker.postMessage).toHaveBeenLastCalledWith({ type: "dispose" });
     expect(worker.terminate).toHaveBeenCalledOnce();
   });
+
+  it("retries the latest request when an on-demand storyboard becomes available", async () => {
+    const on_frame = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ storyboard }) =>
+        use_scrub_frame_preview("/video.mp4", storyboard, undefined),
+      { initialProps: { storyboard: null as Storyboard | null } },
+    );
+    const canvas = document.createElement("canvas");
+    canvas.getContext = vi.fn(() => ({
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+    })) as unknown as typeof canvas.getContext;
+    result.current.canvas_ref.current = canvas;
+
+    act(() => result.current.request_frame(4, 640, 360, "at", on_frame));
+    const worker = MockWorker.latest;
+    const [request] = worker.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === "decode");
+    act(() => worker.onmessage?.(unavailable_response(request)));
+    await waitFor(() => expect(result.current.status).toBe("unavailable"));
+
+    rerender({ storyboard: storyboard() });
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(on_frame).toHaveBeenCalledWith(0, 0);
+  });
 });
+
+class MockImage {
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  set src(_url: string) {
+    queueMicrotask(() => this.onload?.());
+  }
+}
+
+type Storyboard = {
+  url: string;
+  tile_width: number;
+  tile_height: number;
+  tiles: { start_time: number; x: number; y: number }[];
+};
+
+function storyboard(): Storyboard {
+  return {
+    url: "/api/media/assets/asset/thumbnail-sprite",
+    tile_width: 640,
+    tile_height: 360,
+    tiles: [{ start_time: 0, x: 0, y: 0 }],
+  };
+}
 
 function bitmap() {
   return {
@@ -141,6 +203,24 @@ function frame_response(
       range_request_count: 2,
       bytes_read: 4096,
       bitmap: frame_bitmap,
+    },
+  });
+}
+
+function unavailable_response(request: {
+  session_id: number;
+  request_id: number;
+  time_seconds: number;
+}): MessageEvent<ScrubPreviewWorkerResponse> {
+  return new MessageEvent("message", {
+    data: {
+      type: "unavailable",
+      session_id: request.session_id,
+      request_id: request.request_id,
+      requested_time_seconds: request.time_seconds,
+      width: 640,
+      height: 360,
+      reason: "当前视频编码无法通过 WebCodecs 解码",
     },
   });
 }

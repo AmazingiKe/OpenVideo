@@ -201,6 +201,12 @@ export function use_scrub_frame_preview(
   }, [on_metrics]);
 
   useEffect(() => {
+    if (status !== "unavailable" || !fallback_storyboard) return;
+    const latest_request = latest_request_ref.current;
+    if (latest_request) render_storyboard_fallback(latest_request);
+  }, [fallback_storyboard, render_storyboard_fallback, status]);
+
+  useEffect(() => {
     if (!supports_worker_preview()) {
       set_status("unavailable");
       set_unavailable_reason("当前浏览器不支持 Worker 高清取帧");
