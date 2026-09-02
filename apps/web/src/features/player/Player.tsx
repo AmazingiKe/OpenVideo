@@ -186,9 +186,20 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     cancel: cancel_seek_preview,
     is_active: is_scrubbing,
     has_active_preview,
+    commit_timeout_sequence,
   } = use_seek_preview({
     commit_timeout_milliseconds: SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS,
   });
+
+  useEffect(() => {
+    if (commit_timeout_sequence === 0) return;
+    pending_seek_ref.current = false;
+    presented_frame_cancel_ref.current?.();
+    presented_frame_cancel_ref.current = null;
+    clear_scrub_preview();
+    if (resume_after_seek_ref.current) play_fn_ref.current?.();
+    resume_after_seek_ref.current = false;
+  }, [clear_scrub_preview, commit_timeout_sequence]);
 
   const hold_controls_visible = useCallback(() => {
     if (controls_visibility_held_ref.current) return;
@@ -442,19 +453,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     label: marker.label,
   }));
 
-  const plyr_thumbnails = thumbnails
-    ? {
-        url: new URL(thumbnails.url, window.location.origin).href,
-        tileWidth: thumbnails.tile_width,
-        tileHeight: thumbnails.tile_height,
-        tiles: thumbnails.tiles.map((tile) => ({
-          startTime: tile.start_time,
-          x: tile.x,
-          y: tile.y,
-        })),
-      }
-    : null;
-
   return (
     <div
       className="openvideo_player_shell"
@@ -494,7 +492,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
           icons={plyrLayoutIcons}
           translations={PLAYER_TRANSLATIONS}
           markers={plyr_markers}
-          thumbnails={plyr_thumbnails}
           controls={PLAYER_CONTROLS}
           invertTime={false}
         />

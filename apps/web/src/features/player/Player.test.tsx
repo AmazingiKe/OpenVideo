@@ -73,14 +73,17 @@ vi.mock("@vidstack/react/player/layouts/plyr", () => ({
   PlyrLayout: ({
     controls,
     invertTime,
+    thumbnails,
   }: {
     controls: string[];
     invertTime: boolean;
+    thumbnails?: unknown;
   }) => (
     <div
       data-testid="plyr-layout"
       data-controls={controls.join(",")}
       data-invert-time={String(invertTime)}
+      data-thumbnails={String(thumbnails !== undefined)}
     >
       <div role="slider" aria-label="播放进度" data-media-time-slider />
     </div>
@@ -103,7 +106,17 @@ beforeEach(() => {
 
 describe("Player", () => {
   it("renders the complete bottom controls without the hidden large play button", () => {
-    render(<Player src="/video.mp4" />);
+    render(
+      <Player
+        src="/video.mp4"
+        thumbnails={{
+          url: "/thumbnails.jpg",
+          tile_width: 640,
+          tile_height: 360,
+          tiles: [{ start_time: 0, x: 0, y: 0 }],
+        }}
+      />,
+    );
 
     expect(screen.getByLabelText("OpenVideo 播放器")).toBeInTheDocument();
     expect(screen.getByTestId("media-provider")).toBeInTheDocument();
@@ -113,6 +126,10 @@ describe("Player", () => {
     );
     expect(screen.getByTestId("plyr-layout")).toHaveAttribute(
       "data-invert-time",
+      "false",
+    );
+    expect(screen.getByTestId("plyr-layout")).toHaveAttribute(
+      "data-thumbnails",
       "false",
     );
   });

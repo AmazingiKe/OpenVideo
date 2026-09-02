@@ -11,6 +11,7 @@ export function use_seek_preview({
   const commit_pending_ref = useRef(false);
   const finish_timeout_ref = useRef<number | null>(null);
   const [is_active, set_is_active] = useState(false);
+  const [commit_timeout_sequence, set_commit_timeout_sequence] = useState(0);
 
   const finish_preview = useCallback(() => {
     commit_pending_ref.current = false;
@@ -35,13 +36,15 @@ export function use_seek_preview({
   }, []);
 
   const commit = useCallback(() => {
-    if (!active_ref.current) return;
     commit_pending_ref.current = true;
     if (finish_timeout_ref.current !== null) {
       window.clearTimeout(finish_timeout_ref.current);
     }
     finish_timeout_ref.current = window.setTimeout(
-      finish_preview,
+      () => {
+        finish_preview();
+        set_commit_timeout_sequence((current) => current + 1);
+      },
       commit_timeout_milliseconds,
     );
   }, [commit_timeout_milliseconds, finish_preview]);
@@ -73,5 +76,6 @@ export function use_seek_preview({
     cancel,
     is_active,
     has_active_preview,
+    commit_timeout_sequence,
   };
 }

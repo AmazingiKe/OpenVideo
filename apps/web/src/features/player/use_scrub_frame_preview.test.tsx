@@ -62,7 +62,7 @@ afterEach(() => {
 });
 
 describe("use_scrub_frame_preview", () => {
-  it("renders completed frames from the active session in decode order", async () => {
+  it("discards a completed frame once a newer target has been requested", async () => {
     const first_bitmap = bitmap();
     const second_bitmap = bitmap();
     const on_frame = vi.fn();
@@ -90,9 +90,7 @@ describe("use_scrub_frame_preview", () => {
     act(() => worker.onmessage?.(frame_response(first_request, first_bitmap, 4)));
     expect(first_bitmap.close).toHaveBeenCalledOnce();
     expect(on_frame).not.toHaveBeenCalled();
-    expect(on_metrics).toHaveBeenCalledWith(
-      expect.objectContaining({ requested_time_seconds: 4 }),
-    );
+    expect(on_metrics).not.toHaveBeenCalled();
 
     act(() =>
       worker.onmessage?.(frame_response(second_request, second_bitmap, 8.96)),

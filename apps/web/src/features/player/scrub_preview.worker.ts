@@ -80,6 +80,7 @@ async function decode_frame(request: ScrubPreviewRequest) {
       post_unavailable(request, "目标时间没有可用视频帧");
       return;
     }
+    if (has_newer_pending_request(request)) return;
     const bitmap = await createImageBitmap(result.canvas);
     const response: ScrubPreviewWorkerResponse = {
       type: "frame",
@@ -182,6 +183,13 @@ function dispose_input() {
   active_sink_height = 0;
   active_source_url = null;
   active_network_metrics = null;
+}
+
+function has_newer_pending_request(request: ScrubPreviewRequest) {
+  return (
+    pending_request?.session_id === request.session_id &&
+    pending_request.request_id > request.request_id
+  );
 }
 
 function post_unavailable(request: ScrubPreviewRequest, reason: string) {

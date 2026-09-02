@@ -47,7 +47,8 @@ export function use_scrub_frame_preview(
   const worker_ref = useRef<Worker | null>(null);
   const active_session_id_ref = useRef(0);
   const next_request_id_ref = useRef(0);
-  const latest_drawn_request_id_ref = useRef(0);
+  const latest_request_id_ref = useRef(0);
+  const latest_request_ref = useRef<PendingFrameRequest | null>(null);
   const queued_request_ref = useRef<PendingFrameRequest | null>(null);
   const animation_frame_ref = useRef<number | null>(null);
   const preview_quality_scale_ref = useRef(1);
@@ -75,7 +76,8 @@ export function use_scrub_frame_preview(
 
   const invalidate_preview_session = useCallback(() => {
     active_session_id_ref.current += 1;
-    latest_drawn_request_id_ref.current = 0;
+    latest_request_id_ref.current = 0;
+    latest_request_ref.current = null;
     frame_callback_ref.current = null;
     cancel_queued_request();
   }, [cancel_queued_request]);
@@ -83,12 +85,11 @@ export function use_scrub_frame_preview(
   const can_display_request = useCallback(
     (session_id: number, request_id: number) =>
       session_id === active_session_id_ref.current &&
-      request_id >= latest_drawn_request_id_ref.current,
+      request_id === latest_request_id_ref.current,
     [],
   );
 
-  const record_displayed_request = useCallback((request_id: number) => {
-    latest_drawn_request_id_ref.current = request_id;
+  const record_displayed_request = useCallback(() => {
     set_has_preview_frame(true);
     set_status("ready");
   }, []);
@@ -125,13 +126,14 @@ export function use_scrub_frame_preview(
         () => can_display_request(request.session_id, request.request_id),
       )
         .then((tile_time_seconds) => {
-          if (
-            tile_time_seconds === null ||
-            !can_display_request(request.session_id, request.request_id)
-          ) {
+          if (!can_display_request(request.session_id, request.request_id)) {
             return;
           }
-          record_displayed_request(request.request_id);
+          if (tile_time_seconds === null) {
+            set_status("unavailable");
+            return;
+          }
+          record_displayed_request();
           on_metrics_ref.current?.({
             mode: "storyboard",
             requested_time_seconds: request.time_seconds,
@@ -151,7 +153,7 @@ export function use_scrub_frame_preview(
           );
         })
         .catch(() => {
-          if (request.session_id === active_session_id_ref.current) {
+          if (can_display_request(request.session_id, request.request_id)) {
             set_status("unavailable");
           }
         });
@@ -240,7 +242,7 @@ export function use_scrub_frame_preview(
         preview_quality_scale_ref.current,
         response.decode_milliseconds,
       );
-      record_displayed_request(response.request_id);
+      record_displayed_request();
       on_metrics_ref.current?.({
         mode: "webcodecs",
         requested_time_seconds: response.requested_time_seconds,
@@ -261,15 +263,23 @@ export function use_scrub_frame_preview(
       set_unavailable_reason(null);
     };
     worker.onerror = () => {
+      if (worker_ref.current === worker) {
+        worker.terminate();
+        worker_ref.current = null;
+      }
       set_status("unavailable");
       set_unavailable_reason("高清拖动预览 Worker 启动失败");
+      const latest_request = latest_request_ref.current;
+      if (latest_request) render_storyboard_fallback(latest_request);
     };
     return () => {
       invalidate_preview_session();
-      const request: ScrubPreviewWorkerRequest = { type: "dispose" };
-      worker.postMessage(request);
-      worker.terminate();
-      worker_ref.current = null;
+      if (worker_ref.current === worker) {
+        const request: ScrubPreviewWorkerRequest = { type: "dispose" };
+        worker.postMessage(request);
+        worker.terminate();
+        worker_ref.current = null;
+      }
     };
   }, [
     can_display_request,
@@ -318,6 +328,8 @@ export function use_scrub_frame_preview(
         mode,
         ...dimensions,
       };
+      latest_request_id_ref.current = request_id;
+      latest_request_ref.current = request;
       if (on_frame) {
         frame_callback_ref.current = {
           session_id: request.session_id,

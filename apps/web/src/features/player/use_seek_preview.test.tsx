@@ -52,4 +52,20 @@ describe("use_seek_preview", () => {
 
     expect(result.current.is_active).toBe(false);
   });
+
+  it("protects a direct seek with the same confirmation timeout", () => {
+    const { result } = renderHook(() =>
+      use_seek_preview({
+        commit_timeout_milliseconds: 1_500,
+      }),
+    );
+
+    act(() => {
+      result.current.commit();
+      vi.advanceTimersByTime(1_500);
+    });
+
+    expect(result.current.is_active).toBe(false);
+    expect(result.current.commit_timeout_sequence).toBe(1);
+  });
 });
