@@ -39,6 +39,7 @@
     "clsx": "2.1.1",
     "katex": "^0.18.4",
     "lucide-react": "1.33.0",
+    "mediabunny": "1.55.5",
     "mermaid": "^11.17.2",
     "radix-ui": "1.6.7",
     "react": "latest",

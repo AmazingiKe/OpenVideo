@@ -31,10 +31,7 @@ import {
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  MARKER_SHAPE_VALUES,
-  MARKER_TIME_STEP_SECONDS,
-} from "./media_timeline_calculations";
+import { MARKER_SHAPE_VALUES } from "./media_timeline_calculations";
 
 const MARKER_EDITOR_OFFSET = 8;
 const MARKER_EDITOR_COLLISION_PADDING = 8;
@@ -110,7 +107,7 @@ export function MediaTimelineMarkerEditor({
                 type="number"
                 min={0}
                 max={duration}
-                step={MARKER_TIME_STEP_SECONDS}
+                step="any"
                 value={marker_start_draft}
                 onChange={(event) =>
                   set_marker_start_draft(event.currentTarget.valueAsNumber)
@@ -130,7 +127,7 @@ export function MediaTimelineMarkerEditor({
                   type="number"
                   min={marker_start_draft}
                   max={duration}
-                  step={MARKER_TIME_STEP_SECONDS}
+                  step="any"
                   value={marker_end_draft}
                   aria-invalid={marker_end_draft <= marker_start_draft}
                   onChange={(event) =>

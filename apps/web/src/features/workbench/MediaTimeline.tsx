@@ -105,7 +105,7 @@ import {
   default_timeline_row_height,
   filter_timeline_rows_for_window,
   hit_test_timeline_marquee,
-  round_marker_time,
+  normalize_marker_time,
   selected_timeline_range,
   timeline_content_duration,
   type MediaTimelineAction,
@@ -786,8 +786,8 @@ export function MediaTimeline({
     ): Promise<MediaMarker | undefined> => {
       try {
         const marker = await on_add_marker(
-          round_marker_time(start_seconds),
-          end_seconds === null ? null : round_marker_time(end_seconds),
+          normalize_marker_time(start_seconds),
+          end_seconds === null ? null : normalize_marker_time(end_seconds),
         );
         if (marker) {
           set_selected_marker_id(marker.marker_id);
@@ -1095,9 +1095,13 @@ export function MediaTimeline({
       next_start = data.marker_anchor_seconds + movement;
       next_end = null;
     }
-    next_start = round_marker_time(Math.min(Math.max(next_start, 0), duration));
+    next_start = normalize_marker_time(
+      Math.min(Math.max(next_start, 0), duration),
+    );
     if (next_end !== null) {
-      next_end = round_marker_time(Math.min(Math.max(next_end, 0), duration));
+      next_end = normalize_marker_time(
+        Math.min(Math.max(next_end, 0), duration),
+      );
       if (next_end <= next_start) {
         next_end = Math.min(
           duration,
@@ -1656,7 +1660,7 @@ export function MediaTimeline({
 }
 
 function format_ruler_accessible_time(seconds: number): string {
-  return `${round_marker_time(seconds).toFixed(2)} 秒`;
+  return `${normalize_marker_time(seconds).toFixed(3)} 秒`;
 }
 
 function timeline_lod_accessible_description(lod: TimelineLod): string {

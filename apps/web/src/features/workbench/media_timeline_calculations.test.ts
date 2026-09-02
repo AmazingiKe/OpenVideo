@@ -23,7 +23,7 @@ import {
   hit_test_timeline_marquee,
   normalize_wheel_delta,
   normalize_timeline_marquee_rectangle,
-  round_marker_time,
+  normalize_marker_time,
   selected_timeline_range,
   timeline_content_duration,
   type MediaTimelineAction,
@@ -439,7 +439,7 @@ describe("media timeline calculations", () => {
         [],
       ),
     ).toBe(8);
-    expect(round_marker_time(0.04)).toBe(0.05);
+    expect(normalize_marker_time(0.040_123_4)).toBe(0.040123);
   });
 
   it("keeps marker and transcript rows compact and derives selected bounds", () => {

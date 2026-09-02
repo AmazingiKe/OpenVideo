@@ -7,8 +7,6 @@ import * as media_api from "@/shared/api";
 import { error_message } from "@/shared/errors";
 import type { MediaMarker, MediaMarkerUpdate } from "@/shared/types";
 
-const MARKER_TIME_PRECISION = 20;
-
 type MarkerMutationState = {
   confirmed: MediaMarker;
   desired: MediaMarker;
@@ -43,18 +41,10 @@ export function use_asset_markers(asset_id: string) {
     async (start_seconds: number, end_seconds: number | null = null) => {
       if (!asset_id || !Number.isFinite(start_seconds) || start_seconds < 0)
         return;
-      const rounded_start =
-        Math.round(start_seconds * MARKER_TIME_PRECISION) /
-        MARKER_TIME_PRECISION;
-      const rounded_end =
-        end_seconds === null
-          ? null
-          : Math.round(end_seconds * MARKER_TIME_PRECISION) /
-            MARKER_TIME_PRECISION;
       try {
         const marker = await create_marker(asset_id, {
-          start_seconds: rounded_start,
-          end_seconds: rounded_end,
+          start_seconds,
+          end_seconds,
         });
         update_cached_markers((current) => sort_markers([...current, marker]));
         set_mutation_error(null);

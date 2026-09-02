@@ -5,7 +5,7 @@ import type {
   MediaMarkerUpdate,
   Transcript,
 } from "@/shared/types";
-import { round_marker_time } from "./media_timeline_calculations";
+import { normalize_marker_time } from "./media_timeline_calculations";
 
 export type TimelinePointerPosition = {
   x: number;
@@ -130,9 +130,11 @@ export function use_media_timeline_editors({
     set_is_saving_marker(true);
     set_marker_save_error(null);
     void on_update_marker(editing_marker_id, {
-      start_seconds: round_marker_time(marker_start_draft),
+      start_seconds: normalize_marker_time(marker_start_draft),
       end_seconds:
-        marker_end_draft === null ? null : round_marker_time(marker_end_draft),
+        marker_end_draft === null
+          ? null
+          : normalize_marker_time(marker_end_draft),
     })
       .then(cancel_marker_edit)
       .catch(() => set_marker_save_error("标记保存失败，请稍后重试"))

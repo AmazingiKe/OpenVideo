@@ -1028,9 +1028,9 @@ describe("MediaTimeline", () => {
     );
 
     await waitFor(() => expect(add_marker).toHaveBeenCalledTimes(3));
-    expect(add_marker).toHaveBeenNthCalledWith(1, 30, null);
-    expect(add_marker).toHaveBeenNthCalledWith(2, 30, null);
-    expect(add_marker).toHaveBeenNthCalledWith(3, 22.05, null);
+    expect(add_marker).toHaveBeenNthCalledWith(1, 30.023, null);
+    expect(add_marker).toHaveBeenNthCalledWith(2, 30.023, null);
+    expect(add_marker).toHaveBeenNthCalledWith(3, 22.027, null);
   });
 
   it("sets temporary range endpoints from selected clips and bracket shortcuts", () => {
@@ -1195,7 +1195,7 @@ describe("MediaTimeline", () => {
     fireEvent.submit(screen.getByLabelText("开始时间（秒）").closest("form")!);
     await waitFor(() =>
       expect(update_marker).toHaveBeenCalledWith(POINT_MARKER.marker_id, {
-        start_seconds: 21.15,
+        start_seconds: 21.13,
         end_seconds: null,
       }),
     );
@@ -1226,7 +1226,7 @@ describe("MediaTimeline", () => {
     );
   });
 
-  it("persists move and resize only at interaction end with fixed precision", async () => {
+  it("persists move and resize only at interaction end with media precision", async () => {
     const { update_marker } = render_timeline();
     fireEvent.click(screen.getAllByRole("button", { name: /点标记/ })[0]);
     const point_action = action_by_kind("marker");
@@ -1248,7 +1248,7 @@ describe("MediaTimeline", () => {
     });
     await waitFor(() => expect(update_marker).toHaveBeenCalledOnce());
     expect(update_marker).toHaveBeenLastCalledWith(POINT_MARKER.marker_id, {
-      start_seconds: 21,
+      start_seconds: 21.023,
       end_seconds: null,
     });
 
@@ -1263,8 +1263,8 @@ describe("MediaTimeline", () => {
     });
     await waitFor(() => expect(update_marker).toHaveBeenCalledTimes(2));
     expect(update_marker).toHaveBeenLastCalledWith(POINT_MARKER.marker_id, {
-      start_seconds: 12,
-      end_seconds: 31.05,
+      start_seconds: 12.02,
+      end_seconds: 31.07,
     });
 
     act(() => {

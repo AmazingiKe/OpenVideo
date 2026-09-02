@@ -12,7 +12,7 @@ import type {
 const MINIMUM_DURATION_SECONDS = 1;
 export const DEFAULT_ZOOM_PIXELS_PER_SECOND = 80;
 export const MINIMUM_ACTION_DURATION_SECONDS = 0.05;
-export const MARKER_TIME_STEP_SECONDS = 0.05;
+const MEDIA_TIME_PRECISION = 1_000_000;
 const DEFAULT_POINT_HIT_DURATION_SECONDS = 0.4;
 export const MAXIMUM_ZOOM_PIXELS_PER_SECOND = 320;
 const WHEEL_DELTA_MODE_PIXEL = 0;
@@ -884,10 +884,6 @@ export function timeline_content_duration(
   );
 }
 
-export function round_marker_time(seconds: number): number {
-  return Number(
-    (
-      Math.round(seconds / MARKER_TIME_STEP_SECONDS) * MARKER_TIME_STEP_SECONDS
-    ).toFixed(2),
-  );
+export function normalize_marker_time(seconds: number): number {
+  return Math.round(seconds * MEDIA_TIME_PRECISION) / MEDIA_TIME_PRECISION;
 }

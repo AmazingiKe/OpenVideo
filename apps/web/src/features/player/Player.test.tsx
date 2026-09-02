@@ -14,11 +14,14 @@ const media = vi.hoisted(() => ({
     play: vi.fn(),
     pause: vi.fn(),
     changePlaybackRate: vi.fn(),
+    changeVolume: vi.fn(),
+    toggleCaptions: vi.fn(),
   },
   store: {
     currentTime: 12,
     paused: true,
     playbackRate: 1,
+    volume: 1,
   },
   events: {
     seeking_request: null as ((seconds: number) => void) | null,
@@ -47,8 +50,10 @@ vi.mock("@vidstack/react", () => ({
   },
   MediaProvider: () => <div data-testid="media-provider" />,
   useMediaPlayer: () => media.player,
+  useMediaProvider: () => null,
   useMediaRemote: () => media.remote,
   useMediaStore: () => media.store,
+  isVideoProvider: () => false,
 }));
 
 vi.mock("@vidstack/react/player/layouts/plyr", () => ({
@@ -75,6 +80,7 @@ beforeEach(() => {
   media.store.currentTime = 12;
   media.store.paused = true;
   media.store.playbackRate = 1;
+  media.store.volume = 1;
   media.events.seeking_request = null;
   media.events.seek_request = null;
   media.events.seeked = null;
@@ -88,7 +94,7 @@ describe("Player", () => {
     expect(screen.getByTestId("media-provider")).toBeInTheDocument();
     expect(screen.getByTestId("plyr-layout")).toHaveAttribute(
       "data-controls",
-      "play,progress,current-time,mute+volume,captions,settings,pip,airplay,fullscreen",
+      "play,progress,current-time,mute+volume,settings,pip,airplay,fullscreen",
     );
     expect(screen.getByTestId("plyr-layout")).toHaveAttribute(
       "data-invert-time",
@@ -111,7 +117,7 @@ describe("Player", () => {
     expect(player_ref.current?.current_time()).toBe(12);
     act(() => player_ref.current?.seek_to(8));
     expect(media.remote.seek).toHaveBeenCalledWith(8);
-    expect(on_time_change).toHaveBeenCalledWith(8);
+    expect(on_time_change).not.toHaveBeenCalled();
 
     act(() => player_ref.current?.toggle_playback());
     expect(media.remote.play).toHaveBeenCalledOnce();
@@ -185,6 +191,9 @@ describe("Player", () => {
         on_time_change={on_time_change}
       />,
     );
+    expect(on_time_change).not.toHaveBeenCalled();
+    media.player.currentTime = 8.1;
+    act(() => media.events.seeked?.());
     expect(on_time_change).toHaveBeenCalledWith(8.1);
   });
 
@@ -214,6 +223,37 @@ describe("Player", () => {
     );
   });
 
+  it("applies the saved subtitle offset without changing media time", () => {
+    const player_ref = createRef<PlayerHandle>();
+    render(
+      <Player
+        ref={player_ref}
+        src="/video.mp4"
+        subtitles={[
+          {
+            start_seconds: 12.4,
+            end_seconds: 13,
+            text: "校准后的字幕",
+            emotion: null,
+            audio_events: [],
+          },
+        ]}
+        subtitle_display={{
+          font_size: "medium",
+          position: "bottom",
+          background: "shadow",
+          offset_milliseconds: 500,
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("视频字幕")).toHaveTextContent("校准后的字幕");
+    expect(media.player.currentTime).toBe(12);
+
+    act(() => player_ref.current?.toggle_captions());
+    expect(screen.queryByLabelText("视频字幕")).not.toBeInTheDocument();
+  });
+
   it("applies the saved subtitle display presets", () => {
     render(
       <Player
@@ -231,6 +271,7 @@ describe("Player", () => {
           font_size: "large",
           position: "center",
           background: "solid",
+          offset_milliseconds: 0,
         }}
       />,
     );
@@ -244,7 +285,7 @@ describe("Player", () => {
     });
   });
 
-  it("keeps the frame, subtitle, and external timeline unchanged until seek release", () => {
+  it("updates the scrub clock while keeping the presented frame unchanged until release", () => {
     const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();
     const subtitles = [
@@ -278,16 +319,17 @@ describe("Player", () => {
 
     expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
     expect(media.player.currentTime).toBe(12);
-    expect(player_ref.current?.current_time()).toBe(12);
+    expect(player_ref.current?.current_time()).toBe(16);
     expect(media.remote.seek).not.toHaveBeenCalled();
     expect(on_time_change).not.toHaveBeenCalled();
 
     act(() => media.events.seek_request?.(16));
-    expect(on_time_change).toHaveBeenCalledWith(16);
+    expect(on_time_change).not.toHaveBeenCalled();
     expect(player_ref.current?.current_time()).toBe(16);
     media.player.currentTime = 16;
     media.store.currentTime = 16;
     act(() => media.events.seeked?.());
+    expect(on_time_change).toHaveBeenCalledWith(16);
     rerender(
       <Player
         ref={player_ref}
@@ -298,5 +340,19 @@ describe("Player", () => {
     );
 
     expect(screen.getByLabelText("视频字幕")).toHaveTextContent("跳转后字幕");
+  });
+
+  it("freezes playing video during scrub and resumes after the target frame appears", () => {
+    media.player.paused = false;
+    media.store.paused = false;
+    render(<Player src="/video.mp4" />);
+
+    act(() => media.events.seeking_request?.(18));
+    expect(media.remote.pause).toHaveBeenCalledOnce();
+
+    act(() => media.events.seek_request?.(18));
+    media.player.currentTime = 18;
+    act(() => media.events.seeked?.());
+    expect(media.remote.play).toHaveBeenCalledOnce();
   });
 });
