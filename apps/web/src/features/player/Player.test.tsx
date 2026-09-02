@@ -109,7 +109,7 @@ describe("Player", () => {
     render(
       <Player
         src="/video.mp4"
-        thumbnails={{
+        fallback_storyboard={{
           url: "/thumbnails.jpg",
           tile_width: 640,
           tile_height: 360,

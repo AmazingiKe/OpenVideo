@@ -28,7 +28,7 @@ const meta = {
     ],
     subtitles: [],
     evidence_range: null,
-    thumbnails: null,
+    fallback_storyboard: null,
   },
 } satisfies Meta<typeof Player>;
 

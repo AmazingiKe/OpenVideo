@@ -94,7 +94,7 @@ type PlayerProps = {
   subtitles?: TranscriptSegment[];
   subtitle_display?: SubtitleDisplaySettings;
   evidence_range?: AgentEvidenceRange | null;
-  thumbnails?: ScrubPreviewStoryboard | null;
+  fallback_storyboard?: ScrubPreviewStoryboard | null;
   playback_rate?: number;
   volume?: number;
   on_time_change?: (seconds: number) => void;
@@ -114,7 +114,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     subtitles = [],
     subtitle_display = DEFAULT_SUBTITLE_DISPLAY_SETTINGS,
     evidence_range = null,
-    thumbnails = null,
+    fallback_storyboard = null,
     playback_rate,
     volume,
     on_time_change,
@@ -165,7 +165,11 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     clear: clear_scrub_preview,
     has_preview_frame,
     unavailable_reason: scrub_preview_unavailable_reason,
-  } = use_scrub_frame_preview(src, thumbnails, on_scrub_preview_metrics);
+  } = use_scrub_frame_preview(
+    src,
+    fallback_storyboard,
+    on_scrub_preview_metrics,
+  );
 
   useEffect(() => {
     on_time_change_ref.current = on_time_change;

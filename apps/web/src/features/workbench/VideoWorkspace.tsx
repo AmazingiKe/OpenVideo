@@ -190,7 +190,7 @@ export const VideoWorkspace = memo(function VideoWorkspace({
                 start_seconds: marker.start_seconds,
                 label: format_marker_label(marker),
               }))}
-              thumbnails={storyboard}
+              fallback_storyboard={storyboard}
               on_time_change={on_time_change}
               on_pause_change={on_pause_change}
               on_playback_rate_change={on_playback_rate_change}

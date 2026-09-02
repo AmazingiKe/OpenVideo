@@ -113,7 +113,7 @@ export function SummaryMediaShelf({
               asset.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS
             }
             captions_enabled={captions_enabled}
-            thumbnails={storyboard}
+            fallback_storyboard={storyboard}
             on_time_change={set_current_time}
             on_pause_change={set_paused}
             on_captions_change={set_captions_enabled}
