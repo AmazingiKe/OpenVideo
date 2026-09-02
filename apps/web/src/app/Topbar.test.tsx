@@ -41,10 +41,10 @@ describe("Topbar", () => {
       screen
         .getAllByRole("link")
         .filter((link) =>
-          ["下载", "视频库", "标记", "解析"].includes(link.textContent ?? ""),
+          ["下载", "视频库", "标记", "总结"].includes(link.textContent ?? ""),
         )
         .map((link) => link.textContent),
-    ).toEqual(["下载", "视频库", "标记", "解析"]);
+    ).toEqual(["下载", "视频库", "标记", "总结"]);
   });
 
   it("does not render the removed marker video dropdown", () => {

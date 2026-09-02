@@ -74,7 +74,7 @@ export function SummaryPage() {
         <ResizableHandle
           withHandle
           className={cn(!media_expanded && "hidden")}
-          aria-label="调整解析视频高度"
+          aria-label="调整总结参考视频高度"
         />
         <ResizablePanel
           id="summary-editor-workspace"

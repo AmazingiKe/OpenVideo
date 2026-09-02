@@ -65,8 +65,8 @@ describe("SummaryMediaShelf", () => {
     expect(screen.getByTestId("summary-player").parentElement).toHaveClass(
       "size-px",
     );
-    fireEvent.click(screen.getByRole("button", { name: "播放解析视频" }));
-    fireEvent.click(screen.getByRole("button", { name: "展开解析视频" }));
+    fireEvent.click(screen.getByRole("button", { name: "播放总结参考视频" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开总结参考视频" }));
 
     expect(player_toggle).toHaveBeenCalledOnce();
     expect(on_expanded_change).toHaveBeenCalledWith(true);
@@ -85,7 +85,7 @@ describe("SummaryMediaShelf", () => {
       .on_time_change as (seconds: number) => void;
 
     act(() => on_time_change(65.432));
-    expect(screen.getByLabelText("解析视频当前时间")).toHaveTextContent(
+    expect(screen.getByLabelText("总结参考视频当前时间")).toHaveTextContent(
       "00:01:05.432",
     );
   });
@@ -99,7 +99,7 @@ function create_asset(): MediaAsset {
     source_url: "https://www.bilibili.com/video/BV1xx411c7mD",
     source_platform: "bilibili",
     source_video_id: "BV1xx411c7mD",
-    title: "解析视频",
+    title: "课程视频",
     author_name: "作者",
     description: null,
     duration_seconds: 60,

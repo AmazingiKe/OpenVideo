@@ -45,7 +45,7 @@ export function SummaryMediaShelf({
   return (
     <section
       className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card"
-      aria-label="解析视频"
+      aria-label="总结参考视频"
       data-expanded={expanded || undefined}
     >
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
@@ -53,7 +53,7 @@ export function SummaryMediaShelf({
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label={paused ? "播放解析视频" : "暂停解析视频"}
+          aria-label={paused ? "播放总结参考视频" : "暂停总结参考视频"}
           disabled={!playable}
           onClick={() => player_ref.current?.toggle_playback()}
         >
@@ -66,7 +66,7 @@ export function SummaryMediaShelf({
         </div>
         <output
           className="shrink-0 text-xs text-muted-foreground tabular-nums"
-          aria-label="解析视频当前时间"
+          aria-label="总结参考视频当前时间"
         >
           {format_precise_media_time(current_time)}
         </output>
@@ -74,7 +74,7 @@ export function SummaryMediaShelf({
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label="切换解析视频字幕"
+          aria-label="切换总结参考视频字幕"
           aria-pressed={captions_enabled}
           disabled={!playable}
           onClick={toggle_captions}
@@ -85,7 +85,7 @@ export function SummaryMediaShelf({
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label={expanded ? "收起解析视频" : "展开解析视频"}
+          aria-label={expanded ? "收起总结参考视频" : "展开总结参考视频"}
           aria-expanded={expanded}
           disabled={!playable}
           onClick={() => on_expanded_change(!expanded)}

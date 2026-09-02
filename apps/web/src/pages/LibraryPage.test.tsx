@@ -121,7 +121,7 @@ function render_page() {
       <MemoryRouter initialEntries={["/library"]}>
         <Routes>
           <Route path="/library" element={<LibraryPage />} />
-          <Route path="/summary" element={<span>解析页</span>} />
+          <Route path="/summary" element={<span>总结页</span>} />
           <Route path="/markers/:asset_id" element={<span>标记页</span>} />
         </Routes>
         <Location />

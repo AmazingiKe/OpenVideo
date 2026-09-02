@@ -59,11 +59,11 @@ export const WORKSPACE_ROUTES: WorkspaceRoute[] = [
     preserve_state_when_hidden: false,
   },
   {
-    label: "解析",
+    label: "总结",
     path: SUMMARY_ROUTE_PATH,
     component: lazy(load_summary_page),
     load_component: load_summary_page,
-    // 解析页同样包含独立播放器，切换时必须完整销毁播放器实例。
+    // 总结页同样包含独立播放器，切换时必须完整销毁播放器实例。
     preserve_state_when_hidden: false,
   },
 ];
