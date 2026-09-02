@@ -18,6 +18,7 @@ const LOCAL_PREFERENCES_VERSION = 1;
 export type LocalPreferences = {
   assistant_open: boolean | null;
   color_scheme: ColorScheme | null;
+  summary_media_expanded: boolean | null;
   video_library_open: boolean | null;
 };
 
@@ -25,6 +26,7 @@ type LocalPreferencesContextValue = {
   preferences: LocalPreferences;
   set_assistant_open: (open: boolean) => void;
   set_color_scheme: (color_scheme: ColorScheme) => void;
+  set_summary_media_expanded: (expanded: boolean) => void;
   set_video_library_open: (open: boolean) => void;
 };
 
@@ -32,12 +34,14 @@ type StoredLocalPreferences = {
   version: typeof LOCAL_PREFERENCES_VERSION;
   assistant_open?: boolean;
   color_scheme?: ColorScheme;
+  summary_media_expanded?: boolean;
   video_library_open?: boolean;
 };
 
 const EMPTY_LOCAL_PREFERENCES: LocalPreferences = {
   assistant_open: null,
   color_scheme: null,
+  summary_media_expanded: null,
   video_library_open: null,
 };
 
@@ -65,6 +69,12 @@ export function LocalPreferencesProvider({
   const set_color_scheme = useCallback((color_scheme: ColorScheme) => {
     set_preferences((current) => ({ ...current, color_scheme }));
   }, []);
+  const set_summary_media_expanded = useCallback(
+    (summary_media_expanded: boolean) => {
+      set_preferences((current) => ({ ...current, summary_media_expanded }));
+    },
+    [],
+  );
   const set_video_library_open = useCallback((video_library_open: boolean) => {
     set_preferences((current) => ({ ...current, video_library_open }));
   }, []);
@@ -73,9 +83,16 @@ export function LocalPreferencesProvider({
       preferences,
       set_assistant_open,
       set_color_scheme,
+      set_summary_media_expanded,
       set_video_library_open,
     }),
-    [preferences, set_assistant_open, set_color_scheme, set_video_library_open],
+    [
+      preferences,
+      set_assistant_open,
+      set_color_scheme,
+      set_summary_media_expanded,
+      set_video_library_open,
+    ],
   );
 
   return (
@@ -117,6 +134,10 @@ export function read_local_preferences(
         stored.color_scheme === "light" || stored.color_scheme === "dark"
           ? stored.color_scheme
           : null,
+      summary_media_expanded:
+        typeof stored.summary_media_expanded === "boolean"
+          ? stored.summary_media_expanded
+          : null,
       video_library_open:
         typeof stored.video_library_open === "boolean"
           ? stored.video_library_open
@@ -140,6 +161,9 @@ function persist_local_preferences(
   }
   if (preferences.color_scheme !== null) {
     stored.color_scheme = preferences.color_scheme;
+  }
+  if (preferences.summary_media_expanded !== null) {
+    stored.summary_media_expanded = preferences.summary_media_expanded;
   }
   if (preferences.video_library_open !== null) {
     stored.video_library_open = preferences.video_library_open;
