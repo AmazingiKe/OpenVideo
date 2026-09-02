@@ -695,6 +695,64 @@ export function document_drop_placement(
   };
 }
 
+export function apply_document_placement(
+  documents: SummaryDocument[],
+  document_id: string,
+  parent_document_id: string,
+  position: number,
+): SummaryDocument[] {
+  const document = documents.find((item) => item.document_id === document_id);
+  const parent = documents.find(
+    (item) => item.document_id === parent_document_id,
+  );
+  if (!document || !parent || document.parent_document_id === null)
+    return documents;
+
+  const sibling_orders = new Map<string, SummaryDocument[]>();
+  for (const sibling_parent_id of new Set([
+    document.parent_document_id,
+    parent_document_id,
+  ])) {
+    sibling_orders.set(
+      sibling_parent_id,
+      documents
+        .filter(
+          (item) =>
+            item.parent_document_id === sibling_parent_id &&
+            item.document_id !== document_id,
+        )
+        .sort(compare_documents),
+    );
+  }
+  const target_siblings = sibling_orders.get(parent_document_id);
+  if (!target_siblings) return documents;
+  target_siblings.splice(Math.min(position, target_siblings.length), 0, document);
+
+  const placements = new Map<string, DocumentPlacement>();
+  for (const [sibling_parent_id, siblings] of sibling_orders) {
+    siblings.forEach((sibling, sibling_position) => {
+      placements.set(sibling.document_id, {
+        parent_document_id: sibling_parent_id,
+        position: sibling_position,
+      });
+    });
+  }
+  return documents.map((item) => {
+    const placement = placements.get(item.document_id);
+    if (
+      !placement ||
+      (item.parent_document_id === placement.parent_document_id &&
+        item.position === placement.position)
+    )
+      return item;
+    return {
+      ...item,
+      parent_document_id: placement.parent_document_id,
+      position: placement.position,
+    };
+  });
+}
+
 function document_depth(
   document: SummaryDocument,
   by_id: Map<string, SummaryDocument>,

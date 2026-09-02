@@ -294,6 +294,47 @@ class LibraryGeneratedStorageMixin:
             )
             return [self._summary_document_from_row(row) for row in rows]
 
+    def update_summary_document_placements(
+        self, documents: list[SummaryDocument]
+    ) -> None:
+        """将已提交到清单的树结构同步到查询投影，避免重建整个素材索引。"""
+
+        if not documents:
+            return
+        asset_ids = {document.asset_id for document in documents}
+        if len(asset_ids) != 1:
+            raise ValueError("总结文档必须属于同一个素材")
+        for document in documents:
+            self._validate_identifier(document.document_id, "document")
+        asset_id = next(iter(asset_ids))
+        self._validate_asset_id(asset_id)
+        document_ids = {document.document_id for document in documents}
+        with self._lock, self._db():
+            rows = self._db().execute(
+                "SELECT document_id FROM summary_documents "
+                "WHERE asset_id = ? AND document_id IN "
+                f"({', '.join('?' for _ in document_ids)})",
+                (asset_id, *document_ids),
+            ).fetchall()
+            if {row["document_id"] for row in rows} != document_ids:
+                raise ValueError("总结文档索引缺失")
+            self._db().executemany(
+                "UPDATE summary_documents SET parent_document_id = ?, position = ?, "
+                "revision = ?, updated_at = ? "
+                "WHERE document_id = ? AND asset_id = ?",
+                [
+                    (
+                        document.parent_document_id,
+                        document.position,
+                        document.revision,
+                        document.updated_at.isoformat(),
+                        document.document_id,
+                        asset_id,
+                    )
+                    for document in documents
+                ],
+            )
+
     def update_summary_document(
         self,
         document_id: str,

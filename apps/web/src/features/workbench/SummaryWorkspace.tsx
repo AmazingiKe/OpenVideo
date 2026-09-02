@@ -31,6 +31,7 @@ import { error_message } from "@/shared/errors";
 import { use_compact_summary_layout } from "@/features/summary/use_compact_summary_layout";
 import { create_summary_save_metadata } from "@/features/summary/summary_save_metadata";
 import { use_summary_autosave } from "@/features/summary/use_summary_autosave";
+import { apply_document_placement } from "./SummaryDocumentNavigation";
 import {
   load_summary_project,
   type SummaryProjectSnapshot,
@@ -419,12 +420,42 @@ export function SummaryWorkspace({
     position: number,
   ) {
     if (reordering) return;
+    const previous_documents = documents;
+    const reordered_documents = apply_document_placement(
+      previous_documents,
+      document_id,
+      parent_document_id,
+      position,
+    );
+    if (reordered_documents === previous_documents) return;
+    const previous_placements = new Map(
+      previous_documents.map((document) => [
+        document.document_id,
+        {
+          parent_document_id: document.parent_document_id,
+          position: document.position,
+        },
+      ]),
+    );
     set_reordering(true);
+    set_documents(reordered_documents);
     try {
       set_documents(
         await move_summary_document(document_id, parent_document_id, position),
       );
     } catch (error) {
+      set_documents((current) =>
+        current.map((document) => {
+          const previous = previous_placements.get(document.document_id);
+          return previous
+            ? {
+                ...document,
+                parent_document_id: previous.parent_document_id,
+                position: previous.position,
+              }
+            : document;
+        }),
+      );
       on_error?.(error_message(error));
     } finally {
       set_reordering(false);

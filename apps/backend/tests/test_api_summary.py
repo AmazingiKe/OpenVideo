@@ -401,6 +401,56 @@ def test_three_level_document_tree_supports_duplicate_move_and_subtree_delete(
     }
 
 
+def test_move_summary_document_updates_only_document_projection(
+    tmp_path: Path,
+    monkeypatch,
+):
+    install_generation_mocks(monkeypatch)
+    with create_client(tmp_path) as client:
+        generated = generate(client)
+        root = next(
+            item
+            for item in generated["documents"]
+            if item["parent_document_id"] is None
+        )
+        chapter = next(
+            item
+            for item in generated["documents"]
+            if item["parent_document_id"] == root["document_id"]
+        )
+        second_chapter_response = client.post(
+            f"/api/summary-documents/{root['document_id']}/children",
+            json={"title": "第二章", "markdown": "# 第二章\n"},
+        )
+        assert second_chapter_response.status_code == 201
+        second_chapter = second_chapter_response.json()
+
+        def fail_full_reindex(*_args, **_kwargs):
+            raise AssertionError("拖拽排序不应重建素材索引")
+
+        monkeypatch.setattr(
+            "openvideo.summary_manager.synchronize_asset", fail_full_reindex
+        )
+        moved_response = client.put(
+            f"/api/summary-documents/{second_chapter['document_id']}/move",
+            json={"parent_document_id": root["document_id"], "position": 0},
+        )
+
+    assert moved_response.status_code == 200, moved_response.text
+    moved = next(
+        item
+        for item in moved_response.json()
+        if item["document_id"] == second_chapter["document_id"]
+    )
+    assert moved["position"] == 0
+    moved_chapter = next(
+        item
+        for item in moved_response.json()
+        if item["document_id"] == chapter["document_id"]
+    )
+    assert moved_chapter["position"] == 1
+
+
 def test_agent_summary_batch_restores_all_files_when_manifest_commit_fails(
     tmp_path: Path,
     monkeypatch,

@@ -7,6 +7,7 @@ import {
   build_document_tree_rows,
   DocumentOutline,
   DocumentTree,
+  apply_document_placement,
   document_drop_placement,
 } from "./SummaryDocumentNavigation";
 
@@ -78,6 +79,23 @@ describe("document_drop_placement", () => {
   it("拒绝超过三级或移入自身后代", () => {
     expect(document_drop_placement(DOCUMENTS, "a", "a-1", "inside")).toBeNull();
     expect(document_drop_placement(DOCUMENTS, "b", "a-1", "inside")).toBeNull();
+  });
+});
+
+describe("apply_document_placement", () => {
+  it("在请求完成前同步更新源与目标同级位置", () => {
+    expect(
+      apply_document_placement(DOCUMENTS, "b", "a", 0).map((document) => [
+        document.document_id,
+        document.parent_document_id,
+        document.position,
+      ]),
+    ).toEqual([
+      ["root", null, 0],
+      ["a", "root", 0],
+      ["b", "a", 0],
+      ["a-1", "a", 1],
+    ]);
   });
 });
 

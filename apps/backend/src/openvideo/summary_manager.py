@@ -720,20 +720,25 @@ class SummaryManager:
                 asset_directory, SUMMARY_MANIFEST_FILE_NAME
             )
             manifest_snapshot = manifest_path.read_bytes()
+            changed_document_ids = {
+                item.document_id
+                for item, moved in zip(documents, moved_documents, strict=True)
+                if item != moved
+            }
+            previous_placements = [
+                item for item in documents if item.document_id in changed_document_ids
+            ]
+            next_placements = [
+                item
+                for item in moved_documents
+                if item.document_id in changed_document_ids
+            ]
             try:
                 self._write_manifest(document.asset_id, moved_documents)
-                synchronize_asset(
-                    self.library._db(),
-                    self.library.assets_path,
-                    document.asset_id,
-                )
+                self.library.update_summary_document_placements(next_placements)
             except Exception:
                 atomic_write_bytes(manifest_path, manifest_snapshot)
-                synchronize_asset(
-                    self.library._db(),
-                    self.library.assets_path,
-                    document.asset_id,
-                )
+                self.library.update_summary_document_placements(previous_placements)
                 raise
             return self.documents(document.asset_id)
 
