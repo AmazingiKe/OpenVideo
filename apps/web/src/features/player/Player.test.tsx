@@ -34,11 +34,13 @@ vi.mock("@vidstack/react", () => ({
   MediaPlayer: ({
     children,
     ariaLabel,
+    "data-scrubbing": is_scrubbing,
     onMediaSeekingRequest,
     onMediaSeekRequest,
     onSeeked,
   }: PropsWithChildren<{
     ariaLabel: string;
+    "data-scrubbing"?: true;
     onMediaSeekingRequest?: (seconds: number) => void;
     onMediaSeekRequest?: (seconds: number) => void;
     onSeeked?: () => void;
@@ -46,7 +48,14 @@ vi.mock("@vidstack/react", () => ({
     media.events.seeking_request = onMediaSeekingRequest ?? null;
     media.events.seek_request = onMediaSeekRequest ?? null;
     media.events.seeked = onSeeked ?? null;
-    return <section aria-label={ariaLabel}>{children}</section>;
+    return (
+      <section
+        aria-label={ariaLabel}
+        data-scrubbing={is_scrubbing || undefined}
+      >
+        {children}
+      </section>
+    );
   },
   MediaProvider: () => <div data-testid="media-provider" />,
   useMediaPlayer: () => media.player,
@@ -159,6 +168,22 @@ describe("Player", () => {
     );
     expect(player_ref.current?.current_time()).toBe(12);
     expect(on_time_change).not.toHaveBeenCalled();
+  });
+
+  it("keeps controls visible until the native progress drag presents its frame", () => {
+    const player_ref = createRef<PlayerHandle>();
+    render(<Player ref={player_ref} src="/video.mp4" />);
+    const player = screen.getByLabelText("OpenVideo 播放器");
+
+    act(() => player_ref.current?.begin_scrub(16));
+    expect(player).toHaveAttribute("data-scrubbing");
+
+    act(() => player_ref.current?.commit_scrub(16));
+    expect(player).toHaveAttribute("data-scrubbing");
+
+    media.player.currentTime = 16;
+    act(() => media.events.seeked?.());
+    expect(player).not.toHaveAttribute("data-scrubbing");
   });
 
   it("ignores stale time events while an external seek is pending", () => {

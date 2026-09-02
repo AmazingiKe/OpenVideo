@@ -38,6 +38,12 @@
   display: block;
 }
 
+.openvideo_player[data-scrubbing] .plyr__controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
 .openvideo_player [data-media-provider] {
   width: 100%;
   height: 100%;

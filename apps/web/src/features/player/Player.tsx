@@ -179,7 +179,8 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     commit: commit_seek_preview,
     confirm: confirm_seek_preview,
     cancel: cancel_seek_preview,
-    is_active: is_preview_active,
+    is_active: is_scrubbing,
+    has_active_preview,
   } = use_seek_preview({
     commit_timeout_milliseconds: SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS,
   });
@@ -196,7 +197,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   const begin_scrub = useCallback(
     (seconds: number) => {
-      const preview_was_active = is_preview_active();
+      const preview_was_active = has_active_preview();
       const bounded_time = begin_seek_preview(seconds);
       if (!preview_was_active) {
         resume_after_seek_ref.current = !current_paused_ref.current;
@@ -204,18 +205,23 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       }
       request_scrub_preview(bounded_time);
     },
-    [begin_seek_preview, is_preview_active, request_scrub_preview],
+    [begin_seek_preview, has_active_preview, request_scrub_preview],
   );
 
   const update_scrub = useCallback(
     (seconds: number) => {
-      if (!is_preview_active()) {
+      if (!has_active_preview()) {
         begin_scrub(seconds);
         return;
       }
       request_scrub_preview(begin_seek_preview(seconds));
     },
-    [begin_scrub, begin_seek_preview, is_preview_active, request_scrub_preview],
+    [
+      begin_scrub,
+      begin_seek_preview,
+      has_active_preview,
+      request_scrub_preview,
+    ],
   );
 
   useEffect(() => {
@@ -238,21 +244,21 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   const commit_scrub = useCallback(
     (seconds: number) => {
-      if (!is_preview_active()) begin_scrub(seconds);
+      if (!has_active_preview()) begin_scrub(seconds);
       const bounded_time = prepare_seek_commit(seconds);
       seek_fn_ref.current?.(bounded_time);
     },
-    [begin_scrub, is_preview_active, prepare_seek_commit],
+    [begin_scrub, has_active_preview, prepare_seek_commit],
   );
 
   const cancel_scrub = useCallback(() => {
-    if (!is_preview_active()) return;
+    if (!has_active_preview()) return;
     cancel_seek_preview();
     pending_seek_ref.current = false;
     clear_scrub_preview();
     if (resume_after_seek_ref.current) play_fn_ref.current?.();
     resume_after_seek_ref.current = false;
-  }, [cancel_seek_preview, clear_scrub_preview, is_preview_active]);
+  }, [cancel_seek_preview, clear_scrub_preview, has_active_preview]);
 
   const step_frame = useCallback(
     (direction: "previous" | "next") => {
@@ -332,13 +338,13 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   const on_player_time_change = useCallback(
     (seconds: number) => {
-      if (!pending_seek_ref.current && is_preview_active()) return;
+      if (!pending_seek_ref.current && has_active_preview()) return;
       if (pending_seek_ref.current) return;
       current_time_value_ref.current = seconds;
       set_presented_time_seconds(seconds);
       on_time_change_ref.current?.(seconds);
     },
-    [is_preview_active],
+    [has_active_preview],
   );
 
   const confirm_presented_seek = useCallback(() => {
@@ -372,9 +378,10 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     active_source_ref.current = src;
     resume_after_seek_ref.current = false;
     pending_seek_ref.current = false;
+    cancel_seek_preview();
     set_presented_time_seconds(null);
     clear_scrub_preview();
-  }, [clear_scrub_preview, src]);
+  }, [cancel_seek_preview, clear_scrub_preview, src]);
 
   const on_player_pause_change = useCallback(
     (paused: boolean) => {
@@ -410,6 +417,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         playbackRate={playback_rate}
         volume={volume}
         ariaLabel="OpenVideo 播放器"
+        data-scrubbing={is_scrubbing || undefined}
         onMediaSeekingRequest={begin_scrub}
         onMediaSeekRequest={prepare_seek_commit}
         onSeeked={confirm_presented_seek}

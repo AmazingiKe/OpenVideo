@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type SeekPreviewOptions = {
   commit_timeout_milliseconds: number;
@@ -10,10 +10,12 @@ export function use_seek_preview({
   const active_ref = useRef(false);
   const commit_pending_ref = useRef(false);
   const finish_timeout_ref = useRef<number | null>(null);
+  const [is_active, set_is_active] = useState(false);
 
   const finish_preview = useCallback(() => {
     commit_pending_ref.current = false;
     active_ref.current = false;
+    set_is_active(false);
     if (finish_timeout_ref.current !== null) {
       window.clearTimeout(finish_timeout_ref.current);
       finish_timeout_ref.current = null;
@@ -23,6 +25,7 @@ export function use_seek_preview({
   const begin = useCallback((seconds: number) => {
     const bounded_time = Math.max(0, seconds);
     active_ref.current = true;
+    set_is_active(true);
     commit_pending_ref.current = false;
     if (finish_timeout_ref.current !== null) {
       window.clearTimeout(finish_timeout_ref.current);
@@ -52,7 +55,7 @@ export function use_seek_preview({
     finish_preview();
   }, [finish_preview]);
 
-  const is_active = useCallback(() => active_ref.current, []);
+  const has_active_preview = useCallback(() => active_ref.current, []);
 
   useEffect(
     () => () => {
@@ -69,5 +72,6 @@ export function use_seek_preview({
     confirm,
     cancel,
     is_active,
+    has_active_preview,
   };
 }

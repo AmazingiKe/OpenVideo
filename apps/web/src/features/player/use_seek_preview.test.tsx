@@ -17,10 +17,11 @@ describe("use_seek_preview", () => {
     );
 
     act(() => expect(result.current.begin(-2)).toBe(0));
-    expect(result.current.is_active()).toBe(true);
+    expect(result.current.is_active).toBe(true);
+    expect(result.current.has_active_preview()).toBe(true);
 
     act(() => expect(result.current.begin(8)).toBe(8));
-    expect(result.current.is_active()).toBe(true);
+    expect(result.current.is_active).toBe(true);
   });
 
   it("keeps the drag active until the committed seek is confirmed", () => {
@@ -32,10 +33,10 @@ describe("use_seek_preview", () => {
       result.current.begin(8);
       result.current.commit();
     });
-    expect(result.current.is_active()).toBe(true);
+    expect(result.current.is_active).toBe(true);
 
     act(() => result.current.confirm());
-    expect(result.current.is_active()).toBe(false);
+    expect(result.current.is_active).toBe(false);
   });
 
   it("clears an unconfirmed preview after the commit timeout", () => {
@@ -49,6 +50,6 @@ describe("use_seek_preview", () => {
       vi.advanceTimersByTime(1_500);
     });
 
-    expect(result.current.is_active()).toBe(false);
+    expect(result.current.is_active).toBe(false);
   });
 });
