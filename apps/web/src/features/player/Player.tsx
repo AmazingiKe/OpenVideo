@@ -67,7 +67,10 @@ const PLAYER_TRANSLATIONS = {
 
 export type PlayerHandle = {
   seek_to: (seconds: number) => void;
-  preview_to: (seconds: number) => void;
+  begin_scrub: (seconds: number) => void;
+  update_scrub: (seconds: number) => void;
+  commit_scrub: (seconds: number) => void;
+  cancel_scrub: () => void;
   current_time: () => number;
   play: () => void;
   pause: () => void;
@@ -153,6 +156,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const {
     canvas_ref: scrub_preview_canvas_ref,
     request_frame: request_scrub_frame,
+    end_preview: end_scrub_preview,
     clear: clear_scrub_preview,
     has_preview_frame,
     unavailable_reason: scrub_preview_unavailable_reason,
@@ -171,29 +175,47 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   }, [captions_enabled, controlled_captions_enabled, on_captions_change]);
 
   const {
-    preview_to: request_seek_preview,
-    begin_seek_commit,
-    confirm_seek,
+    begin: begin_seek_preview,
+    commit: commit_seek_preview,
+    confirm: confirm_seek_preview,
+    cancel: cancel_seek_preview,
     is_active: is_preview_active,
   } = use_seek_preview({
     commit_timeout_milliseconds: SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS,
   });
 
-  const preview_to = useCallback(
+  const request_scrub_preview = useCallback(
+    (seconds: number) => {
+      const bounds = player_shell_ref.current?.getBoundingClientRect();
+      if (bounds) {
+        request_scrub_frame(seconds, bounds.width, bounds.height);
+      }
+    },
+    [request_scrub_frame],
+  );
+
+  const begin_scrub = useCallback(
     (seconds: number) => {
       const preview_was_active = is_preview_active();
-      const bounded_time = request_seek_preview(seconds);
+      const bounded_time = begin_seek_preview(seconds);
       if (!preview_was_active) {
         resume_after_seek_ref.current = !current_paused_ref.current;
         pause_fn_ref.current?.();
       }
-      current_time_value_ref.current = bounded_time;
-      const bounds = player_shell_ref.current?.getBoundingClientRect();
-      if (bounds) {
-        request_scrub_frame(bounded_time, bounds.width, bounds.height);
-      }
+      request_scrub_preview(bounded_time);
     },
-    [is_preview_active, request_scrub_frame, request_seek_preview],
+    [begin_seek_preview, is_preview_active, request_scrub_preview],
+  );
+
+  const update_scrub = useCallback(
+    (seconds: number) => {
+      if (!is_preview_active()) {
+        begin_scrub(seconds);
+        return;
+      }
+      request_scrub_preview(begin_seek_preview(seconds));
+    },
+    [begin_scrub, begin_seek_preview, is_preview_active, request_scrub_preview],
   );
 
   useEffect(() => {
@@ -205,13 +227,32 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const prepare_seek_commit = useCallback(
     (seconds: number) => {
       const bounded_time = Math.max(0, seconds);
+      end_scrub_preview();
       current_time_value_ref.current = bounded_time;
       pending_seek_ref.current = true;
-      begin_seek_commit();
+      commit_seek_preview();
       return bounded_time;
     },
-    [begin_seek_commit],
+    [commit_seek_preview, end_scrub_preview],
   );
+
+  const commit_scrub = useCallback(
+    (seconds: number) => {
+      if (!is_preview_active()) begin_scrub(seconds);
+      const bounded_time = prepare_seek_commit(seconds);
+      seek_fn_ref.current?.(bounded_time);
+    },
+    [begin_scrub, is_preview_active, prepare_seek_commit],
+  );
+
+  const cancel_scrub = useCallback(() => {
+    if (!is_preview_active()) return;
+    cancel_seek_preview();
+    pending_seek_ref.current = false;
+    clear_scrub_preview();
+    if (resume_after_seek_ref.current) play_fn_ref.current?.();
+    resume_after_seek_ref.current = false;
+  }, [cancel_seek_preview, clear_scrub_preview, is_preview_active]);
 
   const step_frame = useCallback(
     (direction: "previous" | "next") => {
@@ -225,12 +266,13 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         bounds.height,
         direction,
         (frame_time_seconds) => {
+          end_scrub_preview();
           const bounded_time = prepare_seek_commit(frame_time_seconds);
           seek_fn_ref.current?.(bounded_time);
         },
       );
     },
-    [prepare_seek_commit, request_scrub_frame],
+    [end_scrub_preview, prepare_seek_commit, request_scrub_frame],
   );
 
   useImperativeHandle(
@@ -240,9 +282,12 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         const bounded_time = prepare_seek_commit(seconds);
         seek_fn_ref.current?.(bounded_time);
       },
+      begin_scrub,
+      update_scrub,
+      commit_scrub,
+      cancel_scrub,
       play: () => play_fn_ref.current?.(),
       pause: () => pause_fn_ref.current?.(),
-      preview_to,
       current_time: () => current_time_value_ref.current,
       toggle_playback: () => toggle_playback_fn_ref.current?.(),
       set_playback_rate: (rate: number) =>
@@ -251,11 +296,23 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       toggle_captions,
       step_frame,
     }),
-    [prepare_seek_commit, preview_to, step_frame, toggle_captions],
+    [
+      begin_scrub,
+      cancel_scrub,
+      commit_scrub,
+      prepare_seek_commit,
+      step_frame,
+      toggle_captions,
+      update_scrub,
+    ],
   );
 
   const on_player_ready = useCallback((instance: PlayerController | null) => {
-    if (instance) current_time_value_ref.current = instance.current_time();
+    if (instance) {
+      const current_time = instance.current_time();
+      current_time_value_ref.current = current_time;
+      set_presented_time_seconds(current_time);
+    }
     seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
     play_fn_ref.current = instance ? () => instance.play() : null;
     pause_fn_ref.current = instance ? () => instance.pause() : null;
@@ -292,7 +349,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       current_time_value_ref.current = media_time;
       set_presented_time_seconds(media_time);
       on_time_change_ref.current?.(media_time);
-      confirm_seek();
+      confirm_seek_preview();
       clear_scrub_preview();
       if (resume_after_seek_ref.current) play_fn_ref.current?.();
       resume_after_seek_ref.current = false;
@@ -301,7 +358,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       wait_for_presented_frame_fn_ref.current?.(finish) ?? null;
     if (!presented_frame_cancel_ref.current)
       finish(current_time_value_ref.current);
-  }, [clear_scrub_preview, confirm_seek]);
+  }, [clear_scrub_preview, confirm_seek_preview]);
 
   useEffect(
     () => () => {
@@ -353,7 +410,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         playbackRate={playback_rate}
         volume={volume}
         ariaLabel="OpenVideo 播放器"
-        onMediaSeekingRequest={preview_to}
+        onMediaSeekingRequest={begin_scrub}
         onMediaSeekRequest={prepare_seek_commit}
         onSeeked={confirm_presented_seek}
       >

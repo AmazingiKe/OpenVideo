@@ -57,7 +57,7 @@ async function decode_frame(request: ScrubPreviewRequest) {
       typeof createImageBitmap === "undefined"
     ) {
       post_unavailable(
-        request.request_id,
+        request,
         "当前环境不支持 WebCodecs Worker 取帧",
       );
       return;
@@ -69,7 +69,7 @@ async function decode_frame(request: ScrubPreviewRequest) {
     const sink = await sink_for(input, request.width, request.height);
     if (!sink) {
       post_unavailable(
-        request.request_id,
+        request,
         "当前视频编码无法通过 WebCodecs 解码",
       );
       return;
@@ -77,16 +77,15 @@ async function decode_frame(request: ScrubPreviewRequest) {
     const current_frame = await sink.getCanvas(request.time_seconds);
     const result = await stepped_frame(sink, current_frame, request.mode);
     if (!result) {
-      post_unavailable(request.request_id, "目标时间没有可用视频帧");
-      return;
-    }
-    if (pending_request && pending_request.request_id > request.request_id) {
+      post_unavailable(request, "目标时间没有可用视频帧");
       return;
     }
     const bitmap = await createImageBitmap(result.canvas);
     const response: ScrubPreviewWorkerResponse = {
       type: "frame",
+      session_id: request.session_id,
       request_id: request.request_id,
+      requested_time_seconds: request.time_seconds,
       frame_time_seconds: result.timestamp,
       frame_duration_seconds: result.duration,
       decode_milliseconds: performance.now() - started_at,
@@ -99,7 +98,7 @@ async function decode_frame(request: ScrubPreviewRequest) {
   } catch (error) {
     if (active_input?.disposed) return;
     post_unavailable(
-      request.request_id,
+      request,
       error instanceof Error ? error.message : "拖动预览解码失败",
     );
   }
@@ -185,10 +184,14 @@ function dispose_input() {
   active_network_metrics = null;
 }
 
-function post_unavailable(request_id: number, reason: string) {
+function post_unavailable(request: ScrubPreviewRequest, reason: string) {
   const response: ScrubPreviewWorkerResponse = {
     type: "unavailable",
-    request_id,
+    session_id: request.session_id,
+    request_id: request.request_id,
+    requested_time_seconds: request.time_seconds,
+    width: request.width,
+    height: request.height,
     reason,
   };
   self.postMessage(response);

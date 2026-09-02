@@ -1,5 +1,6 @@
 export type ScrubPreviewRequest = {
   type: "decode";
+  session_id: number;
   request_id: number;
   source_url: string;
   time_seconds: number;
@@ -31,7 +32,9 @@ export type ScrubPreviewWorkerRequest =
 
 type ScrubPreviewFrameResponse = {
   type: "frame";
+  session_id: number;
   request_id: number;
+  requested_time_seconds: number;
   frame_time_seconds: number;
   frame_duration_seconds: number;
   decode_milliseconds: number;
@@ -42,7 +45,11 @@ type ScrubPreviewFrameResponse = {
 
 type ScrubPreviewUnavailableResponse = {
   type: "unavailable";
+  session_id: number;
   request_id: number;
+  requested_time_seconds: number;
+  width: number;
+  height: number;
   reason: string;
 };
 

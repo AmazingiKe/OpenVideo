@@ -340,8 +340,20 @@ export function MarkersPage() {
   };
   const { open_assistant } = use_global_assistant_controls();
 
-  function preview_player(seconds: number) {
-    player_ref.current?.preview_to(seconds);
+  function begin_player_scrub(seconds: number) {
+    player_ref.current?.begin_scrub(seconds);
+  }
+
+  function update_player_scrub(seconds: number) {
+    player_ref.current?.update_scrub(seconds);
+  }
+
+  function commit_player_scrub(seconds: number) {
+    player_ref.current?.commit_scrub(seconds);
+  }
+
+  function cancel_player_scrub() {
+    player_ref.current?.cancel_scrub();
   }
 
   function set_range_endpoint(
@@ -533,7 +545,10 @@ export function MarkersPage() {
         selected_transcript_indices={selected_transcript_indices}
         analysis_strategy={analysis_strategy}
         marker_error={marker_error}
-        on_scrub={preview_player}
+        on_scrub_start={begin_player_scrub}
+        on_scrub_update={update_player_scrub}
+        on_scrub_commit={commit_player_scrub}
+        on_scrub_cancel={cancel_player_scrub}
         on_seek={seek_player}
         on_toggle_playback={() => player_ref.current?.toggle_playback()}
         on_playback_rate_change={(rate) =>

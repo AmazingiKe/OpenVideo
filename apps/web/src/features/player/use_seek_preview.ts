@@ -20,7 +20,7 @@ export function use_seek_preview({
     }
   }, []);
 
-  const preview_to = useCallback((seconds: number) => {
+  const begin = useCallback((seconds: number) => {
     const bounded_time = Math.max(0, seconds);
     active_ref.current = true;
     commit_pending_ref.current = false;
@@ -31,7 +31,7 @@ export function use_seek_preview({
     return bounded_time;
   }, []);
 
-  const begin_seek_commit = useCallback(() => {
+  const commit = useCallback(() => {
     if (!active_ref.current) return;
     commit_pending_ref.current = true;
     if (finish_timeout_ref.current !== null) {
@@ -43,8 +43,13 @@ export function use_seek_preview({
     );
   }, [commit_timeout_milliseconds, finish_preview]);
 
-  const confirm_seek = useCallback(() => {
+  const confirm = useCallback(() => {
     if (commit_pending_ref.current) finish_preview();
+  }, [finish_preview]);
+
+  const cancel = useCallback(() => {
+    if (!active_ref.current) return;
+    finish_preview();
   }, [finish_preview]);
 
   const is_active = useCallback(() => active_ref.current, []);
@@ -59,9 +64,10 @@ export function use_seek_preview({
   );
 
   return {
-    preview_to,
-    begin_seek_commit,
-    confirm_seek,
+    begin,
+    commit,
+    confirm,
+    cancel,
     is_active,
   };
 }

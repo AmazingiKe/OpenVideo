@@ -261,7 +261,10 @@ function TimelineStory({
         selected_transcript_indices={selected_transcript_indices}
         analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
         marker_error={marker_error}
-        on_scrub={set_current_time}
+        on_scrub_start={set_current_time}
+        on_scrub_update={set_current_time}
+        on_scrub_commit={set_current_time}
+        on_scrub_cancel={() => undefined}
         on_seek={set_current_time}
         on_toggle_playback={() => set_is_paused((current) => !current)}
         on_playback_rate_change={set_playback_rate}

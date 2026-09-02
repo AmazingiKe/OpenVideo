@@ -346,7 +346,10 @@ type MediaTimelineProps = {
   selected_transcript_indices: number[];
   analysis_strategy: AnalysisStrategy;
   marker_error: string | null;
-  on_scrub: (seconds: number) => void;
+  on_scrub_start: (seconds: number) => void;
+  on_scrub_update: (seconds: number) => void;
+  on_scrub_commit: (seconds: number) => void;
+  on_scrub_cancel: () => void;
   on_seek: (seconds: number) => void;
   on_toggle_playback: () => void;
   on_playback_rate_change: (rate: number) => void;
@@ -389,7 +392,10 @@ export function MediaTimeline({
   selected_transcript_indices,
   analysis_strategy,
   marker_error,
-  on_scrub,
+  on_scrub_start,
+  on_scrub_update,
+  on_scrub_commit,
+  on_scrub_cancel,
   on_seek,
   on_toggle_playback,
   on_playback_rate_change,
@@ -1333,6 +1339,7 @@ export function MediaTimeline({
                 onPointerMove={continue_ruler_scrub}
                 onPointerUp={finish_ruler_scrub}
                 onPointerCancel={cancel_ruler_scrub}
+                onLostPointerCapture={cancel_ruler_scrub}
               />
               <div
                 ref={playhead_ref}
@@ -1572,8 +1579,16 @@ export function MediaTimeline({
     on_seek(Math.min(Math.max(seconds, 0), duration));
   }
 
-  function on_scrub_bounded(seconds: number) {
-    on_scrub(Math.min(Math.max(seconds, 0), duration));
+  function on_scrub_start_bounded(seconds: number) {
+    on_scrub_start(Math.min(Math.max(seconds, 0), duration));
+  }
+
+  function on_scrub_update_bounded(seconds: number) {
+    on_scrub_update(Math.min(Math.max(seconds, 0), duration));
+  }
+
+  function on_scrub_commit_bounded(seconds: number) {
+    on_scrub_commit(Math.min(Math.max(seconds, 0), duration));
   }
 
   function ruler_time_from_pointer(client_x: number) {
@@ -1610,7 +1625,7 @@ export function MediaTimeline({
     ruler_scrub_time_ref.current = time;
     set_playhead_time(time);
     update_ruler_scrub_feedback(event.currentTarget, time);
-    on_scrub_bounded(time);
+    on_scrub_start_bounded(time);
   }
 
   function continue_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
@@ -1619,7 +1634,7 @@ export function MediaTimeline({
     ruler_scrub_time_ref.current = time;
     set_playhead_time(time);
     update_ruler_scrub_feedback(event.currentTarget, time);
-    on_scrub_bounded(time);
+    on_scrub_update_bounded(time);
   }
 
   function finish_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
@@ -1631,14 +1646,21 @@ export function MediaTimeline({
     event.currentTarget.releasePointerCapture(event.pointerId);
     set_playhead_time(time);
     update_ruler_scrub_feedback(event.currentTarget, time);
-    on_seek_bounded(time);
+    on_scrub_commit_bounded(time);
   }
 
   function cancel_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
     if (ruler_pointer_id_ref.current !== event.pointerId) return;
     ruler_pointer_id_ref.current = null;
     ruler_bounds_ref.current = null;
-    on_seek_bounded(ruler_scrub_time_ref.current);
+    const presented_time = Math.min(
+      Math.max(read_playback_time?.() ?? current_time, 0),
+      duration,
+    );
+    ruler_scrub_time_ref.current = presented_time;
+    set_playhead_time(presented_time);
+    update_ruler_scrub_feedback(event.currentTarget, presented_time);
+    on_scrub_cancel();
   }
 
   function scrub_with_keyboard(event: KeyboardEvent<HTMLDivElement>) {

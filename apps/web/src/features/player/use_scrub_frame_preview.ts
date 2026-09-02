@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
+  ScrubPreviewRequest,
   ScrubPreviewStoryboard,
   ScrubPreviewWorkerRequest,
   ScrubPreviewWorkerResponse,
@@ -26,6 +27,17 @@ export type ScrubPreviewMetrics = {
 
 type ScrubPreviewStatus = "idle" | "decoding" | "ready" | "unavailable";
 
+type PendingFrameRequest = Omit<
+  ScrubPreviewRequest,
+  "source_url" | "type"
+>;
+
+type FrameCallback = {
+  session_id: number;
+  request_id: number;
+  callback: (frame_time_seconds: number, frame_duration_seconds: number) => void;
+};
+
 export function use_scrub_frame_preview(
   source_url: string,
   fallback_storyboard: ScrubPreviewStoryboard | null,
@@ -33,17 +45,16 @@ export function use_scrub_frame_preview(
 ) {
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const worker_ref = useRef<Worker | null>(null);
-  const latest_request_id_ref = useRef(0);
-  const requested_time_ref = useRef(0);
-  const requested_dimensions_ref = useRef({ width: 1, height: 1 });
+  const active_session_id_ref = useRef(0);
+  const next_request_id_ref = useRef(0);
+  const latest_drawn_request_id_ref = useRef(0);
+  const queued_request_ref = useRef<PendingFrameRequest | null>(null);
+  const animation_frame_ref = useRef<number | null>(null);
   const preview_quality_scale_ref = useRef(1);
   const fallback_image_ref = useRef<StoryboardImageCache | null>(null);
   const fallback_storyboard_ref = useRef(fallback_storyboard);
   const on_metrics_ref = useRef(on_metrics);
-  const frame_callback_ref = useRef<
-    | ((frame_time_seconds: number, frame_duration_seconds: number) => void)
-    | null
-  >(null);
+  const frame_callback_ref = useRef<FrameCallback | null>(null);
   const [has_preview_frame, set_has_preview_frame] = useState(false);
   const [status, set_status] = useState<ScrubPreviewStatus>("idle");
   const [unavailable_reason, set_unavailable_reason] = useState<string | null>(
@@ -53,6 +64,135 @@ export function use_scrub_frame_preview(
     fallback_image_ref.current = null;
   }
   fallback_storyboard_ref.current = fallback_storyboard;
+
+  const cancel_queued_request = useCallback(() => {
+    if (animation_frame_ref.current !== null) {
+      window.cancelAnimationFrame(animation_frame_ref.current);
+      animation_frame_ref.current = null;
+    }
+    queued_request_ref.current = null;
+  }, []);
+
+  const invalidate_preview_session = useCallback(() => {
+    active_session_id_ref.current += 1;
+    latest_drawn_request_id_ref.current = 0;
+    frame_callback_ref.current = null;
+    cancel_queued_request();
+  }, [cancel_queued_request]);
+
+  const can_display_request = useCallback(
+    (session_id: number, request_id: number) =>
+      session_id === active_session_id_ref.current &&
+      request_id >= latest_drawn_request_id_ref.current,
+    [],
+  );
+
+  const record_displayed_request = useCallback((request_id: number) => {
+    latest_drawn_request_id_ref.current = request_id;
+    set_has_preview_frame(true);
+    set_status("ready");
+  }, []);
+
+  const resolve_frame_callback = useCallback(
+    (
+      session_id: number,
+      request_id: number,
+      frame_time_seconds: number,
+      frame_duration_seconds: number,
+    ) => {
+      const pending_callback = frame_callback_ref.current;
+      if (
+        !pending_callback ||
+        pending_callback.session_id !== session_id ||
+        pending_callback.request_id !== request_id
+      ) {
+        return;
+      }
+      frame_callback_ref.current = null;
+      pending_callback.callback(frame_time_seconds, frame_duration_seconds);
+    },
+    [],
+  );
+
+  const render_storyboard_fallback = useCallback(
+    (request: PendingFrameRequest) => {
+      void draw_storyboard_fallback(
+        canvas_ref.current,
+        fallback_image_ref,
+        fallback_storyboard_ref.current,
+        request.time_seconds,
+        { width: request.width, height: request.height },
+        () => can_display_request(request.session_id, request.request_id),
+      )
+        .then((tile_time_seconds) => {
+          if (
+            tile_time_seconds === null ||
+            !can_display_request(request.session_id, request.request_id)
+          ) {
+            return;
+          }
+          record_displayed_request(request.request_id);
+          on_metrics_ref.current?.({
+            mode: "storyboard",
+            requested_time_seconds: request.time_seconds,
+            frame_time_seconds: tile_time_seconds,
+            frame_duration_seconds: 0,
+            decode_milliseconds: 0,
+            range_request_count: 0,
+            bytes_read: 0,
+            preview_width: request.width,
+            preview_height: request.height,
+          });
+          resolve_frame_callback(
+            request.session_id,
+            request.request_id,
+            tile_time_seconds,
+            0,
+          );
+        })
+        .catch(() => {
+          if (request.session_id === active_session_id_ref.current) {
+            set_status("unavailable");
+          }
+        });
+    },
+    [can_display_request, record_displayed_request, resolve_frame_callback],
+  );
+
+  const dispatch_request = useCallback(
+    (request: PendingFrameRequest) => {
+      const worker = worker_ref.current;
+      set_status("decoding");
+      if (!worker) {
+        render_storyboard_fallback(request);
+        return;
+      }
+      worker.postMessage({
+        type: "decode",
+        source_url,
+        ...request,
+      } satisfies ScrubPreviewWorkerRequest);
+    },
+    [render_storyboard_fallback, source_url],
+  );
+
+  const schedule_request = useCallback(
+    (request: PendingFrameRequest, immediate: boolean) => {
+      if (immediate) {
+        dispatch_request(request);
+        return;
+      }
+      queued_request_ref.current = request;
+      if (animation_frame_ref.current !== null) return;
+      animation_frame_ref.current = window.requestAnimationFrame(() => {
+        animation_frame_ref.current = null;
+        const queued_request = queued_request_ref.current;
+        queued_request_ref.current = null;
+        if (queued_request) dispatch_request(queued_request);
+      });
+    },
+    [dispatch_request],
+  );
 
   useEffect(() => {
     on_metrics_ref.current = on_metrics;
@@ -73,58 +213,37 @@ export function use_scrub_frame_preview(
     worker_ref.current = worker;
     worker.onmessage = (event: MessageEvent<ScrubPreviewWorkerResponse>) => {
       const response = event.data;
-      if (response.request_id !== latest_request_id_ref.current) {
+      if (response.session_id !== active_session_id_ref.current) {
         if (response.type === "frame") response.bitmap.close();
         return;
       }
       if (response.type === "unavailable") {
         set_unavailable_reason(response.reason);
-        void draw_storyboard_fallback(
-          canvas_ref.current,
-          fallback_image_ref,
-          fallback_storyboard_ref.current,
-          requested_time_ref.current,
-          requested_dimensions_ref.current,
-          () => response.request_id === latest_request_id_ref.current,
-        )
-          .then((tile_time_seconds) => {
-            if (response.request_id !== latest_request_id_ref.current) return;
-            if (tile_time_seconds === null) {
-              set_status("unavailable");
-              return;
-            }
-            set_has_preview_frame(true);
-            set_status("ready");
-            on_metrics_ref.current?.({
-              mode: "storyboard",
-              requested_time_seconds: requested_time_ref.current,
-              frame_time_seconds: tile_time_seconds,
-              frame_duration_seconds: 0,
-              decode_milliseconds: 0,
-              range_request_count: 0,
-              bytes_read: 0,
-              preview_width: requested_dimensions_ref.current.width,
-              preview_height: requested_dimensions_ref.current.height,
-            });
-          })
-          .catch(() => {
-            if (response.request_id === latest_request_id_ref.current) {
-              set_status("unavailable");
-            }
-          });
+        render_storyboard_fallback({
+          session_id: response.session_id,
+          request_id: response.request_id,
+          time_seconds: response.requested_time_seconds,
+          width: response.width,
+          height: response.height,
+          mode: "at",
+        });
+        return;
+      }
+      if (!can_display_request(response.session_id, response.request_id)) {
+        response.bitmap.close();
         return;
       }
       const preview_width = response.bitmap.width;
       const preview_height = response.bitmap.height;
       draw_bitmap(canvas_ref.current, response.bitmap);
-      set_has_preview_frame(true);
       preview_quality_scale_ref.current = next_preview_quality_scale(
         preview_quality_scale_ref.current,
         response.decode_milliseconds,
       );
+      record_displayed_request(response.request_id);
       on_metrics_ref.current?.({
         mode: "webcodecs",
-        requested_time_seconds: requested_time_ref.current,
+        requested_time_seconds: response.requested_time_seconds,
         frame_time_seconds: response.frame_time_seconds,
         frame_duration_seconds: response.frame_duration_seconds,
         decode_milliseconds: response.decode_milliseconds,
@@ -133,12 +252,12 @@ export function use_scrub_frame_preview(
         preview_width,
         preview_height,
       });
-      frame_callback_ref.current?.(
+      resolve_frame_callback(
+        response.session_id,
+        response.request_id,
         response.frame_time_seconds,
         response.frame_duration_seconds,
       );
-      frame_callback_ref.current = null;
-      set_status("ready");
       set_unavailable_reason(null);
     };
     worker.onerror = () => {
@@ -146,15 +265,22 @@ export function use_scrub_frame_preview(
       set_unavailable_reason("高清拖动预览 Worker 启动失败");
     };
     return () => {
+      invalidate_preview_session();
       const request: ScrubPreviewWorkerRequest = { type: "dispose" };
       worker.postMessage(request);
       worker.terminate();
       worker_ref.current = null;
     };
-  }, []);
+  }, [
+    can_display_request,
+    invalidate_preview_session,
+    record_displayed_request,
+    render_storyboard_fallback,
+    resolve_frame_callback,
+  ]);
 
   useEffect(() => {
-    latest_request_id_ref.current += 1;
+    invalidate_preview_session();
     worker_ref.current?.postMessage({
       type: "source-change",
       source_url,
@@ -163,7 +289,7 @@ export function use_scrub_frame_preview(
     set_has_preview_frame(false);
     fallback_image_ref.current = null;
     preview_quality_scale_ref.current = 1;
-  }, [source_url]);
+  }, [invalidate_preview_session, source_url]);
 
   const request_frame = useCallback(
     (
@@ -176,80 +302,48 @@ export function use_scrub_frame_preview(
         frame_duration_seconds: number,
       ) => void,
     ) => {
-      const worker = worker_ref.current;
       if (player_width <= 0 || player_height <= 0) return;
-      const request_id = latest_request_id_ref.current + 1;
-      latest_request_id_ref.current = request_id;
-      requested_time_ref.current = time_seconds;
-      frame_callback_ref.current = on_frame ?? null;
+      const request_id = next_request_id_ref.current + 1;
+      next_request_id_ref.current = request_id;
       const dimensions = preview_dimensions(
         player_width,
         player_height,
         window.devicePixelRatio || 1,
         preview_quality_scale_ref.current,
       );
-      requested_dimensions_ref.current = dimensions;
-      if (!worker) {
-        set_status("decoding");
-        void draw_storyboard_fallback(
-          canvas_ref.current,
-          fallback_image_ref,
-          fallback_storyboard_ref.current,
-          time_seconds,
-          dimensions,
-          () => request_id === latest_request_id_ref.current,
-        )
-          .then((tile_time_seconds) => {
-            if (request_id !== latest_request_id_ref.current) return;
-            if (tile_time_seconds === null) {
-              set_status("unavailable");
-              return;
-            }
-            set_has_preview_frame(true);
-            set_status("ready");
-            on_metrics_ref.current?.({
-              mode: "storyboard",
-              requested_time_seconds: time_seconds,
-              frame_time_seconds: tile_time_seconds,
-              frame_duration_seconds: 0,
-              decode_milliseconds: 0,
-              range_request_count: 0,
-              bytes_read: 0,
-              preview_width: dimensions.width,
-              preview_height: dimensions.height,
-            });
-          })
-          .catch(() => {
-            if (request_id === latest_request_id_ref.current) {
-              set_status("unavailable");
-            }
-          });
-        return;
-      }
-      const request: ScrubPreviewWorkerRequest = {
-        type: "decode",
+      const request: PendingFrameRequest = {
+        session_id: active_session_id_ref.current,
         request_id,
-        source_url,
         time_seconds,
         mode,
         ...dimensions,
       };
-      set_status("decoding");
-      worker.postMessage(request);
+      if (on_frame) {
+        frame_callback_ref.current = {
+          session_id: request.session_id,
+          request_id,
+          callback: on_frame,
+        };
+      }
+      schedule_request(request, mode !== "at" || on_frame !== undefined);
     },
-    [source_url],
+    [schedule_request],
   );
 
+  const end_preview = useCallback(() => {
+    invalidate_preview_session();
+  }, [invalidate_preview_session]);
+
   const clear = useCallback(() => {
-    latest_request_id_ref.current += 1;
-    frame_callback_ref.current = null;
+    invalidate_preview_session();
     set_status((current) => (current === "unavailable" ? current : "idle"));
     set_has_preview_frame(false);
-  }, []);
+  }, [invalidate_preview_session]);
 
   return {
     canvas_ref,
     request_frame,
+    end_preview,
     clear,
     has_preview_frame,
     status,
@@ -270,8 +364,7 @@ function draw_bitmap(canvas: HTMLCanvasElement | null, bitmap: ImageBitmap) {
     bitmap.close();
     return;
   }
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
+  resize_canvas(canvas, bitmap.width, bitmap.height);
   const bitmap_context = canvas.getContext("bitmaprenderer");
   if (bitmap_context) {
     bitmap_context.transferFromImageBitmap(bitmap);
@@ -288,15 +381,14 @@ async function draw_storyboard_fallback(
   storyboard: ScrubPreviewStoryboard | null,
   time_seconds: number,
   dimensions: { width: number; height: number },
-  request_is_current: () => boolean,
+  can_draw: () => boolean,
 ) {
   if (!canvas || !storyboard) return null;
   const tile = storyboard_tile_at(storyboard, time_seconds);
   if (!tile) return null;
   const image = await load_storyboard_image(image_ref, storyboard.url);
-  if (!request_is_current()) return null;
-  canvas.width = dimensions.width;
-  canvas.height = dimensions.height;
+  if (!can_draw()) return null;
+  resize_canvas(canvas, dimensions.width, dimensions.height);
   const context = canvas.getContext("2d");
   if (!context) return null;
   const target = contained_preview_rect(
@@ -318,6 +410,11 @@ async function draw_storyboard_fallback(
     target.height,
   );
   return tile.start_time;
+}
+
+function resize_canvas(canvas: HTMLCanvasElement, width: number, height: number) {
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
 }
 
 function load_storyboard_image(

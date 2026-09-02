@@ -154,7 +154,7 @@ function PerformanceProbePlayer(props: ComponentProps<typeof Player>) {
             step="any"
             defaultValue={0}
             onInput={(event) =>
-              player_ref.current?.preview_to(Number(event.currentTarget.value))
+              player_ref.current?.update_scrub(Number(event.currentTarget.value))
             }
           />
         </label>
