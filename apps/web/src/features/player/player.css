@@ -38,10 +38,13 @@
   display: block;
 }
 
-.openvideo_player[data-scrubbing] .plyr__controls {
+.openvideo_player[data-scrubbing] .plyr__controls,
+.openvideo_player:has([data-media-time-slider][data-dragging]) .plyr__controls {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
   transform: none;
+  transition: none;
 }
 
 .openvideo_player [data-media-provider] {

@@ -12,6 +12,8 @@ export type PlayerController = {
   seek: (seconds: number) => void;
   play: () => void;
   pause: () => void;
+  hold_controls_visible: () => void;
+  release_controls_visibility: () => void;
   toggle_playback: () => void;
   set_playback_rate: (rate: number) => void;
   set_volume: (volume: number) => void;
@@ -49,6 +51,8 @@ export function PlayerStateBridge({
       seek: (seconds: number) => remote.seek(seconds),
       play: () => void remote.play(),
       pause: () => void remote.pause(),
+      hold_controls_visible: () => player.controls.pause(),
+      release_controls_visibility: () => player.controls.resume(),
       toggle_playback: () => {
         if (player.paused) void remote.play();
         else void remote.pause();

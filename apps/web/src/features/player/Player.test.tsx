@@ -1,5 +1,5 @@
 import { act, createRef, type PropsWithChildren } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Player, type PlayerHandle } from "./Player";
@@ -8,6 +8,10 @@ const media = vi.hoisted(() => ({
   player: {
     currentTime: 12,
     paused: true,
+    controls: {
+      pause: vi.fn(),
+      resume: vi.fn(),
+    },
   },
   remote: {
     seek: vi.fn(),
@@ -77,7 +81,9 @@ vi.mock("@vidstack/react/player/layouts/plyr", () => ({
       data-testid="plyr-layout"
       data-controls={controls.join(",")}
       data-invert-time={String(invertTime)}
-    />
+    >
+      <div role="slider" aria-label="播放进度" data-media-time-slider />
+    </div>
   ),
   plyrLayoutIcons: {},
 }));
@@ -177,6 +183,7 @@ describe("Player", () => {
 
     act(() => player_ref.current?.begin_scrub(16));
     expect(player).toHaveAttribute("data-scrubbing");
+    expect(media.player.controls.pause).toHaveBeenCalledOnce();
 
     act(() => player_ref.current?.commit_scrub(16));
     expect(player).toHaveAttribute("data-scrubbing");
@@ -184,6 +191,36 @@ describe("Player", () => {
     media.player.currentTime = 16;
     act(() => media.events.seeked?.());
     expect(player).not.toHaveAttribute("data-scrubbing");
+    expect(media.player.controls.resume).toHaveBeenCalledOnce();
+  });
+
+  it("holds control visibility from progress pointer down to pointer up", () => {
+    render(<Player src="/video.mp4" />);
+    const progress = screen.getByRole("slider", { name: "播放进度" });
+
+    fireEvent.pointerDown(progress);
+    expect(media.player.controls.pause).toHaveBeenCalledOnce();
+    expect(media.player.controls.resume).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(progress);
+    expect(media.player.controls.resume).toHaveBeenCalledOnce();
+  });
+
+  it("releases control visibility when seek confirmation times out", () => {
+    vi.useFakeTimers();
+    try {
+      const player_ref = createRef<PlayerHandle>();
+      render(<Player ref={player_ref} src="/video.mp4" />);
+
+      act(() => player_ref.current?.begin_scrub(16));
+      act(() => player_ref.current?.commit_scrub(16));
+      expect(media.player.controls.pause).toHaveBeenCalledOnce();
+
+      act(() => vi.advanceTimersByTime(1_500));
+      expect(media.player.controls.resume).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ignores stale time events while an external seek is pending", () => {

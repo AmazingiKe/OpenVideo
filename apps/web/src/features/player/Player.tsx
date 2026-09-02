@@ -14,6 +14,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 
 import type {
@@ -37,6 +38,7 @@ import type { ScrubPreviewMetrics } from "./use_scrub_frame_preview";
 import type { ScrubPreviewStoryboard } from "./scrub_preview_protocol";
 
 const SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS = 1_500;
+const MEDIA_TIME_SLIDER_SELECTOR = "[data-media-time-slider]";
 const PLAYER_CONTROLS: PlyrControl[] = [
   "play",
   "progress",
@@ -131,6 +133,9 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const toggle_playback_fn_ref = useRef<(() => void) | null>(null);
   const play_fn_ref = useRef<(() => void) | null>(null);
   const pause_fn_ref = useRef<(() => void) | null>(null);
+  const hold_controls_visible_fn_ref = useRef<(() => void) | null>(null);
+  const release_controls_visibility_fn_ref = useRef<(() => void) | null>(null);
+  const controls_visibility_held_ref = useRef(false);
   const set_playback_rate_fn_ref = useRef<((rate: number) => void) | null>(
     null,
   );
@@ -184,6 +189,41 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   } = use_seek_preview({
     commit_timeout_milliseconds: SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS,
   });
+
+  const hold_controls_visible = useCallback(() => {
+    if (controls_visibility_held_ref.current) return;
+    const hold = hold_controls_visible_fn_ref.current;
+    if (!hold) return;
+    controls_visibility_held_ref.current = true;
+    hold();
+  }, []);
+
+  const release_controls_visibility = useCallback(() => {
+    if (!controls_visibility_held_ref.current) return;
+    controls_visibility_held_ref.current = false;
+    release_controls_visibility_fn_ref.current?.();
+  }, []);
+
+  useEffect(() => {
+    if (is_scrubbing) hold_controls_visible();
+    else release_controls_visibility();
+  }, [hold_controls_visible, is_scrubbing, release_controls_visibility]);
+
+  const hold_player_timeline_controls = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!event_targets_media_time_slider(event)) return;
+      hold_controls_visible();
+    },
+    [hold_controls_visible],
+  );
+
+  const release_player_timeline_controls = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!event_targets_media_time_slider(event)) return;
+      if (!has_active_preview()) release_controls_visibility();
+    },
+    [has_active_preview, release_controls_visibility],
+  );
 
   const request_scrub_preview = useCallback(
     (seconds: number) => {
@@ -322,6 +362,12 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
     play_fn_ref.current = instance ? () => instance.play() : null;
     pause_fn_ref.current = instance ? () => instance.pause() : null;
+    hold_controls_visible_fn_ref.current = instance
+      ? () => instance.hold_controls_visible()
+      : null;
+    release_controls_visibility_fn_ref.current = instance
+      ? () => instance.release_controls_visibility()
+      : null;
     toggle_playback_fn_ref.current = instance
       ? () => instance.toggle_playback()
       : null;
@@ -410,7 +456,14 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     : null;
 
   return (
-    <div className="openvideo_player_shell" ref={player_shell_ref}>
+    <div
+      className="openvideo_player_shell"
+      ref={player_shell_ref}
+      onPointerDownCapture={hold_player_timeline_controls}
+      onPointerUpCapture={release_player_timeline_controls}
+      onPointerCancelCapture={release_player_timeline_controls}
+      onLostPointerCapture={release_player_timeline_controls}
+    >
       <MediaPlayer
         className="openvideo_player"
         src={{ src, type: "video/mp4" }}
@@ -456,6 +509,15 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     </div>
   );
 });
+
+function event_targets_media_time_slider(
+  event: ReactPointerEvent<HTMLDivElement>,
+) {
+  return (
+    event.target instanceof Element &&
+    event.target.closest(MEDIA_TIME_SLIDER_SELECTOR) !== null
+  );
+}
 
 function SubtitleOverlay({
   segments,
