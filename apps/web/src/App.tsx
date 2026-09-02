@@ -22,6 +22,7 @@ import {
   workspace_route,
 } from "@/app/workspace_routes";
 import { LibrarySetup } from "@/features/library/LibrarySetup";
+import { PlaybackSessionProvider } from "@/features/player/playback_session";
 
 export function App() {
   return (
@@ -60,11 +61,13 @@ function LibraryGate() {
       <AssetCatalogProvider>
         <TaskManagerProvider>
           <GlobalAssistantProvider>
-            <Routes>
-              <Route element={<AppShell />}>
-                <Route path="*" element={<WorkspaceRouter />} />
-              </Route>
-            </Routes>
+            <PlaybackSessionProvider>
+              <Routes>
+                <Route element={<AppShell />}>
+                  <Route path="*" element={<WorkspaceRouter />} />
+                </Route>
+              </Routes>
+            </PlaybackSessionProvider>
           </GlobalAssistantProvider>
         </TaskManagerProvider>
       </AssetCatalogProvider>

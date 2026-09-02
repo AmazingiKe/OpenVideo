@@ -55,8 +55,7 @@ export const WORKSPACE_ROUTES: WorkspaceRoute[] = [
     path: MARKERS_ROUTE_PATH,
     component: lazy(load_markers_page),
     load_component: load_markers_page,
-    // Vidstack 无法在 Activity 清理 Effect 后恢复已销毁的内部播放器实例。
-    preserve_state_when_hidden: false,
+    preserve_state_when_hidden: true,
   },
   {
     label: "解析",

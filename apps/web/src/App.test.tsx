@@ -357,22 +357,19 @@ describe("App", () => {
       { timeout: 5_000 },
     );
     expect(
-      screen.getByRole("button", { name: "展开视频库" }),
+      await screen.findByRole("button", { name: "展开视频库" }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("全局助手")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "选择标记视频" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
+    expect(screen.getByLabelText("共享播放器")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(
-      screen.getByRole("separator", { name: "调整时间线高度" }),
+      screen.getByRole("separator", { name: "调整播放器高度" }),
     ).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: "转录" }, { timeout: 5_000 }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "字幕修正" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("工具面板")).not.toBeInTheDocument();
     expect(
@@ -439,8 +436,17 @@ describe("App", () => {
     expect(screen.getByRole("main")).toHaveClass("overflow-hidden");
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(
-      screen.getByRole("separator", { name: "调整时间线高度" }),
-    ).toBeInTheDocument();
+      screen.getByRole("separator", { name: "调整播放器高度" }),
+    ).toHaveClass("hidden");
+    const persistent_player = screen.getByTestId("player");
+    fireEvent.click(screen.getByRole("button", { name: "展开播放器" }));
+    expect(
+      screen.getByRole("button", { name: "收起为迷你播放器" }),
+    ).toBeVisible();
+    expect(screen.getByTestId("player")).toBe(persistent_player);
+    fireEvent.click(screen.getByRole("button", { name: "收起为迷你播放器" }));
+    expect(screen.getByRole("button", { name: "展开播放器" })).toBeVisible();
+    expect(screen.getByTestId("player")).toBe(persistent_player);
     expect(screen.getByRole("button", { name: "打开视频库" })).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "视频库" })).toBeNull();
 
@@ -547,7 +553,7 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "第一段视频" }),
     ).toBeInTheDocument();
     const video_workspace = screen.getByRole("region", {
-      name: "视频工作区",
+      name: "共享播放器",
     });
     const marker_workspace = screen.getByRole("region", {
       name: "标记工作区",
@@ -562,7 +568,7 @@ describe("App", () => {
     expect(
       within(agent_panel).queryByLabelText("工作方式"),
     ).not.toBeInTheDocument();
-    expect(marker_workspace).toContainElement(video_workspace);
+    expect(marker_workspace).not.toContainElement(video_workspace);
     expect(marker_workspace).toContainElement(timeline);
     expect(marker_workspace).not.toContainElement(agent_panel);
     expect(
@@ -948,7 +954,7 @@ describe("App", () => {
     );
   });
 
-  it("unmounts the markers player while another workspace is active", async () => {
+  it("keeps the shared player mounted while another workspace is active", async () => {
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
       dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
@@ -975,7 +981,7 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "下载" }));
     await waitFor(() =>
-      expect(screen.queryByTestId("player")).not.toBeInTheDocument(),
+      expect(screen.getByTestId("player")).toBeInTheDocument(),
     );
 
     fireEvent.click(screen.getByRole("link", { name: "标记" }));
