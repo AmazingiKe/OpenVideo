@@ -362,10 +362,10 @@ describe("App", () => {
     expect(
       screen.queryByRole("button", { name: "选择标记视频" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByLabelText("共享播放器")).toBeInTheDocument();
+    expect(screen.getByLabelText("视频工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(
-      screen.getByRole("separator", { name: "调整播放器高度" }),
+      screen.getByRole("separator", { name: "调整时间线高度" }),
     ).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: "转录" }, { timeout: 5_000 }),
@@ -435,17 +435,9 @@ describe("App", () => {
     expect(screen.getByRole("main")).toHaveClass("overflow-hidden");
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
     expect(
-      screen.getByRole("separator", { name: "调整播放器高度" }),
-    ).toHaveClass("hidden");
-    const persistent_player = screen.getByTestId("player");
-    fireEvent.click(screen.getByRole("button", { name: "展开播放器" }));
-    expect(
-      screen.getByRole("button", { name: "收起为迷你播放器" }),
-    ).toBeVisible();
-    expect(screen.getByTestId("player")).toBe(persistent_player);
-    fireEvent.click(screen.getByRole("button", { name: "收起为迷你播放器" }));
-    expect(screen.getByRole("button", { name: "展开播放器" })).toBeVisible();
-    expect(screen.getByTestId("player")).toBe(persistent_player);
+      screen.getByRole("separator", { name: "调整时间线高度" }),
+    ).toBeInTheDocument();
+    const marker_player = screen.getByTestId("player");
     expect(screen.getByRole("button", { name: "打开视频库" })).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "视频库" })).toBeNull();
 
@@ -453,6 +445,7 @@ describe("App", () => {
 
     const library_sheet = await screen.findByRole("dialog", { name: "视频库" });
     expect(within(library_sheet).getByLabelText("视频库浏览器")).toBeVisible();
+    expect(screen.getByTestId("player")).toBe(marker_player);
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
   }, 10_000);
 
@@ -552,7 +545,7 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "第一段视频" }),
     ).toBeInTheDocument();
     const video_workspace = screen.getByRole("region", {
-      name: "共享播放器",
+      name: "视频工作区",
     });
     const marker_workspace = screen.getByRole("region", {
       name: "标记工作区",
@@ -567,13 +560,9 @@ describe("App", () => {
     expect(
       within(agent_panel).queryByLabelText("工作方式"),
     ).not.toBeInTheDocument();
-    expect(marker_workspace).not.toContainElement(video_workspace);
+    expect(marker_workspace).toContainElement(video_workspace);
     expect(marker_workspace).toContainElement(timeline);
     expect(marker_workspace).not.toContainElement(agent_panel);
-    expect(
-      video_workspace.compareDocumentPosition(agent_panel) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     expect(
       screen.queryByRole("tab", { name: "Agent" }),
     ).not.toBeInTheDocument();

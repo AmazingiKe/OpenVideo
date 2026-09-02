@@ -16,10 +16,11 @@ import { use_compact_markers_layout } from "@/features/markers/use_compact_marke
 import { use_markers_page_settings } from "@/features/markers/use_markers_page_settings";
 import { MarkerLibraryPanel } from "@/features/markers/MarkerLibraryPanel";
 import { evidence_range_for_asset } from "@/features/markers/evidence_navigation";
-import { use_playback_session } from "@/features/player/playback_session";
+import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/markers/use_asset_markers";
 import { TranscriptionToolbarTools } from "@/features/workbench/TranscriptionToolbarTools";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
+import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import { timeline_agent_focus } from "@/features/workbench/timeline_agent_context";
 import {
   ResizableHandle,
@@ -45,6 +46,7 @@ import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import { delete_event_analysis, list_event_analyses } from "@/shared/api";
 import type {
   AgentArtifact,
+  AgentEvidenceRange,
   AgentEvidenceReference,
   EventAnalysis,
   FocusSelection,
@@ -70,11 +72,15 @@ const MediaTimeline = lazy(() =>
 const PANEL_TOGGLE_TRANSITION_MS = 280;
 const LIBRARY_PANEL_MIN_WIDTH_PX = 320;
 const LIBRARY_PANEL_MAX_WIDTH_PERCENT = 40;
+const VIDEO_PANEL_MIN_WIDTH_PX = 400;
+const PREVIEW_PANEL_MIN_HEIGHT_PX = 144;
+const TIMELINE_PANEL_DEFAULT_HEIGHT_PX = 264;
+const TIMELINE_PANEL_MIN_HEIGHT_PX = 176;
+const TIMELINE_PANEL_MAX_HEIGHT_PERCENT = 65;
 
 export function MarkersPage() {
   const navigate = useNavigate();
   const { selected_asset, selected_asset_id } = use_asset_catalog();
-  const playback = use_playback_session();
   const { start_transcription, is_transcription_running } = use_task_manager();
   const {
     segments,
@@ -93,6 +99,9 @@ export function MarkersPage() {
     default_transcription,
     error: transcription_resources_error,
   } = use_transcription_resources();
+  const [current_time, set_current_time] = useState(0);
+  const [is_paused, set_is_paused] = useState(true);
+  const [playback_rate, set_playback_rate] = useState(1);
   const [selected_transcript_indices, set_selected_transcript_indices] =
     useState<number[]>([]);
   const [assistant_invocation_request, set_assistant_invocation_request] =
@@ -103,12 +112,8 @@ export function MarkersPage() {
   const [agent_context_attachments, set_agent_context_attachments] = useState<
     AgentContextAttachmentDraft[]
   >([]);
-  const {
-    current_time,
-    evidence_range,
-    paused: is_paused,
-    playback_rate,
-  } = playback;
+  const [evidence_range, set_evidence_range] =
+    useState<AgentEvidenceRange | null>(null);
   const [event_analyses, set_event_analyses] = useState<EventAnalysis[]>([]);
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
     new Set(),
@@ -122,6 +127,7 @@ export function MarkersPage() {
   const [is_panel_size_transitioning, set_is_panel_size_transitioning] =
     useState(false);
   const panel_transition_timeout_ref = useRef<number | null>(null);
+  const player_ref = useRef<PlayerHandle>(null);
   const left_panel_ref = useRef<PanelImperativeHandle>(null);
   const mounted_ref = useRef(true);
   const is_compact_layout = use_compact_markers_layout();
@@ -153,11 +159,15 @@ export function MarkersPage() {
   }, []);
 
   useEffect(() => {
+    set_current_time(0);
+    set_is_paused(true);
+    set_playback_rate(1);
     set_selected_transcript_indices([]);
     set_assistant_invocation_request(null);
     set_candidate_markers([]);
     set_focus_selection(null);
     set_agent_context_attachments([]);
+    set_evidence_range(null);
     set_event_analyses([]);
     set_selected_marker_ids(new Set());
   }, [selected_asset_id]);
@@ -233,7 +243,8 @@ export function MarkersPage() {
   ]);
 
   function seek_player(seconds: number) {
-    playback.seek_to(seconds);
+    set_current_time(seconds);
+    player_ref.current?.seek_to(seconds);
   }
 
   function seek_agent_evidence(
@@ -241,7 +252,7 @@ export function MarkersPage() {
     end_seconds?: number | null,
     evidence?: AgentEvidenceReference,
   ) {
-    playback.set_evidence_range(
+    set_evidence_range(
       evidence_range_for_asset(selected_asset_id, evidence, end_seconds),
     );
     seek_player(seconds);
@@ -330,7 +341,7 @@ export function MarkersPage() {
   const { open_assistant } = use_global_assistant_controls();
 
   function preview_player(seconds: number) {
-    playback.preview_to(seconds);
+    player_ref.current?.preview_to(seconds);
   }
 
   function set_range_endpoint(
@@ -454,6 +465,18 @@ export function MarkersPage() {
       on_open_video={(asset) => open_library_video(asset.asset_id)}
     />
   );
+  const video_workspace = (
+    <VideoWorkspace
+      asset={selected_asset}
+      markers={markers}
+      transcript={transcript}
+      evidence_range={evidence_range}
+      player_ref={player_ref}
+      on_time_change={set_current_time}
+      on_pause_change={set_is_paused}
+      on_playback_rate_change={set_playback_rate}
+    />
+  );
   const transcription_tools = (
     <TranscriptionToolbarTools
       asset={selected_asset}
@@ -494,7 +517,9 @@ export function MarkersPage() {
         asset_id={selected_asset_id}
         duration_seconds={selected_asset?.duration_seconds ?? null}
         current_time={current_time}
-        read_playback_time={playback.read_current_time}
+        read_playback_time={() =>
+          player_ref.current?.current_time() ?? current_time
+        }
         is_paused={is_paused}
         playback_rate={playback_rate}
         transcript={transcript}
@@ -510,8 +535,10 @@ export function MarkersPage() {
         marker_error={marker_error}
         on_scrub={preview_player}
         on_seek={seek_player}
-        on_toggle_playback={playback.toggle_playback}
-        on_playback_rate_change={playback.set_playback_rate}
+        on_toggle_playback={() => player_ref.current?.toggle_playback()}
+        on_playback_rate_change={(rate) =>
+          player_ref.current?.set_playback_rate(rate)
+        }
         on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_request_transcript_correction={request_quick_transcript_correction}
         on_selected_marker_ids_change={set_selected_marker_ids}
@@ -551,78 +578,104 @@ export function MarkersPage() {
           </div>
         ) : (
           <section
-            className="h-full min-h-0 min-w-0 overflow-hidden"
+            className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
             aria-label="标记工作区"
           >
-            {is_compact_layout ? (
-              <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                {compact_library_launcher}
-                <div className="min-h-0 flex-1">{timeline}</div>
-                <Sheet
-                  open={library_open}
-                  onOpenChange={set_video_library_open}
-                >
-                  <SheetContent
-                    side="left"
-                    className="w-[min(92vw,24rem)] gap-0 p-0"
-                    showCloseButton={false}
-                  >
-                    <SheetHeader className="sr-only">
-                      <SheetTitle>视频库</SheetTitle>
-                      <SheetDescription>
-                        选择一个视频并在标记工作区中打开
-                      </SheetDescription>
-                    </SheetHeader>
-                    <MarkerLibraryPanel
-                      compact
-                      current_video_id={selected_asset_id}
-                      initial_folder_id={selected_asset?.folder_id}
-                      on_collapsed_change={(collapsed) => {
-                        if (collapsed) set_video_library_open(false);
-                      }}
-                      on_open_video={(asset) =>
-                        open_library_video(asset.asset_id)
-                      }
-                    />
-                  </SheetContent>
-                </Sheet>
-              </div>
-            ) : (
-              <ResizablePanelGroup
-                id="markers-library-timeline"
-                orientation="horizontal"
-                onLayoutChanged={(layout, metadata) => {
-                  if (metadata.isUserInteraction) save_library_layout(layout);
-                }}
+            <ResizablePanelGroup id="markers-workspace" orientation="vertical">
+              <ResizablePanel
+                id="markers-preview"
+                minSize={`${PREVIEW_PANEL_MIN_HEIGHT_PX}px`}
+                className="min-h-0 overflow-hidden"
               >
-                <ResizablePanel
-                  id="left-panel"
-                  panelRef={left_panel_ref}
-                  defaultSize={
-                    library_open
-                      ? `${settings.left_panel_size_percent}%`
-                      : `${PANEL_RAIL_WIDTH_PX}px`
-                  }
-                  minSize={`${LIBRARY_PANEL_MIN_WIDTH_PX}px`}
-                  maxSize={`${LIBRARY_PANEL_MAX_WIDTH_PERCENT}%`}
-                  collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
-                  collapsible
-                  onResize={(size) => {
-                    const collapsed = size.inPixels <= PANEL_RAIL_WIDTH_PX + 1;
-                    const panel_open = !collapsed;
-                    if (panel_open !== library_open) {
-                      set_video_library_open(panel_open);
-                    }
-                  }}
-                >
-                  {library_panel}
-                </ResizablePanel>
-                <ResizableHandle withHandle aria-label="调整视频库宽度" />
-                <ResizablePanel id="markers-timeline" minSize="400px">
-                  {timeline}
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            )}
+                {is_compact_layout ? (
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                    {compact_library_launcher}
+                    <div className="min-h-0 flex-1">{video_workspace}</div>
+                    <Sheet
+                      open={library_open}
+                      onOpenChange={set_video_library_open}
+                    >
+                      <SheetContent
+                        side="left"
+                        className="w-[min(92vw,24rem)] gap-0 p-0"
+                        showCloseButton={false}
+                      >
+                        <SheetHeader className="sr-only">
+                          <SheetTitle>视频库</SheetTitle>
+                          <SheetDescription>
+                            选择一个视频并在标记工作区中打开
+                          </SheetDescription>
+                        </SheetHeader>
+                        <MarkerLibraryPanel
+                          compact
+                          current_video_id={selected_asset_id}
+                          initial_folder_id={selected_asset?.folder_id}
+                          on_collapsed_change={(collapsed) => {
+                            if (collapsed) set_video_library_open(false);
+                          }}
+                          on_open_video={(asset) =>
+                            open_library_video(asset.asset_id)
+                          }
+                        />
+                      </SheetContent>
+                    </Sheet>
+                  </div>
+                ) : (
+                  <ResizablePanelGroup
+                    id="markers-library-workspace"
+                    orientation="horizontal"
+                    onLayoutChanged={(layout, metadata) => {
+                      if (metadata.isUserInteraction) save_library_layout(layout);
+                    }}
+                  >
+                    <ResizablePanel
+                      id="left-panel"
+                      panelRef={left_panel_ref}
+                      defaultSize={
+                        library_open
+                          ? `${settings.left_panel_size_percent}%`
+                          : `${PANEL_RAIL_WIDTH_PX}px`
+                      }
+                      minSize={`${LIBRARY_PANEL_MIN_WIDTH_PX}px`}
+                      maxSize={`${LIBRARY_PANEL_MAX_WIDTH_PERCENT}%`}
+                      collapsedSize={`${PANEL_RAIL_WIDTH_PX}px`}
+                      collapsible
+                      onResize={(size) => {
+                        const collapsed =
+                          size.inPixels <= PANEL_RAIL_WIDTH_PX + 1;
+                        const panel_open = !collapsed;
+                        if (panel_open !== library_open) {
+                          set_video_library_open(panel_open);
+                        }
+                      }}
+                    >
+                      {library_panel}
+                    </ResizablePanel>
+                    <ResizableHandle withHandle aria-label="调整视频库宽度" />
+                    <ResizablePanel
+                      id="video-player"
+                      minSize={`${VIDEO_PANEL_MIN_WIDTH_PX}px`}
+                    >
+                      {video_workspace}
+                    </ResizablePanel>
+                  </ResizablePanelGroup>
+                )}
+              </ResizablePanel>
+              <ResizableHandle
+                withHandle
+                aria-label="调整时间线高度"
+              />
+              <ResizablePanel
+                id="markers-timeline"
+                defaultSize={`${TIMELINE_PANEL_DEFAULT_HEIGHT_PX}px`}
+                minSize={`${TIMELINE_PANEL_MIN_HEIGHT_PX}px`}
+                maxSize={`${TIMELINE_PANEL_MAX_HEIGHT_PERCENT}%`}
+                groupResizeBehavior="preserve-pixel-size"
+                className="min-h-0 overflow-hidden"
+              >
+                {timeline}
+              </ResizablePanel>
+            </ResizablePanelGroup>
           </section>
         )}
       </div>

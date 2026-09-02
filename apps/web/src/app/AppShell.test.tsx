@@ -12,10 +12,6 @@ vi.mock("@/app/global_assistant", () => ({
 vi.mock("@/app/library", () => ({
   use_library_state: () => ({ library: null }),
 }));
-vi.mock("@/features/player/SharedPlayerWorkspace", () => ({
-  SharedPlayerWorkspace: () => <section aria-label="共享播放器" />,
-}));
-
 function render_shell(pathname: string) {
   render(
     <MemoryRouter initialEntries={[pathname]}>
