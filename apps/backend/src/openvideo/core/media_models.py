@@ -134,7 +134,6 @@ class MediaAssetResponse(BaseModel):
     status: MediaAssetStatus
     error_message: str | None
     playback_url: str | None
-    scrub_preview_url: str | None
     thumbnail_url: str | None
     thumbnail_storyboard: ThumbnailStoryboardResponse | None = None
     subtitle_display: SubtitleDisplaySettings = Field(

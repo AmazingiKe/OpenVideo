@@ -15,14 +15,12 @@ from openvideo.core.media_models import (
     SubtitleDisplaySettings,
     SubtitleExportResult,
 )
-from openvideo.core.thumbnails import SCRUB_PROXY_RELATIVE_PATH
 from openvideo.settings import Settings
 from openvideo.tools.subtitle_export import (
     SubtitleExportError,
     SubtitleExportUnavailableError,
     export_subtitled_video,
 )
-from openvideo.tools.thumbnails import generate_scrub_proxy
 
 STREAM_CHUNK_SIZE = 1024 * 1024
 DEFAULT_VIDEO_MEDIA_TYPE = "video/mp4"
@@ -147,34 +145,6 @@ def register_media_routes(
         if not media_file:
             raise HTTPException(status_code=404, detail="视频文件不存在")
         return stream_video_file(request, media_file, range_header)
-
-    @app.api_route(
-        "/api/media/assets/{asset_id}/scrub-preview",
-        methods=["GET", "HEAD"],
-    )
-    def scrub_preview(
-        request: Request,
-        asset_id: str,
-        range_header: str | None = Header(default=None, alias="Range"),
-    ) -> Response:
-        asset = ready_asset(library(), asset_id)
-        preview_file = library().resolve_asset_file(asset, SCRUB_PROXY_RELATIVE_PATH)
-        if not preview_file:
-            playback_file = library().resolve_asset_file(asset, asset.playback_path)
-            if not playback_file:
-                raise HTTPException(status_code=404, detail="视频文件不存在")
-            generated_file = generate_scrub_proxy(
-                playback_file,
-                library().media_directory(asset.asset_id),
-                settings.ffmpeg_path,
-                settings.ffmpeg_bin_dir,
-            )
-            preview_file = library().resolve_asset_file(
-                asset, SCRUB_PROXY_RELATIVE_PATH
-            )
-            if generated_file is None or not preview_file:
-                raise HTTPException(status_code=404, detail="拖动预览视频生成失败")
-        return stream_video_file(request, preview_file, range_header)
 
     @app.get("/api/media/assets/{asset_id}/thumbnail")
     def thumbnail(asset_id: str) -> FileResponse:

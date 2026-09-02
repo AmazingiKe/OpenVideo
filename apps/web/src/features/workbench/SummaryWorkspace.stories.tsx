@@ -21,7 +21,6 @@ const ASSET: MediaAsset = {
   status: "ready",
   error_message: null,
   playback_url: "/stream",
-  scrub_preview_url: null,
   thumbnail_url: null,
   thumbnail_storyboard: null,
   created_at: "2026-01-01T00:00:00Z",

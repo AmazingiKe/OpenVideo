@@ -113,7 +113,6 @@ function create_asset(): MediaAsset {
     status: "ready",
     error_message: null,
     playback_url: "/stream",
-    scrub_preview_url: null,
     thumbnail_url: null,
     thumbnail_storyboard: null,
     subtitle_display: {

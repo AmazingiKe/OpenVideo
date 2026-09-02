@@ -603,7 +603,6 @@ async def test_initialization_start_failure_does_not_rollback_completed_download
         "probe_media",
         lambda *_: MediaProbe(20, 1920, 1080, "h264", "aac"),
     )
-    monkeypatch.setattr(download_manager, "generate_scrub_proxy", lambda *_: None)
     monkeypatch.setattr(
         download_manager,
         "generate_thumbnail_sprite",

@@ -401,7 +401,6 @@ function asset(
     status,
     error_message: status === "failed" ? "转码失败" : null,
     playback_url: status === "ready" ? "/stream" : null,
-    scrub_preview_url: null,
     thumbnail_url: null,
     thumbnail_storyboard: null,
     created_at: "2026-01-01T00:00:00Z",

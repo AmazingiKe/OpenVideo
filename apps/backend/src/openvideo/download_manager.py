@@ -27,10 +27,7 @@ from openvideo.tools.downloader import (
 )
 from openvideo.tools.media import probe_media
 from openvideo.tools.sources import SourceMatch
-from openvideo.tools.thumbnails import (
-    generate_scrub_proxy,
-    generate_thumbnail_sprite,
-)
+from openvideo.tools.thumbnails import generate_thumbnail_sprite
 
 
 LOGGER = logging.getLogger(__name__)
@@ -295,13 +292,6 @@ class DownloadManager:
                     else None
                 )
                 asset.remote_thumbnail_url = metadata.thumbnail_url
-                await asyncio.to_thread(
-                    generate_scrub_proxy,
-                    downloaded.playback_file,
-                    self.library.media_directory(asset.asset_id),
-                    self.settings.ffmpeg_path,
-                    self.settings.ffmpeg_bin_dir,
-                )
                 storyboard = await asyncio.to_thread(
                     generate_thumbnail_sprite,
                     downloaded.playback_file,
