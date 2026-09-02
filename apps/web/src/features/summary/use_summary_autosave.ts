@@ -232,13 +232,18 @@ export function use_summary_autosave({
               { title: request.title, markdown: request.markdown },
               request.metadata,
             );
-            on_document_saved_ref.current(updated);
-            const response_matches =
-              updated.title === request.title &&
-              updated.markdown === normalize_markdown(request.markdown);
-            save_request_ref.current = null;
-            if (!response_matches) {
-              continue;
+          on_document_saved_ref.current(updated);
+          const response_matches =
+            updated.title === request.title &&
+            updated.markdown === request.markdown;
+          save_request_ref.current = null;
+          if (!response_matches) {
+            retry_attempt_ref.current = Math.min(
+              retry_attempt_ref.current + 1,
+              RETRY_DELAYS_MS.length - 1,
+            );
+            set_status("failed");
+            return false;
             }
             confirmed_version_ref.current = Math.max(
               confirmed_version_ref.current,
@@ -377,11 +382,6 @@ function create_save_request(
     content_version,
     metadata: create_summary_save_metadata(),
   };
-}
-
-function normalize_markdown(markdown: string): string {
-  const trimmed = markdown.trimEnd();
-  return trimmed ? `${trimmed}\n` : "";
 }
 
 function show_manual_confirmation(

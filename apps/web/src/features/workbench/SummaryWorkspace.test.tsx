@@ -674,7 +674,7 @@ describe("SummaryWorkspace", () => {
     ]);
     vi.mocked(update_summary_document).mockResolvedValue({
       ...DOCUMENT,
-      markdown: "# 尚未自动保存的修改\n",
+      markdown: "# 尚未自动保存的修改",
       revision: 2,
     });
 
@@ -690,7 +690,7 @@ describe("SummaryWorkspace", () => {
       name: "可视化 Markdown",
     });
     fireEvent.change(editor, {
-      target: { value: "# 尚未自动保存的修改\n" },
+      target: { value: "# 尚未自动保存的修改" },
     });
     fireEvent.click(screen.getByRole("button", { name: "文档" }));
     fireEvent.click(
@@ -703,7 +703,7 @@ describe("SummaryWorkspace", () => {
       expect(update_summary_document).toHaveBeenLastCalledWith(
         DOCUMENT.document_id,
         {
-          markdown: "# 尚未自动保存的修改\n",
+          markdown: "# 尚未自动保存的修改",
           title: DOCUMENT.title,
         },
         expect.objectContaining({
@@ -712,6 +712,7 @@ describe("SummaryWorkspace", () => {
         }),
       ),
     );
+    expect(update_summary_document).toHaveBeenCalledOnce();
     await waitFor(() => expect(editor).toHaveValue(CHILD_DOCUMENT.markdown));
   });
 
