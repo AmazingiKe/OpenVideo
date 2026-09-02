@@ -6,7 +6,6 @@ import {
   type MediaAsset,
   type SummaryDocument,
   type SummaryPreset,
-  type Transcript,
 } from "@/shared/types";
 import { SummaryWorkspace } from "./SummaryWorkspace";
 
@@ -93,21 +92,6 @@ const DOCUMENTS: SummaryDocument[] = [
     updated_at: CREATED_AT,
   },
 ];
-
-const TRANSCRIPT: Transcript = {
-  asset_id: ASSET_ID,
-  language: "zh",
-  segments: [
-    {
-      start_seconds: 38,
-      end_seconds: 48,
-      text: "摄影机开始向人物缓慢推进。",
-      emotion: null,
-      audio_events: [],
-    },
-  ],
-  created_at: CREATED_AT,
-};
 
 function json_response(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -198,7 +182,6 @@ const meta = {
   tags: ["!test"],
   args: {
     selected_asset: ASSET,
-    transcript: TRANSCRIPT,
   },
   beforeEach() {
     const original_fetch = window.fetch;

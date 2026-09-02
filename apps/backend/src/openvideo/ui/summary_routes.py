@@ -185,6 +185,17 @@ def register_summary_routes(
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post(
+        "/api/media/assets/{asset_id}/summary-documents/init",
+        response_model=SummaryDocument,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def initialize_summary_document(asset_id: str) -> SummaryDocument:
+        try:
+            return summary_manager().initialize_document(asset_id)
+        except SummaryError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post(
         "/api/summary-documents/{document_id}/duplicate",
         response_model=SummaryDocument,
         status_code=status.HTTP_201_CREATED,

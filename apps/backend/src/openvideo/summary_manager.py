@@ -67,6 +67,10 @@ from openvideo.tools.summary_media import (
 
 
 SUMMARY_AGENT_TIMEOUT_SECONDS = 120
+SUMMARY_DRAFT_PRESET_ID = "draft"
+SUMMARY_DRAFT_PRESET_VERSION = 1
+SUMMARY_DRAFT_MODEL_ID = "draft"
+EMPTY_SUMMARY_CONTEXT_DIGEST = hashlib.sha256(b"[]").hexdigest()
 SUMMARY_PLAN_MAX_TOKENS = 2_000
 SUMMARY_OUTPUT_TOKENS = {
     SummaryDetail.CONCISE: 4_000,
@@ -339,6 +343,44 @@ class SummaryManager:
                 documents=self.documents(asset_id),
                 context_capacity_unknown=capacity_unknown,
             )
+
+    def initialize_document(
+        self,
+        asset_id: str,
+        title: str | None = None,
+        ai_model_id: str = SUMMARY_DRAFT_MODEL_ID,
+    ) -> SummaryDocument:
+        """首次打开总结页时建立持久草稿，使用户直接进入 Markdown 编辑器。"""
+
+        with self.library._lock:
+            asset = self._require_asset(asset_id)
+            current_project = self.project(asset_id)
+            if current_project is not None:
+                return self._require_document(current_project.root_document_id)
+            document = self._prepare_document(
+                SummaryDocument(
+                    document_id=f"document-{uuid7().hex}",
+                    asset_id=asset_id,
+                    title=title.strip() if title and title.strip() else asset.title,
+                )
+            )
+            project = SummaryProject(
+                asset_id=asset_id,
+                root_document_id=document.document_id,
+                preset_id=SUMMARY_DRAFT_PRESET_ID,
+                preset_version=SUMMARY_DRAFT_PRESET_VERSION,
+                ai_model_id=ai_model_id,
+                detail=SummaryDetail.STANDARD,
+                output_language="zh-CN",
+                context_summary=SummaryContextSummary(
+                    transcript_digest=EMPTY_SUMMARY_CONTEXT_DIGEST,
+                    marker_digest=EMPTY_SUMMARY_CONTEXT_DIGEST,
+                    event_analysis_digest=EMPTY_SUMMARY_CONTEXT_DIGEST,
+                ),
+            )
+            self._write_project(project, [document])
+            self.library.create_summary_documents([document])
+            return self._require_document(document.document_id)
 
     def create_child(
         self,

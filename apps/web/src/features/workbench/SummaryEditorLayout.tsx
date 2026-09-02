@@ -1,10 +1,4 @@
-import {
-  CircleCheck,
-  Ellipsis,
-  PanelLeft,
-  PanelRight,
-  RefreshCw,
-} from "lucide-react";
+import { PanelLeft, PanelRight } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
@@ -14,25 +8,7 @@ import {
 import { AgentContextSource } from "@/components/AgentContextSource";
 import type { AgentContextAttachmentDraft } from "@/components/agent_context";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -70,7 +46,6 @@ type SummaryEditorLayoutProps = {
   editor_mode: "visual" | "source";
   export_pending: boolean;
   export_relative_path: string | null;
-  generation_notice: string | null;
   illustration_job: SummaryIllustrationJob | null;
   move_document: (
     document_id: string,
@@ -93,7 +68,6 @@ type SummaryEditorLayoutProps = {
   save_status: SaveStatus;
   selected_asset_id: string;
   selected_document: SummaryDocument;
-  on_regenerate: () => void;
   selection: MarkdownSelection | null;
   select_document: (document_id: string) => void;
   set_delete_target: (document: SummaryDocument) => void;
@@ -115,7 +89,6 @@ export function SummaryEditorLayout({
   editor_mode,
   export_pending,
   export_relative_path,
-  generation_notice,
   illustration_job,
   move_document,
   new_document_open,
@@ -134,7 +107,6 @@ export function SummaryEditorLayout({
   save_status,
   selected_asset_id,
   selected_document,
-  on_regenerate,
   selection,
   select_document,
   set_delete_target,
@@ -163,7 +135,6 @@ export function SummaryEditorLayout({
   const [target_heading_id, set_target_heading_id] = useState<string | null>(
     null,
   );
-  const [regenerate_confirm_open, set_regenerate_confirm_open] = useState(false);
   useEffect(() => {
     set_agent_context_attachments([]);
     set_active_heading_id(null);
@@ -277,35 +248,6 @@ export function SummaryEditorLayout({
       aria-label="Markdown 总结工作台"
     >
       <GlobalAssistantRegistration binding={assistant_binding} />
-      <div className="flex shrink-0 justify-end border-b px-3 py-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="outline" size="sm">
-              <Ellipsis data-icon="inline-start" aria-hidden="true" />
-              笔记工具
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuGroup>
-              <DropdownMenuItem
-                onSelect={() => set_regenerate_confirm_open(true)}
-              >
-                <RefreshCw aria-hidden="true" />
-                重新生成
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      {generation_notice ? (
-        <div className="shrink-0 px-2 pt-2">
-          <Alert role="status" aria-live="polite" aria-label="生成提示">
-            <CircleCheck aria-hidden="true" />
-            <AlertTitle>生成提示</AlertTitle>
-            <AlertDescription>{generation_notice}</AlertDescription>
-          </Alert>
-        </div>
-      ) : null}
       {illustration_job ? (
         <SummaryIllustrationProgress job={illustration_job} />
       ) : null}
@@ -356,25 +298,6 @@ export function SummaryEditorLayout({
         }}
         on_confirm={on_delete_confirm}
       />
-      <AlertDialog
-        open={regenerate_confirm_open}
-        onOpenChange={set_regenerate_confirm_open}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>重新生成当前笔记？</AlertDialogTitle>
-            <AlertDialogDescription>
-              新内容会替换当前笔记。请确认现有编辑已经保存，再继续配置生成选项。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={on_regenerate}>
-              继续配置
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   );
 }

@@ -12,29 +12,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   create_summary_export,
-  generate_summary_documents,
+  initialize_summary_document,
   list_agent_definitions,
   list_agent_sessions,
-  list_ai_models,
   list_summary_documents,
-  list_summary_presets,
   subscribe_summary_documents,
   update_summary_document,
 } from "@/shared/api";
 import { ApiError } from "@/shared/api/client";
 import { ApplicationQueryProvider } from "@/app/query_cache";
 import { GlobalAssistantProvider } from "@/app/global_assistant";
-import type {
-  AiModelSummary,
-  MediaAsset,
-  SummaryDocument,
-  SummaryProject,
-  Transcript,
-} from "@/shared/types";
-import {
-  DEFAULT_MODEL_CAPABILITY_OVERRIDES,
-  unknown_model_profile,
-} from "@/shared/types";
+import type { MediaAsset, SummaryDocument } from "@/shared/types";
 import {
   delete_other_summary_drafts,
   load_latest_summary_draft,
@@ -153,10 +141,8 @@ vi.mock("@/shared/api", async (import_original) => {
     duplicate_summary_document: vi.fn(),
     create_summary_export: vi.fn(),
     delete_summary_document: vi.fn(),
-    generate_summary_documents: vi.fn(),
-    list_ai_models: vi.fn(),
+    initialize_summary_document: vi.fn(),
     list_summary_documents: vi.fn(),
-    list_summary_presets: vi.fn(),
     move_summary_document: vi.fn(),
     subscribe_summary_documents: vi.fn(),
     update_summary_document: vi.fn(),
@@ -201,21 +187,6 @@ const ASSET: MediaAsset = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
-const TRANSCRIPT: Transcript = {
-  asset_id: ASSET.asset_id,
-  language: "zh",
-  segments: [
-    {
-      start_seconds: 0,
-      end_seconds: 5,
-      text: "第一段",
-      emotion: null,
-      audio_events: [],
-    },
-  ],
-  created_at: "2026-01-01T00:00:00Z",
-};
-
 const DOCUMENT: SummaryDocument = {
   document_id: "document-01890f4c7a2b7cc298c4dc0c0c07398f",
   asset_id: ASSET.asset_id,
@@ -240,34 +211,6 @@ const CHILD_DOCUMENT: SummaryDocument = {
   position: 1,
 };
 
-const SUMMARY_PROJECT: SummaryProject = {
-  asset_id: ASSET.asset_id,
-  revision: 1,
-  root_document_id: DOCUMENT.document_id,
-  preset_id: "knowledge_notes",
-  preset_version: 1,
-  user_input: null,
-  ai_model_id: "model-1",
-  detail: "standard",
-  output_language: "zh-CN",
-  context_summary: {
-    transcript_digest: "transcript",
-    marker_digest: "markers",
-    event_analysis_digest: "events",
-  },
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-};
-
-const SUMMARY_MODEL: AiModelSummary = {
-  model_id: "model-1",
-  name: "总结模型",
-  litellm_model: "openai/test-model",
-  input_modalities: ["text"],
-  capabilities: { ...DEFAULT_MODEL_CAPABILITY_OVERRIDES },
-  profile: unknown_model_profile("openai", "test-model"),
-};
-
 describe("SummaryWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -285,17 +228,6 @@ describe("SummaryWorkspace", () => {
       configurable: true,
       value: true,
     });
-    vi.mocked(list_ai_models).mockResolvedValue([SUMMARY_MODEL]);
-    vi.mocked(list_summary_presets).mockResolvedValue([
-      {
-        preset_id: "knowledge_notes",
-        title: "知识笔记",
-        description: "整理完整知识结构。",
-        prompt: "生成知识笔记。",
-        minimum_context_tokens: 8_000,
-        version: 1,
-      },
-    ]);
     vi.mocked(list_agent_definitions).mockResolvedValue([]);
     vi.mocked(list_agent_sessions).mockResolvedValue([]);
     vi.mocked(subscribe_summary_documents).mockReturnValue(() => undefined);
@@ -311,12 +243,7 @@ describe("SummaryWorkspace", () => {
       )
       .mockResolvedValueOnce([DOCUMENT]);
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     expect(await screen.findByText("总结项目暂时无法加载")).toBeInTheDocument();
     expect(
@@ -331,83 +258,23 @@ describe("SummaryWorkspace", () => {
     expect(list_summary_documents).toHaveBeenCalledTimes(2);
   });
 
-  it("generates the document only after explicit confirmation", async () => {
+  it("opens a blank Markdown draft without a generation step", async () => {
+    const draft = { ...DOCUMENT, title: ASSET.title, markdown: "" };
     vi.mocked(list_summary_documents).mockResolvedValue([]);
-    vi.mocked(generate_summary_documents).mockResolvedValue({
-      project: SUMMARY_PROJECT,
-      documents: [DOCUMENT],
-      context_capacity_unknown: false,
-      illustration_job: null,
-    });
+    vi.mocked(initialize_summary_document).mockResolvedValue(draft);
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "生成主文档" }));
-
-    await waitFor(() =>
-      expect(generate_summary_documents).toHaveBeenCalledWith(
-        ASSET.asset_id,
-        expect.objectContaining({
-          detail: "standard",
-          ai_model_id: "model-1",
-          preset_id: "knowledge_notes",
-          output_language: "zh-CN",
-        }),
-      ),
-    );
-  });
-
-  it("reports an unknown model capacity after a successful attempt", async () => {
-    vi.mocked(list_summary_documents).mockResolvedValue([]);
-    vi.mocked(generate_summary_documents).mockResolvedValue({
-      project: SUMMARY_PROJECT,
-      documents: [DOCUMENT],
-      context_capacity_unknown: true,
-      illustration_job: null,
-    });
-
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "生成主文档" }));
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     expect(
-      await screen.findByRole("status", { name: "生成提示" }),
-    ).toHaveTextContent("模型容量未知");
-  });
-
-  it("requires confirmation before opening regeneration settings", async () => {
-    vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
-
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
+      await screen.findByRole("textbox", { name: "可视化 Markdown" }),
+    ).toHaveValue("");
+    expect(initialize_summary_document).toHaveBeenCalledWith(
+      ASSET.asset_id,
+      expect.any(AbortSignal),
     );
-
-    fireEvent.pointerDown(
-      await screen.findByRole("button", { name: "笔记工具" }),
-      { button: 0, ctrlKey: false },
-    );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "重新生成" }));
     expect(
-      screen.getByRole("alertdialog", { name: "重新生成当前笔记？" }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "继续配置" }));
-    expect(
-      await screen.findByRole("dialog", { name: "重新生成当前笔记" }),
-    ).toHaveTextContent("会替换当前笔记");
+      screen.queryByRole("button", { name: "生成主文档" }),
+    ).not.toBeInTheDocument();
   });
 
   it("auto-saves markdown with client sequencing metadata", async () => {
@@ -418,12 +285,7 @@ describe("SummaryWorkspace", () => {
       revision: 2,
     });
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     const editor = await screen.findByRole("textbox", {
       name: "可视化 Markdown",
@@ -478,12 +340,7 @@ describe("SummaryWorkspace", () => {
       revision: 2,
     });
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     expect(
       await screen.findByRole("textbox", { name: "可视化 Markdown" }),
@@ -508,12 +365,7 @@ describe("SummaryWorkspace", () => {
         revision: 2,
       });
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     fireEvent.change(
       await screen.findByRole("textbox", { name: "可视化 Markdown" }),
@@ -548,12 +400,7 @@ describe("SummaryWorkspace", () => {
         markdown: "# 离线草稿\n",
         revision: 2,
       });
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     fireEvent.change(
       await screen.findByRole("textbox", { name: "可视化 Markdown" }),
@@ -580,12 +427,7 @@ describe("SummaryWorkspace", () => {
       markdown: "# 手动保存\n",
       revision: 2,
     });
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     fireEvent.change(
       await screen.findByRole("textbox", { name: "可视化 Markdown" }),
@@ -599,12 +441,7 @@ describe("SummaryWorkspace", () => {
   it("adds a selected summary passage as visible AI context", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     const source = await screen.findByRole("textbox", {
       name: "可视化 Markdown",
@@ -633,12 +470,7 @@ describe("SummaryWorkspace", () => {
       CHILD_DOCUMENT,
     ]);
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     const editor = await screen.findByRole("textbox", {
       name: "可视化 Markdown",
@@ -665,12 +497,7 @@ describe("SummaryWorkspace", () => {
       revision: 2,
     });
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     const editor = await screen.findByRole("textbox", {
       name: "可视化 Markdown",
@@ -712,12 +539,7 @@ describe("SummaryWorkspace", () => {
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "文档" }));
     fireEvent.click(
@@ -747,12 +569,7 @@ describe("SummaryWorkspace", () => {
       },
     );
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     const editor = await screen.findByRole("textbox", {
       name: "可视化 Markdown",
@@ -773,12 +590,7 @@ describe("SummaryWorkspace", () => {
   it("uses accessible icons for preview and source modes", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     expect(
       await screen.findByRole("tab", { name: "预览模式" }),
@@ -798,12 +610,7 @@ describe("SummaryWorkspace", () => {
     });
     vi.mocked(list_summary_documents).mockResolvedValue([DOCUMENT]);
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     await screen.findByRole("region", { name: "Markdown 总结工作台" });
     expect(global_assistant_state.binding).toMatchObject({
@@ -835,12 +642,7 @@ describe("SummaryWorkspace", () => {
       exported_at: "2026-01-01T00:00:00+08:00",
     });
 
-    render(
-      <SummaryWorkspace
-        selected_asset={ASSET}
-        transcript={TRANSCRIPT}
-      />,
-    );
+    render(<SummaryWorkspace selected_asset={ASSET} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "导出 ZIP" }));
 

@@ -9,8 +9,8 @@ const meta = {
   title: "Summary/EmptyState",
   component: SummaryEmpty,
   args: {
-    title: "尚未生成总结",
-    description: "选择生成参数后创建第一版总结文档。",
+    title: "尚未选择素材",
+    description: "请先在标记页选择一个已下载的视频。",
   },
   parameters: { layout: "fullscreen" },
   decorators: [

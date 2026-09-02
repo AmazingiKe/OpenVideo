@@ -9,19 +9,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { AiModelSelect } from "@/components/AiModelSelect";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Dialog,
   DialogClose,
@@ -38,33 +29,11 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
-import type {
-  AiModelSummary,
-  MediaAsset,
-  SummaryDetail,
-  SummaryDocument,
-  SummaryPreset,
-  Transcript,
-} from "@/shared/types";
+import type { SummaryDocument } from "@/shared/types";
 
 const MarkdownEditor = lazy(() =>
   import("@/components/MarkdownEditor").then((module) => ({
@@ -86,162 +55,6 @@ export type SaveStatus =
   | "failed"
   | "recovered"
   | "confirmed";
-
-export function SummaryGeneration({
-  asset,
-  transcript,
-  models,
-  presets,
-  model_id,
-  on_model_change,
-  detail,
-  on_detail_change,
-  preset_id,
-  on_preset_change,
-  user_input,
-  on_user_input_change,
-  output_language,
-  on_output_language_change,
-  is_generating,
-  on_generate,
-  compact = false,
-}: {
-  asset: MediaAsset;
-  transcript: Transcript | null;
-  models: AiModelSummary[];
-  presets: SummaryPreset[];
-  model_id: string | null;
-  on_model_change: (model_id: string | null) => void;
-  detail: SummaryDetail;
-  on_detail_change: (detail: SummaryDetail) => void;
-  preset_id: string;
-  on_preset_change: (preset_id: string) => void;
-  user_input: string;
-  on_user_input_change: (user_input: string) => void;
-  output_language: string;
-  on_output_language_change: (language: string) => void;
-  is_generating: boolean;
-  on_generate: () => void;
-  compact?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "mx-auto flex w-full max-w-3xl",
-        compact ? "" : "min-h-full items-start px-4 py-8",
-      )}
-    >
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText aria-hidden="true" /> 生成 Markdown 总结
-          </CardTitle>
-          <CardDescription>
-            为“{asset.title}
-            ”创建一份可持续编辑的知识文档。总结只会在你点击生成后开始。
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FieldGroup>
-            <AiModelSelect
-              id="summary-generation-model"
-              label="AI 模型"
-              models={models}
-              value={model_id}
-              on_change={on_model_change}
-              disabled={is_generating}
-              description="总结始终使用完整上下文，不会检索或静默截断。"
-            />
-            <Field>
-              <FieldLabel htmlFor="summary_preset">角色预设</FieldLabel>
-              <Select value={preset_id} onValueChange={on_preset_change}>
-                <SelectTrigger id="summary_preset" className="w-full">
-                  <SelectValue placeholder="选择总结角色" />
-                </SelectTrigger>
-                <SelectContent>
-                  {presets.map((preset) => (
-                    <SelectItem key={preset.preset_id} value={preset.preset_id}>
-                      {preset.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FieldDescription>
-                {presets.find((preset) => preset.preset_id === preset_id)
-                  ?.description ?? "角色决定文档组织方式。"}
-              </FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="summary_detail">文档详细度</FieldLabel>
-              <Select
-                value={detail}
-                onValueChange={(value) =>
-                  on_detail_change(value as SummaryDetail)
-                }
-              >
-                <SelectTrigger id="summary_detail" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="concise">精简</SelectItem>
-                    <SelectItem value="standard">标准</SelectItem>
-                    <SelectItem value="detailed">详细</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="summary_language">输出语言</FieldLabel>
-              <Select
-                value={output_language}
-                onValueChange={on_output_language_change}
-              >
-                <SelectTrigger id="summary_language" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="zh-CN">简体中文</SelectItem>
-                  <SelectItem value="en">English</SelectItem>
-                  <SelectItem value="ja">日本語</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="summary_user_input">本次补充要求</FieldLabel>
-              <Textarea
-                id="summary_user_input"
-                value={user_input}
-                onChange={(event) => on_user_input_change(event.target.value)}
-                placeholder="例如：保留术语原文，并在每章末尾列出复习问题"
-                disabled={is_generating}
-              />
-            </Field>
-          </FieldGroup>
-          <div className="mt-6 flex flex-wrap gap-2" aria-label="可用分析内容">
-            <Badge variant="secondary">
-              转写 {transcript?.segments.length ?? 0} 段
-            </Badge>
-            <Badge variant="secondary">正式标记与有效事件分析</Badge>
-          </div>
-        </CardContent>
-        <CardFooter>
-          <Button
-            onClick={on_generate}
-            disabled={!transcript || !model_id || !preset_id || is_generating}
-          >
-            {is_generating ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <FileText data-icon="inline-start" />
-            )}
-            {is_generating ? "正在生成…" : "生成主文档"}
-          </Button>
-        </CardFooter>
-      </Card>
-    </div>
-  );
-}
 
 export function DocumentEditor({
   document,

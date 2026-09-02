@@ -21,6 +21,16 @@ export function list_summary_documents(
   );
 }
 
+export function initialize_summary_document(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<SummaryDocument> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents/init`,
+    { method: "POST", signal },
+  );
+}
+
 export function list_summary_presets(
   signal?: AbortSignal,
 ): Promise<SummaryPreset[]> {

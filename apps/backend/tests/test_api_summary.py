@@ -208,6 +208,21 @@ def generate(client: TestClient):
     return response.json()
 
 
+def test_initializes_one_blank_markdown_document_idempotently(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        first = client.post(f"/api/media/assets/{ASSET_ID}/summary-documents/init")
+        second = client.post(f"/api/media/assets/{ASSET_ID}/summary-documents/init")
+        documents = client.get(f"/api/media/assets/{ASSET_ID}/summary-documents").json()
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json() == second.json()
+    assert first.json()["title"] == "总结测试视频"
+    assert first.json()["markdown"] == ""
+    assert first.json()["relative_path"] == "index.md"
+    assert documents == [first.json()]
+
+
 def test_summary_presets_and_formal_context_exclude_focus_selection(
     tmp_path: Path,
     monkeypatch,

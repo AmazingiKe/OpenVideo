@@ -84,7 +84,6 @@ export function SummaryPage() {
           <SummaryWorkspace
             key={selected_asset_id ?? "no-selected-asset"}
             selected_asset={selected_asset}
-            transcript={transcript}
             on_error={set_page_error}
           />
         </ResizablePanel>
