@@ -141,6 +141,9 @@
   --player-subtitle-shadow: #000000;
   --player-evidence-border: #60a5fa;
   --player-evidence-ring: #60a5fa52;
+  --player-preview-layer: 2;
+  --player-subtitle-layer: 3;
+  --player-controls-layer: 4;
 
   --timeline-color-panel: #ffffff;
   --timeline-color-panel-muted: #f6f8fc;

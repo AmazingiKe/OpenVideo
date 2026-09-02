@@ -43,6 +43,21 @@ export const Default: Story = {
     expect(await canvas.findByRole("button", { name: "上一帧" })).toBeVisible();
     expect(await canvas.findByRole("button", { name: "下一帧" })).toBeVisible();
     expect(canvas.getByLabelText("当前精确时间")).toBeVisible();
+    const preview = canvasElement.querySelector<HTMLElement>(
+      ".openvideo_scrub_preview",
+    );
+    const controls_layout = canvasElement.querySelector<HTMLElement>(
+      ".openvideo_player > .plyr",
+    );
+    if (!preview || !controls_layout) {
+      throw new Error("Missing player preview or controls layout");
+    }
+    const preview_layer = Number.parseInt(getComputedStyle(preview).zIndex, 10);
+    const controls_layer = Number.parseInt(
+      getComputedStyle(controls_layout).zIndex,
+      10,
+    );
+    expect(controls_layer).toBeGreaterThan(preview_layer);
   },
 };
 
