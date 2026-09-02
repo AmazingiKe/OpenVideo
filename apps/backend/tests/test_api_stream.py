@@ -204,10 +204,12 @@ def test_replaces_a_legacy_storyboard_when_a_compatibility_browser_requests_it(
     monkeypatch.setattr(media_routes, "generate_thumbnail_sprite", generate_storyboard)
 
     with TestClient(create_app(Settings(library_path=tmp_path))) as client:
+        asset_response = client.get(f"/api/media/assets/{ASSET_ID}")
         response = client.post(
             f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard"
         )
 
+    assert asset_response.json()["thumbnail_storyboard"] is None
     assert response.status_code == 200
     assert response.json()["version"] == 2
     assert len(generation_calls) == 1

@@ -668,6 +668,8 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         return SummaryDocument.model_validate({**values, "markdown": markdown})
 
     def _storyboard_for(self, asset: MediaAsset) -> ThumbnailStoryboardResponse | None:
+        if Path(asset.thumbnail_sprite_path or "").name != SPRITE_FILE_NAME:
+            return None
         if not self.resolve_asset_file(asset, asset.thumbnail_sprite_path):
             return None
         values = (
@@ -692,11 +694,7 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
             for item in build_thumbnail_tiles(storyboard)
         ]
         return ThumbnailStoryboardResponse(
-            version=(
-                STORYBOARD_VERSION
-                if Path(storyboard.sprite_path).name == SPRITE_FILE_NAME
-                else 1
-            ),
+            version=STORYBOARD_VERSION,
             url=SPRITE_ROUTE_TEMPLATE.format(asset_id=asset.asset_id),
             tile_width=storyboard.tile_width,
             tile_height=storyboard.tile_height,
