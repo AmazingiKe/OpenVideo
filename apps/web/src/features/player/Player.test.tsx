@@ -102,6 +102,10 @@ beforeEach(() => {
   media.events.seeking_request = null;
   media.events.seek_request = null;
   media.events.seeked = null;
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
 });
 
 describe("Player", () => {
@@ -132,6 +136,25 @@ describe("Player", () => {
       "data-thumbnails",
       "false",
     );
+    expect(screen.getByLabelText("当前精确时间")).toHaveTextContent(
+      "00:00:12.000",
+    );
+    expect(screen.getByRole("button", { name: "上一帧" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "下一帧" })).toBeVisible();
+  });
+
+  it("supports precise frame shortcuts and copies the presented time", () => {
+    render(<Player src="/video.mp4" />);
+    const precise_controls = screen.getByRole("group", { name: "精确定位" });
+
+    fireEvent.keyDown(precise_controls, { key: "[" });
+    fireEvent.keyDown(precise_controls, { key: "]" });
+    expect(media.remote.pause).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "复制当前精确时间" }),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("00:00:12.000");
   });
 
   it("exposes playback commands through the stable player handle", () => {

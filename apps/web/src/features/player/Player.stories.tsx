@@ -40,6 +40,9 @@ export const Default: Story = {
     const canvas = within(canvasElement);
     expect(await canvas.findByRole("button", { name: "播放" })).toBeVisible();
     expect(await canvas.findByRole("button", { name: "设置" })).toBeVisible();
+    expect(await canvas.findByRole("button", { name: "上一帧" })).toBeVisible();
+    expect(await canvas.findByRole("button", { name: "下一帧" })).toBeVisible();
+    expect(canvas.getByLabelText("当前精确时间")).toBeVisible();
   },
 };
 

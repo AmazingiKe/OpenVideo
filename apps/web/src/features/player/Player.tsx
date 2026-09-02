@@ -1,5 +1,6 @@
 import { MediaPlayer, MediaProvider } from "@vidstack/react";
 import "@vidstack/react/player/styles/base.css";
+import { Check, ClipboardCopy, StepBack, StepForward } from "lucide-react";
 import {
   PlyrLayout,
   plyrLayoutIcons,
@@ -14,9 +15,11 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import { Button } from "@/components/ui/button";
 import type {
   AgentEvidenceRange,
   SubtitleDisplaySettings,
@@ -32,6 +35,7 @@ import {
   subtitle_is_evidence,
 } from "./subtitle_rules";
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "./subtitle_settings";
+import { format_precise_media_time } from "./format_media_time";
 import { use_seek_preview } from "./use_seek_preview";
 import { use_scrub_frame_preview } from "./use_scrub_frame_preview";
 import type { ScrubPreviewMetrics } from "./use_scrub_frame_preview";
@@ -39,6 +43,9 @@ import type { ScrubPreviewStoryboard } from "./scrub_preview_protocol";
 
 const SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS = 1_500;
 const MEDIA_TIME_SLIDER_SELECTOR = "[data-media-time-slider]";
+const PREVIOUS_FRAME_SHORTCUT = "[";
+const NEXT_FRAME_SHORTCUT = "]";
+const COPY_FEEDBACK_DURATION_MILLISECONDS = 1_500;
 const PLAYER_CONTROLS: PlyrControl[] = [
   "play",
   "progress",
@@ -145,6 +152,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const [presented_time_seconds, set_presented_time_seconds] = useState<
     number | null
   >(null);
+  const [copied_time, set_copied_time] = useState(false);
   const captions_enabled =
     controlled_captions_enabled ?? internal_captions_enabled;
   const wait_for_presented_frame_fn_ref = useRef<
@@ -156,6 +164,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const active_source_ref = useRef(src);
   const player_shell_ref = useRef<HTMLDivElement>(null);
   const current_time_value_ref = useRef(0);
+  const copy_feedback_timeout_ref = useRef<number | null>(null);
   const pending_seek_ref = useRef(false);
   const on_time_change_ref = useRef(on_time_change);
   const {
@@ -336,6 +345,49 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     [end_scrub_preview, prepare_seek_commit, request_scrub_frame],
   );
 
+  const precise_time_seconds = presented_time_seconds ?? 0;
+  const precise_time_label = format_precise_media_time(precise_time_seconds);
+
+  const copy_precise_time = useCallback(() => {
+    if (!navigator.clipboard?.writeText) return;
+    void navigator.clipboard.writeText(precise_time_label).then(
+      () => {
+        set_copied_time(true);
+        if (copy_feedback_timeout_ref.current !== null) {
+          window.clearTimeout(copy_feedback_timeout_ref.current);
+        }
+        copy_feedback_timeout_ref.current = window.setTimeout(() => {
+          copy_feedback_timeout_ref.current = null;
+          set_copied_time(false);
+        }, COPY_FEEDBACK_DURATION_MILLISECONDS);
+      },
+      () => undefined,
+    );
+  }, [precise_time_label]);
+
+  const handle_frame_shortcut = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        is_text_entry(event.target)
+      ) {
+        return;
+      }
+      if (event.key === PREVIOUS_FRAME_SHORTCUT) {
+        event.preventDefault();
+        step_frame("previous");
+      }
+      if (event.key === NEXT_FRAME_SHORTCUT) {
+        event.preventDefault();
+        step_frame("next");
+      }
+    },
+    [step_frame],
+  );
+
   useImperativeHandle(
     ref,
     () => ({
@@ -430,6 +482,9 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   useEffect(
     () => () => {
       presented_frame_cancel_ref.current?.();
+      if (copy_feedback_timeout_ref.current !== null) {
+        window.clearTimeout(copy_feedback_timeout_ref.current);
+      }
     },
     [],
   );
@@ -461,11 +516,61 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     <div
       className="openvideo_player_shell"
       ref={player_shell_ref}
+      onKeyDownCapture={handle_frame_shortcut}
       onPointerDownCapture={hold_player_timeline_controls}
       onPointerUpCapture={release_player_timeline_controls}
       onPointerCancelCapture={release_player_timeline_controls}
       onLostPointerCapture={release_player_timeline_controls}
     >
+      <div
+        className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-md border bg-card/95 p-1 text-card-foreground shadow-sm max-[600px]:top-2 max-[600px]:right-2"
+        role="group"
+        aria-label="精确定位"
+      >
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon-xs"
+          aria-label="上一帧"
+          aria-keyshortcuts={PREVIOUS_FRAME_SHORTCUT}
+          title="上一帧（[）"
+          onClick={() => step_frame("previous")}
+        >
+          <StepBack aria-hidden="true" />
+        </Button>
+        <output
+          className="min-w-24 px-1 text-center font-mono text-xs tabular-nums max-[600px]:min-w-20 max-[600px]:text-[10px]"
+          aria-label="当前精确时间"
+          aria-live="polite"
+        >
+          {precise_time_label}
+        </output>
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon-xs"
+          aria-label="下一帧"
+          aria-keyshortcuts={NEXT_FRAME_SHORTCUT}
+          title="下一帧（]）"
+          onClick={() => step_frame("next")}
+        >
+          <StepForward aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon-xs"
+          aria-label="复制当前精确时间"
+          title="复制当前精确时间"
+          onClick={copy_precise_time}
+        >
+          {copied_time ? (
+            <Check aria-hidden="true" />
+          ) : (
+            <ClipboardCopy aria-hidden="true" />
+          )}
+        </Button>
+      </div>
       <MediaPlayer
         className="openvideo_player"
         src={{ src, type: "video/mp4" }}
@@ -517,6 +622,16 @@ function event_targets_media_time_slider(
   return (
     event.target instanceof Element &&
     event.target.closest(MEDIA_TIME_SLIDER_SELECTOR) !== null
+  );
+}
+
+function is_text_entry(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement)
   );
 }
 
