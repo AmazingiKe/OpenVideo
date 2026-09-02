@@ -62,6 +62,7 @@ async function decode_frame(request: ScrubPreviewRequest) {
       );
       return;
     }
+    release_sink_for_new_dimensions(request.width, request.height);
     const input = input_for(request.source_url);
     const network_metrics = active_network_metrics;
     const range_request_count_at_start = network_metrics?.request_count ?? 0;
@@ -183,6 +184,16 @@ function dispose_input() {
   active_sink_height = 0;
   active_source_url = null;
   active_network_metrics = null;
+}
+
+function release_sink_for_new_dimensions(width: number, height: number) {
+  if (
+    !active_sink ||
+    (active_sink_width === width && active_sink_height === height)
+  ) {
+    return;
+  }
+  dispose_input();
 }
 
 function has_newer_pending_request(request: ScrubPreviewRequest) {
