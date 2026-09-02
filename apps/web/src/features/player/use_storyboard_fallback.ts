@@ -52,10 +52,7 @@ export function use_storyboard_fallback(asset: MediaAsset | null) {
 export function storyboard_for_asset(
   asset: MediaAsset | null,
 ): ScrubPreviewStoryboard | null {
-  if (
-    !asset?.thumbnail_storyboard ||
-    asset.thumbnail_storyboard.version !== 2
-  ) {
+  if (!asset?.thumbnail_storyboard) {
     return null;
   }
   return {

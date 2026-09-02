@@ -9,7 +9,6 @@ describe("storyboard_for_asset", () => {
     const storyboard = storyboard_for_asset({
       ...asset(),
       thumbnail_storyboard: {
-        version: 2,
         url: "/api/media/assets/asset/thumbnail-sprite",
         tile_width: 480,
         tile_height: 360,
@@ -29,20 +28,6 @@ describe("storyboard_for_asset", () => {
     expect(storyboard_for_asset(asset())).toBeNull();
   });
 
-  it("rejects legacy storyboards so they are regenerated on demand", () => {
-    expect(
-      storyboard_for_asset({
-        ...asset(),
-        thumbnail_storyboard: {
-          version: 1,
-          url: "/api/media/assets/asset/thumbnail-sprite",
-          tile_width: 640,
-          tile_height: 360,
-          tiles: [{ start_time: 0, x: 0, y: 0 }],
-        },
-      }),
-    ).toBeNull();
-  });
 });
 
 function asset(): MediaAsset {

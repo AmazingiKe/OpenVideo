@@ -54,7 +54,6 @@ from openvideo.core.summary_files import read_markdown
 from openvideo.core.summary_models import SummaryDocument
 from openvideo.core.thumbnails import (
     SPRITE_FILE_NAME,
-    STORYBOARD_VERSION,
     ThumbnailStoryboard,
     build_thumbnail_tiles,
 )
@@ -694,7 +693,6 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
             for item in build_thumbnail_tiles(storyboard)
         ]
         return ThumbnailStoryboardResponse(
-            version=STORYBOARD_VERSION,
             url=SPRITE_ROUTE_TEMPLATE.format(asset_id=asset.asset_id),
             tile_width=storyboard.tile_width,
             tile_height=storyboard.tile_height,

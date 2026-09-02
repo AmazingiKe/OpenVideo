@@ -125,9 +125,9 @@ def test_generates_a_storyboard_only_when_a_compatibility_browser_requests_it(
         _project_bin_dir,
     ):
         generation_calls.append((duration_seconds, source_width, source_height))
-        (media_directory / "scrub-storyboard-v2.jpg").write_bytes(b"storyboard")
+        (media_directory / "scrub-storyboard.jpg").write_bytes(b"storyboard")
         return ThumbnailStoryboard(
-            sprite_path="scrub-storyboard-v2.jpg",
+            sprite_path="scrub-storyboard.jpg",
             tile_width=640,
             tile_height=360,
             interval_seconds=5,
@@ -149,13 +149,12 @@ def test_generates_a_storyboard_only_when_a_compatibility_browser_requests_it(
     assert first_response.json()["url"] == (
         f"/api/media/assets/{ASSET_ID}/thumbnail-sprite"
     )
-    assert first_response.json()["version"] == 2
     assert first_response.json()["tile_width"] == 640
     assert second_response.status_code == 200
     assert generation_calls == [(20, 1920, 1080)]
 
 
-def test_replaces_a_legacy_storyboard_when_a_compatibility_browser_requests_it(
+def test_rebuilds_an_unrecognized_storyboard_when_a_compatibility_browser_requests_it(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -171,9 +170,9 @@ def test_replaces_a_legacy_storyboard_when_a_compatibility_browser_requests_it(
         _project_bin_dir,
     ):
         generation_calls.append(media_directory)
-        (media_directory / "scrub-storyboard-v2.jpg").write_bytes(b"current")
+        (media_directory / "scrub-storyboard.jpg").write_bytes(b"current")
         return ThumbnailStoryboard(
-            sprite_path="scrub-storyboard-v2.jpg",
+            sprite_path="scrub-storyboard.jpg",
             tile_width=640,
             tile_height=360,
             interval_seconds=5,
@@ -186,12 +185,12 @@ def test_replaces_a_legacy_storyboard_when_a_compatibility_browser_requests_it(
     library = MediaLibrary.open(tmp_path)
     asset = library.get(ASSET_ID)
     assert asset is not None
-    legacy_directory = library.media_directory(ASSET_ID)
-    (legacy_directory / "thumbnails.jpg").write_bytes(b"legacy")
+    media_directory = library.media_directory(ASSET_ID)
+    (media_directory / "unrecognized-storyboard.jpg").write_bytes(b"stale")
     library.save(
         asset.model_copy(
             update={
-                "thumbnail_sprite_path": "media/thumbnails.jpg",
+                "thumbnail_sprite_path": "media/unrecognized-storyboard.jpg",
                 "thumbnail_tile_width": 640,
                 "thumbnail_tile_height": 360,
                 "thumbnail_interval_seconds": 5,
@@ -211,7 +210,6 @@ def test_replaces_a_legacy_storyboard_when_a_compatibility_browser_requests_it(
 
     assert asset_response.json()["thumbnail_storyboard"] is None
     assert response.status_code == 200
-    assert response.json()["version"] == 2
     assert len(generation_calls) == 1
 
 

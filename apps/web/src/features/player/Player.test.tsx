@@ -114,7 +114,7 @@ describe("Player", () => {
       <Player
         src="/video.mp4"
         fallback_storyboard={{
-          url: "/thumbnails.jpg",
+          url: "/scrub-storyboard.jpg",
           tile_width: 640,
           tile_height: 360,
           tiles: [{ start_time: 0, x: 0, y: 0 }],

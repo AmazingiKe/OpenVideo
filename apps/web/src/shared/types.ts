@@ -521,7 +521,6 @@ export type MediaMarkerUpdate = Partial<
 >;
 
 export type ThumbnailStoryboard = {
-  version: number;
   url: string;
   tile_width: number;
   tile_height: number;

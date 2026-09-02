@@ -22,7 +22,6 @@ from openvideo.tools.subtitle_export import (
     SubtitleExportUnavailableError,
     export_subtitled_video,
 )
-from openvideo.core.thumbnails import STORYBOARD_VERSION
 from openvideo.tools.thumbnails import generate_thumbnail_sprite
 
 STREAM_CHUNK_SIZE = 1024 * 1024
@@ -171,10 +170,7 @@ def register_media_routes(
         if asset.media_type != MediaType.VIDEO:
             raise HTTPException(status_code=422, detail="只有视频支持拖动预览")
         existing_storyboard = media_library.response_for(asset).thumbnail_storyboard
-        if (
-            existing_storyboard is not None
-            and existing_storyboard.version == STORYBOARD_VERSION
-        ):
+        if existing_storyboard is not None:
             return existing_storyboard
 
         generation_lock = storyboard_locks.setdefault(asset_id, asyncio.Lock())
@@ -183,10 +179,7 @@ def register_media_routes(
             existing_storyboard = media_library.response_for(
                 asset
             ).thumbnail_storyboard
-            if (
-                existing_storyboard is not None
-                and existing_storyboard.version == STORYBOARD_VERSION
-            ):
+            if existing_storyboard is not None:
                 return existing_storyboard
             media_file = media_library.resolve_asset_file(asset, asset.playback_path)
             if media_file is None:

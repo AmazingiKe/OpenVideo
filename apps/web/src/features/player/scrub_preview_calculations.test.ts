@@ -32,7 +32,7 @@ describe("scrub preview calculations", () => {
 
   it("selects the nearest preceding fallback tile", () => {
     const storyboard = {
-      url: "/thumbnails.jpg",
+      url: "/scrub-storyboard.jpg",
       tile_width: 640,
       tile_height: 360,
       tiles: [
