@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  waitForElementToBeRemoved,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LibraryBrowser } from "@/features/library/LibraryBrowser";
@@ -280,10 +286,12 @@ describe("LibraryBrowser", () => {
     fireEvent.change(screen.getByLabelText("文件夹名称"), {
       target: { value: "新项目" },
     });
+    const create_dialog = screen.getByRole("dialog", { name: "新建文件夹" });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() =>
       expect(create_folder).toHaveBeenCalledWith("新项目", null),
     );
+    await waitForElementToBeRemoved(create_dialog);
 
     const course = screen.getByRole("button", { name: "课程，2 个视频" });
     fireEvent.contextMenu(course);

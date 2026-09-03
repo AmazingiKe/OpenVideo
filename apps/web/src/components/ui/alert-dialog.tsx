@@ -1,13 +1,38 @@
 import * as React from "react";
+import { AnimatePresence } from "motion/react";
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  MotionDialogSurface,
+  MotionOverlay,
+  use_overlay_open,
+} from "@/components/ui/overlay-motion";
+
+const AlertDialogOpenContext = React.createContext<boolean | null>(null);
 
 function AlertDialog({
+  open: controlled_open,
+  defaultOpen,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />;
+  const { open, set_open } = use_overlay_open({
+    open: controlled_open,
+    default_open: defaultOpen,
+    on_open_change: onOpenChange,
+  });
+  return (
+    <AlertDialogOpenContext.Provider value={open}>
+      <AlertDialogPrimitive.Root
+        data-slot="alert-dialog"
+        open={open}
+        onOpenChange={set_open}
+        {...props}
+      />
+    </AlertDialogOpenContext.Provider>
+  );
 }
 
 function AlertDialogTrigger({
@@ -31,36 +56,50 @@ function AlertDialogOverlay({
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
   return (
-    <AlertDialogPrimitive.Overlay
-      data-slot="alert-dialog-overlay"
-      className={cn(
-        "fixed inset-0 z-50 bg-overlay duration-200 ease-out supports-backdrop-filter:backdrop-blur-xs motion-reduce:animate-none data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:duration-150 data-closed:ease-in data-closed:fade-out-0",
-        className,
-      )}
-      {...props}
-    />
+    <AlertDialogPrimitive.Overlay forceMount asChild {...props}>
+      <MotionOverlay
+        data-slot="alert-dialog-overlay"
+        className={cn(
+          "fixed inset-0 z-50 bg-overlay supports-backdrop-filter:backdrop-blur-xs",
+          className,
+        )}
+      />
+    </AlertDialogPrimitive.Overlay>
   );
 }
 
 function AlertDialogContent({
   className,
+  children,
   size = "default",
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm";
 }) {
+  const open = React.useContext(AlertDialogOpenContext);
+  if (open === null) {
+    throw new Error("AlertDialogContent 必须在 AlertDialog 内使用");
+  }
   return (
-    <AlertDialogPortal>
-      <AlertDialogOverlay />
-      <AlertDialogPrimitive.Content
-        data-slot="alert-dialog-content"
-        data-size={size}
-        className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-popover-foreground ring-1 ring-outline-subtle duration-200 ease-out outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs motion-reduce:animate-none data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-open:slide-in-from-bottom-2 data-closed:animate-out data-closed:duration-150 data-closed:ease-in data-closed:fade-out-0 data-closed:zoom-out-95 data-closed:slide-out-to-bottom-1",
-          className,
-        )}
-        {...props}
-      />
+    <AlertDialogPortal forceMount>
+      <AnimatePresence>
+        {open ? <AlertDialogOverlay key="alert-dialog-overlay" /> : null}
+        {open ? (
+          <AlertDialogPrimitive.Content forceMount asChild {...props}>
+            <MotionDialogSurface
+              key="alert-dialog-content"
+              data-slot="alert-dialog-content"
+              data-size={size}
+              className={cn(
+                "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-popover-foreground ring-1 ring-outline-subtle outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm",
+                className,
+              )}
+            >
+              {children}
+            </MotionDialogSurface>
+          </AlertDialogPrimitive.Content>
+        ) : null}
+      </AnimatePresence>
     </AlertDialogPortal>
   );
 }

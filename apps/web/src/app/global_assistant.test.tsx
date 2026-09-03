@@ -124,7 +124,6 @@ describe("GlobalAssistantLayout", () => {
     ).toBeVisible();
     const marker_panel = await screen.findByLabelText("助手面板");
     expect(marker_panel).toHaveAttribute("data-agent-id", "marker");
-    expect(marker_panel.closest("aside")).toHaveClass("global_assistant_panel");
     expect(marker_panel.closest("aside")).toHaveAttribute("data-open", "true");
     expect(marker_panel).toHaveTextContent("当前视频 · 示例");
     expect(screen.getAllByLabelText("助手面板")).toHaveLength(1);

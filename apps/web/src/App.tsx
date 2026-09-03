@@ -1,4 +1,5 @@
 import { Activity, Suspense, useEffect, useState } from "react";
+import { MotionConfig } from "motion/react";
 import {
   BrowserRouter,
   Navigate,
@@ -25,15 +26,17 @@ import { LibrarySetup } from "@/features/library/LibrarySetup";
 
 export function App() {
   return (
-    <LocalPreferencesProvider>
-      <BackendConnectionGate>
-        <BrowserRouter>
-          <LibraryProvider>
-            <ApplicationRoutes />
-          </LibraryProvider>
-        </BrowserRouter>
-      </BackendConnectionGate>
-    </LocalPreferencesProvider>
+    <MotionConfig reducedMotion="user">
+      <LocalPreferencesProvider>
+        <BackendConnectionGate>
+          <BrowserRouter>
+            <LibraryProvider>
+              <ApplicationRoutes />
+            </LibraryProvider>
+          </BrowserRouter>
+        </BackendConnectionGate>
+      </LocalPreferencesProvider>
+    </MotionConfig>
   );
 }
 

@@ -130,12 +130,7 @@
   --motion-loader-typing-duration: 800ms;
   --motion-loader-text-blink-duration: 2s;
   --motion-loader-typing-delay: 160ms;
-  --motion-assistant-layout-duration: 360ms;
-  --motion-assistant-content-duration: 240ms;
-  --motion-assistant-content-delay: 60ms;
-  --motion-assistant-enter-distance: 32px;
-  --motion-assistant-easing: cubic-bezier(0.22, 1, 0.36, 1);
-  --motion-assistant-reduced-duration: 280ms;
+  --motion-assistant-handle-duration: 160ms;
 
   /* 播放器保持中性深色画布，时间线则通过独立语义 Token 跟随应用主题。 */
   --player-canvas-background: #000000;
@@ -1509,14 +1504,8 @@
   }
 }
 
-.global_assistant_layout > [data-panel] {
-  transition: flex-grow var(--motion-assistant-layout-duration)
-    var(--motion-assistant-easing);
-  will-change: flex-grow;
-}
-
 .global_assistant_handle {
-  transition: opacity var(--motion-assistant-content-duration) ease-out;
+  transition: opacity var(--motion-assistant-handle-duration) ease-out;
 }
 
 .global_assistant_handle[data-open="false"] {
@@ -1524,30 +1513,8 @@
   opacity: 0;
 }
 
-.global_assistant_panel {
-  opacity: 0;
-  transform: translateX(var(--motion-assistant-enter-distance));
-  transition:
-    opacity var(--motion-assistant-content-duration)
-      var(--motion-assistant-easing),
-    transform var(--motion-assistant-layout-duration)
-      var(--motion-assistant-easing);
-  will-change: opacity, transform;
-}
-
-.global_assistant_panel[data-open="true"] {
-  opacity: 1;
-  transform: translateX(0);
-  transition-delay: var(--motion-assistant-content-delay), 0ms;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .global_assistant_layout > [data-panel] {
-    transition-duration: var(--motion-assistant-reduced-duration);
-  }
-
-  .global_assistant_panel {
-    transform: none;
-    transition: opacity var(--motion-assistant-reduced-duration) ease-out;
+  .global_assistant_handle {
+    transition: none;
   }
 }

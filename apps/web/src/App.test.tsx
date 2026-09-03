@@ -3,6 +3,7 @@ import {
   render,
   screen,
   waitFor,
+  waitForElementToBeRemoved,
   within,
 } from "@testing-library/react";
 import { forwardRef, useImperativeHandle } from "react";
@@ -346,7 +347,9 @@ describe("App", () => {
       screen.getByRole("button", { name: "下载 1 个视频" }),
     ).toBeInTheDocument();
     expect(create_download).not.toHaveBeenCalled();
+    const download_dialog = screen.getByRole("dialog", { name: "解析下载" });
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitForElementToBeRemoved(download_dialog);
     const navigation = screen.getByRole("navigation", { name: "工作区导航" });
     expect(
       within(navigation).getByRole("link", { name: "视频库" }),
@@ -450,7 +453,11 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开视频库" }));
 
     const library_sheet = await screen.findByRole("dialog", { name: "视频库" });
-    expect(within(library_sheet).getByLabelText("视频库浏览器")).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(library_sheet).getByLabelText("视频库浏览器"),
+      ).toBeVisible(),
+    );
     expect(screen.getByTestId("player")).toBe(marker_player);
     expect(screen.getByLabelText("剪辑时间轴")).toBeInTheDocument();
   }, 10_000);
@@ -729,6 +736,9 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("手动粘贴 Bilibili Cookie"), {
       target: { value: "SESSDATA=login-token; bili_jct=csrf-token" },
     });
+    const connection_dialog = screen.getByRole("dialog", {
+      name: "连接 Bilibili 账号",
+    });
     fireEvent.click(screen.getByRole("button", { name: "保存 Cookie" }));
 
     await waitFor(() =>
@@ -737,6 +747,7 @@ describe("App", () => {
         "SESSDATA=login-token; bili_jct=csrf-token",
       ),
     );
+    await waitForElementToBeRemoved(connection_dialog);
     expect(await screen.findByText("待测试")).toBeInTheDocument();
 
     fireEvent.click(
@@ -845,6 +856,9 @@ describe("App", () => {
     fireEvent.click(
       within(bilibili_account).getByRole("button", { name: "连接账号" }),
     );
+    const connection_dialog = await screen.findByRole("dialog", {
+      name: "连接 Bilibili 账号",
+    });
     fireEvent.click(await screen.findByRole("button", { name: "取消登录" }));
     resolve_login({
       login_id: "login-0198d12345677890abcdef1234567890",
@@ -859,9 +873,7 @@ describe("App", () => {
         "login-0198d12345677890abcdef1234567890",
       ),
     );
-    expect(
-      screen.queryByRole("dialog", { name: "连接 Bilibili 账号" }),
-    ).not.toBeInTheDocument();
+    await waitForElementToBeRemoved(connection_dialog);
     expect(
       screen.getByRole("dialog", { name: "平台账号" }),
     ).toBeInTheDocument();
@@ -965,7 +977,9 @@ describe("App", () => {
     fireEvent.change(source_input, {
       target: { value: "https://example.com/preserved-video" },
     });
+    const download_dialog = screen.getByRole("dialog", { name: "解析下载" });
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitForElementToBeRemoved(download_dialog);
     fireEvent.click(screen.getByRole("link", { name: "标记" }));
     await waitFor(() => expect(window.location.pathname).toBe("/markers"));
     fireEvent.click(screen.getByRole("link", { name: "视频库" }));

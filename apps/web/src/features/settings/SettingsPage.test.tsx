@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  waitForElementToBeRemoved,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -315,6 +316,7 @@ describe("SettingsPage", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "图片" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "音频" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "确认添加" }));
+    await waitForElementToBeRemoved(dialog);
 
     const model_list = screen.getByRole("list", { name: "AI 模型列表" });
     expect(within(model_list).getByText("视觉分析模型")).toBeInTheDocument();
@@ -367,7 +369,9 @@ describe("SettingsPage", () => {
       target: { value: "ollama/qwen2.5-vl" },
     });
 
-    expect(within(dialog).getByText(/不能使用本地推理供应商/)).toBeVisible();
+    await waitFor(() =>
+      expect(within(dialog).getByText(/不能使用本地推理供应商/)).toBeVisible(),
+    );
     expect(
       within(dialog).getByRole("button", { name: "确认添加" }),
     ).toBeDisabled();
@@ -401,6 +405,7 @@ describe("SettingsPage", () => {
       target: { value: "test-model" },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "确认添加" }));
+    await waitForElementToBeRemoved(dialog);
     fireEvent.click(screen.getByRole("button", { name: "测试" }));
 
     expect(test_ai_model).toHaveBeenCalledWith(

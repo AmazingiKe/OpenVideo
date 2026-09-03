@@ -549,9 +549,11 @@ describe("SummaryWorkspace", () => {
     );
 
     expect(await screen.findByText("可视化编辑器未能打开")).toBeInTheDocument();
-    expect(
-      screen.getByRole("region", { name: "Markdown 总结工作台" }),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "Markdown 总结工作台" }),
+      ).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "使用源码模式" }));
     expect(
       await screen.findByRole("textbox", { name: "Markdown 源码" }),

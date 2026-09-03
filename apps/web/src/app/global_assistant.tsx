@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { animate, motion, useReducedMotion } from "motion/react";
 import type { GroupImperativeHandle } from "react-resizable-panels";
 import { useLocation } from "react-router-dom";
 
@@ -41,6 +42,11 @@ import type {
   AgentEvidenceReference,
   AgentFocusContext,
 } from "@/shared/types";
+import {
+  ASSISTANT_CONTENT_TRANSITION,
+  ASSISTANT_ENTER_OFFSET_PX,
+  ASSISTANT_LAYOUT_TRANSITION,
+} from "@/motion_tokens";
 
 const COMPACT_ASSISTANT_QUERY = "(max-width: 1199px)";
 const DEFAULT_PANEL_SIZE_PERCENT = 30;
@@ -206,15 +212,44 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
   const panel_size_percent =
     binding.panel_size_percent ?? DEFAULT_PANEL_SIZE_PERCENT;
   const desktop_group_ref = useRef<GroupImperativeHandle>(null);
+  const panel_size_percent_ref = useRef(panel_size_percent);
+  const reduce_motion = useReducedMotion();
+
+  useEffect(() => {
+    panel_size_percent_ref.current = panel_size_percent;
+  }, [panel_size_percent]);
 
   useEffect(() => {
     if (compact) return;
-    const assistant_size_percent = assistant.open ? panel_size_percent : 0;
-    desktop_group_ref.current?.setLayout({
-      [WORKSPACE_PANEL_ID]: 100 - assistant_size_percent,
-      [ASSISTANT_PANEL_ID]: assistant_size_percent,
-    });
-  }, [assistant.open, compact, panel_size_percent]);
+    const group = desktop_group_ref.current;
+    if (!group) return;
+    const current_layout = group.getLayout();
+    const current_size_percent =
+      current_layout[ASSISTANT_PANEL_ID] ??
+      (assistant.open ? panel_size_percent_ref.current : 0);
+    const target_size_percent = assistant.open
+      ? panel_size_percent_ref.current
+      : 0;
+    const update_layout = (assistant_size_percent: number) => {
+      group.setLayout({
+        [WORKSPACE_PANEL_ID]: 100 - assistant_size_percent,
+        [ASSISTANT_PANEL_ID]: assistant_size_percent,
+      });
+    };
+    if (reduce_motion) {
+      update_layout(target_size_percent);
+      return;
+    }
+    const layout_animation = animate(
+      current_size_percent,
+      target_size_percent,
+      {
+        ...ASSISTANT_LAYOUT_TRANSITION,
+        onUpdate: update_layout,
+      },
+    );
+    return () => layout_animation.stop();
+  }, [assistant.open, compact, reduce_motion, workspace_path]);
 
   const assistant_panel = (
     <AgentPanel
@@ -253,7 +288,6 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
     >
       {!compact ? (
         <ResizablePanelGroup
-          className="global_assistant_layout"
           groupRef={desktop_group_ref}
           orientation="horizontal"
           defaultLayout={{
@@ -265,7 +299,11 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
           onLayoutChanged={(layout, metadata) => {
             const next_size = layout[ASSISTANT_PANEL_ID];
             if (metadata.isUserInteraction && next_size !== undefined) {
-              binding.on_panel_size_percent_change?.(next_size);
+              if (next_size === 0) {
+                assistant.set_open(false);
+              } else {
+                binding.on_panel_size_percent_change?.(next_size);
+              }
             }
           }}
         >
@@ -294,15 +332,21 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
             groupResizeBehavior="preserve-pixel-size"
             style={{ overflow: "hidden" }}
           >
-            <aside
-              className="global_assistant_panel h-full min-h-0 bg-card"
+            <motion.aside
+              className="h-full min-h-0 bg-card"
               data-open={assistant.open}
               aria-hidden={!assistant.open}
               inert={!assistant.open}
               aria-label="全局助手"
+              initial={false}
+              animate={{
+                opacity: assistant.open ? 1 : 0,
+                x: assistant.open ? 0 : ASSISTANT_ENTER_OFFSET_PX,
+              }}
+              transition={ASSISTANT_CONTENT_TRANSITION}
             >
               {assistant_panel}
-            </aside>
+            </motion.aside>
           </ResizablePanel>
         </ResizablePanelGroup>
       ) : (
