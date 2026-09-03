@@ -42,7 +42,7 @@ describe("LibraryPathForm", () => {
   it("activates the selected directory", async () => {
     const on_success = vi.fn();
     render(<LibraryPathForm on_success={on_success} />);
-    fireEvent.change(screen.getByLabelText("文件夹绝对路径"), {
+    fireEvent.change(screen.getByLabelText("资料库路径"), {
       target: { value: "D:\\课程" },
     });
     fireEvent.click(screen.getByRole("button", { name: "使用此文件夹" }));
@@ -56,8 +56,6 @@ describe("LibraryPathForm", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "选择文件夹" }));
 
-    expect(await screen.findByLabelText("文件夹绝对路径")).toHaveValue(
-      "D:\\课程",
-    );
+    expect(await screen.findByLabelText("资料库路径")).toHaveValue("D:\\课程");
   });
 });

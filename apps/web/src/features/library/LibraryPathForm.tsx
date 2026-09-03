@@ -1,22 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { FolderOpen, LibraryBig } from "lucide-react";
+import { Ellipsis } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { activate_library, select_directory } from "@/shared/api";
@@ -67,67 +54,45 @@ export function LibraryPathForm({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <LibraryBig aria-hidden="true" />
-          选择资料库文件夹
-        </CardTitle>
-        <CardDescription>
-          已有资料库会直接打开；空文件夹会自动初始化为新资料库。
-        </CardDescription>
-      </CardHeader>
-      <form onSubmit={submit}>
-        <CardContent>
-          <FieldGroup>
-            <Field data-invalid={Boolean(error)} data-disabled={disabled}>
-              <FieldLabel htmlFor="library_path">文件夹绝对路径</FieldLabel>
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <Input
-                  id="library_path"
-                  value={path}
-                  onChange={(event) => set_path(event.target.value)}
-                  placeholder="D:\\OpenVideo"
-                  disabled={disabled || busy}
-                  aria-invalid={Boolean(error)}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={choose_directory}
-                  disabled={disabled || busy}
-                >
-                  {selecting ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : (
-                    <FolderOpen data-icon="inline-start" />
-                  )}
-                  {selecting ? "正在选择" : "选择文件夹"}
-                </Button>
-              </div>
-              <FieldDescription>
-                也可手动输入绝对路径；没有 library.json 的非空文件夹不会被修改。
-              </FieldDescription>
-            </Field>
-            {error ? (
-              <Alert variant="destructive">
-                <AlertTitle>无法完成操作</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            ) : null}
-          </FieldGroup>
-        </CardContent>
-        <CardFooter>
-          <Button className="w-full" type="submit" disabled={disabled || busy}>
-            {submitting ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <LibraryBig data-icon="inline-start" />
-            )}
-            {submitting ? "正在加载资料库" : "使用此文件夹"}
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
+    <form onSubmit={submit}>
+      <FieldGroup>
+        <Field data-invalid={Boolean(error)} data-disabled={disabled}>
+          <FieldLabel className="sr-only" htmlFor="library_path">
+            资料库路径
+          </FieldLabel>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2">
+            <Input
+              id="library_path"
+              value={path}
+              onChange={(event) => set_path(event.target.value)}
+              placeholder="D:\\OpenVideo"
+              disabled={disabled || busy}
+              aria-invalid={Boolean(error)}
+            />
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              onClick={choose_directory}
+              disabled={disabled || busy}
+              aria-label="选择文件夹"
+              title="选择文件夹"
+            >
+              {selecting ? <Spinner /> : <Ellipsis aria-hidden="true" />}
+            </Button>
+            <Button type="submit" disabled={disabled || busy}>
+              {submitting ? <Spinner data-icon="inline-start" /> : null}
+              {submitting ? "正在加载" : "使用此文件夹"}
+            </Button>
+          </div>
+        </Field>
+        {error ? (
+          <Alert variant="destructive">
+            <AlertTitle>无法完成操作</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+      </FieldGroup>
+    </form>
   );
 }
