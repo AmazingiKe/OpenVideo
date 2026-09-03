@@ -71,6 +71,7 @@ vi.mock("./shared/api", () => ({
   get_preferences: vi.fn(),
   import_download_account_from_browser: vi.fn(),
   import_local_media: vi.fn(),
+  import_video_directory: vi.fn(),
   get_markers: vi.fn(),
   get_agent_index_status: vi.fn(),
   get_segments: vi.fn(),
@@ -238,7 +239,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await waitFor(() => expect(window.location.pathname).toBe("/downloads"));
+    await waitFor(() => expect(window.location.pathname).toBe("/library"));
   });
   it("keeps the library, video and timeline together in one workbench", async () => {
     vi.mocked(get_health).mockResolvedValue({
@@ -304,18 +305,19 @@ describe("App", () => {
 
     render(<App />);
 
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "下载在线视频，稍后集中处理" }),
-      ).toBeInTheDocument(),
-    );
+    expect(
+      await screen.findByRole("heading", { name: "整理和查找所有视频" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "开始分析" }),
     ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "解析并下载在线视频" }));
     expect(
       screen.getByRole("button", { name: "解析链接" }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "解析下载" }),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("视频或播放列表地址"), {
       target: { value: "https://www.bilibili.com/video/BV1xx411c7mD" },
     });
@@ -344,10 +346,13 @@ describe("App", () => {
       screen.getByRole("button", { name: "下载 1 个视频" }),
     ).toBeInTheDocument();
     expect(create_download).not.toHaveBeenCalled();
-    const download_module = screen.getByRole("link", { name: "下载" });
-    expect(download_module).toHaveAttribute("aria-current", "page");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    const navigation = screen.getByRole("navigation", { name: "工作区导航" });
+    expect(
+      within(navigation).getByRole("link", { name: "视频库" }),
+    ).toHaveAttribute("aria-current", "page");
 
-    fireEvent.click(screen.getByRole("link", { name: "标记" }));
+    fireEvent.click(within(navigation).getByRole("link", { name: "标记" }));
     await waitFor(
       () =>
         expect(
@@ -384,21 +389,22 @@ describe("App", () => {
         expect.objectContaining({ uncategorized: true }),
       ),
     );
+    const compact_library = screen
+      .getAllByLabelText("视频库浏览器")
+      .find((browser) => browser.dataset.compact === "true");
+    expect(compact_library).toBeDefined();
     await waitFor(() =>
-      expect(screen.getByLabelText("视频库浏览器")).toHaveTextContent(
-        "下载中的视频",
-      ),
+      expect(compact_library).toHaveTextContent("下载中的视频"),
     );
-    expect(screen.getByLabelText("视频库浏览器")).toHaveTextContent(
-      "失败的视频",
-    );
+    expect(compact_library).toHaveTextContent("失败的视频");
 
     expect(window.location.pathname).toBe(`/markers/${ASSET_ID}`);
-    expect(download_module).not.toHaveAttribute("aria-current");
-    expect(screen.getByRole("link", { name: "标记" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(
+      within(navigation).getByRole("link", { name: "视频库" }),
+    ).not.toHaveAttribute("aria-current");
+    expect(
+      within(navigation).getByRole("link", { name: "标记" }),
+    ).toHaveAttribute("aria-current", "page");
   }, 10_000);
 
   it("opens the video library as a sheet without pushing the compact timeline below the viewport", async () => {
@@ -490,6 +496,8 @@ describe("App", () => {
       );
 
     render(<App />);
+
+    await open_download_tool();
 
     fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
       target: { value: first_probe.entries[0].url },
@@ -621,6 +629,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await open_download_tool();
+
     const source_url =
       "https://www.douyin.com/search/dy?modal_id=7676366977263042789";
     fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
@@ -664,6 +674,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await open_download_tool();
+
     const source_url =
       "https://www.bilibili.com/video/BV1X7411F744/?p=2&spm_id_from=333.337.search-card.all.click";
     fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
@@ -703,6 +715,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await open_accounts_tool();
+
     const bilibili_account = await screen.findByRole("region", {
       name: "Bilibili",
     });
@@ -735,7 +749,7 @@ describe("App", () => {
   });
 
   it("imports dropped videos and images from anywhere in the window", async () => {
-    window.history.replaceState(null, "", "/downloads");
+    window.history.replaceState(null, "", "/library");
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
       dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
@@ -751,7 +765,7 @@ describe("App", () => {
       source_video_id: null,
     });
     render(<App />);
-    await screen.findByRole("heading", { name: "下载在线视频，稍后集中处理" });
+    await screen.findByRole("heading", { name: "整理和查找所有视频" });
     const video_file = new File(["video"], "本地演示.mp4", {
       type: "video/mp4",
     });
@@ -791,6 +805,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await open_accounts_tool();
+
     const douyin_account = await screen.findByRole("region", { name: "抖音" });
     fireEvent.click(
       within(douyin_account).getByRole("button", { name: "连接账号" }),
@@ -821,6 +837,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await open_accounts_tool();
+
     const bilibili_account = await screen.findByRole("region", {
       name: "Bilibili",
     });
@@ -841,7 +859,12 @@ describe("App", () => {
         "login-0198d12345677890abcdef1234567890",
       ),
     );
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "连接 Bilibili 账号" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "平台账号" }),
+    ).toBeInTheDocument();
   });
 
   it("imports a logged-in Douyin account from Edge", async () => {
@@ -859,6 +882,8 @@ describe("App", () => {
     });
 
     render(<App />);
+
+    await open_accounts_tool();
 
     const douyin_account = await screen.findByRole("region", { name: "抖音" });
     fireEvent.click(
@@ -897,6 +922,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await open_accounts_tool();
+
     expect(await screen.findByText("登录状态已过期")).toBeInTheDocument();
     const douyin_account = screen.getByRole("region", { name: "抖音" });
     expect(
@@ -907,7 +934,7 @@ describe("App", () => {
     ).toBeDisabled();
   });
 
-  it("redirects unknown paths to downloads", async () => {
+  it("redirects unknown paths to the video library", async () => {
     window.history.replaceState(null, "", "/missing");
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
@@ -917,11 +944,11 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/downloads");
-      expect(screen.getByRole("link", { name: "下载" })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
+      expect(window.location.pathname).toBe("/library");
+      const navigation = screen.getByRole("navigation", { name: "工作区导航" });
+      expect(
+        within(navigation).getByRole("link", { name: "视频库" }),
+      ).toHaveAttribute("aria-current", "page");
     });
   });
 
@@ -933,13 +960,16 @@ describe("App", () => {
     vi.mocked(list_assets).mockResolvedValue([]);
     render(<App />);
 
+    await open_download_tool();
     const source_input = await screen.findByLabelText("视频或播放列表地址");
     fireEvent.change(source_input, {
       target: { value: "https://example.com/preserved-video" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("link", { name: "标记" }));
     await waitFor(() => expect(window.location.pathname).toBe("/markers"));
-    fireEvent.click(screen.getByRole("link", { name: "下载" }));
+    fireEvent.click(screen.getByRole("link", { name: "视频库" }));
+    await open_download_tool();
 
     expect(await screen.findByLabelText("视频或播放列表地址")).toHaveValue(
       "https://example.com/preserved-video",
@@ -971,7 +1001,7 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("link", { name: "标记" }));
     expect(await screen.findByTestId("player")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("link", { name: "下载" }));
+    fireEvent.click(screen.getByRole("link", { name: "视频库" }));
     await waitFor(() =>
       expect(screen.queryByTestId("player")).not.toBeInTheDocument(),
     );
@@ -992,6 +1022,20 @@ describe("App", () => {
     expect(list_assets).not.toHaveBeenCalled();
   });
 });
+
+async function open_download_tool() {
+  fireEvent.click(
+    await screen.findByRole("button", { name: "解析并下载在线视频" }),
+  );
+  await screen.findByRole("dialog", { name: "解析下载" });
+}
+
+async function open_accounts_tool() {
+  fireEvent.click(
+    await screen.findByRole("button", { name: "管理下载平台账号" }),
+  );
+  await screen.findByRole("dialog", { name: "平台账号" });
+}
 
 function create_asset({
   status,

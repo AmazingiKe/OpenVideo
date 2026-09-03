@@ -80,6 +80,24 @@ export function import_local_media(
   });
 }
 
+export type DirectoryImportResult = {
+  assets: MediaAsset[];
+  failed_files: string[];
+};
+
+export function import_video_directory(
+  path: string,
+  include_subfolders: boolean,
+  signal?: AbortSignal,
+): Promise<DirectoryImportResult> {
+  return request_json("/api/media/assets/import-directory", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, include_subfolders }),
+    signal,
+  });
+}
+
 export function create_folder(
   name: string,
   parent_id: string | null,

@@ -214,6 +214,89 @@ def test_dragged_video_is_imported_into_the_library(tmp_path: Path, monkeypatch)
         assert client.head(asset["playback_url"]).headers["content-type"] == "video/mp4"
 
 
+def test_video_directory_import_preserves_selected_folder_structure(
+    tmp_path: Path, monkeypatch
+):
+    library_path = tmp_path / "portable"
+    library_path.mkdir()
+    source_directory = tmp_path / "课程"
+    nested_directory = source_directory / "第一章" / "示例"
+    nested_directory.mkdir(parents=True)
+    (source_directory / "介绍.mp4").write_bytes(b"intro")
+    (nested_directory / "镜头.mp4").write_bytes(b"shot")
+    (nested_directory / "说明.txt").write_text("忽略", encoding="utf-8")
+    monkeypatch.setattr(
+        "openvideo.local_media_import.probe_media",
+        lambda *_: MediaProbe(12.5, 1920, 1080, "h264", "aac"),
+    )
+    monkeypatch.setattr("openvideo.local_media_import.resolve_tool", lambda *_: None)
+    app = create_app(
+        Settings(), PreferenceStore(tmp_path / "config" / "preferences.json")
+    )
+
+    with TestClient(app) as client:
+        client.post("/api/library/activate", json={"path": str(library_path)})
+        response = client.post(
+            "/api/media/assets/import-directory",
+            json={"path": str(source_directory), "include_subfolders": True},
+        )
+
+        assert response.status_code == 201
+        imported_assets = response.json()["assets"]
+        assert {asset["title"] for asset in imported_assets} == {"介绍", "镜头"}
+        assert response.json()["failed_files"] == []
+        folders = client.get("/api/library/folders").json()
+        folder_by_name = {folder["name"]: folder for folder in folders}
+        assert folder_by_name["课程"]["parent_id"] is None
+        assert (
+            folder_by_name["第一章"]["parent_id"] == folder_by_name["课程"]["folder_id"]
+        )
+        assert (
+            folder_by_name["示例"]["parent_id"] == folder_by_name["第一章"]["folder_id"]
+        )
+        asset_folder_ids = {
+            asset["title"]: asset["folder_id"] for asset in imported_assets
+        }
+        assert asset_folder_ids == {
+            "介绍": folder_by_name["课程"]["folder_id"],
+            "镜头": folder_by_name["示例"]["folder_id"],
+        }
+
+
+def test_video_directory_import_does_not_scan_subfolders_by_default(
+    tmp_path: Path, monkeypatch
+):
+    library_path = tmp_path / "portable"
+    library_path.mkdir()
+    source_directory = tmp_path / "素材"
+    nested_directory = source_directory / "子文件夹"
+    nested_directory.mkdir(parents=True)
+    (source_directory / "顶层.mp4").write_bytes(b"top")
+    (nested_directory / "下层.mp4").write_bytes(b"nested")
+    monkeypatch.setattr(
+        "openvideo.local_media_import.probe_media",
+        lambda *_: MediaProbe(3.0, 1280, 720, "h264", "aac"),
+    )
+    monkeypatch.setattr("openvideo.local_media_import.resolve_tool", lambda *_: None)
+    app = create_app(
+        Settings(), PreferenceStore(tmp_path / "config" / "preferences.json")
+    )
+
+    with TestClient(app) as client:
+        client.post("/api/library/activate", json={"path": str(library_path)})
+        response = client.post(
+            "/api/media/assets/import-directory",
+            json={"path": str(source_directory)},
+        )
+
+        assert response.status_code == 201
+        assert [asset["title"] for asset in response.json()["assets"]] == ["顶层"]
+        folder_names = [
+            folder["name"] for folder in client.get("/api/library/folders").json()
+        ]
+        assert folder_names == ["素材"]
+
+
 def test_dragged_image_is_imported_into_the_library(tmp_path: Path):
     library_path = tmp_path / "portable"
     library_path.mkdir()

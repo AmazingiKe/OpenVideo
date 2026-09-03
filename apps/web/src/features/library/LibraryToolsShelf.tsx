@@ -1,9 +1,21 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Download, FolderInput, KeyRound, Wrench } from "lucide-react";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { use_task_manager } from "@/app/task_manager";
-import { DownloadWorkspace } from "@/features/workbench/DownloadWorkspace";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { DownloadAccountsCard } from "@/features/downloads/DownloadAccountsCard";
+import { OnlineDownloadTool } from "@/features/downloads/OnlineDownloadTool";
+import { FolderImportDialog } from "@/features/library/FolderImportDialog";
 import {
   create_download_account_login_session,
   delete_download_account_login_session,
@@ -43,7 +55,9 @@ const BILIBILI_PART_PARAMETER = "p";
 const BILIBILI_PART_ID_SEPARATOR = "_p";
 const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/;
 
-export function DownloadsPage() {
+type LibraryTool = "accounts" | "download" | "folder_import";
+
+export function LibraryToolsShelf() {
   const query_client = useQueryClient();
   const { start_downloads } = use_task_manager();
   const health_query = useQuery({
@@ -68,6 +82,7 @@ export function DownloadsPage() {
   const [video_quality, set_video_quality] = useState<DownloadQuality>("best");
   const [is_submitting, set_is_submitting] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
+  const [active_tool, set_active_tool] = useState<LibraryTool | null>(null);
   const [account_loading_platform, set_account_loading_platform] =
     useState<SourcePlatform | null>(null);
   const [account_errors, set_account_errors] = useState<
@@ -345,43 +360,133 @@ export function DownloadsPage() {
     });
   }
 
+  const download_error =
+    page_error ??
+    resource_error(health_query.error) ??
+    resource_error(folders_query.error);
+  const account_query_error = resource_error(download_accounts_query.error);
+
   return (
-    <DownloadWorkspace
-      health={health}
-      source_url={source_url}
-      probe_result={probe_result}
-      selected_urls={selected_urls}
-      folders={folders_query.data ?? []}
-      target_folder_id={target_folder_id}
-      video_quality={video_quality}
-      current_source_video_id={
-        current_probe_entry(probe_result?.entries ?? [], source_url)
-          ?.source_video_id ?? null
-      }
-      is_submitting={is_submitting}
-      error={
-        page_error ??
-        resource_error(health_query.error) ??
-        resource_error(download_accounts_query.error) ??
-        resource_error(folders_query.error)
-      }
-      download_accounts={download_accounts}
-      account_loading_platform={account_loading_platform}
-      account_errors={account_errors}
-      on_source_url_change={set_source_url}
-      on_submit_probe={submit_source_probe}
-      on_toggle_url={toggle_url}
-      on_replace_selection={(urls) => set_selected_urls(new Set(urls))}
-      on_target_folder_change={set_target_folder_id}
-      on_video_quality_change={set_video_quality}
-      on_start_download={() => void start_selected_downloads()}
-      on_save_download_account={save_platform_account}
-      on_login_download_account={login_platform_account}
-      on_cancel_download_account_login={cancel_platform_account_login}
-      on_import_download_account={import_platform_account}
-      on_test_download_account={test_platform_account}
-      on_disconnect_download_account={disconnect_platform_account}
-    />
+    <>
+      <div
+        className="flex shrink-0 items-center gap-2 rounded-xl border bg-card px-3 py-2"
+        role="toolbar"
+        aria-label="视频库工具"
+      >
+        <span className="mr-auto flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <Wrench className="size-4" aria-hidden="true" />
+          工具
+        </span>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="outline"
+          onClick={() => set_active_tool("download")}
+          aria-label="解析并下载在线视频"
+          title="解析下载"
+        >
+          <Download />
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="outline"
+          onClick={() => set_active_tool("accounts")}
+          aria-label="管理下载平台账号"
+          title="平台账号"
+        >
+          <KeyRound />
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="outline"
+          onClick={() => set_active_tool("folder_import")}
+          aria-label="从文件夹导入视频"
+          title="文件夹导入"
+        >
+          <FolderInput />
+        </Button>
+      </div>
+
+      <Dialog
+        open={active_tool === "download"}
+        onOpenChange={(open) => {
+          if (!open && !is_submitting) set_active_tool(null);
+        }}
+      >
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>解析下载</DialogTitle>
+            <DialogDescription>
+              解析视频或播放列表，选择内容后加入后台下载队列。
+            </DialogDescription>
+          </DialogHeader>
+          <OnlineDownloadTool
+            health={health}
+            source_url={source_url}
+            probe_result={probe_result}
+            selected_urls={selected_urls}
+            folders={folders_query.data ?? []}
+            target_folder_id={target_folder_id}
+            video_quality={video_quality}
+            current_source_video_id={
+              current_probe_entry(probe_result?.entries ?? [], source_url)
+                ?.source_video_id ?? null
+            }
+            is_submitting={is_submitting}
+            error={download_error}
+            on_source_url_change={set_source_url}
+            on_submit_probe={submit_source_probe}
+            on_toggle_url={toggle_url}
+            on_replace_selection={(urls) => set_selected_urls(new Set(urls))}
+            on_target_folder_change={set_target_folder_id}
+            on_video_quality_change={set_video_quality}
+            on_start_download={() => void start_selected_downloads()}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={active_tool === "accounts"}
+        onOpenChange={(open) => {
+          if (!open && !account_loading_platform) set_active_tool(null);
+        }}
+      >
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>平台账号</DialogTitle>
+            <DialogDescription>
+              管理 Bilibili、抖音和 YouTube 的下载登录状态。
+            </DialogDescription>
+          </DialogHeader>
+          {account_query_error ? (
+            <Alert variant="destructive">
+              <AlertTitle>无法读取平台账号</AlertTitle>
+              <AlertDescription>{account_query_error}</AlertDescription>
+            </Alert>
+          ) : null}
+          <DownloadAccountsCard
+            accounts={download_accounts}
+            loading_platform={account_loading_platform}
+            errors={account_errors}
+            on_save={save_platform_account}
+            on_login={login_platform_account}
+            on_cancel_login={cancel_platform_account_login}
+            on_import_browser={import_platform_account}
+            on_test={test_platform_account}
+            on_disconnect={disconnect_platform_account}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <FolderImportDialog
+        open={active_tool === "folder_import"}
+        on_open_change={(open) =>
+          set_active_tool(open ? "folder_import" : null)
+        }
+      />
+    </>
   );
 }
 

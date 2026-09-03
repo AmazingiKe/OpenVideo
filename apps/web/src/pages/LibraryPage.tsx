@@ -4,10 +4,10 @@ import { useNavigate } from "react-router-dom";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
-import { marker_asset_path } from "@/app/workspace_routes";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { LibraryBrowser } from "@/features/library/LibraryBrowser";
+import { LibraryToolsShelf } from "@/features/library/LibraryToolsShelf";
 import { load_summary_project } from "@/features/summary/load_summary_project";
 import type { MediaAsset } from "@/shared/types";
 
@@ -17,16 +17,12 @@ export function LibraryPage() {
   const { assets, select_asset } = use_asset_catalog();
 
   async function open_video(asset: MediaAsset) {
-    const project = await query_client.fetchQuery({
+    await query_client.fetchQuery({
       queryKey: RESOURCE_QUERY_KEYS.summary_project(asset.asset_id),
       queryFn: ({ signal }) => load_summary_project(asset.asset_id, signal),
     });
     select_asset(asset.asset_id);
-    navigate(
-      project.documents.length > 0
-        ? "/summary"
-        : marker_asset_path(asset.asset_id),
-    );
+    navigate("/summary");
   }
 
   return (
@@ -42,6 +38,7 @@ export function LibraryPage() {
         icon={Library}
         action={<Badge variant="secondary">{assets.length} 个视频</Badge>}
       />
+      <LibraryToolsShelf />
       <LibraryBrowser
         className="flex-1 rounded-xl border bg-background p-3 md:p-4"
         initial_folder_id={null}

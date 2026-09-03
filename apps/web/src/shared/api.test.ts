@@ -18,6 +18,7 @@ import {
   get_markers_page_settings,
   import_download_account_from_browser,
   import_local_media,
+  import_video_directory,
   list_downloads,
   list_transcription_models,
   media_url,
@@ -255,6 +256,32 @@ describe("api client", () => {
     expect(uploaded_file.name).toBe(file.name);
     expect(uploaded_file.size).toBe(file.size);
     expect(uploaded_file.type).toBe(file.type);
+  });
+
+  it("imports a video folder with an explicit recursion choice", async () => {
+    const response = { assets: [], failed_files: [] };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(
+      import_video_directory("D:\\素材\\课程", true),
+    ).resolves.toEqual(response);
+    expect(fetch_mock).toHaveBeenCalledWith(
+      "/api/media/assets/import-directory",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: "D:\\素材\\课程",
+          include_subfolders: true,
+        }),
+        signal: undefined,
+      },
+    );
   });
 
   it("submits a typed download request", async () => {

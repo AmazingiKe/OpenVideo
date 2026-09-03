@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LibraryPage } from "@/pages/LibraryPage";
 import {
+  initialize_summary_document,
   list_assets,
   list_folders,
   list_summary_documents,
@@ -45,6 +46,10 @@ vi.mock("@/app/asset_catalog", () => ({
   }),
 }));
 
+vi.mock("@/features/library/LibraryToolsShelf", () => ({
+  LibraryToolsShelf: () => null,
+}));
+
 vi.mock("@/shared/api", () => ({
   create_folder: vi.fn(),
   delete_asset: vi.fn(),
@@ -52,6 +57,7 @@ vi.mock("@/shared/api", () => ({
   list_assets: vi.fn(),
   list_folders: vi.fn(),
   list_summary_documents: vi.fn(),
+  initialize_summary_document: vi.fn(),
   media_url: (path: string) => path,
   move_assets: vi.fn(),
   move_folder: vi.fn(),
@@ -80,8 +86,11 @@ describe("LibraryPage", () => {
     expect(list_summary_documents).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the marker UUID route when no summary document exists", async () => {
+  it("initializes and opens the summary workspace when no document exists", async () => {
     vi.mocked(list_summary_documents).mockResolvedValue([]);
+    vi.mocked(initialize_summary_document).mockResolvedValue(
+      summary_document(),
+    );
     render_page();
 
     fireEvent.doubleClick(
@@ -89,11 +98,13 @@ describe("LibraryPage", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByTestId("location")).toHaveTextContent(
-        `/markers/${ASSET_ID}`,
-      ),
+      expect(screen.getByTestId("location")).toHaveTextContent("/summary"),
     );
     expect(select_asset).toHaveBeenCalledWith(ASSET_ID);
+    expect(initialize_summary_document).toHaveBeenCalledWith(
+      ASSET_ID,
+      expect.any(AbortSignal),
+    );
   });
 
   it("stays on the library page and reports a project query failure", async () => {

@@ -34,17 +34,17 @@ describe("Topbar", () => {
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("link", { name: "下载" })).not.toHaveAttribute(
+    expect(screen.getByRole("link", { name: "视频库" })).not.toHaveAttribute(
       "aria-current",
     );
     expect(
       screen
         .getAllByRole("link")
         .filter((link) =>
-          ["下载", "视频库", "标记", "总结"].includes(link.textContent ?? ""),
+          ["视频库", "标记", "总结"].includes(link.textContent ?? ""),
         )
         .map((link) => link.textContent),
-    ).toEqual(["下载", "视频库", "标记", "总结"]);
+    ).toEqual(["视频库", "标记", "总结"]);
   });
 
   it("does not render the removed marker video dropdown", () => {

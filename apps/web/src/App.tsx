@@ -48,7 +48,7 @@ function ApplicationRoutes() {
 
 function InitializeLibraryPage() {
   const { library, notice, set_library } = use_library_state();
-  if (library) return <Navigate to="/downloads" replace />;
+  if (library) return <Navigate to="/library" replace />;
   return <LibrarySetup notice={notice} on_library_opened={set_library} />;
 }
 
@@ -92,7 +92,7 @@ function WorkspaceRouter() {
     });
   }, [active_workspace_route, is_settings_active, location.pathname]);
   if (!active_workspace_route && !is_settings_active) {
-    return <Navigate to="/downloads" replace />;
+    return <Navigate to="/library" replace />;
   }
   const SettingsPage = SETTINGS_ROUTE.component;
   return (

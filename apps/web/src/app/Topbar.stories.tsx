@@ -23,7 +23,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const DownloadsActive: Story = {
-  parameters: { route: "/downloads" },
+  parameters: { route: "/library" },
 };
 
 export const SettingsActive: Story = {

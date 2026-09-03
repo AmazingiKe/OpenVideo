@@ -1,7 +1,6 @@
 import {
   Clapperboard,
   Bot,
-  Download,
   FileText,
   Flag,
   Library,
@@ -29,7 +28,6 @@ function preload_component(load_component: () => Promise<unknown>) {
 }
 
 const WORKSPACE_ICONS = {
-  "/downloads": Download,
   "/library": Library,
   "/markers": Flag,
   "/summary": FileText,

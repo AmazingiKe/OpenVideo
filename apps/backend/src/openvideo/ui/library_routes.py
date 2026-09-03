@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
@@ -14,7 +15,11 @@ from openvideo.core.library import (
 )
 from openvideo.core.media_models import MediaAssetResponse
 from openvideo.download_manager import DownloadManager
-from openvideo.local_media_import import LocalMediaImportError, persist_local_media
+from openvideo.local_media_import import (
+    LocalMediaImportError,
+    import_video_directory,
+    persist_local_media,
+)
 from openvideo.settings import Settings
 from openvideo.ui.media_routes import ready_asset
 
@@ -39,6 +44,16 @@ class FolderDeleteRequest(BaseModel):
 class AssetMoveRequest(BaseModel):
     asset_ids: list[str] = Field(min_length=1, max_length=100)
     folder_id: str | None = None
+
+
+class DirectoryImportRequest(BaseModel):
+    path: str = Field(min_length=1)
+    include_subfolders: bool = False
+
+
+class DirectoryImportResponse(BaseModel):
+    assets: list[MediaAssetResponse]
+    failed_files: list[str]
 
 
 def register_library_routes(
@@ -153,6 +168,38 @@ def register_library_routes(
         finally:
             await file.close()
         return media_library.response_for(asset)
+
+    @app.post(
+        "/api/media/assets/import-directory",
+        response_model=DirectoryImportResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def import_local_video_directory(
+        request: DirectoryImportRequest,
+    ) -> DirectoryImportResponse:
+        media_library = library()
+        try:
+            assets, failed_files = await asyncio.to_thread(
+                import_video_directory,
+                media_library,
+                settings,
+                Path(request.path),
+                include_subfolders=request.include_subfolders,
+            )
+        except LocalMediaImportError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(error),
+            ) from error
+        except OSError as error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="无法读取所选文件夹",
+            ) from error
+        return DirectoryImportResponse(
+            assets=[media_library.response_for(asset) for asset in assets],
+            failed_files=failed_files,
+        )
 
     @app.delete("/api/media/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_asset(asset_id: str) -> Response:
