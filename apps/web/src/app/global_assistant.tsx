@@ -5,8 +5,10 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import type { GroupImperativeHandle } from "react-resizable-panels";
 import { useLocation } from "react-router-dom";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
@@ -45,6 +47,7 @@ const DEFAULT_PANEL_SIZE_PERCENT = 30;
 const ASSISTANT_PANEL_MIN_WIDTH_PX = 352;
 const ASSISTANT_PANEL_MAX_WIDTH_PX = 576;
 const WORKSPACE_PANEL_MIN_WIDTH_PX = 480;
+const WORKSPACE_PANEL_ID = "global-assistant-workspace";
 const ASSISTANT_PANEL_ID = "global-assistant-panel";
 
 export type GlobalAssistantBinding = {
@@ -202,7 +205,17 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
   };
   const panel_size_percent =
     binding.panel_size_percent ?? DEFAULT_PANEL_SIZE_PERCENT;
-  const docked = assistant.open && !compact;
+  const desktop_group_ref = useRef<GroupImperativeHandle>(null);
+
+  useEffect(() => {
+    if (compact) return;
+    const assistant_size_percent = assistant.open ? panel_size_percent : 0;
+    desktop_group_ref.current?.setLayout({
+      [WORKSPACE_PANEL_ID]: 100 - assistant_size_percent,
+      [ASSISTANT_PANEL_ID]: assistant_size_percent,
+    });
+  }, [assistant.open, compact, panel_size_percent]);
+
   const assistant_panel = (
     <AgentPanel
       className="h-full rounded-none border-0"
@@ -238,9 +251,17 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
       className="min-h-0 flex-1 overflow-hidden"
       data-slot="global-assistant-layout"
     >
-      {docked ? (
+      {!compact ? (
         <ResizablePanelGroup
+          className="global_assistant_layout"
+          groupRef={desktop_group_ref}
           orientation="horizontal"
+          defaultLayout={{
+            [WORKSPACE_PANEL_ID]: assistant.open
+              ? 100 - panel_size_percent
+              : 100,
+            [ASSISTANT_PANEL_ID]: assistant.open ? panel_size_percent : 0,
+          }}
           onLayoutChanged={(layout, metadata) => {
             const next_size = layout[ASSISTANT_PANEL_ID];
             if (metadata.isUserInteraction && next_size !== undefined) {
@@ -249,22 +270,37 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
           }}
         >
           <ResizablePanel
-            id="global-assistant-workspace"
+            id={WORKSPACE_PANEL_ID}
             minSize={`${WORKSPACE_PANEL_MIN_WIDTH_PX}px`}
           >
             <div className="h-full min-h-0 min-w-0 overflow-hidden">
               {children}
             </div>
           </ResizablePanel>
-          <ResizableHandle withHandle aria-label="调整助手宽度" />
+          <ResizableHandle
+            withHandle
+            className="global_assistant_handle"
+            data-open={assistant.open}
+            disabled={!assistant.open}
+            aria-label="调整助手宽度"
+          />
           <ResizablePanel
             id={ASSISTANT_PANEL_ID}
             defaultSize={`${panel_size_percent}%`}
             minSize={`${ASSISTANT_PANEL_MIN_WIDTH_PX}px`}
             maxSize={`${ASSISTANT_PANEL_MAX_WIDTH_PX}px`}
+            collapsedSize="0%"
+            collapsible
             groupResizeBehavior="preserve-pixel-size"
+            style={{ overflow: "hidden" }}
           >
-            <aside className="h-full min-h-0 bg-card" aria-label="全局助手">
+            <aside
+              className="global_assistant_panel h-full min-h-0 bg-card"
+              data-open={assistant.open}
+              aria-hidden={!assistant.open}
+              inert={!assistant.open}
+              aria-label="全局助手"
+            >
               {assistant_panel}
             </aside>
           </ResizablePanel>
