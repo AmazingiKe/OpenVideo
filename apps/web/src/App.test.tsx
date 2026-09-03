@@ -22,7 +22,7 @@ import {
   get_library,
   get_preferences,
   import_download_account_from_browser,
-  import_local_video,
+  import_local_media,
   get_markers,
   get_agent_index_status,
   get_segments,
@@ -70,7 +70,7 @@ vi.mock("./shared/api", () => ({
   get_library: vi.fn(),
   get_preferences: vi.fn(),
   import_download_account_from_browser: vi.fn(),
-  import_local_video: vi.fn(),
+  import_local_media: vi.fn(),
   get_markers: vi.fn(),
   get_agent_index_status: vi.fn(),
   get_segments: vi.fn(),
@@ -734,13 +734,13 @@ describe("App", () => {
     expect(await screen.findByText("可用")).toBeInTheDocument();
   });
 
-  it("imports one dropped local video and reports completion", async () => {
+  it("imports dropped videos and images from anywhere in the window", async () => {
     window.history.replaceState(null, "", "/downloads");
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
       dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
     });
-    vi.mocked(import_local_video).mockResolvedValue({
+    vi.mocked(import_local_media).mockResolvedValue({
       ...create_asset({
         status: "ready",
         title: "本地演示",
@@ -751,17 +751,21 @@ describe("App", () => {
       source_video_id: null,
     });
     render(<App />);
-    const drop_region = await screen.findByRole("region", {
-      name: "本地视频拖拽导入区",
+    await screen.findByRole("heading", { name: "下载在线视频，稍后集中处理" });
+    const video_file = new File(["video"], "本地演示.mp4", {
+      type: "video/mp4",
     });
-    const file = new File(["video"], "本地演示.mp4", { type: "video/mp4" });
+    const image_file = new File(["image"], "封面.png", { type: "image/png" });
 
-    fireEvent.drop(drop_region, {
-      dataTransfer: { files: [file], types: ["Files"] },
+    fireEvent.drop(window, {
+      dataTransfer: { files: [video_file, image_file], types: ["Files"] },
     });
 
-    await waitFor(() => expect(import_local_video).toHaveBeenCalledWith(file));
-    expect(await screen.findByText("“本地演示”已导入")).toBeVisible();
+    await waitFor(() => {
+      expect(import_local_media).toHaveBeenNthCalledWith(1, video_file);
+      expect(import_local_media).toHaveBeenNthCalledWith(2, image_file);
+    });
+    expect(await screen.findByText("已将 2 个文件加入视频库。")).toBeVisible();
   });
 
   it("connects a Douyin account through the dedicated login window", async () => {

@@ -2,6 +2,7 @@ import { Outlet, useLocation } from "react-router-dom";
 
 import { Topbar } from "@/app/Topbar";
 import { GlobalAssistantLayout } from "@/app/global_assistant";
+import { GlobalMediaImport } from "@/app/GlobalMediaImport";
 import { use_library_state } from "@/app/library";
 import {
   MARKERS_ROUTE_PATH,
@@ -22,6 +23,7 @@ export function AppShell() {
   return (
     <div className="grid h-full grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background">
       <Topbar />
+      <GlobalMediaImport />
       <GlobalAssistantLayout>
         <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
           {library && library.index_issues.length > 0 ? (

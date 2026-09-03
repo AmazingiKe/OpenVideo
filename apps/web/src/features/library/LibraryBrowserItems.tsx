@@ -6,6 +6,7 @@ import {
   Clock3,
   Folder,
   GripVertical,
+  Image,
   Video,
 } from "lucide-react";
 
@@ -218,11 +219,17 @@ export function VideoItem({
               loading="lazy"
             />
           ) : (
-            <Video className="size-8" />
+            asset.media_type === "image" ? (
+              <Image className="size-8" />
+            ) : (
+              <Video className="size-8" />
+            )
           )}
-          <Badge className="absolute right-2 bottom-2" variant="secondary">
-            {format_duration(asset.duration_seconds)}
-          </Badge>
+          {asset.media_type === "video" ? (
+            <Badge className="absolute right-2 bottom-2" variant="secondary">
+              {format_duration(asset.duration_seconds)}
+            </Badge>
+          ) : null}
           {selected ? (
             <span className="absolute top-2 left-2 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
               <Check className="size-4" />

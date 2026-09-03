@@ -29,10 +29,6 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { DownloadAccountsCard } from "@/features/downloads/DownloadAccountsCard";
 import { DownloadSelection } from "@/features/downloads/DownloadSelection";
-import {
-  VideoImportCard,
-  type VideoImportState,
-} from "@/features/downloads/VideoImportCard";
 import type {
   DownloadAccount,
   DownloadCookieBrowser,
@@ -58,7 +54,6 @@ type DownloadWorkspaceProps = {
   download_accounts: DownloadAccount[];
   account_loading_platform: SourcePlatform | null;
   account_errors: Partial<Record<SourcePlatform, string>>;
-  video_import_state: VideoImportState;
   on_source_url_change: (value: string) => void;
   on_submit_probe: (event: FormEvent<HTMLFormElement>) => void;
   on_toggle_url: (url: string) => void;
@@ -78,8 +73,6 @@ type DownloadWorkspaceProps = {
   ) => Promise<void>;
   on_test_download_account: (platform: SourcePlatform) => Promise<void>;
   on_disconnect_download_account: (platform: SourcePlatform) => Promise<void>;
-  on_video_drop: (file: File) => void;
-  on_invalid_video_drop: (message: string) => void;
 };
 
 export function DownloadWorkspace({
@@ -96,7 +89,6 @@ export function DownloadWorkspace({
   download_accounts,
   account_loading_platform,
   account_errors,
-  video_import_state,
   on_source_url_change,
   on_submit_probe,
   on_toggle_url,
@@ -110,8 +102,6 @@ export function DownloadWorkspace({
   on_import_download_account,
   on_test_download_account,
   on_disconnect_download_account,
-  on_video_drop,
-  on_invalid_video_drop,
 }: DownloadWorkspaceProps) {
   const dependencies_ready = Boolean(
     health?.dependencies.yt_dlp && health.dependencies.ffmpeg,
@@ -160,11 +150,6 @@ export function DownloadWorkspace({
             {status_label}
           </Badge>
         }
-      />
-      <VideoImportCard
-        state={video_import_state}
-        on_video_drop={on_video_drop}
-        on_invalid_drop={on_invalid_video_drop}
       />
       <DownloadAccountsCard
         accounts={download_accounts}

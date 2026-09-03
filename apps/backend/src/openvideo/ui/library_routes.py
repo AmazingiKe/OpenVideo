@@ -14,7 +14,7 @@ from openvideo.core.library import (
 )
 from openvideo.core.media_models import MediaAssetResponse
 from openvideo.download_manager import DownloadManager
-from openvideo.local_video_import import LocalVideoImportError, persist_local_video
+from openvideo.local_media_import import LocalMediaImportError, persist_local_media
 from openvideo.settings import Settings
 from openvideo.ui.media_routes import ready_asset
 
@@ -128,19 +128,19 @@ def register_library_routes(
         response_model=MediaAssetResponse,
         status_code=status.HTTP_201_CREATED,
     )
-    async def import_local_video(
+    async def import_local_media(
         file: UploadFile = File(...),
     ) -> MediaAssetResponse:
         media_library = library()
         try:
             asset = await asyncio.to_thread(
-                persist_local_video,
+                persist_local_media,
                 media_library,
                 settings,
                 file.file,
                 file.filename,
             )
-        except LocalVideoImportError as error:
+        except LocalMediaImportError as error:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(error),
@@ -148,7 +148,7 @@ def register_library_routes(
         except OSError as error:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="视频文件无法写入资料库",
+                detail="媒体文件无法写入资料库",
             ) from error
         finally:
             await file.close()

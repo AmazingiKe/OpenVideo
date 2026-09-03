@@ -1,6 +1,8 @@
+from io import BytesIO
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import PROJECT_ROOT, Settings
@@ -183,10 +185,10 @@ def test_dragged_video_is_imported_into_the_library(tmp_path: Path, monkeypatch)
     library_path.mkdir()
     preference_store = PreferenceStore(tmp_path / "config" / "preferences.json")
     monkeypatch.setattr(
-        "openvideo.local_video_import.probe_media",
+        "openvideo.local_media_import.probe_media",
         lambda *_: MediaProbe(12.5, 1920, 1080, "h264", "aac"),
     )
-    monkeypatch.setattr("openvideo.local_video_import.resolve_tool", lambda *_: None)
+    monkeypatch.setattr("openvideo.local_media_import.resolve_tool", lambda *_: None)
     app = create_app(Settings(), preference_store)
 
     with TestClient(app) as client:
@@ -212,7 +214,33 @@ def test_dragged_video_is_imported_into_the_library(tmp_path: Path, monkeypatch)
         assert client.head(asset["playback_url"]).headers["content-type"] == "video/mp4"
 
 
-def test_local_video_import_rejects_unsupported_and_empty_files(tmp_path: Path):
+def test_dragged_image_is_imported_into_the_library(tmp_path: Path):
+    library_path = tmp_path / "portable"
+    library_path.mkdir()
+    app = create_app(
+        Settings(), PreferenceStore(tmp_path / "config" / "preferences.json")
+    )
+    image_content = BytesIO()
+    Image.new("RGB", (320, 180)).save(image_content, format="PNG")
+
+    with TestClient(app) as client:
+        client.post("/api/library/activate", json={"path": str(library_path)})
+        response = client.post(
+            "/api/media/assets/import",
+            files={"file": ("封面.png", image_content.getvalue(), "image/png")},
+        )
+
+        assert response.status_code == 201
+        asset = response.json()
+        assert asset["media_type"] == "image"
+        assert asset["title"] == "封面"
+        assert asset["width"] == 320
+        assert asset["height"] == 180
+        assert asset["thumbnail_url"].endswith(f"/{asset['asset_id']}/thumbnail")
+        assert client.get(asset["thumbnail_url"]).headers["content-type"] == "image/png"
+
+
+def test_local_media_import_rejects_unsupported_and_empty_files(tmp_path: Path):
     library_path = tmp_path / "portable"
     library_path.mkdir()
     app = create_app(
@@ -233,5 +261,5 @@ def test_local_video_import_rejects_unsupported_and_empty_files(tmp_path: Path):
         assert unsupported.status_code == 422
         assert "仅支持" in unsupported.json()["detail"]
         assert empty.status_code == 422
-        assert empty.json()["detail"] == "不能导入空的视频文件"
+        assert empty.json()["detail"] == "不能导入空的媒体文件"
         assert client.get("/api/media/assets").json() == []

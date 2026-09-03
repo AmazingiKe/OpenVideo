@@ -9,6 +9,7 @@ vi.mock("@/app/Topbar", () => ({ Topbar: () => <header>OpenVideo</header> }));
 vi.mock("@/app/global_assistant", () => ({
   GlobalAssistantLayout: ({ children }: { children: ReactNode }) => children,
 }));
+vi.mock("@/app/GlobalMediaImport", () => ({ GlobalMediaImport: () => null }));
 vi.mock("@/app/library", () => ({
   use_library_state: () => ({ library: null }),
 }));

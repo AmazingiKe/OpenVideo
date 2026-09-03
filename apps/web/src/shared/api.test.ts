@@ -231,7 +231,7 @@ describe("api client", () => {
     });
   });
 
-  it("uploads a dropped local video as multipart data", async () => {
+  it("uploads a dropped local media file as multipart data", async () => {
     const asset = {
       asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
       title: "产品演示",
