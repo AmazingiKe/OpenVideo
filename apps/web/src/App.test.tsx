@@ -376,8 +376,8 @@ describe("App", () => {
       screen.getByRole("separator", { name: "调整时间线高度" }),
     ).toBeInTheDocument();
     expect(
-      await screen.findByRole("button", { name: "转录" }, { timeout: 5_000 }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "转录" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("工具面板")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "视频信息" }),

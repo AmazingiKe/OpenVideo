@@ -18,7 +18,7 @@ import { MarkerLibraryPanel } from "@/features/markers/MarkerLibraryPanel";
 import { evidence_range_for_asset } from "@/features/markers/evidence_navigation";
 import { type PlayerHandle } from "@/features/player/Player";
 import { use_asset_markers } from "@/features/markers/use_asset_markers";
-import { TranscriptionToolbarTools } from "@/features/workbench/TranscriptionToolbarTools";
+import { TranscriptionDialog } from "@/features/workbench/TranscriptionDialog";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
 import { timeline_agent_focus } from "@/features/workbench/timeline_agent_context";
@@ -107,6 +107,8 @@ export function MarkersPage() {
   const [assistant_invocation_request, set_assistant_invocation_request] =
     useState<AgentInvocationRequest | null>(null);
   const [page_error, set_page_error] = useState<string | null>(null);
+  const [transcription_dialog_open, set_transcription_dialog_open] =
+    useState(false);
   const [focus_selection, set_focus_selection] =
     useState<FocusSelection | null>(null);
   const [agent_context_attachments, set_agent_context_attachments] = useState<
@@ -489,23 +491,6 @@ export function MarkersPage() {
       on_playback_rate_change={set_playback_rate}
     />
   );
-  const transcription_tools = (
-    <TranscriptionToolbarTools
-      asset={selected_asset}
-      has_transcript={transcript !== null}
-      is_transcribing={is_transcribing}
-      on_start_transcription={(options) => void run_transcription(options)}
-      transcription_models={transcription_models}
-      default_transcription={default_transcription}
-      on_transcription_model_change={(updated_model) =>
-        set_transcription_model_overrides((current) => ({
-          ...current,
-          [`${updated_model.engine}:${updated_model.model}`]: updated_model,
-        }))
-      }
-    />
-  );
-
   const error =
     page_error ??
     transcription_resources_error ??
@@ -566,13 +551,29 @@ export function MarkersPage() {
         on_update_marker={update_marker}
         on_delete_marker={remove_marker}
         on_update_transcript={save_transcript_segment}
-        toolbar_tools={transcription_tools}
+        on_request_transcription={() => set_transcription_dialog_open(true)}
       />
     </Suspense>
   );
   return (
     <>
       <GlobalAssistantRegistration binding={assistant_binding} />
+      <TranscriptionDialog
+        open={transcription_dialog_open}
+        on_open_change={set_transcription_dialog_open}
+        asset={selected_asset}
+        has_transcript={transcript !== null}
+        is_transcribing={is_transcribing}
+        on_start_transcription={(options) => void run_transcription(options)}
+        transcription_models={transcription_models}
+        default_transcription={default_transcription}
+        on_transcription_model_change={(updated_model) =>
+          set_transcription_model_overrides((current) => ({
+            ...current,
+            [`${updated_model.engine}:${updated_model.model}`]: updated_model,
+          }))
+        }
+      />
       <div
         className={cn(
           "h-full min-h-0 min-w-0 overflow-hidden",

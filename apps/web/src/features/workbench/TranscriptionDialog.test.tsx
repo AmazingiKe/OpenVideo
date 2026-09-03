@@ -6,7 +6,7 @@ import {
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
 } from "@/shared/types";
-import { TranscriptionToolbarTools } from "./TranscriptionToolbarTools";
+import { TranscriptionDialog } from "./TranscriptionDialog";
 
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
@@ -35,21 +35,20 @@ const DEFAULT_TRANSCRIPTION: TranscriptionOptions = {
   compute_type: "int8",
 };
 
-describe("TranscriptionToolbarTools", () => {
-  it("keeps only transcription configuration in the timeline toolbar", () => {
+describe("TranscriptionDialog", () => {
+  it("shows transcription configuration", () => {
     render_tools();
 
-    expect(screen.getByRole("button", { name: "转录" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "转录" })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "字幕修正" }),
     ).not.toBeInTheDocument();
   });
 
-  it("starts transcription from the toolbar popover", () => {
+  it("starts transcription from the dialog", () => {
     const start_transcription = vi.fn();
     render_tools({ start_transcription, has_transcript: false });
 
-    fireEvent.click(screen.getByRole("button", { name: "转录" }));
     expect(screen.getByText("Whisper Small")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "生成转录" }));
 
@@ -61,7 +60,6 @@ describe("TranscriptionToolbarTools", () => {
     const start_transcription = vi.fn();
     render_tools({ start_transcription, has_transcript: false });
 
-    fireEvent.click(screen.getByRole("button", { name: "转录" }));
     const language_trigger = screen.getByRole("combobox", {
       name: "音频语言",
     });
@@ -85,7 +83,6 @@ describe("TranscriptionToolbarTools", () => {
     const start_transcription = vi.fn();
     render_tools({ start_transcription });
 
-    fireEvent.click(screen.getByRole("button", { name: "转录" }));
     fireEvent.click(screen.getByRole("button", { name: "重新转录" }));
 
     expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
@@ -105,7 +102,6 @@ describe("TranscriptionToolbarTools", () => {
       ],
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "转录" }));
     expect(screen.getByRole("button", { name: "下载并使用" })).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: "生成转录" }),
@@ -120,26 +116,20 @@ type RenderOptions = {
 };
 
 function render_tools(options: RenderOptions = {}) {
-  return render(<ControlledTools options={options} />);
-}
-
-function ControlledTools({ options }: { options: RenderOptions }) {
-  return (
-    <div className="media_timeline_toolbar">
-      <div className="media_timeline_transport">
-        <TranscriptionToolbarTools
-          asset={create_asset()}
-          has_transcript={options.has_transcript ?? true}
-          is_transcribing={false}
-          on_start_transcription={options.start_transcription ?? vi.fn()}
-          transcription_models={
-            options.transcription_models ?? TRANSCRIPTION_MODELS
-          }
-          default_transcription={DEFAULT_TRANSCRIPTION}
-          on_transcription_model_change={vi.fn()}
-        />
-      </div>
-    </div>
+  return render(
+    <TranscriptionDialog
+      open
+      on_open_change={vi.fn()}
+      asset={create_asset()}
+      has_transcript={options.has_transcript ?? true}
+      is_transcribing={false}
+      on_start_transcription={options.start_transcription ?? vi.fn()}
+      transcription_models={
+        options.transcription_models ?? TRANSCRIPTION_MODELS
+      }
+      default_transcription={DEFAULT_TRANSCRIPTION}
+      on_transcription_model_change={vi.fn()}
+    />,
   );
 }
 

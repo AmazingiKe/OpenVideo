@@ -112,6 +112,9 @@ vi.mock("@xzdarcy/react-timeline-editor", () => ({
                 onDoubleClick={(event) =>
                   props.onDoubleClickRow?.(event, { row, time: 22.027 })
                 }
+                onContextMenu={(event) =>
+                  props.onContextMenuRow?.(event, { row, time: 22.027 })
+                }
               />
             </div>
           ))}
@@ -252,6 +255,7 @@ function render_timeline(options?: {
     update_transcript: vi.fn().mockResolvedValue(undefined),
     change_selected_transcript_indices: vi.fn(),
     request_transcript_correction: vi.fn(),
+    request_transcription: vi.fn(),
     change_selected_marker_ids: vi.fn(),
     set_focus_in: vi.fn(),
     set_focus_out: vi.fn(),
@@ -337,6 +341,7 @@ function render_timeline(options?: {
         on_request_transcript_correction={
           callbacks.request_transcript_correction
         }
+        on_request_transcription={callbacks.request_transcription}
         on_selected_marker_ids_change={callbacks.change_selected_marker_ids}
         on_set_focus_in={callbacks.set_focus_in}
         on_set_focus_out={callbacks.set_focus_out}
@@ -347,7 +352,6 @@ function render_timeline(options?: {
         on_update_marker={callbacks.update_marker}
         on_delete_marker={callbacks.delete_marker}
         on_update_transcript={callbacks.update_transcript}
-        toolbar_tools={null}
       />
     );
   }
@@ -873,6 +877,9 @@ describe("MediaTimeline", () => {
     expect(
       screen.queryByRole("button", { name: "设置范围终点" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "转录" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the editor render boundary stable for visible playback updates", () => {
@@ -1202,6 +1209,19 @@ describe("MediaTimeline", () => {
     expect(change_selected_transcript_indices).toHaveBeenCalledWith([0]);
     expect(request_transcript_correction).toHaveBeenCalledWith([0]);
     expect(transcript_button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("opens transcription from the transcript row context menu", async () => {
+    const { request_transcription } = render_timeline();
+
+    fireEvent.contextMenu(
+      screen.getByRole("button", {
+        name: "timeline-transcript-track 空白处",
+      }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "重新转录" }));
+
+    expect(request_transcription).toHaveBeenCalledOnce();
   });
 
   it("preserves a multi-selection when starting correction with the keyboard", async () => {

@@ -25,7 +25,6 @@ type MediaTimelineToolbarProps = {
   minimum_zoom_pixels_per_second: number;
   zoom_pixels_per_second: number;
   on_zoom_change: (zoom_pixels_per_second: number) => void;
-  tools: ReactNode;
   context_sources?: ReactNode;
 };
 
@@ -36,7 +35,6 @@ export function MediaTimelineToolbar({
   minimum_zoom_pixels_per_second,
   zoom_pixels_per_second,
   on_zoom_change,
-  tools,
   context_sources,
 }: MediaTimelineToolbarProps) {
   const bounded_time = current_time;
@@ -85,7 +83,6 @@ export function MediaTimelineToolbar({
         <output ref={current_time_output_ref} aria-label="当前播放时间和总时长">
           {format_time(bounded_time)} / {format_time(duration)}
         </output>
-        {tools}
         {context_sources}
       </div>
       <div className="media_timeline_zoom" aria-label="时间线缩放">

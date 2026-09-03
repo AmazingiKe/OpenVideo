@@ -25,7 +25,6 @@ import {
   useRef,
   useState,
   memo,
-  type ReactNode,
 } from "react";
 
 import { AgentContextSource } from "@/components/AgentContextSource";
@@ -220,6 +219,7 @@ type MediaTimelineEditorHandlers = {
     event: MouseEvent<HTMLElement>,
     action: TimelineAction,
   ) => void;
+  prepare_row_context_menu: (row_id: string, time: number) => void;
   seek: (time: number) => void;
   select_action: (action: TimelineAction, toggle_selection: boolean) => void;
 };
@@ -287,6 +287,9 @@ const MediaTimelineEditorCanvas = memo(function MediaTimelineEditorCanvas({
       }}
       onContextMenuAction={(event, { action }) =>
         handlers_ref.current.prepare_action_context_menu(event, action)
+      }
+      onContextMenuRow={(_event, { row, time }) =>
+        handlers_ref.current.prepare_row_context_menu(row.id, time)
       }
       onDoubleClickRow={(event, { row, time }) => {
         if (lod !== TIMELINE_LOD_VALUES.detail) return;
@@ -370,7 +373,7 @@ type MediaTimelineProps = {
   on_clear_focus?: () => void;
   on_add_agent_context?: (attachment: AgentContextAttachmentDraft) => void;
   on_delete_event_analysis?: (event_analysis_id: string) => Promise<void>;
-  toolbar_tools: ReactNode;
+  on_request_transcription: () => void;
 };
 
 export function MediaTimeline({
@@ -408,7 +411,7 @@ export function MediaTimeline({
   on_clear_focus,
   on_add_agent_context,
   on_delete_event_analysis,
-  toolbar_tools,
+  on_request_transcription,
 }: MediaTimelineProps) {
   const [selected_marker_id, set_selected_marker_id] = useState<string | null>(
     null,
@@ -425,6 +428,9 @@ export function MediaTimeline({
   const [context_transcript_indices, set_context_transcript_indices] = useState<
     number[]
   >([]);
+  const [context_track_id, set_context_track_id] = useState<string | null>(
+    null,
+  );
   const [context_time, set_context_time] = useState(0);
   const [interaction_revision, set_interaction_revision] = useState(0);
   const [interaction_error, set_interaction_error] = useState<string | null>(
@@ -439,7 +445,7 @@ export function MediaTimeline({
   const ruler_pointer_id_ref = useRef<number | null>(null);
   const ruler_bounds_ref = useRef<{ left: number } | null>(null);
   const ruler_scrub_time_ref = useRef(0);
-  const action_context_menu_prepared_ref = useRef(false);
+  const timeline_context_menu_prepared_ref = useRef(false);
   const current_time_output_ref = useRef<HTMLOutputElement>(null);
   const previous_asset_id_ref = useRef(asset_id);
   const transcript_segments = useMemo(
@@ -715,6 +721,7 @@ export function MediaTimeline({
     set_uncontrolled_selected_marker_ids(new Set());
     set_context_marker_id(null);
     set_context_transcript_indices([]);
+    set_context_track_id(null);
     set_interaction_error(null);
     set_selected_read_only_action_ids(new Set());
     set_selected_event_analysis_ids([]);
@@ -879,6 +886,7 @@ export function MediaTimeline({
     set_selected_event_analysis_ids([]);
     set_context_marker_id(null);
     set_context_transcript_indices([]);
+    set_context_track_id(null);
     on_selected_marker_ids_change?.(new Set());
     on_selected_transcript_indices_change([]);
   }
@@ -934,6 +942,7 @@ export function MediaTimeline({
     set_selected_event_analysis_ids([]);
     set_context_marker_id(null);
     set_context_transcript_indices([]);
+    set_context_track_id(null);
     on_selected_marker_ids_change?.(next_marker_ids);
     on_selected_transcript_indices_change(next_transcript_indices);
     return actions.length;
@@ -1046,10 +1055,12 @@ export function MediaTimeline({
     const data = (action as MediaTimelineAction).data;
     set_context_marker_id(null);
     set_context_transcript_indices([]);
+    set_context_track_id(null);
     if (data.kind === "marker" && data.source_id) {
-      action_context_menu_prepared_ref.current = true;
+      timeline_context_menu_prepared_ref.current = true;
       set_context_time(data.marker_anchor_seconds ?? action.start);
       set_context_marker_id(data.source_id);
+      set_context_track_id(TIMELINE_TRACK_IDS.marker);
       set_selected_marker_id(data.source_id);
       const next_selection = new Set([data.source_id]);
       set_uncontrolled_selected_marker_ids(next_selection);
@@ -1061,8 +1072,9 @@ export function MediaTimeline({
       return;
     }
     if (data.kind === "transcript" && data.source_index !== undefined) {
-      action_context_menu_prepared_ref.current = true;
+      timeline_context_menu_prepared_ref.current = true;
       set_context_time(action.start);
+      set_context_track_id(TIMELINE_TRACK_IDS.transcript);
       const context_selection = selected_transcript_index_set.has(
         data.source_index,
       )
@@ -1081,13 +1093,23 @@ export function MediaTimeline({
     event.preventDefault();
   }
 
+  function prepare_row_context_menu(row_id: string, time: number) {
+    if (timeline_context_menu_prepared_ref.current) return;
+    timeline_context_menu_prepared_ref.current = true;
+    set_context_marker_id(null);
+    set_context_transcript_indices([]);
+    set_context_track_id(row_id);
+    set_context_time(Math.min(Math.max(time, 0), duration));
+  }
+
   function prepare_timeline_context_menu(event: MouseEvent<HTMLDivElement>) {
-    if (action_context_menu_prepared_ref.current) {
-      action_context_menu_prepared_ref.current = false;
+    if (timeline_context_menu_prepared_ref.current) {
+      timeline_context_menu_prepared_ref.current = false;
       return;
     }
     set_context_marker_id(null);
     set_context_transcript_indices([]);
+    set_context_track_id(null);
     if (event.clientX === 0 && event.clientY === 0) {
       set_context_time(bounded_time);
       return;
@@ -1174,6 +1196,7 @@ export function MediaTimeline({
     open_action_editor: () => undefined,
     persist_marker_bounds: () => undefined,
     prepare_action_context_menu: () => undefined,
+    prepare_row_context_menu: () => undefined,
     seek: () => undefined,
     select_action: () => undefined,
   });
@@ -1189,6 +1212,7 @@ export function MediaTimeline({
         void persist_marker_bounds(action, start, end, interaction);
       },
       prepare_action_context_menu,
+      prepare_row_context_menu,
       seek: on_seek_bounded,
       select_action,
     };
@@ -1203,7 +1227,6 @@ export function MediaTimeline({
         minimum_zoom_pixels_per_second={minimum_zoom_pixels_per_second}
         zoom_pixels_per_second={viewport.zoom_pixels_per_second}
         on_zoom_change={zoom_to}
-        tools={toolbar_tools}
         context_sources={
           on_add_agent_context ? (
             <>
@@ -1311,7 +1334,7 @@ export function MediaTimeline({
                   : undefined
               }
               onContextMenu={prepare_timeline_context_menu}
-              aria-label="时间线画布；Ctrl+M 添加标记，方括号设置范围，右键或 Shift+F10 打开菜单"
+              aria-label="时间线画布；Ctrl+M 添加标记，方括号设置范围，右键转写轨道可转录，Shift+F10 打开菜单"
               aria-description={timeline_lod_accessible_description(
                 timeline_lod,
               )}
@@ -1448,21 +1471,33 @@ export function MediaTimeline({
                   ))}
                 </ContextMenuRadioGroup>
               </ContextMenuGroup>
-            ) : context_transcript_indices.length > 0 ? (
+            ) : context_track_id === TIMELINE_TRACK_IDS.transcript ? (
               <ContextMenuGroup>
                 <ContextMenuLabel>
-                  {context_transcript_indices.length === 1
-                    ? "字幕"
-                    : `已选择 ${context_transcript_indices.length} 条字幕`}
+                  {context_transcript_indices.length === 0
+                    ? "转写轨道"
+                    : context_transcript_indices.length === 1
+                      ? "字幕"
+                      : `已选择 ${context_transcript_indices.length} 条字幕`}
                 </ContextMenuLabel>
-                <ContextMenuItem
-                  onSelect={() =>
-                    on_request_transcript_correction(context_transcript_indices)
-                  }
-                >
-                  快速修正字幕
+                <ContextMenuItem onSelect={on_request_transcription}>
+                  <Captions aria-hidden="true" />
+                  {transcript ? "重新转录" : "生成转录"}
                 </ContextMenuItem>
-                {transcript_attachment && on_add_agent_context ? (
+                {context_transcript_indices.length > 0 ? (
+                  <ContextMenuItem
+                    onSelect={() =>
+                      on_request_transcript_correction(
+                        context_transcript_indices,
+                      )
+                    }
+                  >
+                    快速修正字幕
+                  </ContextMenuItem>
+                ) : null}
+                {context_transcript_indices.length > 0 &&
+                transcript_attachment &&
+                on_add_agent_context ? (
                   <ContextMenuItem
                     onSelect={() =>
                       on_add_agent_context(
@@ -1490,7 +1525,8 @@ export function MediaTimeline({
                 ) : null}
               </ContextMenuGroup>
             ) : null}
-            {context_marker || context_transcript_indices.length > 0 ? (
+            {context_marker ||
+            context_track_id === TIMELINE_TRACK_IDS.transcript ? (
               <ContextMenuSeparator />
             ) : null}
             <ContextMenuGroup>

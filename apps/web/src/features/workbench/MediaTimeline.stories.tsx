@@ -280,7 +280,7 @@ function TimelineStory({
           )
         }
         on_update_transcript={async () => undefined}
-        toolbar_tools={null}
+        on_request_transcription={() => undefined}
       />
     </div>
   );

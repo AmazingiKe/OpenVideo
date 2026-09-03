@@ -1,6 +1,3 @@
-import { useId } from "react";
-import { Captions } from "lucide-react";
-
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,13 +8,12 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -38,7 +34,9 @@ import {
 } from "@/shared/types";
 import { use_transcription_tool_state } from "./use_transcription_tool_state";
 
-type TranscriptionToolbarToolsProps = {
+type TranscriptionDialogProps = {
+  open: boolean;
+  on_open_change: (open: boolean) => void;
   asset: MediaAsset | null;
   has_transcript: boolean;
   is_transcribing: boolean;
@@ -48,7 +46,9 @@ type TranscriptionToolbarToolsProps = {
   on_transcription_model_change: (model: TranscriptionModelDescriptor) => void;
 };
 
-export function TranscriptionToolbarTools({
+export function TranscriptionDialog({
+  open,
+  on_open_change,
   asset,
   has_transcript,
   is_transcribing,
@@ -56,8 +56,7 @@ export function TranscriptionToolbarTools({
   transcription_models,
   default_transcription,
   on_transcription_model_change,
-}: TranscriptionToolbarToolsProps) {
-  const transcription_title_id = useId();
+}: TranscriptionDialogProps) {
   const {
     available_transcription_models,
     selected_transcription_model,
@@ -69,25 +68,14 @@ export function TranscriptionToolbarTools({
     transcription_models,
   });
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button type="button" size="sm" variant="ghost" aria-label="转录">
-          <Captions data-icon="inline-start" aria-hidden="true" />
-          <span className="media_timeline_tool_label">转录</span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="start"
-        className="w-80 gap-4 p-4"
-        aria-labelledby={transcription_title_id}
-      >
-        <PopoverHeader>
-          <PopoverTitle id={transcription_title_id}>转录</PopoverTitle>
-          <PopoverDescription>
+    <Dialog open={open} onOpenChange={on_open_change}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>转录</DialogTitle>
+          <DialogDescription>
             选择本地语音模型，为当前视频生成可编辑字幕。
-          </PopoverDescription>
-        </PopoverHeader>
+          </DialogDescription>
+        </DialogHeader>
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>状态</span>
           <Badge variant="secondary">
@@ -209,7 +197,7 @@ export function TranscriptionToolbarTools({
             ? "重新转录会在成功后替换当前文字；失败时保留现有结果。"
             : "转录生成可编辑文字，完成后可继续修正内容。"}
         </FieldDescription>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   );
 }

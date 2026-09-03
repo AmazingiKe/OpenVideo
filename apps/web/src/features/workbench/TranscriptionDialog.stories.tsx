@@ -2,7 +2,7 @@ import { type ComponentProps, useEffect } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import type { MediaAsset, TranscriptionModelDescriptor } from "@/shared/types";
-import { TranscriptionToolbarTools } from "./TranscriptionToolbarTools";
+import { TranscriptionDialog } from "./TranscriptionDialog";
 
 const TRANSCRIPTION_MODELS: TranscriptionModelDescriptor[] = [
   {
@@ -56,32 +56,22 @@ function agent_fetch(input: RequestInfo | URL): Promise<Response> {
   return Promise.resolve(Response.json({}));
 }
 
-function ControlledTranscriptionToolbarTools(
-  props: ComponentProps<typeof TranscriptionToolbarTools>,
-) {
-  return (
-    <div className="media_timeline_toolbar">
-      <div className="media_timeline_transport">
-        <TranscriptionToolbarTools {...props} />
-      </div>
-    </div>
-  );
-}
-
-function DarkTranscriptionToolbarTools(
-  props: ComponentProps<typeof TranscriptionToolbarTools>,
+function DarkTranscriptionDialog(
+  props: ComponentProps<typeof TranscriptionDialog>,
 ) {
   useEffect(() => {
     document.documentElement.classList.add("dark");
     return () => document.documentElement.classList.remove("dark");
   }, []);
-  return <ControlledTranscriptionToolbarTools {...props} />;
+  return <TranscriptionDialog {...props} />;
 }
 
 const meta = {
-  title: "Workbench/TranscriptionToolbarTools",
-  component: TranscriptionToolbarTools,
+  title: "Workbench/TranscriptionDialog",
+  component: TranscriptionDialog,
   args: {
+    open: true,
+    on_open_change: () => undefined,
     asset: ASSET,
     has_transcript: true,
     is_transcribing: false,
@@ -96,7 +86,6 @@ const meta = {
     },
     on_transcription_model_change: () => undefined,
   },
-  render: (args) => <ControlledTranscriptionToolbarTools {...args} />,
   beforeEach() {
     const original_fetch = window.fetch;
     window.fetch = agent_fetch;
@@ -111,7 +100,7 @@ const meta = {
       </div>
     ),
   ],
-} satisfies Meta<typeof TranscriptionToolbarTools>;
+} satisfies Meta<typeof TranscriptionDialog>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -123,5 +112,5 @@ export const Transcribing: Story = {
 };
 
 export const Dark: Story = {
-  render: (args) => <DarkTranscriptionToolbarTools {...args} />,
+  render: (args) => <DarkTranscriptionDialog {...args} />,
 };
