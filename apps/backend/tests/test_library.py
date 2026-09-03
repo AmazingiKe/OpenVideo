@@ -23,7 +23,6 @@ from openvideo.core.summary_files import (
     write_summary_manifest,
 )
 from openvideo.core.summary_models import (
-    SummaryContextSummary,
     SummaryDocument,
     SummaryMediaArtifact,
     SummaryProject,
@@ -65,16 +64,6 @@ def _save_summary(library: MediaLibrary) -> None:
     project = SummaryProject(
         asset_id=ASSET_ID,
         root_document_id=DOCUMENT_ID,
-        preset_id="knowledge_notes",
-        preset_version=1,
-        ai_model_id="model-1",
-        detail="standard",
-        output_language="zh-CN",
-        context_summary=SummaryContextSummary(
-            transcript_digest="transcript",
-            marker_digest="markers",
-            event_analysis_digest="events",
-        ),
     )
     document = SummaryDocument(
         document_id=DOCUMENT_ID,

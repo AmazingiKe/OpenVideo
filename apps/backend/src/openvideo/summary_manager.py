@@ -1,21 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import io
 import json
-import posixpath
 import re
 import shutil
 import zipfile
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
-from typing import Callable, TypeVar
-
-import litellm
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-
-from openvideo.core.ai_models import AiModelConfiguration
-from openvideo.core.event_analysis_models import EventAnalysisStatus
+from pathlib import Path
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.library_index import synchronize_asset
@@ -39,26 +30,18 @@ from openvideo.core.summary_files import (
     write_summary_manifest,
 )
 from openvideo.core.summary_models import (
-    SummaryContextSummary,
-    SummaryDetail,
     SummaryDocument,
     SummaryDocumentCreate,
     SummaryDocumentMove,
     SummaryDocumentUpdate,
     SummaryExportResult,
-    SummaryGenerationRequest,
-    SummaryGenerationResult,
     SummaryMediaArtifact,
     SummaryMediaCreate,
     SummaryMediaProvenance,
     SummaryMediaType,
     SummaryProject,
 )
-from openvideo.core.summary_presets import require_summary_preset
-from openvideo.core.transcription_models import TranscriptSegment
-from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.settings import Settings
-from openvideo.tools.llm import LlmCompletionError, complete_text
 from openvideo.tools.summary_media import (
     GIF_DEFAULT_DURATION_SECONDS,
     SummaryMediaError,
@@ -66,46 +49,7 @@ from openvideo.tools.summary_media import (
 )
 
 
-SUMMARY_AGENT_TIMEOUT_SECONDS = 120
-SUMMARY_DRAFT_PRESET_ID = "draft"
-SUMMARY_DRAFT_PRESET_VERSION = 1
-SUMMARY_DRAFT_MODEL_ID = "draft"
-EMPTY_SUMMARY_CONTEXT_DIGEST = hashlib.sha256(b"[]").hexdigest()
-SUMMARY_PLAN_MAX_TOKENS = 2_000
-SUMMARY_OUTPUT_TOKENS = {
-    SummaryDetail.CONCISE: 4_000,
-    SummaryDetail.STANDARD: 8_000,
-    SummaryDetail.DETAILED: 12_000,
-}
-SUMMARY_DOCUMENT_LIMITS = {
-    SummaryDetail.CONCISE: 2,
-    SummaryDetail.STANDARD: 5,
-    SummaryDetail.DETAILED: 8,
-}
-SUMMARY_MARKDOWN_CHARACTER_LIMITS = {
-    SummaryDetail.CONCISE: 1_200,
-    SummaryDetail.STANDARD: 3_500,
-    SummaryDetail.DETAILED: 7_000,
-}
-SUMMARY_JSON_RETRY_INSTRUCTION = (
-    "\n\n上一轮响应未通过完整性或 JSON 校验。请重新生成一次，严格遵守文档数量、"
-    "总长度、允许路径和 JSON 结构；优先压缩措辞，必须返回完整闭合的 JSON。"
-)
 EXPORT_FILE_NAME_TIME_FORMAT = "%Y%m%d-%H%M%S-%f"
-SECONDS_PER_MINUTE = 60
-SUMMARY_DECIMAL_EVIDENCE_PATTERN = re.compile(
-    r"\\?\[(?P<start>\d+(?:\.\d+)?)\s*[-–—]\s*"
-    r"(?P<end>\d+(?:\.\d+)?)\\?\]"
-)
-SUMMARY_TIMESTAMP_RANGE_PATTERN = re.compile(
-    r"(?:【|\[)(?P<start_minutes>\d+):(?P<start_seconds>[0-5]\d)\s*"
-    r"[-–—]\s*(?P<end_minutes>\d+):(?P<end_seconds>[0-5]\d)(?:】|\])"
-    r"|(?P<label_start_minutes>\d+):(?P<label_start_seconds>[0-5]\d)\s*"
-    r"[-–—]\s*(?P<label_end_minutes>\d+):(?P<label_end_seconds>[0-5]\d)"
-    r"\s*(?:区域|片段|段落)"
-)
-
-SummaryModelT = TypeVar("SummaryModelT", bound=BaseModel)
 
 
 class SummaryError(RuntimeError):
@@ -120,95 +64,12 @@ class SummaryRevisionConflictError(SummaryError):
     """文档已被更新，调用方必须读取新版本后再决定如何合并。"""
 
 
-class SummaryCapacityError(SummaryError):
-    """已知模型容量无法容纳完整上下文时阻止生成，绝不静默截断。"""
-
-    def __init__(
-        self,
-        stage: str,
-        required_tokens: int,
-        context_tokens: int,
-    ) -> None:
-        super().__init__("所选模型无法容纳完整总结上下文")
-        self.detail = {
-            "code": "summary_context_capacity_exceeded",
-            "message": str(self),
-            "stage": stage,
-            "required_tokens": required_tokens,
-            "context_tokens": context_tokens,
-        }
-
-
-class SummaryPlanDocument(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    key: str = Field(min_length=1, max_length=100)
-    title: str = Field(min_length=1, max_length=200)
-    parent_key: str | None = None
-
-
-class SummaryPlan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    documents: list[SummaryPlanDocument] = Field(min_length=1, max_length=100)
-
-    @model_validator(mode="after")
-    def validate_tree(self) -> "SummaryPlan":
-        keys = [document.key for document in self.documents]
-        if len(keys) != len(set(keys)):
-            raise ValueError("总结规划文档键不能重复")
-        roots = [document for document in self.documents if document.parent_key is None]
-        if len(roots) != 1:
-            raise ValueError("总结规划必须只有一篇主文档")
-        known = set(keys)
-        if any(
-            document.parent_key is not None and document.parent_key not in known
-            for document in self.documents
-        ):
-            raise ValueError("总结规划引用了不存在的父文档")
-        by_key = {document.key: document for document in self.documents}
-        depths: dict[str, int] = {}
-        visiting: set[str] = set()
-
-        def resolve_depth(key: str) -> int:
-            if key in depths:
-                return depths[key]
-            if key in visiting:
-                raise ValueError("总结规划不能形成循环")
-            visiting.add(key)
-            parent_key = by_key[key].parent_key
-            depth = 0 if parent_key is None else resolve_depth(parent_key) + 1
-            visiting.remove(key)
-            if depth > SUMMARY_DOCUMENT_MAX_DEPTH:
-                raise ValueError("总结规划最多支持三级文档")
-            depths[key] = depth
-            return depth
-
-        for key in keys:
-            resolve_depth(key)
-        return self
-
-
-class SummaryGeneratedDocument(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    relative_path: str
-    markdown: str
-
-
-class SummaryBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    documents: list[SummaryGeneratedDocument]
-
-
 class SummaryManager:
-    """维护素材唯一的当前笔记、媒体、导出与生成路径白名单。"""
+    """维护素材唯一的当前笔记、媒体与导出。"""
 
     def __init__(self, library: MediaLibrary, settings: Settings) -> None:
         self.library = library
         self.settings = settings
-        self.capability_resolver = CapabilityResolver()
 
     def project(self, asset_id: str) -> SummaryProject | None:
         self._require_asset(asset_id)
@@ -231,124 +92,10 @@ class SummaryManager:
             return []
         return self.library.load_summary_documents(asset_id)
 
-    def generate(
-        self,
-        asset_id: str,
-        request: SummaryGenerationRequest,
-    ) -> SummaryGenerationResult:
-        asset = self._require_asset(asset_id)
-        model = self.settings.ai_model(request.ai_model_id)
-        if model is None:
-            raise SummaryError("所选 AI 模型不存在")
-        try:
-            preset = require_summary_preset(request.preset_id)
-        except ValueError as error:
-            raise SummaryError(str(error)) from error
-        context, context_summary = self._formal_context(asset_id)
-        plan_messages = _plan_messages(
-            asset.title,
-            context,
-            preset.prompt,
-            request,
-        )
-        capacity_unknown = self._preflight(
-            model,
-            preset.minimum_context_tokens,
-            "planning",
-            plan_messages,
-            SUMMARY_PLAN_MAX_TOKENS,
-        )
-        try:
-            plan = _complete_summary_json(
-                model,
-                plan_messages,
-                SummaryPlan,
-                SUMMARY_PLAN_MAX_TOKENS,
-                lambda _result: None,
-            )
-            plan = _limit_summary_plan(plan, request.detail)
-        except (LlmCompletionError, ValidationError, ValueError) as error:
-            raise SummaryError(f"总结文档规划无效：{error}") from error
-
-        allocated = _allocate_documents(asset_id, plan)
-        allowed_paths = {document.relative_path: document for document in allocated}
-        body_messages = _body_messages(
-            asset.title,
-            context,
-            preset.prompt,
-            request,
-            allocated,
-        )
-        output_tokens = SUMMARY_OUTPUT_TOKENS[request.detail]
-        capacity_unknown = (
-            self._preflight(
-                model,
-                preset.minimum_context_tokens,
-                "writing",
-                body_messages,
-                output_tokens,
-            )
-            or capacity_unknown
-        )
-        try:
-            body = _complete_summary_json(
-                model,
-                body_messages,
-                SummaryBody,
-                output_tokens,
-                lambda result: _validate_body_contract(
-                    result,
-                    set(allowed_paths),
-                    asset.duration_seconds,
-                ),
-            )
-        except (LlmCompletionError, ValidationError, ValueError) as error:
-            raise SummaryError(f"总结正文输出无效：{error}") from error
-        markdown_by_path = {
-            document.relative_path: _sanitize_markdown_links(
-                _normalize_summary_evidence_ranges(
-                    document.markdown,
-                    asset.duration_seconds,
-                ),
-                document.relative_path,
-                set(allowed_paths),
-            )
-            for document in body.documents
-        }
-        documents = [
-            self._prepare_document(
-                document.model_copy(
-                    update={"markdown": markdown_by_path[document.relative_path]}
-                )
-            )
-            for document in allocated
-        ]
-        with self.library._lock:
-            project = self._project_for_generation(
-                asset_id,
-                next(
-                    document.document_id
-                    for document in documents
-                    if document.parent_document_id is None
-                ),
-                preset.preset_id,
-                preset.version,
-                request,
-                context_summary,
-            )
-            self._write_project(project, documents)
-            self.library.create_summary_documents(documents)
-            return SummaryGenerationResult(
-                project=project,
-                documents=self.documents(asset_id),
-                context_capacity_unknown=capacity_unknown,
-            )
-
     def initialize_document(
         self,
         asset_id: str,
         title: str | None = None,
-        ai_model_id: str = SUMMARY_DRAFT_MODEL_ID,
     ) -> SummaryDocument:
         """首次打开总结页时建立持久草稿，使用户直接进入 Markdown 编辑器。"""
 
@@ -367,16 +114,6 @@ class SummaryManager:
             project = SummaryProject(
                 asset_id=asset_id,
                 root_document_id=document.document_id,
-                preset_id=SUMMARY_DRAFT_PRESET_ID,
-                preset_version=SUMMARY_DRAFT_PRESET_VERSION,
-                ai_model_id=ai_model_id,
-                detail=SummaryDetail.STANDARD,
-                output_language="zh-CN",
-                context_summary=SummaryContextSummary(
-                    transcript_digest=EMPTY_SUMMARY_CONTEXT_DIGEST,
-                    marker_digest=EMPTY_SUMMARY_CONTEXT_DIGEST,
-                    event_analysis_digest=EMPTY_SUMMARY_CONTEXT_DIGEST,
-                ),
             )
             self._write_project(project, [document])
             self.library.create_summary_documents([document])
@@ -970,8 +707,7 @@ class SummaryManager:
         timestamp = exported_at.strftime(EXPORT_FILE_NAME_TIME_FORMAT)[:-3]
         file_name = f"summary-{timestamp}-{export_id}.zip"
         output_directory = (
-            self.library.asset_directory(asset_id)
-            / SUMMARY_OUTPUT_DIRECTORY_NAME
+            self.library.asset_directory(asset_id) / SUMMARY_OUTPUT_DIRECTORY_NAME
         )
         if output_directory.is_symlink():
             raise SummaryError("总结导出目录不能是符号链接")
@@ -999,95 +735,15 @@ class SummaryManager:
             raise SummaryNotFoundError("总结媒体不存在")
         return self._artifact_path(artifacts[0])
 
-    def _formal_context(
-        self,
-        asset_id: str,
-    ) -> tuple[str, SummaryContextSummary]:
-        transcript = self.library.load_transcript(asset_id)
-        if transcript is None:
-            raise SummaryError("请先完成视频转录")
-        markers = [
-            marker
-            for marker in self.library.load_markers(asset_id)
-            if marker.end_seconds is not None
-        ]
-        analyses = [
-            analysis
-            for analysis in self.library.load_event_analyses(asset_id)
-            if analysis.target.source == "marker"
-            and analysis.status == EventAnalysisStatus.VALID
-        ]
-        transcript_values = [
-            _summary_transcript_value(segment) for segment in transcript.segments
-        ]
-        marker_values = []
-        for marker in markers:
-            excerpts = [
-                _summary_transcript_value(segment)
-                for segment in transcript.segments
-                if segment.end_seconds > marker.start_seconds
-                and segment.start_seconds < marker.end_seconds
-            ]
-            marker_values.append(
-                {
-                    **marker.model_dump(mode="json"),
-                    "time_range": _summary_time_range(
-                        marker.start_seconds,
-                        marker.end_seconds,
-                    ),
-                    "transcript": excerpts,
-                }
-            )
-        analysis_values = [analysis.model_dump(mode="json") for analysis in analyses]
-        context = (
-            "<完整转录>\n"
-            + json.dumps(transcript_values, ensure_ascii=False)
-            + "\n</完整转录>\n\n<正式范围标记重点区域>\n"
-            + json.dumps(marker_values, ensure_ascii=False)
-            + "\n</正式范围标记重点区域>\n\n<有效 marker 事件分析>\n"
-            + json.dumps(analysis_values, ensure_ascii=False)
-            + "\n</有效 marker 事件分析>"
-        )
-        return context, SummaryContextSummary(
-            transcript_digest=_digest(transcript_values),
-            marker_digest=_digest(marker_values),
-            event_analysis_digest=_digest(analysis_values),
-        )
-
-    def _preflight(
-        self,
-        model,
-        minimum_context_tokens: int,
-        stage: str,
-        messages: list[dict[str, str]],
-        output_tokens: int,
-    ) -> bool:
-        profile = self.capability_resolver.resolve(model)
-        context_tokens = profile.limits.context_tokens
-        max_output_tokens = profile.limits.max_output_tokens
-        if context_tokens is not None and context_tokens < minimum_context_tokens:
-            raise SummaryCapacityError(stage, minimum_context_tokens, context_tokens)
-        if max_output_tokens is not None and output_tokens > max_output_tokens:
-            raise SummaryCapacityError(stage, output_tokens, max_output_tokens)
-        try:
-            input_tokens = litellm.token_counter(
-                model=model.litellm_model,
-                messages=messages,
-            )
-        except Exception:
-            return True
-        required_tokens = input_tokens + output_tokens
-        if context_tokens is not None and required_tokens > context_tokens:
-            raise SummaryCapacityError(stage, required_tokens, context_tokens)
-        return context_tokens is None or max_output_tokens is None
-
     def _write_project(
         self,
         project: SummaryProject,
         documents: list[SummaryDocument],
     ) -> None:
         asset_directory = self.library.asset_directory(project.asset_id)
-        target = resolve_summary_path(asset_directory, SUMMARY_MANIFEST_FILE_NAME).parent
+        target = resolve_summary_path(
+            asset_directory, SUMMARY_MANIFEST_FILE_NAME
+        ).parent
         temporary = target.with_name(f".{target.name}.creating")
         if temporary.exists() and not temporary.is_symlink():
             shutil.rmtree(temporary)
@@ -1147,32 +803,6 @@ class SummaryManager:
             ),
         )
 
-    def _project_for_generation(
-        self,
-        asset_id: str,
-        root_document_id: str,
-        preset_id: str,
-        preset_version: int,
-        request: SummaryGenerationRequest,
-        context_summary: SummaryContextSummary,
-    ) -> SummaryProject:
-        current = self.project(asset_id)
-        now = datetime.now(UTC)
-        return SummaryProject(
-            asset_id=asset_id,
-            revision=current.revision + 1 if current is not None else 1,
-            root_document_id=root_document_id,
-            preset_id=preset_id,
-            preset_version=preset_version,
-            user_input=request.user_input.strip() if request.user_input else None,
-            ai_model_id=request.ai_model_id,
-            detail=request.detail,
-            output_language=request.output_language,
-            context_summary=context_summary,
-            created_at=current.created_at if current is not None else now,
-            updated_at=now,
-        )
-
     @staticmethod
     def _next_project(manifest: SummaryManifest) -> SummaryProject:
         project = project_from_manifest(manifest)
@@ -1227,56 +857,6 @@ class SummaryManager:
             raise SummaryNotFoundError("总结文档不存在")
         return document
 
-def _allocate_documents(
-    asset_id: str,
-    plan: SummaryPlan,
-) -> list[SummaryDocument]:
-    identifiers = {item.key: f"document-{uuid7().hex}" for item in plan.documents}
-    documents = []
-    sibling_positions: dict[str | None, int] = {}
-    for item in plan.documents:
-        parent_id = identifiers[item.parent_key] if item.parent_key else None
-        position = sibling_positions.get(parent_id, 0)
-        sibling_positions[parent_id] = position + 1
-        document = SummaryDocument(
-            document_id=identifiers[item.key],
-            asset_id=asset_id,
-            parent_document_id=parent_id,
-            title=item.title,
-            position=position,
-        )
-        documents.append(
-            document.model_copy(
-                update={"relative_path": document_relative_path(document)}
-            )
-        )
-    return documents
-
-
-def _plan_messages(
-    asset_title: str,
-    context: str,
-    preset_prompt: str,
-    request: SummaryGenerationRequest,
-) -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": (
-                "你负责规划 Markdown 总结的文档树，但此阶段不能写正文。"
-                '只返回 JSON：{"documents":[{"key":"root",'
-                '"title":"...","parent_key":null}]}。'
-                "必须只有一个根文档，文档树最多三级，不得形成循环。"
-            ),
-        },
-        {
-            "role": "user",
-            "content": _generation_control(
-                asset_title, context, preset_prompt, request
-            ),
-        },
-    ]
-
 
 def _summary_subtree_ids(
     documents: list[SummaryDocument],
@@ -1324,275 +904,6 @@ def _normalize_sibling_positions(
         else document
         for document in documents
     ]
-
-
-def _body_messages(
-    asset_title: str,
-    context: str,
-    preset_prompt: str,
-    request: SummaryGenerationRequest,
-    documents: list[SummaryDocument],
-) -> list[dict[str, str]]:
-    path_table = [
-        {
-            "relative_path": document.relative_path,
-            "title": document.title,
-            "parent_document_id": document.parent_document_id,
-        }
-        for document in documents
-    ]
-    return [
-        {
-            "role": "system",
-            "content": (
-                "你负责生成 Markdown 正文。只返回 JSON："
-                '{"documents":[{"relative_path":"index.md",'
-                '"markdown":"..."}]}。不得返回或构造路径表以外的路径。'
-                "文档之间只能使用路径表中的相对路径建立链接。"
-                "正文中的每个事实都必须由所给上下文直接支持。不得用常识补全或改写"
-                "人名、机构、日期、数字和作品名；转录不清或证据冲突时必须省略或明确"
-                "标注不确定。"
-                "上下文中的 start_seconds 与 end_seconds 单位都是秒；引用视频时间时必须"
-                "原样使用 time_range 字段并写成【MM:SS–MM:SS】，不得把秒数解释成分钟，"
-                "也不得输出 [143.86-148.86] 一类裸数字区间。"
-                "不要生成图片、截图链接或图片占位符，配图由独立任务处理。"
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                _generation_control(asset_title, context, preset_prompt, request)
-                + "\n\n<允许路径表>\n"
-                + json.dumps(path_table, ensure_ascii=False)
-                + "\n</允许路径表>"
-            ),
-        },
-    ]
-
-
-def _generation_control(
-    asset_title: str,
-    context: str,
-    preset_prompt: str,
-    request: SummaryGenerationRequest,
-) -> str:
-    return (
-        f"视频标题：{asset_title}\n\n{context}\n\n<总结角色>\n{preset_prompt}"
-        f"\n</总结角色>\n\n<本次用户补充要求>\n{request.user_input or '无'}"
-        f"\n</本次用户补充要求>\n\n详细程度：{request.detail.value}"
-        f"\n文档数量上限：{SUMMARY_DOCUMENT_LIMITS[request.detail]}"
-        f"\n全部 Markdown 总字符数上限："
-        f"{SUMMARY_MARKDOWN_CHARACTER_LIMITS[request.detail]}"
-        f"\n输出语言：{request.output_language}"
-    )
-
-
-def _digest(value: object) -> str:
-    content = json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-def _strip_code_fence(content: str) -> str:
-    stripped = content.strip()
-    if stripped.startswith("```") and stripped.endswith("```"):
-        first_line_end = stripped.find("\n")
-        if first_line_end >= 0:
-            return stripped[first_line_end + 1 : -3].strip()
-    return stripped
-
-
-def _complete_summary_json(
-    model: AiModelConfiguration,
-    messages: list[dict[str, str]],
-    response_model: type[SummaryModelT],
-    max_tokens: int,
-    validate: Callable[[SummaryModelT], None],
-) -> SummaryModelT:
-    """结构输出失败时自动缩短重试，避免把供应商截断转嫁给用户。"""
-
-    retry_messages = messages
-    for attempt in range(2):
-        content = complete_text(
-            model,
-            retry_messages,
-            SUMMARY_AGENT_TIMEOUT_SECONDS,
-            max_tokens,
-            True,
-        )
-        try:
-            result = response_model.model_validate_json(_strip_code_fence(content))
-            validate(result)
-            return result
-        except (ValidationError, ValueError):
-            if attempt == 1:
-                raise
-            retry_messages = [
-                *messages[:-1],
-                {
-                    **messages[-1],
-                    "content": messages[-1]["content"] + SUMMARY_JSON_RETRY_INSTRUCTION,
-                },
-            ]
-    raise AssertionError("总结 JSON 重试必须返回或抛出异常")
-
-
-def _limit_summary_plan(plan: SummaryPlan, detail: SummaryDetail) -> SummaryPlan:
-    limit = SUMMARY_DOCUMENT_LIMITS[detail]
-    if len(plan.documents) <= limit:
-        return plan
-    documents_by_key = {document.key: document for document in plan.documents}
-    depths: dict[str, int] = {}
-
-    def depth(document: SummaryPlanDocument) -> int:
-        if document.key in depths:
-            return depths[document.key]
-        parent = (
-            documents_by_key[document.parent_key]
-            if document.parent_key is not None
-            else None
-        )
-        resolved_depth = 0 if parent is None else depth(parent) + 1
-        depths[document.key] = resolved_depth
-        return resolved_depth
-
-    positions = {document.key: index for index, document in enumerate(plan.documents)}
-    selected = sorted(
-        plan.documents,
-        key=lambda document: (depth(document), positions[document.key]),
-    )[:limit]
-    return SummaryPlan(documents=selected)
-
-
-def _validate_body_contract(
-    body: SummaryBody,
-    allowed_paths: set[str],
-    duration_seconds: float | None,
-) -> None:
-    generated_paths = [document.relative_path for document in body.documents]
-    if (
-        len(generated_paths) != len(set(generated_paths))
-        or set(generated_paths) != allowed_paths
-    ):
-        raise ValueError("总结正文必须覆盖后端预分配的完整路径表")
-    for document in body.documents:
-        _validate_summary_evidence_ranges(document.markdown, duration_seconds)
-
-
-def _summary_transcript_value(segment: TranscriptSegment) -> dict:
-    return {
-        **segment.model_dump(mode="json"),
-        "time_range": _summary_time_range(
-            segment.start_seconds,
-            segment.end_seconds,
-        ),
-    }
-
-
-def _summary_time_range(start_seconds: float, end_seconds: float) -> str:
-    return f"{_summary_timestamp(start_seconds)}–{_summary_timestamp(end_seconds)}"
-
-
-def _summary_timestamp(seconds: float) -> str:
-    whole_seconds = max(int(seconds), 0)
-    minutes, remaining_seconds = divmod(whole_seconds, SECONDS_PER_MINUTE)
-    return f"{minutes:02d}:{remaining_seconds:02d}"
-
-
-def _validate_summary_evidence_ranges(
-    markdown: str,
-    duration_seconds: float | None,
-) -> None:
-    if duration_seconds is None or duration_seconds <= 0:
-        return
-    for match in SUMMARY_DECIMAL_EVIDENCE_PATTERN.finditer(markdown):
-        _require_summary_range_within_duration(
-            float(match.group("start")),
-            float(match.group("end")),
-            duration_seconds,
-        )
-    for match in SUMMARY_TIMESTAMP_RANGE_PATTERN.finditer(markdown):
-        start_minutes = match.group("start_minutes") or match.group(
-            "label_start_minutes"
-        )
-        start_seconds = match.group("start_seconds") or match.group(
-            "label_start_seconds"
-        )
-        end_minutes = match.group("end_minutes") or match.group("label_end_minutes")
-        end_seconds = match.group("end_seconds") or match.group("label_end_seconds")
-        assert start_minutes and start_seconds and end_minutes and end_seconds
-        _require_summary_range_within_duration(
-            int(start_minutes) * SECONDS_PER_MINUTE + int(start_seconds),
-            int(end_minutes) * SECONDS_PER_MINUTE + int(end_seconds),
-            duration_seconds,
-        )
-
-
-def _require_summary_range_within_duration(
-    start_seconds: float,
-    end_seconds: float,
-    duration_seconds: float,
-) -> None:
-    if start_seconds > end_seconds or end_seconds > duration_seconds:
-        raise ValueError("总结引用的视频时间超出素材范围")
-
-
-def _normalize_summary_evidence_ranges(
-    markdown: str,
-    duration_seconds: float | None,
-) -> str:
-    _validate_summary_evidence_ranges(markdown, duration_seconds)
-
-    def replace_decimal_range(match: re.Match[str]) -> str:
-        return (
-            "【"
-            + _summary_time_range(
-                float(match.group("start")),
-                float(match.group("end")),
-            )
-            + "】"
-        )
-
-    return SUMMARY_DECIMAL_EVIDENCE_PATTERN.sub(replace_decimal_range, markdown)
-
-
-MARKDOWN_LINK_PATTERN = re.compile(
-    r"(?P<image>!)?\[(?P<label>[^\]]*)\]"
-    r"\((?P<destination>[^)\s]+)(?:\s+[^)]*)?\)"
-)
-EXTERNAL_LINK_SCHEMES = ("http://", "https://", "mailto:")
-
-
-def _sanitize_markdown_links(
-    markdown: str,
-    source_path: str,
-    allowed_paths: set[str],
-) -> str:
-    """越界或悬空链接降为可读文本，避免一次瑕疵使整份总结失败。"""
-
-    source_directory = PurePosixPath(source_path).parent.as_posix()
-
-    def replace_invalid_link(match: re.Match[str]) -> str:
-        destination = match.group("destination").strip("<>")
-        if destination.startswith("#") or destination.lower().startswith(
-            EXTERNAL_LINK_SCHEMES
-        ):
-            return match.group(0)
-        path_without_fragment = destination.split("#", 1)[0].split("?", 1)[0]
-        if not path_without_fragment:
-            return match.group(0)
-        combined = posixpath.normpath(
-            posixpath.join(source_directory, path_without_fragment)
-        )
-        if not combined.startswith("../") and combined in allowed_paths:
-            return match.group(0)
-        label = match.group("label").strip()
-        if match.group("image"):
-            return f"图片：{label}" if label else "图片"
-        return label
-
-    return MARKDOWN_LINK_PATTERN.sub(replace_invalid_link, markdown)
 
 
 def _insert_markdown(markdown: str, insert_after: str | None, content: str) -> str:

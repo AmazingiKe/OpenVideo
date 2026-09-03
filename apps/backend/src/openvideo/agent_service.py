@@ -118,10 +118,13 @@ from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaMarker, MediaSegment
 from openvideo.core.summary_models import (
     SummaryDocumentCreate,
+    SummaryIllustrationJob,
     SummaryMediaCreate,
     SummaryMediaType,
+    SummaryProject,
 )
 from openvideo.summary_manager import SummaryError, SummaryRevisionConflictError
+from openvideo.summary_illustration_manager import SummaryIllustrationError
 from openvideo.settings import Settings
 from openvideo.tools.frames import extract_frames
 from openvideo.tools.summary_media import GIF_MAX_DURATION_SECONDS
@@ -182,6 +185,8 @@ SUMMARY_MEDIA_MIN_CONFIDENCE = 0.75
 
 
 class SummaryDocumentService(Protocol):
+    def project(self, asset_id: str) -> SummaryProject | None: ...
+
     def apply_agent_edit(
         self,
         document_id: str,
@@ -203,18 +208,31 @@ class SummaryDocumentService(Protocol):
     ) -> Any: ...
 
 
+class SummaryIllustrationService(Protocol):
+    def create(
+        self,
+        asset_id: str,
+        project_revision: int,
+        planning_model_id: str,
+    ) -> SummaryIllustrationJob: ...
+
+    def start(self, job_id: str) -> None: ...
+
+
 class AgentService:
     def __init__(
         self,
         library: MediaLibrary,
         settings: Settings,
         summary_documents: SummaryDocumentService,
+        summary_illustrations: SummaryIllustrationService,
         capability_resolver: CapabilityResolver | None = None,
         retrieval_models: NeuralRetrievalModels | None = None,
     ) -> None:
         self.library = library
         self.settings = settings
         self.summary_documents = summary_documents
+        self.summary_illustrations = summary_illustrations
         self.capability_resolver = capability_resolver or CapabilityResolver()
         self.retrieval_models = retrieval_models
         self._event_loop: asyncio.AbstractEventLoop | None = None
@@ -749,7 +767,6 @@ class AgentService:
                 )
                 if approved is None:
                     raise AgentConflictError("审批状态已被其他操作更新")
-                return approved
             except AgentConflictError as error:
                 self._rollback_failed_approval(applied_artifact, history_saved)
                 stale = self.library.finish_agent_artifact(
@@ -770,6 +787,45 @@ class AgentService:
                 if failed is None:
                     raise AgentConflictError("审批状态已被其他操作更新") from error
                 raise
+            self._start_initial_summary_illustration(approved)
+            return approved
+
+    def _start_initial_summary_illustration(self, artifact: AgentArtifact) -> None:
+        """首次空白主文档成稿后异步配图，避免普通改稿重复扫描整篇笔记。"""
+
+        payload = artifact.payload
+        if (
+            artifact.agent_id != SUMMARY_AGENT_ID
+            or artifact.result_type != SUMMARY_ARTIFACT_TYPE
+            or str(payload.get("original_markdown", "")).strip()
+            or not str(payload.get("proposed_markdown", "")).strip()
+        ):
+            return
+        application_result = payload.get("application_result")
+        if (
+            not isinstance(application_result, dict)
+            or int(application_result.get("applied_change_count", 0)) < 1
+        ):
+            return
+        try:
+            document = self.library.load_summary_document(payload["document_id"])
+            run = self.library.load_agent_run(artifact.run_id)
+            project = self.summary_documents.project(artifact.asset_id)
+            if (
+                document is None
+                or document.parent_document_id is not None
+                or run is None
+                or project is None
+            ):
+                return
+            job = self.summary_illustrations.create(
+                artifact.asset_id,
+                project.revision,
+                run.model_id,
+            )
+            self.summary_illustrations.start(job.job_id)
+        except (SummaryError, SummaryIllustrationError, ValueError):
+            return
 
     def approve_with_grant(
         self,
@@ -1370,6 +1426,25 @@ class AgentService:
                 for tool in definition.tools
                 if tool.name in SUMMARY_EDIT_TOOL_NAMES
             ]
+            document_id = request.task_input.get(AGENT_DOCUMENT_ID_KEY)
+            document = (
+                self.library.load_summary_document(str(document_id))
+                if document_id is not None
+                else None
+            )
+            initialization_instruction = ""
+            if (
+                document is not None
+                and document.parent_document_id is None
+                and not document.markdown.strip()
+            ):
+                initialization_instruction = (
+                    "当前主文档为空，本次负责初始化整篇视频笔记。先检索覆盖全片的证据，再按视频"
+                    "实际内容密度决定结构和篇幅，不套固定章节数或字数。主文档负责概览与导航；"
+                    "存在值得独立阅读的主题时，通过 suggested_subdocuments 一次提交对应子文档，"
+                    "无需为了形式强行拆分。正文不要写图片占位符；批准后系统会根据最终文档树"
+                    "自动规划配图。"
+                )
             return definition.model_copy(
                 update={
                     "prompt": (
@@ -1377,6 +1452,7 @@ class AgentService:
                         "不会直接写入。聚焦章节只是默认目标，不是访问边界。跨章节请求先调用 "
                         "list_summary_documents 确认结构，再逐一读取每个目标文档；只能为已在本次运行中"
                         "读取的目标调用 propose_summary_edit，成功前不得声称修改已经应用。"
+                        + initialization_instruction
                     ),
                     "required_capabilities": {AgentCapability.TOOLS},
                     "tools": edit_tools,

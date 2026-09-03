@@ -555,33 +555,6 @@ export type LibraryFolder = {
   updated_at: string;
 };
 
-export type SummaryDetail = "concise" | "standard" | "detailed";
-export type SummaryPreset = {
-  preset_id: string;
-  title: string;
-  description: string;
-  prompt: string;
-  minimum_context_tokens: number;
-  version: number;
-};
-export type SummaryProject = {
-  asset_id: string;
-  revision: number;
-  root_document_id: string;
-  preset_id: string;
-  preset_version: number;
-  user_input: string | null;
-  ai_model_id: string;
-  detail: SummaryDetail;
-  output_language: string;
-  context_summary: {
-    transcript_digest: string;
-    marker_digest: string;
-    event_analysis_digest: string;
-  };
-  created_at: string;
-  updated_at: string;
-};
 export type SummaryDocument = {
   document_id: string;
   asset_id: string;
@@ -606,12 +579,6 @@ export type SummaryExportResult = {
   file_name: string;
   size_bytes: number;
   exported_at: string;
-};
-export type SummaryGenerationResult = {
-  project: SummaryProject;
-  documents: SummaryDocument[];
-  context_capacity_unknown: boolean;
-  illustration_job: SummaryIllustrationJob | null;
 };
 type SummaryIllustrationConfidence = "high" | "medium" | "low";
 type SummaryIllustrationStage =

@@ -456,6 +456,14 @@ export function SummaryWorkspace({
   async function refresh_approved_artifact(artifact: AgentArtifact) {
     if (artifact.status !== "approved") return;
     const loaded = await load_documents(editor_asset_id);
+    const initialized_summary =
+      artifact.result_type === "summary_edit" &&
+      !String(artifact.payload.original_markdown ?? "").trim();
+    if (initialized_summary) {
+      void get_asset_summary_illustration_job(editor_asset_id)
+        .then((job) => set_illustration_job(job))
+        .catch(() => undefined);
+    }
     const active = loaded.find(
       (document) => document.document_id === editor_document_id,
     );

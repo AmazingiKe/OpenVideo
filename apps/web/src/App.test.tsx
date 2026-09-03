@@ -86,7 +86,6 @@ vi.mock("./shared/api", () => ({
   list_downloads: vi.fn(),
   list_event_analyses: vi.fn(),
   list_summary_documents: vi.fn(),
-  list_summary_presets: vi.fn(),
   list_transcription_models: vi.fn(),
   media_url: (path: string) => path,
   move_assets: vi.fn(),

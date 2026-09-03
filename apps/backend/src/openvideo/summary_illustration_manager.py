@@ -23,7 +23,6 @@ from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaMarker
 from openvideo.core.summary_models import (
-    SummaryDetail,
     SummaryIllustrationConfidence,
     SummaryIllustrationJob,
     SummaryIllustrationSlot,
@@ -55,11 +54,8 @@ EVIDENCE_WINDOW_PADDING_SECONDS = 4
 MINIMUM_EVIDENCE_WINDOW_SECONDS = 6
 MAXIMUM_DIRECT_EVIDENCE_WINDOW_SECONDS = 120
 FORMAL_MARKER_SCORE_PER_LEVEL = 0.04
-DETAIL_SLOT_LIMITS = {
-    SummaryDetail.CONCISE: 2,
-    SummaryDetail.STANDARD: 4,
-    SummaryDetail.DETAILED: 6,
-}
+MAXIMUM_ILLUSTRATION_SLOT_COUNT = 8
+ILLUSTRATION_CHARACTERS_PER_SLOT = 1_500
 
 
 class IllustrationPlanSlot(BaseModel):
@@ -75,7 +71,10 @@ class IllustrationPlanSlot(BaseModel):
 class IllustrationPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    slots: list[IllustrationPlanSlot] = Field(default_factory=list, max_length=6)
+    slots: list[IllustrationPlanSlot] = Field(
+        default_factory=list,
+        max_length=MAXIMUM_ILLUSTRATION_SLOT_COUNT,
+    )
 
 
 class VisionFrameDecision(BaseModel):
@@ -110,9 +109,8 @@ class SummaryIllustrationManager:
         self.visual_index_service = visual_index_service
         self._jobs: dict[str, SummaryIllustrationJob] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._vision_probe_errors: dict[
-            tuple[str, str, str, str, str], str | None
-        ] = {}
+        self._vision_probe_errors: dict[tuple[str, str, str, str, str], str | None] = {}
+        self._event_loop: asyncio.AbstractEventLoop | None = None
         self._lock = RLock()
 
     def create(
@@ -157,6 +155,19 @@ class SummaryIllustrationManager:
         job = self.get(job_id)
         if job is None or job.stage in TERMINAL_SUMMARY_ILLUSTRATION_STAGES:
             return
+        loop = self._event_loop
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if loop is None or loop.is_closed():
+            if current_loop is None:
+                raise SummaryIllustrationError("配图任务缺少可用的事件循环")
+            loop = current_loop
+            self._event_loop = loop
+        if current_loop is not loop:
+            loop.call_soon_threadsafe(self.start, job_id)
+            return
         with self._lock:
             active = self._tasks.get(job_id)
             if active is not None and not active.done():
@@ -164,6 +175,7 @@ class SummaryIllustrationManager:
             self._tasks[job_id] = asyncio.create_task(self._run(job_id))
 
     def restore(self) -> None:
+        self._event_loop = asyncio.get_running_loop()
         for job in self.library.load_summary_illustration_jobs():
             with self._lock:
                 self._jobs[job.job_id] = job
@@ -289,7 +301,16 @@ class SummaryIllustrationManager:
             }
             for document in documents
         ]
-        slot_limit = DETAIL_SLOT_LIMITS[project.detail]
+        markdown_character_count = sum(len(document.markdown) for document in documents)
+        content_slot_count = max(
+            1,
+            (markdown_character_count + ILLUSTRATION_CHARACTERS_PER_SLOT - 1)
+            // ILLUSTRATION_CHARACTERS_PER_SLOT,
+        )
+        slot_limit = min(
+            MAXIMUM_ILLUSTRATION_SLOT_COUNT,
+            max(len(documents), content_slot_count),
+        )
         messages = [
             {
                 "role": "system",
@@ -307,7 +328,9 @@ class SummaryIllustrationManager:
             {
                 "role": "user",
                 "content": (
-                    f"最多规划 {slot_limit} 张图。输出语言：{project.output_language}。"
+                    f"最多规划 {slot_limit} 张图，图注沿用正文语言。没有固定配额；每个具有独立"
+                    "视觉信息的子文档都可以获得自己的配图，长文档有多个不同视觉主题时也可以"
+                    "规划多张，但不要为了凑数选择低价值画面。"
                     "\n\n<最终文档树>\n"
                     + json.dumps(document_payload, ensure_ascii=False)
                     + "\n</最终文档树>"
@@ -469,12 +492,9 @@ class SummaryIllustrationManager:
                 confidence=decision.confidence,
             )
             return
-        if (
-            audit_decision is not None
-            and (
-                audit_decision.confidence != SummaryIllustrationConfidence.HIGH
-                or audit_decision.selected_index is None
-            )
+        if audit_decision is not None and (
+            audit_decision.confidence != SummaryIllustrationConfidence.HIGH
+            or audit_decision.selected_index is None
         ):
             self._skip_slot(
                 job_id,
@@ -557,9 +577,7 @@ class SummaryIllustrationManager:
             reranker=reranker,
         )
         markers = self.library.load_markers(job.asset_id)
-        precise_evidence = [
-            item for item in evidence if _is_temporally_precise(item)
-        ]
+        precise_evidence = [item for item in evidence if _is_temporally_precise(item)]
         ranked = sorted(
             precise_evidence,
             key=lambda item: (

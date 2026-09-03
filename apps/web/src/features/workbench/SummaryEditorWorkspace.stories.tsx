@@ -5,7 +5,6 @@ import {
   unknown_model_profile,
   type MediaAsset,
   type SummaryDocument,
-  type SummaryPreset,
 } from "@/shared/types";
 import { SummaryWorkspace } from "./SummaryWorkspace";
 
@@ -14,15 +13,6 @@ const ROOT_DOCUMENT_ID = "document-0198dbf212347abc8123456789abcdef";
 const CHILD_DOCUMENT_ID = "document-0198dbf312347abc8123456789abcdef";
 const GRANDCHILD_DOCUMENT_ID = "document-0198dbf412347abc8123456789abcdef";
 const CREATED_AT = "2026-08-24T08:00:00Z";
-
-const SUMMARY_PRESET: SummaryPreset = {
-  preset_id: "knowledge_notes",
-  title: "知识笔记",
-  description: "整理课程中的概念、论证与结论。",
-  prompt: "生成结构清晰的课程知识笔记。",
-  minimum_context_tokens: 8_000,
-  version: 1,
-};
 
 const ASSET: MediaAsset = {
   asset_id: ASSET_ID,
@@ -148,9 +138,6 @@ function summary_fetch(input: RequestInfo | URL): Promise<Response> {
   }
   if (url.includes("/api/agent-sessions")) {
     return Promise.resolve(json_response([]));
-  }
-  if (url.includes("/api/summary-presets")) {
-    return Promise.resolve(json_response([SUMMARY_PRESET]));
   }
   if (url.includes("/summary-illustration-job")) {
     return Promise.resolve(json_response(null));

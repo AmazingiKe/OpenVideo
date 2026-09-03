@@ -12,25 +12,17 @@ from openvideo.core.summary_models import (
     SummaryDocumentMove,
     SummaryDocumentUpdate,
     SummaryExportResult,
-    SummaryGenerationRequest,
-    SummaryGenerationResult,
     SummaryIllustrationJob,
     SummaryMediaArtifact,
     SummaryMediaCreate,
-    SummaryPreset,
 )
-from openvideo.core.summary_presets import summary_presets
 from openvideo.summary_manager import (
-    SummaryCapacityError,
     SummaryError,
     SummaryManager,
     SummaryNotFoundError,
     SummaryRevisionConflictError,
 )
-from openvideo.summary_illustration_manager import (
-    SummaryIllustrationError,
-    SummaryIllustrationManager,
-)
+from openvideo.summary_illustration_manager import SummaryIllustrationManager
 from openvideo.ui.event_stream import sse_event
 
 SUMMARY_DOCUMENT_EVENT_POLL_SECONDS = 0.5
@@ -47,10 +39,6 @@ def register_summary_routes(
     summary_manager: Callable[[], SummaryManager],
     illustration_manager: Callable[[], SummaryIllustrationManager],
 ) -> None:
-    @app.get("/api/summary-presets", response_model=list[SummaryPreset])
-    def list_summary_presets() -> list[SummaryPreset]:
-        return [preset.model_copy(deep=True) for preset in summary_presets()]
-
     @app.get(
         "/api/media/assets/{asset_id}/summary-documents",
         response_model=list[SummaryDocument],
@@ -103,38 +91,6 @@ def register_summary_routes(
                 "X-Accel-Buffering": "no",
             },
         )
-
-    @app.post(
-        "/api/media/assets/{asset_id}/summary-documents/generate",
-        response_model=SummaryGenerationResult,
-        status_code=status.HTTP_201_CREATED,
-    )
-    async def generate_summary_documents(
-        asset_id: str,
-        request: SummaryGenerationRequest,
-    ) -> SummaryGenerationResult:
-        try:
-            result = await asyncio.to_thread(
-                summary_manager().generate,
-                asset_id,
-                request,
-            )
-            try:
-                job = illustration_manager().create(
-                    asset_id,
-                    result.project.revision,
-                    request.ai_model_id,
-                )
-                illustration_manager().start(job.job_id)
-                return result.model_copy(update={"illustration_job": job})
-            except SummaryIllustrationError:
-                return result
-        except SummaryNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except SummaryCapacityError as error:
-            raise HTTPException(status_code=409, detail=error.detail) from error
-        except SummaryError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.get(
         "/api/summary-illustration-jobs/{job_id}",

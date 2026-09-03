@@ -8,42 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from openvideo.core.agent_evidence_models import AgentEvidenceSource
 
 
-class SummaryDetail(StrEnum):
-    CONCISE = "concise"
-    STANDARD = "standard"
-    DETAILED = "detailed"
-
-
-class SummaryPreset(BaseModel):
-    """只读角色提示词独立于 Agent Runtime，保证生成职责和权限不混用。"""
-
-    preset_id: str
-    title: str
-    description: str
-    prompt: str
-    minimum_context_tokens: int = Field(ge=1_000)
-    version: int = Field(ge=1)
-
-
-class SummaryContextSummary(BaseModel):
-    transcript_digest: str
-    marker_digest: str
-    event_analysis_digest: str
-
-
 class SummaryProject(BaseModel):
-    """描述素材唯一的当前笔记及最近一次生成依据。"""
+    """描述素材唯一的当前笔记。"""
 
     asset_id: str
     revision: int = Field(default=1, ge=1)
     root_document_id: str
-    preset_id: str
-    preset_version: int = Field(ge=1)
-    user_input: str | None = None
-    ai_model_id: str
-    detail: SummaryDetail
-    output_language: str
-    context_summary: SummaryContextSummary
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -60,21 +30,6 @@ class SummaryDocument(BaseModel):
     revision: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class SummaryGenerationRequest(BaseModel):
-    ai_model_id: str
-    preset_id: str
-    user_input: str | None = Field(default=None, max_length=20_000)
-    detail: SummaryDetail = SummaryDetail.STANDARD
-    output_language: str = Field(default="zh-CN", min_length=2, max_length=40)
-
-
-class SummaryGenerationResult(BaseModel):
-    project: SummaryProject
-    documents: list[SummaryDocument]
-    context_capacity_unknown: bool = False
-    illustration_job: "SummaryIllustrationJob | None" = None
 
 
 class SummaryDocumentCreate(BaseModel):
@@ -240,6 +195,3 @@ class SummaryExportResult(BaseModel):
     file_name: str
     size_bytes: int = Field(ge=0)
     exported_at: datetime
-
-
-SummaryGenerationResult.model_rebuild()

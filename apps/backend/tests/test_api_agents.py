@@ -66,7 +66,6 @@ from openvideo.llm.events import (
     LlmAgentEventType,
 )
 from openvideo.llm.models_dev import ModelsDevCatalog
-from openvideo.llm.model_profile import ModelLimits, ModelProfile
 from openvideo.llm.probe_cache import ProbeCache
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
@@ -222,9 +221,7 @@ def test_manual_context_compression_records_only_status_event(
         response = client.post(
             f"/api/agent-sessions/{session['session_id']}/compact-context"
         )
-        state = client.get(
-            f"/api/agent-sessions/{session['session_id']}"
-        ).json()
+        state = client.get(f"/api/agent-sessions/{session['session_id']}").json()
 
         assert response.status_code == 200
         assert response.json() == {
@@ -1105,6 +1102,106 @@ def test_service_approval_uses_single_claim_before_side_effect(
     assert calls == [artifact.artifact_id]
 
 
+def test_first_summary_agent_approval_starts_one_illustration_job(
+    tmp_path: Path,
+    monkeypatch,
+):
+    created_jobs: list[tuple[str, int, str]] = []
+    started_jobs: list[str] = []
+    with create_client(tmp_path) as client:
+        root = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/init"
+        ).json()
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="summary", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(run)
+        artifact = AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=run.run_id,
+            session_id=session.session_id,
+            agent_id="summary",
+            asset_id=ASSET_ID,
+            result_type="summary_edit",
+            payload={
+                "document_id": root["document_id"],
+                "base_revision": root["revision"],
+                "original_markdown": "",
+                "proposed_markdown": "# 测试视频\n\n正文。",
+                "explanation": "初始化总结",
+                "diff": "",
+                "suggested_subdocuments": [
+                    {"title": "第一章", "markdown": "# 第一章\n\n正文。"}
+                ],
+                ARTIFACT_EVIDENCE_GATE_KEY: evidence_gate(),
+            },
+        )
+        service.library.save_agent_artifact(artifact)
+
+        def create_illustration_job(
+            asset_id: str,
+            project_revision: int,
+            planning_model_id: str,
+        ) -> SimpleNamespace:
+            created_jobs.append((asset_id, project_revision, planning_model_id))
+            return SimpleNamespace(job_id="summary-illustration-job-test")
+
+        monkeypatch.setattr(
+            service.summary_illustrations,
+            "create",
+            create_illustration_job,
+        )
+        monkeypatch.setattr(
+            service.summary_illustrations,
+            "start",
+            started_jobs.append,
+        )
+
+        approved = service.approve(artifact.artifact_id)
+        documents = service.summary_documents.documents(ASSET_ID)
+        root_document = next(
+            document for document in documents if document.parent_document_id is None
+        )
+        later_run = new_agent_run(
+            session.session_id,
+            f"request-{uuid7().hex}",
+            MODEL_ID,
+        )
+        service.library.save_agent_run(later_run)
+        later_artifact = AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=later_run.run_id,
+            session_id=session.session_id,
+            agent_id="summary",
+            asset_id=ASSET_ID,
+            result_type="summary_edit",
+            payload={
+                "document_id": root_document.document_id,
+                "base_revision": root_document.revision,
+                "original_markdown": root_document.markdown,
+                "proposed_markdown": root_document.markdown + "\n补充内容。",
+                "explanation": "补充总结",
+                "diff": "",
+                "suggested_subdocuments": [],
+                ARTIFACT_EVIDENCE_GATE_KEY: evidence_gate(),
+            },
+        )
+        service.library.save_agent_artifact(later_artifact)
+        service.approve(later_artifact.artifact_id)
+
+    assert approved.status == AgentArtifactStatus.APPROVED
+    assert created_jobs == [(ASSET_ID, 2, MODEL_ID)]
+    assert started_jobs == ["summary-illustration-job-test"]
+    assert len(documents) == 2
+    assert documents[0].markdown == "# 测试视频\n\n正文。\n"
+
+
 def test_marker_approval_rebases_safe_changes_and_skips_conflicts(tmp_path: Path):
     with create_client(tmp_path) as client:
         service = client.app.state.agent_service
@@ -1786,40 +1883,40 @@ def test_summary_media_mode_requires_inspected_visual_toolchain(tmp_path: Path):
         assert definition.result_type == "summary_media"
 
 
+def test_empty_root_uses_adaptive_summary_initialization_instruction(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        root = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/init"
+        ).json()
+        service = client.app.state.agent_service
+        registered = service.registry.require("summary")
+        profile = service.capability_resolver.resolve(
+            service.settings.ai_model(MODEL_ID)
+        )
+
+        definition = registered.run_definition(
+            registered.definition,
+            AgentRunCreate(
+                request_key=f"request-{uuid7().hex}",
+                ai_model_id=MODEL_ID,
+                content="初始化整篇总结",
+                task_input={
+                    "intent": "edit",
+                    "document_id": root["document_id"],
+                },
+            ),
+            profile,
+        )
+
+    assert "按视频实际内容密度决定结构和篇幅" in definition.prompt
+    assert "suggested_subdocuments" in definition.prompt
+    assert "批准后系统会根据最终文档树自动规划配图" in definition.prompt
+
+
 def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
     tmp_path: Path,
     monkeypatch,
 ):
-    monkeypatch.setattr(
-        "openvideo.summary_manager.CapabilityResolver.resolve",
-        lambda *_args, **_kwargs: ModelProfile(
-            provider="openai",
-            model="test",
-            limits=ModelLimits(),
-        ),
-    )
-    monkeypatch.setattr(
-        "openvideo.summary_manager.litellm.token_counter",
-        lambda **_kwargs: 1_000,
-    )
-
-    def complete_summary(_model, messages, *_args, **_kwargs):
-        if "规划" in messages[0]["content"]:
-            return json.dumps(
-                {
-                    "documents": [
-                        {"key": "root", "title": "测试视频", "parent_key": None}
-                    ]
-                }
-            )
-        match = re.search(r"<允许路径表>\n(.*?)\n</允许路径表>", messages[1]["content"])
-        assert match is not None
-        path = json.loads(match.group(1))[0]["relative_path"]
-        return json.dumps(
-            {"documents": [{"relative_path": path, "markdown": "# 测试视频"}]}
-        )
-
-    monkeypatch.setattr("openvideo.summary_manager.complete_text", complete_summary)
     with create_client(tmp_path) as client:
         library = client.app.state.library
         library.save_transcript(
@@ -1834,16 +1931,16 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
                 ],
             )
         )
-        generation = client.post(
-            f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
-            json={
-                "ai_model_id": MODEL_ID,
-                "preset_id": "knowledge_notes",
-                "detail": "standard",
-                "output_language": "zh-CN",
-            },
+        root = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/init"
         ).json()
-        document = generation["documents"][0]
+        document, _ = client.app.state.summary_manager.apply_agent_edit(
+            root["document_id"],
+            root["revision"],
+            "# 测试视频",
+            [],
+        )
+        document = document.model_dump(mode="json")
         service = client.app.state.agent_service
         created_artifact: AgentArtifact | None = None
 
@@ -1892,10 +1989,10 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
             )
         )
         context = SimpleNamespace(
-                session=SimpleNamespace(
-                    asset_id=ASSET_ID,
-                    context={},
-                ),
+            session=SimpleNamespace(
+                asset_id=ASSET_ID,
+                context={},
+            ),
             evidence=evidence_state,
             create_artifact=create_artifact,
         )

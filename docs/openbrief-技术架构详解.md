@@ -3167,7 +3167,7 @@ useMediaLibrary.ts 拆为：
   ├─ useMediaLibraryState.ts     快照与持久化（核心）
   ├─ useIngestPipeline.ts        导入任务
   ├─ useTranscriptPipeline.ts    转录任务
-  ├─ useSummaryGeneration.ts     摘要任务
+  ├─ useSummaryAgent.ts          摘要 Agent 协作
   ├─ useChatGeneration.ts        问答任务
   ├─ usePodcastGeneration.ts     播客任务
   └─ useQuizGeneration.ts        测验任务

@@ -1,10 +1,7 @@
 import type {
-  SummaryDetail,
   SummaryDocument,
   SummaryExportResult,
-  SummaryGenerationResult,
   SummaryIllustrationJob,
-  SummaryPreset,
   SummarySaveMetadata,
 } from "../types";
 import { api_base_url, ApiError, request_json } from "./client";
@@ -31,12 +28,6 @@ export function initialize_summary_document(
   );
 }
 
-export function list_summary_presets(
-  signal?: AbortSignal,
-): Promise<SummaryPreset[]> {
-  return request_json("/api/summary-presets", { signal });
-}
-
 export function subscribe_summary_documents(
   asset_id: string,
   on_documents: (documents: SummaryDocument[]) => void,
@@ -53,28 +44,6 @@ export function subscribe_summary_documents(
     event_source.removeEventListener(SUMMARY_DOCUMENTS_EVENT, handle_documents);
     event_source.close();
   };
-}
-
-export function generate_summary_documents(
-  asset_id: string,
-  options: {
-    ai_model_id: string;
-    preset_id: string;
-    user_input: string | null;
-    detail: SummaryDetail;
-    output_language: string;
-  },
-  signal?: AbortSignal,
-): Promise<SummaryGenerationResult> {
-  return request_json(
-    `/api/media/assets/${encodeURIComponent(asset_id)}/summary-documents/generate`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(options),
-      signal,
-    },
-  );
 }
 
 export function get_summary_illustration_job(

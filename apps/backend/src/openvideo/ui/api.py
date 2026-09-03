@@ -190,6 +190,7 @@ def create_app(
             opened_library,
             resolved_settings,
             summary_manager,
+            summary_illustration_manager,
             resolved_capability_resolver,
             retrieval_models,
         )
@@ -309,12 +310,7 @@ def create_app(
             "/api/page-settings",
             "/assets/media-",
         )
-        global_resource_paths = {"/api/summary-presets"}
-        if (
-            request.url.path not in global_resource_paths
-            and request.url.path.startswith(managed_prefixes)
-            and library is None
-        ):
+        if request.url.path.startswith(managed_prefixes) and library is None:
             return JSONResponse(
                 status_code=status.HTTP_409_CONFLICT,
                 content={"code": "library_not_open", "message": "尚未打开资料库"},

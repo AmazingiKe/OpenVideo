@@ -11,8 +11,6 @@ from pathlib import Path, PurePosixPath
 from pydantic import BaseModel, Field
 
 from openvideo.core.summary_models import (
-    SummaryContextSummary,
-    SummaryDetail,
     SummaryDocument,
     SummaryMediaArtifact,
     SummaryProject,
@@ -61,13 +59,6 @@ class SummaryManifest(BaseModel):
     media: list[SummaryMediaArtifact] = Field(default_factory=list)
     recent_operations: list[SummaryManifestOperation] = Field(default_factory=list)
     client_sequences: dict[str, int] = Field(default_factory=dict)
-    preset_id: str
-    preset_version: int = Field(ge=1)
-    user_input: str | None = None
-    ai_model_id: str
-    detail: SummaryDetail
-    output_language: str
-    context_summary: SummaryContextSummary
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

@@ -11,6 +11,7 @@ from openvideo.core.agent_evidence_models import AgentEvidenceSource
 from openvideo.core.agent_governance_models import AgentPreferences
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY, TEXT_INPUT_MODALITY
 from openvideo.core.summary_models import (
+    SummaryDocumentCreate,
     SummaryIllustrationJob,
     SummaryIllustrationSlot,
     SummaryIllustrationStage,
@@ -21,16 +22,14 @@ from test_api_summary import (
     ASSET_ID,
     MODEL_ID,
     create_client,
-    install_generation_mocks,
 )
 
 
 def test_first_summary_inserts_only_vision_verified_frame(tmp_path: Path, monkeypatch):
-    install_generation_mocks(monkeypatch)
     _install_illustration_mocks(monkeypatch, confidence="high")
     with create_client(tmp_path) as client:
         _enable_vision_model(client)
-        result = _generate(client)
+        result = _start_illustration(client)
         job = _wait_for_job(client, result["illustration_job"]["job_id"])
         documents = client.get(
             f"/api/media/assets/{ASSET_ID}/summary-documents",
@@ -51,11 +50,10 @@ def test_first_summary_inserts_only_vision_verified_frame(tmp_path: Path, monkey
 
 
 def test_medium_confidence_keeps_text_and_records_skip(tmp_path: Path, monkeypatch):
-    install_generation_mocks(monkeypatch)
     _install_illustration_mocks(monkeypatch, confidence="medium")
     with create_client(tmp_path) as client:
         _enable_vision_model(client)
-        result = _generate(client)
+        result = _start_illustration(client)
         job = _wait_for_job(client, result["illustration_job"]["job_id"])
         documents = client.get(
             f"/api/media/assets/{ASSET_ID}/summary-documents",
@@ -69,7 +67,6 @@ def test_medium_confidence_keeps_text_and_records_skip(tmp_path: Path, monkeypat
 
 
 def test_final_frame_audit_rejects_named_entity_conflict(tmp_path: Path, monkeypatch):
-    install_generation_mocks(monkeypatch)
     _install_illustration_mocks(
         monkeypatch,
         confidence="high",
@@ -77,7 +74,7 @@ def test_final_frame_audit_rejects_named_entity_conflict(tmp_path: Path, monkeyp
     )
     with create_client(tmp_path) as client:
         _enable_vision_model(client)
-        result = _generate(client)
+        result = _start_illustration(client)
         job = _wait_for_job(client, result["illustration_job"]["job_id"])
 
     assert job["inserted_count"] == 0
@@ -89,9 +86,8 @@ def test_final_frame_audit_rejects_named_entity_conflict(tmp_path: Path, monkeyp
 def test_missing_vision_model_finishes_without_blocking_summary(
     tmp_path: Path, monkeypatch
 ):
-    install_generation_mocks(monkeypatch)
     with create_client(tmp_path) as client:
-        result = _generate(client)
+        result = _start_illustration(client)
         job = _wait_for_job(client, result["illustration_job"]["job_id"])
 
     assert job["stage"] == "complete"
@@ -99,7 +95,6 @@ def test_missing_vision_model_finishes_without_blocking_summary(
 
 
 def test_model_that_cannot_read_pixels_keeps_text_summary(tmp_path: Path, monkeypatch):
-    install_generation_mocks(monkeypatch)
     monkeypatch.setattr(
         "openvideo.summary_illustration_manager.probe_image_input",
         lambda *_args: (_ for _ in ()).throw(
@@ -108,7 +103,7 @@ def test_model_that_cannot_read_pixels_keeps_text_summary(tmp_path: Path, monkey
     )
     with create_client(tmp_path) as client:
         _enable_vision_model(client)
-        result = _generate(client)
+        result = _start_illustration(client)
         job = _wait_for_job(client, result["illustration_job"]["job_id"])
 
     assert job["stage"] == "complete"
@@ -171,20 +166,23 @@ def _enable_vision_model(client: TestClient) -> None:
     settings.agent = AgentPreferences(vision_model_id=MODEL_ID)
 
 
-def _generate(client: TestClient) -> dict[str, object]:
-    response = client.post(
-        f"/api/media/assets/{ASSET_ID}/summary-documents/generate",
-        json={
-            "ai_model_id": MODEL_ID,
-            "preset_id": "knowledge_notes",
-            "detail": "standard",
-            "output_language": "zh-CN",
-        },
+def _start_illustration(client: TestClient) -> dict[str, object]:
+    root_response = client.post(f"/api/media/assets/{ASSET_ID}/summary-documents/init")
+    assert root_response.status_code == 201, root_response.text
+    root = root_response.json()
+    summary_manager = client.app.state.summary_manager
+    summary_manager.apply_agent_edit(
+        root["document_id"],
+        root["revision"],
+        "# 总结测试视频\n\n完整转录对应的正文。",
+        [SummaryDocumentCreate(title="第一章", markdown="# 第一章\n\n章节正文。")],
     )
-    assert response.status_code == 201, response.text
-    payload = response.json()
-    assert payload["illustration_job"] is not None
-    return payload
+    project = summary_manager.project(ASSET_ID)
+    assert project is not None
+    illustration_manager = client.app.state.summary_illustration_manager
+    job = illustration_manager.create(ASSET_ID, project.revision, MODEL_ID)
+    illustration_manager.start(job.job_id)
+    return {"illustration_job": job.model_dump(mode="json")}
 
 
 def _wait_for_job(client: TestClient, job_id: str) -> dict[str, object]:
@@ -209,6 +207,16 @@ def _install_illustration_mocks(
     audit_confidence: str | None = None,
 ) -> None:
     monkeypatch.setattr(
+        "openvideo.summary_illustration_manager.SummaryIllustrationManager._retrieve_evidence",
+        lambda *_args, **_kwargs: _evidence(
+            "precise",
+            AgentEvidenceSource.TRANSCRIPT,
+            start_seconds=5,
+            end_seconds=15,
+            relevance_score=0.9,
+        ),
+    )
+    monkeypatch.setattr(
         "openvideo.summary_illustration_manager.probe_image_input",
         lambda *_args: None,
     )
@@ -220,6 +228,9 @@ def _install_illustration_mocks(
         )
         assert match is not None
         documents = json.loads(match.group(1))
+        assert len(documents) == 2
+        assert "没有固定配额" in messages[1]["content"]
+        assert "每个具有独立视觉信息的子文档" in messages[1]["content"]
         root = documents[0]
         return json.dumps(
             {
@@ -263,8 +274,10 @@ def _install_illustration_mocks(
         return json.dumps(
             {
                 "selected_index": (
-                    1 if is_audit and resolved_confidence == "high"
-                    else 2 if resolved_confidence == "high"
+                    1
+                    if is_audit and resolved_confidence == "high"
+                    else 2
+                    if resolved_confidence == "high"
                     else None
                 ),
                 "confidence": resolved_confidence,
