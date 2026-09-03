@@ -30,22 +30,36 @@ describe("scrub preview calculations", () => {
     expect(next_preview_quality_scale(0.8, 40)).toBe(0.8);
   });
 
-  it("selects the nearest preceding fallback tile", () => {
+  it("selects the nearest preceding tile from the correct page", () => {
     const storyboard = {
-      url: "/scrub-storyboard.jpg",
+      storyboard_id: "storyboard-test",
       tile_width: 640,
       tile_height: 360,
-      tiles: [
-        { start_time: 0, x: 0, y: 0 },
-        { start_time: 5, x: 640, y: 0 },
-        { start_time: 10, x: 1280, y: 0 },
+      interval_seconds: 5,
+      columns: 2,
+      total_tiles: 5,
+      pages: [
+        { url: "/page-1.jpg", start_index: 0, tile_count: 4 },
+        { url: "/page-2.jpg", start_index: 4, tile_count: 1 },
       ],
     };
-    expect(storyboard_tile_at(storyboard, 7.8)?.start_time).toBe(5);
-    expect(storyboard_tile_at(storyboard, 0)?.start_time).toBe(0);
+    expect(storyboard_tile_at(storyboard, 7.8)).toEqual({
+      url: "/page-1.jpg",
+      start_time: 5,
+      duration: 5,
+      x: 640,
+      y: 0,
+    });
+    expect(storyboard_tile_at(storyboard, 25)).toEqual({
+      url: "/page-2.jpg",
+      start_time: 20,
+      duration: 5,
+      x: 0,
+      y: 0,
+    });
   });
 
-  it("contains fallback images without changing their aspect ratio", () => {
+  it("contains storyboard tiles without changing their aspect ratio", () => {
     expect(contained_preview_rect(640, 360, 800, 800)).toEqual({
       x: 0,
       y: 175,

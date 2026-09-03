@@ -1,71 +1,66 @@
 import math
 
 from openvideo.core.thumbnails import (
+    LONG_STORYBOARD_INTERVAL_SECONDS,
     MAXIMUM_STORYBOARD_TILES,
     MAXIMUM_STORYBOARD_TILE_HEIGHT,
-    MAXIMUM_STORYBOARD_TILE_WIDTH,
-    build_thumbnail_storyboard,
-    build_thumbnail_tiles,
-    storyboard_rows,
+    SHORT_STORYBOARD_INTERVAL_SECONDS,
+    STORYBOARD_COLUMNS,
+    STORYBOARD_TILES_PER_PAGE,
+    build_thumbnail_storyboard_plan,
+    storyboard_page_tile_count,
 )
 
 
-def test_builds_storyboard_plan_for_positive_duration():
-    storyboard = build_thumbnail_storyboard(3589)
+def test_builds_paginated_storyboard_for_one_hour_video():
+    storyboard = build_thumbnail_storyboard_plan(3_600)
     assert storyboard is not None
-    assert storyboard.total_tiles == MAXIMUM_STORYBOARD_TILES
-    assert storyboard.columns == 10
-    assert storyboard_rows(storyboard) == math.ceil(MAXIMUM_STORYBOARD_TILES / 10)
+    assert storyboard.interval_seconds == SHORT_STORYBOARD_INTERVAL_SECONDS
+    assert storyboard.total_tiles == 720
+    assert storyboard.columns == STORYBOARD_COLUMNS
+    assert storyboard.page_count == math.ceil(720 / STORYBOARD_TILES_PER_PAGE)
+
+
+def test_builds_paginated_storyboard_for_three_hour_video():
+    storyboard = build_thumbnail_storyboard_plan(3 * 60 * 60)
+    assert storyboard is not None
+    assert storyboard.interval_seconds == LONG_STORYBOARD_INTERVAL_SECONDS
+    assert storyboard.total_tiles == 1_080
+    assert storyboard.page_count == math.ceil(1_080 / STORYBOARD_TILES_PER_PAGE)
 
 
 def test_skips_storyboard_for_empty_duration():
-    assert build_thumbnail_storyboard(0) is None
-    assert build_thumbnail_storyboard(None) is None
+    assert build_thumbnail_storyboard_plan(0) is None
+    assert build_thumbnail_storyboard_plan(None) is None
 
 
-def test_builds_tiles_with_correct_positions():
-    storyboard = build_thumbnail_storyboard(25)
+def test_counts_tiles_on_incomplete_last_page():
+    storyboard = build_thumbnail_storyboard_plan(126)
     assert storyboard is not None
-    tiles = build_thumbnail_tiles(storyboard)
-    assert len(tiles) == 6  # t=0,5,10,15,20,25
-    assert (tiles[0].start_time, tiles[0].x, tiles[0].y) == (0, 0, 0)
-    assert (tiles[1].start_time, tiles[1].x, tiles[1].y) == (
-        5,
-        MAXIMUM_STORYBOARD_TILE_WIDTH,
-        0,
-    )
-    assert (tiles[5].start_time, tiles[5].x, tiles[5].y) == (
-        25,
-        MAXIMUM_STORYBOARD_TILE_WIDTH * 5,
-        0,
-    )
-
-
-def test_wraps_tiles_into_next_row():
-    storyboard = build_thumbnail_storyboard(55)
-    assert storyboard is not None
-    tiles = build_thumbnail_tiles(storyboard)
-    assert len(tiles) == 12  # t=0..55
-    assert (tiles[10].start_time, tiles[10].x, tiles[10].y) == (
-        50,
-        0,
-        MAXIMUM_STORYBOARD_TILE_HEIGHT,
-    )
-    assert (tiles[11].start_time, tiles[11].x, tiles[11].y) == (
-        55,
-        MAXIMUM_STORYBOARD_TILE_WIDTH,
-        MAXIMUM_STORYBOARD_TILE_HEIGHT,
-    )
+    assert storyboard.total_tiles == 26
+    assert storyboard.page_count == 2
+    assert storyboard_page_tile_count(storyboard, 0) == STORYBOARD_TILES_PER_PAGE
+    assert storyboard_page_tile_count(storyboard, 1) == 1
 
 
 def test_preserves_source_aspect_ratio_within_preview_bounds():
-    storyboard = build_thumbnail_storyboard(25, 1440, 1080)
+    storyboard = build_thumbnail_storyboard_plan(25, 1440, 1080)
     assert storyboard is not None
-    assert (storyboard.tile_width, storyboard.tile_height) == (480, 360)
+    assert (storyboard.tile_width, storyboard.tile_height) == (
+        480,
+        MAXIMUM_STORYBOARD_TILE_HEIGHT,
+    )
 
 
-def test_caps_long_storyboards_and_spreads_tiles_across_the_video():
-    storyboard = build_thumbnail_storyboard(3_600)
+def test_does_not_upscale_small_source_frames():
+    storyboard = build_thumbnail_storyboard_plan(25, 320, 180)
+    assert storyboard is not None
+    assert (storyboard.tile_width, storyboard.tile_height) == (320, 180)
+
+
+def test_caps_storyboards_beyond_the_supported_long_video_window():
+    duration_seconds = 8 * 60 * 60
+    storyboard = build_thumbnail_storyboard_plan(duration_seconds)
     assert storyboard is not None
     assert storyboard.total_tiles == MAXIMUM_STORYBOARD_TILES
-    assert storyboard.interval_seconds == 3_600 / (MAXIMUM_STORYBOARD_TILES - 1)
+    assert storyboard.interval_seconds == duration_seconds / MAXIMUM_STORYBOARD_TILES

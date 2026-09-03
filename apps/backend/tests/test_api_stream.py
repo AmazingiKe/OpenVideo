@@ -9,7 +9,10 @@ from openvideo.core.media_models import (
     SourcePlatform,
     SubtitleDisplaySettings,
 )
-from openvideo.core.thumbnails import ThumbnailStoryboard
+from openvideo.core.thumbnails import (
+    ThumbnailStoryboardManifest,
+    ThumbnailStoryboardPage,
+)
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.settings import Settings
 from openvideo.ui import media_routes
@@ -17,6 +20,8 @@ from openvideo.ui.api import create_app
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 CONTENT = bytes(range(100))
+STORYBOARD_ID = "storyboard-01890f4c7a2b7cc298c4dc0c0c07398f"
+STORYBOARD_PAGE_ID = "storyboard-page-01890f4c7a2b7cc298c4dc0c0c07398f"
 
 
 def create_client(tmp_path: Path) -> TestClient:
@@ -109,7 +114,7 @@ def test_saves_subtitle_settings_in_the_asset_configuration(tmp_path: Path):
     assert '"subtitle_display"' in configuration_path.read_text(encoding="utf-8")
 
 
-def test_generates_a_storyboard_only_when_a_compatibility_browser_requests_it(
+def test_generates_and_serves_a_paginated_storyboard_once(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -125,17 +130,35 @@ def test_generates_a_storyboard_only_when_a_compatibility_browser_requests_it(
         _project_bin_dir,
     ):
         generation_calls.append((duration_seconds, source_width, source_height))
-        (media_directory / "scrub-storyboard.jpg").write_bytes(b"storyboard")
-        return ThumbnailStoryboard(
-            sprite_path="scrub-storyboard.jpg",
+        page_file = media_directory / f"{STORYBOARD_PAGE_ID}.jpg"
+        page_file.write_bytes(b"storyboard")
+        manifest_file = media_directory / f"{STORYBOARD_ID}.json"
+        manifest = ThumbnailStoryboardManifest(
+            storyboard_id=STORYBOARD_ID,
             tile_width=640,
             tile_height=360,
             interval_seconds=5,
-            columns=10,
+            columns=5,
             total_tiles=5,
+            pages=[
+                ThumbnailStoryboardPage(
+                    page_id=STORYBOARD_PAGE_ID,
+                    relative_path=page_file.relative_to(
+                        media_directory.parent
+                    ).as_posix(),
+                    start_index=0,
+                    tile_count=5,
+                )
+            ],
         )
+        manifest_file.write_text(manifest.model_dump_json(), encoding="utf-8")
+        return manifest_file
 
-    monkeypatch.setattr(media_routes, "generate_thumbnail_sprite", generate_storyboard)
+    monkeypatch.setattr(
+        media_routes,
+        "generate_thumbnail_storyboard",
+        generate_storyboard,
+    )
 
     with create_client(tmp_path) as client:
         first_response = client.post(
@@ -144,17 +167,34 @@ def test_generates_a_storyboard_only_when_a_compatibility_browser_requests_it(
         second_response = client.post(
             f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard"
         )
+        page_response = client.get(
+            f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard/pages/"
+            f"{STORYBOARD_PAGE_ID}"
+        )
 
-    assert first_response.status_code == 200
-    assert first_response.json()["url"] == (
-        f"/api/media/assets/{ASSET_ID}/thumbnail-sprite"
-    )
+    assert first_response.status_code == 200, first_response.text
+    assert first_response.json()["storyboard_id"] == STORYBOARD_ID
+    assert first_response.json()["pages"] == [
+        {
+            "url": (
+                f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard/pages/"
+                f"{STORYBOARD_PAGE_ID}"
+            ),
+            "start_index": 0,
+            "tile_count": 5,
+        }
+    ]
     assert first_response.json()["tile_width"] == 640
+    assert first_response.json()["interval_seconds"] == 5
     assert second_response.status_code == 200
+    assert page_response.content == b"storyboard"
+    assert page_response.headers["cache-control"] == (
+        "private, max-age=31536000, immutable"
+    )
     assert generation_calls == [(20, 1920, 1080)]
 
 
-def test_rebuilds_an_unrecognized_storyboard_when_a_compatibility_browser_requests_it(
+def test_rebuilds_an_unrecognized_storyboard_manifest(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -170,15 +210,29 @@ def test_rebuilds_an_unrecognized_storyboard_when_a_compatibility_browser_reques
         _project_bin_dir,
     ):
         generation_calls.append(media_directory)
-        (media_directory / "scrub-storyboard.jpg").write_bytes(b"current")
-        return ThumbnailStoryboard(
-            sprite_path="scrub-storyboard.jpg",
+        page_file = media_directory / f"{STORYBOARD_PAGE_ID}.jpg"
+        page_file.write_bytes(b"current")
+        manifest_file = media_directory / f"{STORYBOARD_ID}.json"
+        manifest = ThumbnailStoryboardManifest(
+            storyboard_id=STORYBOARD_ID,
             tile_width=640,
             tile_height=360,
             interval_seconds=5,
-            columns=10,
+            columns=5,
             total_tiles=5,
+            pages=[
+                ThumbnailStoryboardPage(
+                    page_id=STORYBOARD_PAGE_ID,
+                    relative_path=page_file.relative_to(
+                        media_directory.parent
+                    ).as_posix(),
+                    start_index=0,
+                    tile_count=5,
+                )
+            ],
         )
+        manifest_file.write_text(manifest.model_dump_json(), encoding="utf-8")
+        return manifest_file
 
     client = create_client(tmp_path)
     client.close()
@@ -186,30 +240,30 @@ def test_rebuilds_an_unrecognized_storyboard_when_a_compatibility_browser_reques
     asset = library.get(ASSET_ID)
     assert asset is not None
     media_directory = library.media_directory(ASSET_ID)
-    (media_directory / "unrecognized-storyboard.jpg").write_bytes(b"stale")
+    invalid_manifest = media_directory / "unrecognized-storyboard.json"
+    invalid_manifest.write_text("{}", encoding="utf-8")
     library.save(
         asset.model_copy(
             update={
-                "thumbnail_sprite_path": "media/unrecognized-storyboard.jpg",
-                "thumbnail_tile_width": 640,
-                "thumbnail_tile_height": 360,
-                "thumbnail_interval_seconds": 5,
-                "thumbnail_columns": 10,
-                "thumbnail_total_tiles": 5,
+                "thumbnail_storyboard_manifest_path": (
+                    "media/unrecognized-storyboard.json"
+                ),
             }
         )
     )
     library.close()
-    monkeypatch.setattr(media_routes, "generate_thumbnail_sprite", generate_storyboard)
+    monkeypatch.setattr(
+        media_routes,
+        "generate_thumbnail_storyboard",
+        generate_storyboard,
+    )
 
     with TestClient(create_app(Settings(library_path=tmp_path))) as client:
         asset_response = client.get(f"/api/media/assets/{ASSET_ID}")
-        response = client.post(
-            f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard"
-        )
+        response = client.post(f"/api/media/assets/{ASSET_ID}/thumbnail-storyboard")
 
     assert asset_response.json()["thumbnail_storyboard"] is None
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     assert len(generation_calls) == 1
 
 

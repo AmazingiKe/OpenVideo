@@ -58,12 +58,32 @@ export function storyboard_tile_at(
   storyboard: ScrubPreviewStoryboard,
   time_seconds: number,
 ) {
-  let selected_tile = storyboard.tiles[0] ?? null;
-  for (const tile of storyboard.tiles) {
-    if (tile.start_time > time_seconds) break;
-    selected_tile = tile;
+  if (
+    storyboard.total_tiles <= 0 ||
+    storyboard.interval_seconds <= 0 ||
+    storyboard.columns <= 0
+  ) {
+    return null;
   }
-  return selected_tile;
+  const tile_index = Math.min(
+    storyboard.total_tiles - 1,
+    Math.max(0, Math.floor(time_seconds / storyboard.interval_seconds)),
+  );
+  const page = storyboard.pages.find(
+    (candidate) =>
+      candidate.start_index <= tile_index &&
+      tile_index < candidate.start_index + candidate.tile_count,
+  );
+  if (!page) return null;
+  const page_tile_index = tile_index - page.start_index;
+  return {
+    url: page.url,
+    start_time: tile_index * storyboard.interval_seconds,
+    duration: storyboard.interval_seconds,
+    x: (page_tile_index % storyboard.columns) * storyboard.tile_width,
+    y:
+      Math.floor(page_tile_index / storyboard.columns) * storyboard.tile_height,
+  };
 }
 
 export function contained_preview_rect(

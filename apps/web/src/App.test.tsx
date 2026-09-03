@@ -57,6 +57,7 @@ vi.mock("./shared/api", () => ({
   create_download_account_login_session: vi.fn(),
   create_marker: vi.fn(),
   download_formula_model: vi.fn(),
+  ensure_thumbnail_storyboard: vi.fn(() => new Promise(() => undefined)),
   delete_download_account: vi.fn(),
   delete_download_account_login_session: vi.fn(),
   delete_marker: vi.fn(),

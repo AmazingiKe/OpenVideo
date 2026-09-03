@@ -25,7 +25,7 @@ from openvideo.core.summary_files import summary_document_depths
 
 
 DATABASE_FILE_NAME = "openvideo.sqlite3"
-DATABASE_VERSION = 23
+DATABASE_VERSION = 24
 DISABLED_SQLITE_STATEMENT_CACHE_SIZE = 0
 VIDEO_AGENT_ID = "marker"
 LEGACY_TRANSCRIPT_AGENT_ID = "transcript_correction"
@@ -599,10 +599,9 @@ CREATE TABLE assets (
     source_platform TEXT NOT NULL, source_video_id TEXT, title TEXT NOT NULL,
     author_name TEXT, description TEXT, duration_seconds REAL, width INTEGER,
     height INTEGER, video_codec TEXT, audio_codec TEXT, playback_path TEXT,
-    thumbnail_path TEXT, remote_thumbnail_url TEXT, thumbnail_sprite_path TEXT,
-    thumbnail_tile_width INTEGER, thumbnail_tile_height INTEGER,
-    thumbnail_interval_seconds REAL, thumbnail_columns INTEGER,
-    thumbnail_total_tiles INTEGER, status TEXT NOT NULL, error_message TEXT,
+    thumbnail_path TEXT, remote_thumbnail_url TEXT,
+    thumbnail_storyboard_manifest_path TEXT,
+    status TEXT NOT NULL, error_message TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE(source_platform, source_video_id)
 );

@@ -9,11 +9,11 @@ from threading import RLock
 from uuid import UUID
 
 import portalocker
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from openvideo.core.download_models import DownloadJob, DownloadStage
 from openvideo.core.agent_checkpoint_store import open_agent_checkpoint_database
-from openvideo.core.identifiers import is_uuid7, uuid7
+from openvideo.core.identifiers import is_prefixed_uuid7, is_uuid7, uuid7
 from openvideo.core.folder_models import (
     Folder,
     FolderManifest,
@@ -46,17 +46,13 @@ from openvideo.core.media_models import (
     MediaAssetStatus,
     MediaMarker,
     SourcePlatform,
+    ThumbnailStoryboardPageResponse,
     ThumbnailStoryboardResponse,
-    ThumbnailStoryboardTile,
     VideoConfiguration,
 )
 from openvideo.core.summary_files import read_markdown
 from openvideo.core.summary_models import SummaryDocument
-from openvideo.core.thumbnails import (
-    SPRITE_FILE_NAME,
-    ThumbnailStoryboard,
-    build_thumbnail_tiles,
-)
+from openvideo.core.thumbnails import ThumbnailStoryboardManifest
 
 
 FORMAT_VERSION = 2
@@ -66,7 +62,9 @@ AGENT_CHECKPOINT_DATABASE_FILE_NAME = "agent_checkpoints.sqlite3"
 LOCK_FILE_NAME = ".openvideo.lock"
 PLAYBACK_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/stream"
 THUMBNAIL_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail"
-SPRITE_ROUTE_TEMPLATE = "/api/media/assets/{asset_id}/thumbnail-sprite"
+STORYBOARD_PAGE_ROUTE_TEMPLATE = (
+    "/api/media/assets/{asset_id}/thumbnail-storyboard/pages/{page_id}"
+)
 HEX_IDENTIFIER_LENGTH = 32
 
 
@@ -566,12 +564,7 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
             "playback_path",
             "thumbnail_path",
             "remote_thumbnail_url",
-            "thumbnail_sprite_path",
-            "thumbnail_tile_width",
-            "thumbnail_tile_height",
-            "thumbnail_interval_seconds",
-            "thumbnail_columns",
-            "thumbnail_total_tiles",
+            "thumbnail_storyboard_manifest_path",
         }
         return MediaAssetResponse(
             **asset.model_dump(exclude=excluded_fields),
@@ -640,37 +633,71 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         return SummaryDocument.model_validate({**values, "markdown": markdown})
 
     def _storyboard_for(self, asset: MediaAsset) -> ThumbnailStoryboardResponse | None:
-        if Path(asset.thumbnail_sprite_path or "").name != SPRITE_FILE_NAME:
+        storyboard = self._thumbnail_storyboard_manifest(asset)
+        if storyboard is None:
             return None
-        if not self.resolve_asset_file(asset, asset.thumbnail_sprite_path):
-            return None
-        values = (
-            asset.thumbnail_tile_width,
-            asset.thumbnail_tile_height,
-            asset.thumbnail_interval_seconds,
-            asset.thumbnail_columns,
-            asset.thumbnail_total_tiles,
-        )
-        if any(value is None for value in values):
-            return None
-        storyboard = ThumbnailStoryboard(
-            sprite_path=asset.thumbnail_sprite_path,
-            tile_width=asset.thumbnail_tile_width,
-            tile_height=asset.thumbnail_tile_height,
-            interval_seconds=asset.thumbnail_interval_seconds,
-            columns=asset.thumbnail_columns,
-            total_tiles=asset.thumbnail_total_tiles,
-        )
-        tiles = [
-            ThumbnailStoryboardTile(start_time=item.start_time, x=item.x, y=item.y)
-            for item in build_thumbnail_tiles(storyboard)
-        ]
+        pages: list[ThumbnailStoryboardPageResponse] = []
+        for page in storyboard.pages:
+            if not is_prefixed_uuid7(page.page_id, "storyboard-page-"):
+                return None
+            if not self.resolve_asset_file(asset, page.relative_path):
+                return None
+            pages.append(
+                ThumbnailStoryboardPageResponse(
+                    url=STORYBOARD_PAGE_ROUTE_TEMPLATE.format(
+                        asset_id=asset.asset_id,
+                        page_id=page.page_id,
+                    ),
+                    start_index=page.start_index,
+                    tile_count=page.tile_count,
+                )
+            )
         return ThumbnailStoryboardResponse(
-            url=SPRITE_ROUTE_TEMPLATE.format(asset_id=asset.asset_id),
+            storyboard_id=storyboard.storyboard_id,
             tile_width=storyboard.tile_width,
             tile_height=storyboard.tile_height,
-            tiles=tiles,
+            interval_seconds=storyboard.interval_seconds,
+            columns=storyboard.columns,
+            total_tiles=storyboard.total_tiles,
+            pages=pages,
         )
+
+    def resolve_thumbnail_storyboard_page(
+        self,
+        asset: MediaAsset,
+        page_id: str,
+    ) -> Path | None:
+        """页面标识只用于清单查找，绝不直接参与文件路径拼接。"""
+        if not is_prefixed_uuid7(page_id, "storyboard-page-"):
+            return None
+        storyboard = self._thumbnail_storyboard_manifest(asset)
+        if storyboard is None:
+            return None
+        page = next(
+            (item for item in storyboard.pages if item.page_id == page_id),
+            None,
+        )
+        return self.resolve_asset_file(asset, page.relative_path) if page else None
+
+    def _thumbnail_storyboard_manifest(
+        self,
+        asset: MediaAsset,
+    ) -> ThumbnailStoryboardManifest | None:
+        manifest_file = self.resolve_asset_file(
+            asset,
+            asset.thumbnail_storyboard_manifest_path,
+        )
+        if manifest_file is None:
+            return None
+        try:
+            manifest = ThumbnailStoryboardManifest.model_validate_json(
+                manifest_file.read_text(encoding="utf-8")
+            )
+        except (OSError, ValidationError):
+            return None
+        if not is_prefixed_uuid7(manifest.storyboard_id, "storyboard-"):
+            return None
+        return manifest
 
     def _recover_interrupted_downloads(self) -> None:
         now = datetime.now(UTC)

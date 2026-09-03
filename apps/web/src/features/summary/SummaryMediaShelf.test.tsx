@@ -15,7 +15,7 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@/shared/api", () => ({
-  ensure_thumbnail_storyboard: vi.fn(),
+  ensure_thumbnail_storyboard: vi.fn(() => new Promise(() => undefined)),
   media_url: (path: string) => path,
 }));
 

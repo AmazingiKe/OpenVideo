@@ -11,10 +11,13 @@
 ## 决策
 
 - 标记和总结各自持有一个 Vidstack/`video` 实例。播放器只与所属工作区的时间线同步，不跨页面共享播放、暂停、音量、字幕或拖动状态。
-- 正式播放继续由浏览器媒体栈完成；Mediabunny 只在 Worker 中解析真实帧时间并生成拖动覆盖画面。
+- 正式播放继续由浏览器媒体栈完成；拖动期间不修改主播放器时间，松手后只提交一次跳转，并在 `requestVideoFrameCallback` 确认新画面已经提交合成后恢复原播放状态。
+- 普通拖动先从分页故事板立即绘制清晰预览；指针停留 140ms 后才由 Mediabunny/WebCodecs Worker 解码原始帧细化画面。逐帧前进和后退仍直接请求真实帧，不经过故事板近似时间。
 - Worker 在任意时刻最多保留正在解码的请求和一个最新待处理请求；过期位图在绘制前关闭，不得覆盖较新的指针位置。
+- Worker 切换预览尺寸时只重建 Canvas sink，继续复用同一媒体输入和 32MB Range 缓存，避免尺寸自适应导致远端索引重新加载。
 - `requestVideoFrameCallback` 报告的媒体时间是每个工作区中播放器、字幕、标记和时间引用的共同时间源，不用固定 FPS 推算可变帧率素材。
-- WebCodecs、Worker 或目标编码不可用时，前端才请求兼容拼板。后端按需生成最多 120 帧、保持源画面比例的 `scrub-storyboard.jpg`，不再占用下载完成链路。
+- 后端按需在低优先级单线程中生成 5×5 JPEG 分页故事板。单格最大 `640×360` 且不放大小分辨率源；一小时视频按五秒间隔生成 720 格，三小时视频按十秒间隔生成 1080 格，极长视频最多 1200 格。
+- 每一页和清单使用 UUIDv7 持久化标识。前端只保留当前页及相邻页，最多缓存三页；页面 URL 使用不可变缓存策略，避免长视频把整张巨型纹理载入内存。
 - 自定义 Canvas 预览是唯一的拖动视觉层；不向 Plyr 传入故事板，避免内置预览与 Canvas 争抢同一个播放器区域。
 - 字幕偏移按视频保存，只影响播放时的字幕查找，不修改原始转写或标记。
 
@@ -30,9 +33,9 @@
 | 4K H.264/H.265 | 硬件解码、自动尺寸上限、回退 |
 | 60fps、可变帧率 | 相邻帧时间戳、逐帧方向 |
 | 长 GOP | 随机远距离拖动延迟 |
-| 一小时以上文件 | 内存上限、持续拖动稳定性 |
+| 一到三小时文件 | 分页边界、末页残格、内存上限、持续拖动稳定性 |
 
-性能矩阵未通过时，降低 Canvas 预览尺寸或使用受限的兼容拼板；不恢复低清代理，也不在正式播放器中启用两套拖动渲染实现。
+性能矩阵未通过时，降低高清细化的 Canvas 预览尺寸；不降低故事板清晰度，也不在正式播放器中启用两套拖动渲染实现。
 
 ## 结果
 
@@ -52,4 +55,15 @@
 | 1080p 长 GOP | 79–246ms；快速请求最终帧 67ms | 可用，冷跳转待优化 |
 | 一小时 H.264 | 14–24ms；快速请求最终帧 6ms；强制回收后 JS 堆无增长 | 通过 |
 
-连续请求只保留最新目标，帧位图会在淘汰或绘制后释放。4K H.264 的瓶颈主要位于源帧解码；降低输出画布尺寸能控制画布和位图成本，但不能降低 WebCodecs 对 4K 源帧的解码成本。因此 `scrub-proxy.mp4` 生成链路、接口与字段已删除；兼容环境只会在需要时请求受限拼板。只接受当前拼板文件，历史派生缓存不会参与拖动预览。
+连续请求只保留最新目标，帧位图会在淘汰或绘制后释放。4K H.264 的瓶颈主要位于源帧解码；降低输出画布尺寸能控制画布和位图成本，但不能降低 WebCodecs 对 4K 源帧的解码成本。因此 `scrub-proxy.mp4` 生成链路、接口与字段保持删除，普通拖动改用分页故事板承担首屏反馈，WebCodecs 只负责停留后的高清细化。只接受清单引用的 UUIDv7 页面，历史派生缓存不会参与拖动预览。
+
+### 2026-09-04 长视频拖动调整
+
+4K 和长 GOP 素材的源帧解码延迟不适合作为每个指针事件的首屏反馈，因此拖动路径改为“分页故事板即时显示、停留后高清细化、松手后单次正式跳转”。本机 FFmpeg 9.0 验证覆盖完整页和末页残格；后端单元测试固定验证一小时、三小时、极长视频上限和纵横比，前端单元测试固定验证跨页定位、过期帧丢弃与延迟细化。
+
+这项选择与现有播放器和流媒体行业的 trick-play 做法一致：
+
+- [Vidstack 缩略图文档](https://vidstack.io/docs/player/core-concepts/loading/#thumbnails)使用带时间范围与图集坐标的 WebVTT/JSON 缩略图。
+- [Mux 时间线预览文档](https://www.mux.com/docs/guides/create-timeline-hover-previews)把固定时间间隔的视频帧组织为故事板和坐标元数据。
+- [Apple HLS Authoring Specification](https://developer.apple.com/documentation/http-live-streaming/hls-authoring-specification-for-apple-devices/)要求 trick play 使用独立 I-frame 表示，说明拖动浏览不应反复驱动正式播放轨道。
+- [MDN WebCodecs](https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API)说明该接口可在 Dedicated Worker 中低层控制视频解码；[MDN `requestVideoFrameCallback`](https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback)提供实际提交合成帧的媒体时间，用于可靠恢复播放流程。

@@ -22,7 +22,7 @@ from openvideo.tools.subtitle_export import (
     SubtitleExportUnavailableError,
     export_subtitled_video,
 )
-from openvideo.tools.thumbnails import generate_thumbnail_sprite
+from openvideo.tools.thumbnails import generate_thumbnail_storyboard
 
 STREAM_CHUNK_SIZE = 1024 * 1024
 DEFAULT_VIDEO_MEDIA_TYPE = "video/mp4"
@@ -176,17 +176,15 @@ def register_media_routes(
         generation_lock = storyboard_locks.setdefault(asset_id, asyncio.Lock())
         async with generation_lock:
             asset = ready_asset(media_library, asset_id)
-            existing_storyboard = media_library.response_for(
-                asset
-            ).thumbnail_storyboard
+            existing_storyboard = media_library.response_for(asset).thumbnail_storyboard
             if existing_storyboard is not None:
                 return existing_storyboard
             media_file = media_library.resolve_asset_file(asset, asset.playback_path)
             if media_file is None:
                 raise HTTPException(status_code=404, detail="视频文件不存在")
             media_directory = media_library.media_directory(asset.asset_id)
-            storyboard = await asyncio.to_thread(
-                generate_thumbnail_sprite,
+            manifest_file = await asyncio.to_thread(
+                generate_thumbnail_storyboard,
                 media_file,
                 media_directory,
                 asset.duration_seconds,
@@ -195,35 +193,32 @@ def register_media_routes(
                 settings.ffmpeg_path,
                 settings.ffmpeg_bin_dir,
             )
-            if storyboard is None:
+            if manifest_file is None:
                 raise HTTPException(
                     status_code=503,
                     detail="拖动预览图暂时无法生成",
                 )
-            sprite_file = media_directory / storyboard.sprite_path
-            asset.thumbnail_sprite_path = (
-                sprite_file.relative_to(
-                    media_library.asset_directory(asset.asset_id)
-                ).as_posix()
-            )
-            asset.thumbnail_tile_width = storyboard.tile_width
-            asset.thumbnail_tile_height = storyboard.tile_height
-            asset.thumbnail_interval_seconds = storyboard.interval_seconds
-            asset.thumbnail_columns = storyboard.columns
-            asset.thumbnail_total_tiles = storyboard.total_tiles
+            asset.thumbnail_storyboard_manifest_path = manifest_file.relative_to(
+                media_library.asset_directory(asset.asset_id)
+            ).as_posix()
             media_library.save(asset)
             response = media_library.response_for(asset).thumbnail_storyboard
             if response is None:
                 raise HTTPException(status_code=500, detail="拖动预览图保存失败")
             return response
 
-    @app.get("/api/media/assets/{asset_id}/thumbnail-sprite")
-    def thumbnail_sprite(asset_id: str) -> FileResponse:
-        asset = ready_asset(library(), asset_id)
-        sprite_file = library().resolve_asset_file(asset, asset.thumbnail_sprite_path)
-        if not sprite_file:
+    @app.get("/api/media/assets/{asset_id}/thumbnail-storyboard/pages/{page_id}")
+    def thumbnail_storyboard_page(asset_id: str, page_id: str) -> FileResponse:
+        media_library = library()
+        asset = ready_asset(media_library, asset_id)
+        page_file = media_library.resolve_thumbnail_storyboard_page(asset, page_id)
+        if not page_file:
             raise HTTPException(status_code=404, detail="预览图拼板不存在")
-        return FileResponse(sprite_file, media_type="image/jpeg")
+        return FileResponse(
+            page_file,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
 
 
 def ready_asset(library: MediaLibrary, asset_id: str):

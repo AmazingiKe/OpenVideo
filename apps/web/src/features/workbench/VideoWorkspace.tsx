@@ -13,7 +13,7 @@ import {
 import { Player, type PlayerHandle } from "@/features/player/Player";
 import { record_scrub_preview_metrics } from "@/features/player/scrub_preview_diagnostics";
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_settings";
-import { use_storyboard_fallback } from "@/features/player/use_storyboard_fallback";
+import { use_storyboard_preview } from "@/features/player/use_storyboard_preview";
 import {
   create_subtitle_export,
   media_url,
@@ -64,8 +64,7 @@ export const VideoWorkspace = memo(function VideoWorkspace({
   const [subtitle_error, set_subtitle_error] = useState<string | null>(null);
   const settings_request_version_ref = useRef(0);
   const saved_subtitle_settings_ref = useRef(subtitle_settings);
-  const { storyboard, ensure_fallback_storyboard } =
-    use_storyboard_fallback(asset);
+  const { storyboard, request_storyboard } = use_storyboard_preview(asset);
 
   useEffect(() => {
     settings_request_version_ref.current += 1;
@@ -190,12 +189,12 @@ export const VideoWorkspace = memo(function VideoWorkspace({
                 start_seconds: marker.start_seconds,
                 label: format_marker_label(marker),
               }))}
-              fallback_storyboard={storyboard}
+              storyboard={storyboard}
               on_time_change={on_time_change}
               on_pause_change={on_pause_change}
               on_playback_rate_change={on_playback_rate_change}
               on_scrub_preview_metrics={record_scrub_preview_metrics}
-              on_scrub_preview_unavailable={ensure_fallback_storyboard}
+              on_scrub_preview_unavailable={request_storyboard}
             />
           </div>
         </div>

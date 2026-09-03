@@ -28,7 +28,7 @@ const meta = {
     ],
     subtitles: [],
     evidence_range: null,
-    fallback_storyboard: null,
+    storyboard: null,
   },
 } satisfies Meta<typeof Player>;
 
@@ -172,7 +172,9 @@ function PerformanceProbePlayer(props: ComponentProps<typeof Player>) {
             step="any"
             defaultValue={0}
             onInput={(event) =>
-              player_ref.current?.update_scrub(Number(event.currentTarget.value))
+              player_ref.current?.update_scrub(
+                Number(event.currentTarget.value),
+              )
             }
           />
         </label>

@@ -113,11 +113,16 @@ describe("Player", () => {
     render(
       <Player
         src="/video.mp4"
-        fallback_storyboard={{
-          url: "/scrub-storyboard.jpg",
+        storyboard={{
+          storyboard_id: "storyboard-test",
           tile_width: 640,
           tile_height: 360,
-          tiles: [{ start_time: 0, x: 0, y: 0 }],
+          interval_seconds: 5,
+          columns: 5,
+          total_tiles: 1,
+          pages: [
+            { url: "/storyboard-page.jpg", start_index: 0, tile_count: 1 },
+          ],
         }}
       />,
     );
@@ -151,9 +156,7 @@ describe("Player", () => {
     fireEvent.keyDown(precise_controls, { key: "]" });
     expect(media.remote.pause).toHaveBeenCalledTimes(2);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "复制当前精确时间" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "复制当前精确时间" }));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("00:00:12.000");
   });
 

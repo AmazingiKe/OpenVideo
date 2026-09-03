@@ -2,32 +2,49 @@ import { describe, expect, it } from "vitest";
 
 import type { MediaAsset } from "@/shared/types";
 
-import { storyboard_for_asset } from "./use_storyboard_fallback";
+import { storyboard_for_asset } from "./use_storyboard_preview";
 
 describe("storyboard_for_asset", () => {
-  it("preserves the server-provided tile dimensions and source ratio", () => {
+  it("preserves the paginated server storyboard", () => {
     const storyboard = storyboard_for_asset({
       ...asset(),
       thumbnail_storyboard: {
-        url: "/api/media/assets/asset/thumbnail-sprite",
+        storyboard_id: "storyboard-asset",
         tile_width: 480,
         tile_height: 360,
-        tiles: [{ start_time: 0, x: 0, y: 0 }],
+        interval_seconds: 5,
+        columns: 5,
+        total_tiles: 25,
+        pages: [
+          {
+            url: "/api/media/assets/asset/thumbnail-storyboard/pages/page",
+            start_index: 0,
+            tile_count: 25,
+          },
+        ],
       },
     });
 
     expect(storyboard).toEqual({
-      url: "/api/media/assets/asset/thumbnail-sprite",
+      storyboard_id: "storyboard-asset",
       tile_width: 480,
       tile_height: 360,
-      tiles: [{ start_time: 0, x: 0, y: 0 }],
+      interval_seconds: 5,
+      columns: 5,
+      total_tiles: 25,
+      pages: [
+        {
+          url: "/api/media/assets/asset/thumbnail-storyboard/pages/page",
+          start_index: 0,
+          tile_count: 25,
+        },
+      ],
     });
   });
 
-  it("does not invent a fallback when the asset has no storyboard", () => {
+  it("does not invent a storyboard when the asset has none", () => {
     expect(storyboard_for_asset(asset())).toBeNull();
   });
-
 });
 
 function asset(): MediaAsset {

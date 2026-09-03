@@ -91,29 +91,27 @@ class MediaAsset(BaseModel):
     playback_path: str | None = None
     thumbnail_path: str | None = None
     remote_thumbnail_url: HttpUrl | None = None
-    thumbnail_sprite_path: str | None = None
-    thumbnail_tile_width: int | None = None
-    thumbnail_tile_height: int | None = None
-    thumbnail_interval_seconds: float | None = None
-    thumbnail_columns: int | None = None
-    thumbnail_total_tiles: int | None = None
+    thumbnail_storyboard_manifest_path: str | None = None
     status: MediaAssetStatus = MediaAssetStatus.PENDING
     error_message: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class ThumbnailStoryboardTile(BaseModel):
-    start_time: float
-    x: int
-    y: int
+class ThumbnailStoryboardPageResponse(BaseModel):
+    url: str
+    start_index: int
+    tile_count: int
 
 
 class ThumbnailStoryboardResponse(BaseModel):
-    url: str
+    storyboard_id: str
     tile_width: int
     tile_height: int
-    tiles: list[ThumbnailStoryboardTile]
+    interval_seconds: float
+    columns: int
+    total_tiles: int
+    pages: list[ThumbnailStoryboardPageResponse]
 
 
 class MediaAssetResponse(BaseModel):
@@ -167,15 +165,6 @@ class VideoMetadata(BaseModel):
     audio_codec: str | None = None
 
 
-class AssetStoryboardMetadata(BaseModel):
-    sprite_path: str
-    tile_width: int
-    tile_height: int
-    interval_seconds: float
-    columns: int
-    total_tiles: int
-
-
 class AssetTranscriptionMetadata(BaseModel):
     """资源清单只保留任务摘要，详细参数与错误仍由转录产物独立记录。"""
 
@@ -198,7 +187,7 @@ class AssetMetadata(BaseModel):
     playback_path: str | None = None
     thumbnail_path: str | None = None
     remote_thumbnail_url: HttpUrl | None = None
-    storyboard: AssetStoryboardMetadata | None = None
+    thumbnail_storyboard_manifest_path: str | None = None
     created_at: datetime
     updated_at: datetime
 

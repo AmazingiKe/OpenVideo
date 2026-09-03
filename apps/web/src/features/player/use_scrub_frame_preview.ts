@@ -25,22 +25,25 @@ export type ScrubPreviewMetrics = {
   preview_height: number;
 };
 
+const HIGH_DEFINITION_REFINEMENT_DELAY_MILLISECONDS = 140;
+const MAXIMUM_CACHED_STORYBOARD_PAGES = 3;
+
 type ScrubPreviewStatus = "idle" | "decoding" | "ready" | "unavailable";
 
-type PendingFrameRequest = Omit<
-  ScrubPreviewRequest,
-  "source_url" | "type"
->;
+type PendingFrameRequest = Omit<ScrubPreviewRequest, "source_url" | "type">;
 
 type FrameCallback = {
   session_id: number;
   request_id: number;
-  callback: (frame_time_seconds: number, frame_duration_seconds: number) => void;
+  callback: (
+    frame_time_seconds: number,
+    frame_duration_seconds: number,
+  ) => void;
 };
 
 export function use_scrub_frame_preview(
   source_url: string,
-  fallback_storyboard: ScrubPreviewStoryboard | null,
+  storyboard: ScrubPreviewStoryboard | null,
   on_metrics?: (metrics: ScrubPreviewMetrics) => void,
 ) {
   const canvas_ref = useRef<HTMLCanvasElement>(null);
@@ -51,9 +54,14 @@ export function use_scrub_frame_preview(
   const latest_request_ref = useRef<PendingFrameRequest | null>(null);
   const queued_request_ref = useRef<PendingFrameRequest | null>(null);
   const animation_frame_ref = useRef<number | null>(null);
+  const refinement_timeout_ref = useRef<number | null>(null);
+  const session_dimensions_ref = useRef<{
+    width: number;
+    height: number;
+  } | null>(null);
   const preview_quality_scale_ref = useRef(1);
-  const fallback_image_ref = useRef<StoryboardImageCache | null>(null);
-  const fallback_storyboard_ref = useRef(fallback_storyboard);
+  const storyboard_image_cache_ref = useRef<StoryboardImageCache>(new Map());
+  const storyboard_ref = useRef(storyboard);
   const on_metrics_ref = useRef(on_metrics);
   const frame_callback_ref = useRef<FrameCallback | null>(null);
   const [has_preview_frame, set_has_preview_frame] = useState(false);
@@ -61,15 +69,19 @@ export function use_scrub_frame_preview(
   const [unavailable_reason, set_unavailable_reason] = useState<string | null>(
     null,
   );
-  if (fallback_storyboard_ref.current?.url !== fallback_storyboard?.url) {
-    fallback_image_ref.current = null;
+  if (storyboard_ref.current?.storyboard_id !== storyboard?.storyboard_id) {
+    storyboard_image_cache_ref.current.clear();
   }
-  fallback_storyboard_ref.current = fallback_storyboard;
+  storyboard_ref.current = storyboard;
 
   const cancel_queued_request = useCallback(() => {
     if (animation_frame_ref.current !== null) {
       window.cancelAnimationFrame(animation_frame_ref.current);
       animation_frame_ref.current = null;
+    }
+    if (refinement_timeout_ref.current !== null) {
+      window.clearTimeout(refinement_timeout_ref.current);
+      refinement_timeout_ref.current = null;
     }
     queued_request_ref.current = null;
   }, []);
@@ -79,6 +91,7 @@ export function use_scrub_frame_preview(
     latest_request_id_ref.current = 0;
     latest_request_ref.current = null;
     frame_callback_ref.current = null;
+    session_dimensions_ref.current = null;
     cancel_queued_request();
   }, [cancel_queued_request]);
 
@@ -115,21 +128,21 @@ export function use_scrub_frame_preview(
     [],
   );
 
-  const render_storyboard_fallback = useCallback(
+  const render_storyboard = useCallback(
     (request: PendingFrameRequest) => {
-      void draw_storyboard_fallback(
+      void draw_storyboard(
         canvas_ref.current,
-        fallback_image_ref,
-        fallback_storyboard_ref.current,
+        storyboard_image_cache_ref.current,
+        storyboard_ref.current,
         request.time_seconds,
         { width: request.width, height: request.height },
         () => can_display_request(request.session_id, request.request_id),
       )
-        .then((tile_time_seconds) => {
+        .then((tile) => {
           if (!can_display_request(request.session_id, request.request_id)) {
             return;
           }
-          if (tile_time_seconds === null) {
+          if (tile === null) {
             set_status("unavailable");
             return;
           }
@@ -137,8 +150,8 @@ export function use_scrub_frame_preview(
           on_metrics_ref.current?.({
             mode: "storyboard",
             requested_time_seconds: request.time_seconds,
-            frame_time_seconds: tile_time_seconds,
-            frame_duration_seconds: 0,
+            frame_time_seconds: tile.start_time,
+            frame_duration_seconds: tile.duration,
             decode_milliseconds: 0,
             range_request_count: 0,
             bytes_read: 0,
@@ -148,8 +161,8 @@ export function use_scrub_frame_preview(
           resolve_frame_callback(
             request.session_id,
             request.request_id,
-            tile_time_seconds,
-            0,
+            tile.start_time,
+            tile.duration,
           );
         })
         .catch(() => {
@@ -161,12 +174,12 @@ export function use_scrub_frame_preview(
     [can_display_request, record_displayed_request, resolve_frame_callback],
   );
 
-  const dispatch_request = useCallback(
+  const dispatch_worker_request = useCallback(
     (request: PendingFrameRequest) => {
       const worker = worker_ref.current;
       set_status("decoding");
       if (!worker) {
-        render_storyboard_fallback(request);
+        render_storyboard(request);
         return;
       }
       worker.postMessage({
@@ -175,13 +188,45 @@ export function use_scrub_frame_preview(
         ...request,
       } satisfies ScrubPreviewWorkerRequest);
     },
-    [render_storyboard_fallback, source_url],
+    [render_storyboard, source_url],
+  );
+
+  const schedule_high_definition_refinement = useCallback(
+    (request: PendingFrameRequest, immediate: boolean) => {
+      if (refinement_timeout_ref.current !== null) {
+        window.clearTimeout(refinement_timeout_ref.current);
+      }
+      if (immediate) {
+        refinement_timeout_ref.current = null;
+        dispatch_worker_request(request);
+        return;
+      }
+      refinement_timeout_ref.current = window.setTimeout(() => {
+        refinement_timeout_ref.current = null;
+        if (can_display_request(request.session_id, request.request_id)) {
+          dispatch_worker_request(request);
+        }
+      }, HIGH_DEFINITION_REFINEMENT_DELAY_MILLISECONDS);
+    },
+    [can_display_request, dispatch_worker_request],
+  );
+
+  const present_request = useCallback(
+    (request: PendingFrameRequest, immediate: boolean) => {
+      if (request.mode === "at" && storyboard_ref.current) {
+        render_storyboard(request);
+        schedule_high_definition_refinement(request, immediate);
+        return;
+      }
+      schedule_high_definition_refinement(request, true);
+    },
+    [render_storyboard, schedule_high_definition_refinement],
   );
 
   const schedule_request = useCallback(
     (request: PendingFrameRequest, immediate: boolean) => {
       if (immediate) {
-        dispatch_request(request);
+        present_request(request, true);
         return;
       }
       queued_request_ref.current = request;
@@ -190,10 +235,10 @@ export function use_scrub_frame_preview(
         animation_frame_ref.current = null;
         const queued_request = queued_request_ref.current;
         queued_request_ref.current = null;
-        if (queued_request) dispatch_request(queued_request);
+        if (queued_request) present_request(queued_request, false);
       });
     },
-    [dispatch_request],
+    [present_request],
   );
 
   useEffect(() => {
@@ -201,10 +246,10 @@ export function use_scrub_frame_preview(
   }, [on_metrics]);
 
   useEffect(() => {
-    if (status !== "unavailable" || !fallback_storyboard) return;
+    if (status !== "unavailable" || !storyboard) return;
     const latest_request = latest_request_ref.current;
-    if (latest_request) render_storyboard_fallback(latest_request);
-  }, [fallback_storyboard, render_storyboard_fallback, status]);
+    if (latest_request) render_storyboard(latest_request);
+  }, [render_storyboard, status, storyboard]);
 
   useEffect(() => {
     if (!supports_worker_preview()) {
@@ -226,8 +271,9 @@ export function use_scrub_frame_preview(
         return;
       }
       if (response.type === "unavailable") {
+        set_status("unavailable");
         set_unavailable_reason(response.reason);
-        render_storyboard_fallback({
+        render_storyboard({
           session_id: response.session_id,
           request_id: response.request_id,
           time_seconds: response.requested_time_seconds,
@@ -276,7 +322,7 @@ export function use_scrub_frame_preview(
       set_status("unavailable");
       set_unavailable_reason("高清拖动预览 Worker 启动失败");
       const latest_request = latest_request_ref.current;
-      if (latest_request) render_storyboard_fallback(latest_request);
+      if (latest_request) render_storyboard(latest_request);
     };
     return () => {
       invalidate_preview_session();
@@ -291,7 +337,7 @@ export function use_scrub_frame_preview(
     can_display_request,
     invalidate_preview_session,
     record_displayed_request,
-    render_storyboard_fallback,
+    render_storyboard,
     resolve_frame_callback,
   ]);
 
@@ -303,7 +349,7 @@ export function use_scrub_frame_preview(
     } satisfies ScrubPreviewWorkerRequest);
     set_status((current) => (current === "unavailable" ? current : "idle"));
     set_has_preview_frame(false);
-    fallback_image_ref.current = null;
+    storyboard_image_cache_ref.current.clear();
     preview_quality_scale_ref.current = 1;
   }, [invalidate_preview_session, source_url]);
 
@@ -321,12 +367,15 @@ export function use_scrub_frame_preview(
       if (player_width <= 0 || player_height <= 0) return;
       const request_id = next_request_id_ref.current + 1;
       next_request_id_ref.current = request_id;
-      const dimensions = preview_dimensions(
-        player_width,
-        player_height,
-        window.devicePixelRatio || 1,
-        preview_quality_scale_ref.current,
-      );
+      const dimensions =
+        session_dimensions_ref.current ??
+        preview_dimensions(
+          player_width,
+          player_height,
+          window.devicePixelRatio || 1,
+          preview_quality_scale_ref.current,
+        );
+      session_dimensions_ref.current = dimensions;
       const request: PendingFrameRequest = {
         session_id: active_session_id_ref.current,
         request_id,
@@ -393,9 +442,9 @@ function draw_bitmap(canvas: HTMLCanvasElement | null, bitmap: ImageBitmap) {
   bitmap.close();
 }
 
-async function draw_storyboard_fallback(
+async function draw_storyboard(
   canvas: HTMLCanvasElement | null,
-  image_ref: { current: StoryboardImageCache | null },
+  image_cache: StoryboardImageCache,
   storyboard: ScrubPreviewStoryboard | null,
   time_seconds: number,
   dimensions: { width: number; height: number },
@@ -404,8 +453,9 @@ async function draw_storyboard_fallback(
   if (!canvas || !storyboard) return null;
   const tile = storyboard_tile_at(storyboard, time_seconds);
   if (!tile) return null;
-  const image = await load_storyboard_image(image_ref, storyboard.url);
+  const image = await load_storyboard_image(image_cache, tile.url);
   if (!can_draw()) return null;
+  preload_adjacent_storyboard_pages(image_cache, storyboard, tile.url);
   resize_canvas(canvas, dimensions.width, dimensions.height);
   const context = canvas.getContext("2d");
   if (!context) return null;
@@ -427,30 +477,57 @@ async function draw_storyboard_fallback(
     target.width,
     target.height,
   );
-  return tile.start_time;
+  return tile;
 }
 
-function resize_canvas(canvas: HTMLCanvasElement, width: number, height: number) {
+function resize_canvas(
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+) {
   if (canvas.width !== width) canvas.width = width;
   if (canvas.height !== height) canvas.height = height;
 }
 
-function load_storyboard_image(
-  image_ref: { current: StoryboardImageCache | null },
-  url: string,
-) {
-  if (image_ref.current?.url === url) return image_ref.current.image;
+function load_storyboard_image(image_cache: StoryboardImageCache, url: string) {
+  const cached_image = image_cache.get(url);
+  if (cached_image) {
+    image_cache.delete(url);
+    image_cache.set(url, cached_image);
+    return cached_image;
+  }
   const image_promise = new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("响应式缩略图加载失败"));
+    image.onerror = () => reject(new Error("分页预览图加载失败"));
     image.src = url;
   });
-  image_ref.current = { url, image: image_promise };
+  image_cache.set(url, image_promise);
+  while (image_cache.size > MAXIMUM_CACHED_STORYBOARD_PAGES) {
+    const oldest_url = image_cache.keys().next().value;
+    if (typeof oldest_url !== "string") break;
+    image_cache.delete(oldest_url);
+  }
+  void image_promise.catch(() => {
+    if (image_cache.get(url) === image_promise) image_cache.delete(url);
+  });
   return image_promise;
 }
 
-type StoryboardImageCache = {
-  url: string;
-  image: Promise<HTMLImageElement>;
-};
+function preload_adjacent_storyboard_pages(
+  image_cache: StoryboardImageCache,
+  storyboard: ScrubPreviewStoryboard,
+  current_url: string,
+) {
+  const current_index = storyboard.pages.findIndex(
+    (page) => page.url === current_url,
+  );
+  if (current_index < 0) return;
+  for (const page_index of [current_index - 1, current_index + 1]) {
+    const page = storyboard.pages[page_index];
+    if (page)
+      void load_storyboard_image(image_cache, page.url).catch(() => undefined);
+  }
+}
+
+type StoryboardImageCache = Map<string, Promise<HTMLImageElement>>;

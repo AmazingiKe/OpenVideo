@@ -56,10 +56,7 @@ async function decode_frame(request: ScrubPreviewRequest) {
       typeof OffscreenCanvas === "undefined" ||
       typeof createImageBitmap === "undefined"
     ) {
-      post_unavailable(
-        request,
-        "当前环境不支持 WebCodecs Worker 取帧",
-      );
+      post_unavailable(request, "当前环境不支持 WebCodecs Worker 取帧");
       return;
     }
     release_sink_for_new_dimensions(request.width, request.height);
@@ -69,10 +66,7 @@ async function decode_frame(request: ScrubPreviewRequest) {
     const bytes_read_at_start = network_metrics?.bytes_read ?? 0;
     const sink = await sink_for(input, request.width, request.height);
     if (!sink) {
-      post_unavailable(
-        request,
-        "当前视频编码无法通过 WebCodecs 解码",
-      );
+      post_unavailable(request, "当前视频编码无法通过 WebCodecs 解码");
       return;
     }
     const current_frame = await sink.getCanvas(request.time_seconds);
@@ -193,7 +187,9 @@ function release_sink_for_new_dimensions(width: number, height: number) {
   ) {
     return;
   }
-  dispose_input();
+  active_sink = null;
+  active_sink_width = 0;
+  active_sink_height = 0;
 }
 
 function has_newer_pending_request(request: ScrubPreviewRequest) {

@@ -10,10 +10,13 @@ export type ScrubPreviewRequest = {
 };
 
 export type ScrubPreviewStoryboard = {
-  url: string;
+  storyboard_id: string;
   tile_width: number;
   tile_height: number;
-  tiles: { start_time: number; x: number; y: number }[];
+  interval_seconds: number;
+  columns: number;
+  total_tiles: number;
+  pages: { url: string; start_index: number; tile_count: number }[];
 };
 
 type ScrubPreviewDisposeRequest = {

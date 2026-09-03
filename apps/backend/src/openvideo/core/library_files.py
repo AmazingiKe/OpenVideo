@@ -18,7 +18,6 @@ from openvideo.core.identifiers import is_uuid7
 from openvideo.core.media_models import (
     AssetMetadata,
     AssetSourceMetadata,
-    AssetStoryboardMetadata,
     AssetTranscriptionMetadata,
     MediaAsset,
     MediaMarker,
@@ -125,24 +124,6 @@ def metadata_from_asset(
         )
     else:
         transcription_summary = AssetTranscriptionMetadata()
-    storyboard = None
-    storyboard_values = (
-        asset.thumbnail_sprite_path,
-        asset.thumbnail_tile_width,
-        asset.thumbnail_tile_height,
-        asset.thumbnail_interval_seconds,
-        asset.thumbnail_columns,
-        asset.thumbnail_total_tiles,
-    )
-    if all(value is not None for value in storyboard_values):
-        storyboard = AssetStoryboardMetadata(
-            sprite_path=asset.thumbnail_sprite_path,
-            tile_width=asset.thumbnail_tile_width,
-            tile_height=asset.thumbnail_tile_height,
-            interval_seconds=asset.thumbnail_interval_seconds,
-            columns=asset.thumbnail_columns,
-            total_tiles=asset.thumbnail_total_tiles,
-        )
     return AssetMetadata(
         asset_id=asset.asset_id,
         folder_id=asset.folder_id,
@@ -162,7 +143,9 @@ def metadata_from_asset(
         playback_path=asset.playback_path,
         thumbnail_path=asset.thumbnail_path,
         remote_thumbnail_url=asset.remote_thumbnail_url,
-        storyboard=storyboard,
+        thumbnail_storyboard_manifest_path=(
+            asset.thumbnail_storyboard_manifest_path
+        ),
         created_at=asset.created_at,
         updated_at=asset.updated_at,
     )
@@ -170,7 +153,6 @@ def metadata_from_asset(
 
 def asset_from_metadata(metadata: AssetMetadata) -> MediaAsset:
     video = metadata.video or VideoMetadata()
-    storyboard = metadata.storyboard
     return MediaAsset(
         asset_id=metadata.asset_id,
         folder_id=metadata.folder_id,
@@ -189,12 +171,9 @@ def asset_from_metadata(metadata: AssetMetadata) -> MediaAsset:
         playback_path=metadata.playback_path,
         thumbnail_path=metadata.thumbnail_path,
         remote_thumbnail_url=metadata.remote_thumbnail_url,
-        thumbnail_sprite_path=storyboard.sprite_path if storyboard else None,
-        thumbnail_tile_width=storyboard.tile_width if storyboard else None,
-        thumbnail_tile_height=storyboard.tile_height if storyboard else None,
-        thumbnail_interval_seconds=storyboard.interval_seconds if storyboard else None,
-        thumbnail_columns=storyboard.columns if storyboard else None,
-        thumbnail_total_tiles=storyboard.total_tiles if storyboard else None,
+        thumbnail_storyboard_manifest_path=(
+            metadata.thumbnail_storyboard_manifest_path
+        ),
         status=metadata.status,
         error_message=metadata.error_message,
         created_at=metadata.created_at,
@@ -251,7 +230,7 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
     for relative_path in (
         asset.playback_path,
         asset.thumbnail_path,
-        asset.thumbnail_sprite_path,
+        asset.thumbnail_storyboard_manifest_path,
     ):
         if relative_path:
             _validate_asset_reference(
