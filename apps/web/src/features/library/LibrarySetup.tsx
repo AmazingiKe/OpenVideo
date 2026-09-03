@@ -37,12 +37,12 @@ export function LibrarySetup({
           <Info aria-hidden="true" />
           <AlertTitle>请选择或创建资料库</AlertTitle>
           <AlertDescription>
-            {notice ?? "打开已有资料库，或选择一个空文件夹创建新的资料库。"}
+            {notice ??
+              "选择资料库文件夹，系统会自动打开已有资料库或初始化空文件夹。"}
           </AlertDescription>
         </Alert>
-        <div className="grid items-start gap-6 md:grid-cols-2">
-          <LibraryPathForm action="initialize" on_success={on_library_opened} />
-          <LibraryPathForm action="open" on_success={on_library_opened} />
+        <div className="mx-auto w-full max-w-2xl">
+          <LibraryPathForm on_success={on_library_opened} />
         </div>
       </section>
     </main>

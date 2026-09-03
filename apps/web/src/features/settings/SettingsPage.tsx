@@ -264,9 +264,8 @@ export function SettingsPage() {
             </AlertDescription>
           </Alert>
         ) : (
-          <div className="grid items-start gap-6 lg:grid-cols-2">
-            <LibraryPathForm action="initialize" on_success={set_library} />
-            <LibraryPathForm action="open" on_success={set_library} />
+          <div className="max-w-2xl">
+            <LibraryPathForm on_success={set_library} />
           </div>
         )}
       </SettingsCard>

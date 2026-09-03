@@ -7,23 +7,11 @@ export function get_library(
   return request_json("/api/library", { signal });
 }
 
-export function create_library(
+export function activate_library(
   path: string,
   signal?: AbortSignal,
 ): Promise<LibraryDescription> {
-  return request_json("/api/library/create", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
-    signal,
-  });
-}
-
-export function open_library(
-  path: string,
-  signal?: AbortSignal,
-): Promise<LibraryDescription> {
-  return request_json("/api/library/open", {
+  return request_json("/api/library/activate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
@@ -79,7 +67,7 @@ export function list_folders(signal?: AbortSignal): Promise<LibraryFolder[]> {
   return request_json("/api/library/folders", { signal });
 }
 
-export function import_local_video(
+export function import_local_media(
   file: File,
   signal?: AbortSignal,
 ): Promise<MediaAsset> {

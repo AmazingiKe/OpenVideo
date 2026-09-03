@@ -9,7 +9,7 @@ from openvideo.ui.api import create_app
 from openvideo.ui.directory_picker import DirectoryPickerError
 
 
-def test_library_gate_create_close_and_reopen(tmp_path: Path):
+def test_library_gate_activate_close_and_reactivate(tmp_path: Path):
     library_path = tmp_path / "portable"
     library_path.mkdir()
     preference_store = PreferenceStore(tmp_path / "config" / "preferences.json")
@@ -22,15 +22,17 @@ def test_library_gate_create_close_and_reopen(tmp_path: Path):
         assert gated.json()["code"] == "library_not_open"
 
         created = client.post(
-            "/api/library/create",
+            "/api/library/activate",
             json={"path": str(library_path)},
         )
-        assert created.status_code == 201
+        assert created.status_code == 200
         assert created.json()["root_path"] == str(library_path.resolve())
         assert client.delete("/api/library").status_code == 204
         assert client.get("/api/library").json() is None
 
-        reopened = client.post("/api/library/open", json={"path": str(library_path)})
+        reopened = client.post(
+            "/api/library/activate", json={"path": str(library_path)}
+        )
         assert reopened.status_code == 200
         assert reopened.json()["library_id"] == created.json()["library_id"]
 
@@ -42,12 +44,32 @@ def test_failed_switch_keeps_current_library(tmp_path: Path):
 
     with TestClient(app) as client:
         created = client.post(
-            "/api/library/create",
+            "/api/library/activate",
             json={"path": str(library_path)},
         ).json()
-        failed = client.post("/api/library/open", json={"path": str(tmp_path / "missing")})
+        failed = client.post(
+            "/api/library/activate", json={"path": str(tmp_path / "missing")}
+        )
         assert failed.status_code == 422
         assert client.get("/api/library").json()["library_id"] == created["library_id"]
+
+
+def test_activation_rejects_nonempty_directory_without_manifest(tmp_path: Path):
+    library_path = tmp_path / "not-a-library"
+    library_path.mkdir()
+    existing_file = library_path / "keep.txt"
+    existing_file.write_text("保留", encoding="utf-8")
+    app = create_app(Settings(), PreferenceStore(tmp_path / "preferences.json"))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/library/activate", json={"path": str(library_path)}
+        )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_library"
+    assert existing_file.read_text(encoding="utf-8") == "保留"
+    assert not (library_path / "library.json").exists()
 
 
 def test_rejects_library_inside_application_directory(tmp_path: Path):
@@ -55,7 +77,7 @@ def test_rejects_library_inside_application_directory(tmp_path: Path):
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/library/create",
+            "/api/library/activate",
             json={"path": str(PROJECT_ROOT / "library")},
         )
 
@@ -117,9 +139,12 @@ def test_folder_api_manages_nested_virtual_folders(tmp_path: Path):
     app = create_app(Settings(), PreferenceStore(tmp_path / "preferences.json"))
 
     with TestClient(app) as client:
-        assert client.post(
-            "/api/library/create", json={"path": str(library_path)}
-        ).status_code == 201
+        assert (
+            client.post(
+                "/api/library/activate", json={"path": str(library_path)}
+            ).status_code
+            == 200
+        )
         root = client.post(
             "/api/library/folders", json={"name": "课程", "parent_id": None}
         ).json()
@@ -165,7 +190,7 @@ def test_dragged_video_is_imported_into_the_library(tmp_path: Path, monkeypatch)
     app = create_app(Settings(), preference_store)
 
     with TestClient(app) as client:
-        client.post("/api/library/create", json={"path": str(library_path)})
+        client.post("/api/library/activate", json={"path": str(library_path)})
         response = client.post(
             "/api/media/assets/import",
             files={"file": ("课程片段.mp4", b"video-content", "video/mp4")},
@@ -195,7 +220,7 @@ def test_local_video_import_rejects_unsupported_and_empty_files(tmp_path: Path):
     )
 
     with TestClient(app) as client:
-        client.post("/api/library/create", json={"path": str(library_path)})
+        client.post("/api/library/activate", json={"path": str(library_path)})
         unsupported = client.post(
             "/api/media/assets/import",
             files={"file": ("说明.txt", b"not-video", "text/plain")},

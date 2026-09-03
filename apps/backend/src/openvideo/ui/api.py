@@ -35,6 +35,7 @@ from openvideo.core.transcription_models import (
 from openvideo.core.library import (
     LibraryDescription,
     LibraryError,
+    MANIFEST_FILE_NAME,
     MediaLibrary,
 )
 from openvideo.core.media_models import SourcePlatform
@@ -89,11 +90,7 @@ from openvideo.ui.download_routes import register_download_routes
 from openvideo.ui.event_analysis_routes import register_event_analysis_routes
 
 
-class LibraryCreateRequest(BaseModel):
-    path: str
-
-
-class LibraryOpenRequest(BaseModel):
+class LibraryActivationRequest(BaseModel):
     path: str
 
 
@@ -339,42 +336,10 @@ def create_app(
             _library_error(503, "directory_picker_unavailable", str(error))
         return DirectorySelectionResponse(path=selected_path)
 
-    @app.post("/api/library/create", response_model=LibraryDescription, status_code=201)
-    async def create_library(request: LibraryCreateRequest) -> LibraryDescription:
-        if os.getenv("OPENVIDEO_LIBRARY_PATH"):
-            _library_error(
-                409, "library_managed_by_environment", "资料库由环境变量固定，无法切换"
-            )
-        _ensure_switch_allowed(
-            manager,
-            analysis_manager,
-            event_analysis_manager,
-            agent_service,
-        )
-        requested_path = _absolute_library_path(request.path)
-        try:
-            opened = MediaLibrary.initialize_directory(requested_path)
-        except (LibraryError, OSError) as error:
-            error_code = (
-                error.code
-                if isinstance(error, LibraryError)
-                else "library_create_failed"
-            )
-            _library_error(422, error_code, str(error))
-        if analysis_manager:
-            await analysis_manager.close()
-        if agent_service:
-            await agent_service.close()
-        if event_analysis_manager:
-            await event_analysis_manager.close()
-        if library:
-            library.close()
-        await install_library(opened)
-        save_current_path(str(opened.library_path))
-        return opened.description
-
-    @app.post("/api/library/open", response_model=LibraryDescription)
-    async def open_library(request: LibraryOpenRequest) -> LibraryDescription:
+    @app.post("/api/library/activate", response_model=LibraryDescription)
+    async def activate_library(
+        request: LibraryActivationRequest,
+    ) -> LibraryDescription:
         if os.getenv("OPENVIDEO_LIBRARY_PATH"):
             _library_error(
                 409, "library_managed_by_environment", "资料库由环境变量固定，无法切换"
@@ -389,10 +354,17 @@ def create_app(
             agent_service,
         )
         try:
-            opened = MediaLibrary.open(target)
+            manifest_path = target / MANIFEST_FILE_NAME
+            opened = (
+                MediaLibrary.open(target)
+                if manifest_path.is_file()
+                else MediaLibrary.initialize_directory(target)
+            )
         except (LibraryError, OSError) as error:
             error_code = (
-                error.code if isinstance(error, LibraryError) else "library_open_failed"
+                error.code
+                if isinstance(error, LibraryError)
+                else "library_activation_failed"
             )
             _library_error(422, error_code, str(error))
         if analysis_manager:

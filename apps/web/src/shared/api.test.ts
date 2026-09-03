@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  activate_library,
   ApiError,
   create_marker,
   create_download,
@@ -16,7 +17,7 @@ import {
   get_transcription_model_download,
   get_markers_page_settings,
   import_download_account_from_browser,
-  import_local_video,
+  import_local_media,
   list_downloads,
   list_transcription_models,
   media_url,
@@ -209,6 +210,27 @@ describe("api client", () => {
     });
   });
 
+  it("activates a library directory", async () => {
+    const library = {
+      library_id: "library-0198d12345677890abcdef1234567890",
+      name: "课程",
+    };
+    const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(library), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(activate_library("D:\\课程")).resolves.toEqual(library);
+    expect(fetch_mock).toHaveBeenCalledWith("/api/library/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "D:\\课程" }),
+      signal: undefined,
+    });
+  });
+
   it("uploads a dropped local video as multipart data", async () => {
     const asset = {
       asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
@@ -223,7 +245,7 @@ describe("api client", () => {
     );
     const file = new File(["video"], "产品演示.mp4", { type: "video/mp4" });
 
-    await expect(import_local_video(file)).resolves.toEqual(asset);
+    await expect(import_local_media(file)).resolves.toEqual(asset);
     expect(fetch_mock).toHaveBeenCalledOnce();
     const [path, request] = fetch_mock.mock.calls[0];
     expect(path).toBe("/api/media/assets/import");

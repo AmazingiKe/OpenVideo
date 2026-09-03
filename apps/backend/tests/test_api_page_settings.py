@@ -77,7 +77,7 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
 
         assert (
             client.post(
-                "/api/library/open", json={"path": str(second_path)}
+                "/api/library/activate", json={"path": str(second_path)}
             ).status_code
             == 200
         )
@@ -90,7 +90,9 @@ def test_markers_page_settings_are_isolated_when_switching_libraries(
         )
 
         assert (
-            client.post("/api/library/open", json={"path": str(first_path)}).status_code
+            client.post(
+                "/api/library/activate", json={"path": str(first_path)}
+            ).status_code
             == 200
         )
         restored = client.get("/api/page-settings/markers").json()

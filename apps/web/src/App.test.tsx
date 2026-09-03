@@ -50,6 +50,7 @@ import type {
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
 vi.mock("./shared/api", () => ({
+  activate_library: vi.fn(),
   create_folder: vi.fn(),
   create_download: vi.fn(),
   create_download_account_login_session: vi.fn(),

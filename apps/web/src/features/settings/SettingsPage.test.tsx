@@ -39,7 +39,7 @@ vi.mock("@/app/library", () => ({
 }));
 
 vi.mock("@/shared/api", () => ({
-  create_library: vi.fn(),
+  activate_library: vi.fn(),
   download_formula_model: vi.fn(),
   download_transcription_model: vi.fn(),
   get_formula_model: vi.fn(),
@@ -51,7 +51,6 @@ vi.mock("@/shared/api", () => ({
   unload_visual_index: vi.fn(),
   list_ai_models: vi.fn(),
   list_transcription_models: vi.fn(),
-  open_library: vi.fn(),
   select_directory: vi.fn(),
   test_ai_model: vi.fn(),
   update_preferences: vi.fn(),
