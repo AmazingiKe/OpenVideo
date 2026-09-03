@@ -34,7 +34,6 @@ vi.mock("@/features/player/Player", () => ({
       commit_scrub: vi.fn(),
       cancel_scrub: vi.fn(),
       seek_to: vi.fn(),
-      set_playback_rate: vi.fn(),
       set_volume: vi.fn(),
       step_frame: vi.fn(),
       toggle_captions: vi.fn(),

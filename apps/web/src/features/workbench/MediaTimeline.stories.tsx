@@ -206,8 +206,6 @@ function TimelineStory({
     useState<number[]>([]);
   const [range_selection, set_range_selection] =
     useState<FocusSelection | null>(focus_selection);
-  const [is_paused, set_is_paused] = useState(true);
-  const [playback_rate, set_playback_rate] = useState(1);
 
   async function update_marker(
     marker_id: string,
@@ -244,8 +242,8 @@ function TimelineStory({
         asset_id={ASSET_ID}
         duration_seconds={duration_seconds}
         current_time={current_time}
-        is_paused={is_paused}
-        playback_rate={playback_rate}
+        is_paused
+        playback_rate={1}
         transcript={{
           asset_id: ASSET_ID,
           language: "zh",
@@ -266,8 +264,6 @@ function TimelineStory({
         on_scrub_commit={set_current_time}
         on_scrub_cancel={() => undefined}
         on_seek={set_current_time}
-        on_toggle_playback={() => set_is_paused((current) => !current)}
-        on_playback_rate_change={set_playback_rate}
         on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_selected_marker_ids_change={set_selected_marker_ids}
         on_set_focus_in={(seconds) => set_range_endpoint("in_seconds", seconds)}

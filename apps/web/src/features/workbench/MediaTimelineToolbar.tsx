@@ -1,12 +1,4 @@
-import {
-  Eraser,
-  Flag,
-  Minus,
-  Pause,
-  Play,
-  Plus,
-  RotateCcw,
-} from "lucide-react";
+import { Minus, Plus, RotateCcw } from "lucide-react";
 import {
   type ReactNode,
   type RefObject,
@@ -16,14 +8,6 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { format_time } from "@/shared/format";
 import {
@@ -33,23 +17,13 @@ import {
 
 const ZOOM_BUTTON_FACTOR = 1.25;
 const ZOOM_SLIDER_STEP = 0.1;
-const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
 type MediaTimelineToolbarProps = {
   current_time: number;
   current_time_output_ref: RefObject<HTMLOutputElement | null>;
   duration: number;
-  is_paused: boolean;
-  playback_rate: number;
   minimum_zoom_pixels_per_second: number;
   zoom_pixels_per_second: number;
-  on_toggle_playback: () => void;
-  on_playback_rate_change: (rate: number) => void;
-  on_add_marker: (seconds: number) => void;
-  on_set_range_start: () => void;
-  on_set_range_end: () => void;
-  on_clear_range: () => void;
-  has_range_selection: boolean;
   on_zoom_change: (zoom_pixels_per_second: number) => void;
   tools: ReactNode;
   context_sources?: ReactNode;
@@ -59,17 +33,8 @@ export function MediaTimelineToolbar({
   current_time,
   current_time_output_ref,
   duration,
-  is_paused,
-  playback_rate,
   minimum_zoom_pixels_per_second,
   zoom_pixels_per_second,
-  on_toggle_playback,
-  on_playback_rate_change,
-  on_add_marker,
-  on_set_range_start,
-  on_set_range_end,
-  on_clear_range,
-  has_range_selection,
   on_zoom_change,
   tools,
   context_sources,
@@ -117,85 +82,11 @@ export function MediaTimelineToolbar({
   return (
     <div className="media_timeline_toolbar" aria-label="时间线工具栏">
       <div className="media_timeline_transport">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          onClick={on_toggle_playback}
-          aria-label={is_paused ? "播放" : "暂停"}
-        >
-          {is_paused ? (
-            <Play data-icon="inline-start" aria-hidden="true" />
-          ) : (
-            <Pause data-icon="inline-start" aria-hidden="true" />
-          )}
-        </Button>
         <output ref={current_time_output_ref} aria-label="当前播放时间和总时长">
           {format_time(bounded_time)} / {format_time(duration)}
         </output>
-        <Select
-          value={String(playback_rate)}
-          onValueChange={(value) => on_playback_rate_change(Number(value))}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label={`播放倍速，当前 ${playback_rate} 倍`}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent position="popper" side="top">
-            <SelectGroup>
-              {PLAYBACK_RATES.map((rate) => (
-                <SelectItem key={rate} value={String(rate)}>
-                  {rate}×
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          aria-label={`在 ${format_time(bounded_time)} 添加标记`}
-          title="添加标记（Ctrl+M）"
-          onClick={() => on_add_marker(bounded_time)}
-        >
-          <Flag data-icon="inline-start" aria-hidden="true" />
-          <span className="media_timeline_add_label">添加标记</span>
-        </Button>
         {tools}
         {context_sources}
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="outline"
-          title="设置范围起点（[）；有片段选中时使用片段起点"
-          aria-label="设置范围起点"
-          onClick={on_set_range_start}
-        >
-          [
-        </Button>
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="outline"
-          title="设置范围终点（]）；有片段选中时使用片段终点"
-          aria-label="设置范围终点"
-          onClick={on_set_range_end}
-        >
-          ]
-        </Button>
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="ghost"
-          disabled={!has_range_selection}
-          onClick={on_clear_range}
-          aria-label="清除时间线范围选区"
-        >
-          <Eraser aria-hidden="true" />
-        </Button>
       </div>
       <div className="media_timeline_zoom" aria-label="时间线缩放">
         <Button

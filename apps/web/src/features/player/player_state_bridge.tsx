@@ -15,7 +15,6 @@ export type PlayerController = {
   hold_controls_visible: () => void;
   release_controls_visibility: () => void;
   toggle_playback: () => void;
-  set_playback_rate: (rate: number) => void;
   set_volume: (volume: number) => void;
   wait_for_presented_frame: (
     callback: (media_time: number) => void,
@@ -57,7 +56,6 @@ export function PlayerStateBridge({
         if (player.paused) void remote.play();
         else void remote.pause();
       },
-      set_playback_rate: (rate: number) => remote.changePlaybackRate(rate),
       set_volume: (volume: number) => remote.changeVolume(volume),
       wait_for_presented_frame: (callback) => {
         if (provider && isVideoProvider(provider)) {

@@ -182,9 +182,6 @@ describe("Player", () => {
     media.player.paused = false;
     act(() => player_ref.current?.toggle_playback());
     expect(media.remote.pause).toHaveBeenCalledOnce();
-
-    act(() => player_ref.current?.set_playback_rate(1.5));
-    expect(media.remote.changePlaybackRate).toHaveBeenCalledWith(1.5);
   });
 
   it("keeps the presented media clock unchanged until a scrub commits", () => {

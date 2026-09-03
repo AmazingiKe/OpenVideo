@@ -857,13 +857,6 @@
   background: var(--timeline-color-control-active-background);
 }
 
-.media_timeline_toolbar [data-slot="select-trigger"] {
-  min-width: 52px;
-  border-color: var(--timeline-color-border);
-  color: var(--timeline-color-foreground);
-  background: var(--timeline-color-panel-control);
-}
-
 .media_timeline_toolbar output {
   display: inline-flex;
   min-width: max-content;
@@ -1458,7 +1451,6 @@
     flex: 1;
   }
 
-  .media_timeline_add_label,
   .media_timeline_tool_label {
     display: none;
   }

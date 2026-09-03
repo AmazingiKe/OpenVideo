@@ -550,10 +550,6 @@ export function MarkersPage() {
         on_scrub_commit={commit_player_scrub}
         on_scrub_cancel={cancel_player_scrub}
         on_seek={seek_player}
-        on_toggle_playback={() => player_ref.current?.toggle_playback()}
-        on_playback_rate_change={(rate) =>
-          player_ref.current?.set_playback_rate(rate)
-        }
         on_selected_transcript_indices_change={set_selected_transcript_indices}
         on_request_transcript_correction={request_quick_transcript_correction}
         on_selected_marker_ids_change={set_selected_marker_ids}

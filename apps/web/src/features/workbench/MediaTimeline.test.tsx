@@ -245,8 +245,6 @@ function render_timeline(options?: {
     scrub_commit: vi.fn(),
     scrub_cancel: vi.fn(),
     seek_to: vi.fn(),
-    toggle_playback: vi.fn(),
-    change_playback_rate: vi.fn(),
     add_marker: vi.fn().mockResolvedValue(options?.added_marker),
     update_marker:
       options?.update_marker ?? vi.fn().mockResolvedValue(undefined),
@@ -332,8 +330,6 @@ function render_timeline(options?: {
         on_scrub_commit={callbacks.scrub_commit}
         on_scrub_cancel={callbacks.scrub_cancel}
         on_seek={callbacks.seek_to}
-        on_toggle_playback={callbacks.toggle_playback}
-        on_playback_rate_change={callbacks.change_playback_rate}
         on_selected_transcript_indices_change={(segment_indices) => {
           callbacks.change_selected_transcript_indices(segment_indices);
           set_selected_transcript_indices(segment_indices);
@@ -853,21 +849,30 @@ describe("MediaTimeline", () => {
     expect(timeline_mock.set_scroll_top).not.toHaveBeenCalled();
   });
 
-  it("shares playback controls and timecode with the player state", async () => {
-    const { toggle_playback, change_playback_rate } = render_timeline();
+  it("shows timecode without duplicating player controls", () => {
+    render_timeline();
 
     expect(screen.getByLabelText("当前播放时间和总时长")).toHaveTextContent(
       "00:30 / 02:00",
     );
-    fireEvent.click(screen.getByRole("button", { name: "播放" }));
-    fireEvent.keyDown(
-      screen.getByRole("combobox", { name: "播放倍速，当前 1 倍" }),
-      { key: "Enter" },
-    );
-    fireEvent.click(await screen.findByRole("option", { name: "1.5×" }));
-
-    expect(toggle_playback).toHaveBeenCalledOnce();
-    expect(change_playback_rate).toHaveBeenCalledWith(1.5);
+    expect(
+      screen.queryByRole("button", { name: "播放" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "暂停" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: /播放倍速/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /添加标记/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "设置范围起点" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "设置范围终点" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the editor render boundary stable for visible playback updates", () => {
@@ -1061,11 +1066,12 @@ describe("MediaTimeline", () => {
     expect(scrub_start).toHaveBeenCalledTimes(2);
   });
 
-  it("adds markers from the toolbar, shortcut, and marker row", async () => {
+  it("adds markers from the context menu, shortcut, and marker row", async () => {
     const added_marker = { ...POINT_MARKER, marker_id: "marker-added" };
     const { add_marker } = render_timeline({ added_marker });
 
-    fireEvent.click(screen.getByRole("button", { name: /添加标记/ }));
+    fireEvent.contextMenu(screen.getByLabelText(/时间线画布/));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /添加标记/ }));
     fireEvent.keyDown(window, { key: "m", ctrlKey: true });
     fireEvent.doubleClick(
       screen.getByRole("button", {
@@ -1079,7 +1085,7 @@ describe("MediaTimeline", () => {
     expect(add_marker).toHaveBeenNthCalledWith(3, 22.027, null);
   });
 
-  it("sets temporary range endpoints from selected clips and bracket shortcuts", () => {
+  it("sets temporary range endpoints from the context menu and shortcuts", async () => {
     const { set_focus_in, set_focus_out, clear_focus } = render_timeline({
       focus_selection: {
         selection_id: "focus-selection-0198d12345677890abcdef1234567890",
@@ -1091,9 +1097,16 @@ describe("MediaTimeline", () => {
       },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /范围标记/ }));
-    fireEvent.click(screen.getByRole("button", { name: "设置范围起点" }));
-    fireEvent.click(screen.getByRole("button", { name: "设置范围终点" }));
+    const range_marker = screen.getByRole("button", { name: /范围标记/ });
+    fireEvent.click(range_marker);
+    fireEvent.contextMenu(range_marker);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /设置范围起点/ }),
+    );
+    fireEvent.contextMenu(range_marker);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /设置范围终点/ }),
+    );
     fireEvent.keyDown(window, { key: "[", code: "BracketLeft" });
     fireEvent.keyDown(window, { key: "]", code: "BracketRight" });
     expect(set_focus_in).toHaveBeenCalledTimes(2);
@@ -1116,7 +1129,8 @@ describe("MediaTimeline", () => {
     expect(set_focus_out).toHaveBeenCalledTimes(2);
     input.remove();
 
-    fireEvent.click(screen.getByRole("button", { name: "清除时间线范围选区" }));
+    fireEvent.contextMenu(range_marker);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "清除范围" }));
     expect(clear_focus).toHaveBeenCalledOnce();
   });
 

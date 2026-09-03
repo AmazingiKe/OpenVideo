@@ -84,7 +84,6 @@ export type PlayerHandle = {
   play: () => void;
   pause: () => void;
   toggle_playback: () => void;
-  set_playback_rate: (rate: number) => void;
   set_volume: (volume: number) => void;
   toggle_captions: () => void;
   step_frame: (direction: "previous" | "next") => void;
@@ -143,9 +142,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const hold_controls_visible_fn_ref = useRef<(() => void) | null>(null);
   const release_controls_visibility_fn_ref = useRef<(() => void) | null>(null);
   const controls_visibility_held_ref = useRef(false);
-  const set_playback_rate_fn_ref = useRef<((rate: number) => void) | null>(
-    null,
-  );
   const set_volume_fn_ref = useRef<((volume: number) => void) | null>(null);
   const [internal_captions_enabled, set_internal_captions_enabled] =
     useState(true);
@@ -399,8 +395,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       pause: () => pause_fn_ref.current?.(),
       current_time: () => current_time_value_ref.current,
       toggle_playback: () => toggle_playback_fn_ref.current?.(),
-      set_playback_rate: (rate: number) =>
-        set_playback_rate_fn_ref.current?.(rate),
       set_volume: (volume: number) => set_volume_fn_ref.current?.(volume),
       toggle_captions,
       step_frame,
@@ -433,9 +427,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       : null;
     toggle_playback_fn_ref.current = instance
       ? () => instance.toggle_playback()
-      : null;
-    set_playback_rate_fn_ref.current = instance
-      ? (rate) => instance.set_playback_rate(rate)
       : null;
     set_volume_fn_ref.current = instance
       ? (volume) => instance.set_volume(volume)

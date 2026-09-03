@@ -52,6 +52,7 @@ import {
   ContextMenuLabel,
   ContextMenuRadioGroup,
   ContextMenuRadioItem,
+  ContextMenuSeparator,
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -351,8 +352,6 @@ type MediaTimelineProps = {
   on_scrub_commit: (seconds: number) => void;
   on_scrub_cancel: () => void;
   on_seek: (seconds: number) => void;
-  on_toggle_playback: () => void;
-  on_playback_rate_change: (rate: number) => void;
   on_selected_transcript_indices_change: (segment_indices: number[]) => void;
   on_request_transcript_correction: (segment_indices: number[]) => void;
   on_add_marker: (
@@ -397,8 +396,6 @@ export function MediaTimeline({
   on_scrub_commit,
   on_scrub_cancel,
   on_seek,
-  on_toggle_playback,
-  on_playback_rate_change,
   on_selected_transcript_indices_change,
   on_request_transcript_correction,
   on_add_marker,
@@ -428,6 +425,7 @@ export function MediaTimeline({
   const [context_transcript_indices, set_context_transcript_indices] = useState<
     number[]
   >([]);
+  const [context_time, set_context_time] = useState(0);
   const [interaction_revision, set_interaction_revision] = useState(0);
   const [interaction_error, set_interaction_error] = useState<string | null>(
     null,
@@ -441,6 +439,7 @@ export function MediaTimeline({
   const ruler_pointer_id_ref = useRef<number | null>(null);
   const ruler_bounds_ref = useRef<{ left: number } | null>(null);
   const ruler_scrub_time_ref = useRef(0);
+  const action_context_menu_prepared_ref = useRef(false);
   const current_time_output_ref = useRef<HTMLOutputElement>(null);
   const previous_asset_id_ref = useRef(asset_id);
   const transcript_segments = useMemo(
@@ -1048,6 +1047,8 @@ export function MediaTimeline({
     set_context_marker_id(null);
     set_context_transcript_indices([]);
     if (data.kind === "marker" && data.source_id) {
+      action_context_menu_prepared_ref.current = true;
+      set_context_time(data.marker_anchor_seconds ?? action.start);
       set_context_marker_id(data.source_id);
       set_selected_marker_id(data.source_id);
       const next_selection = new Set([data.source_id]);
@@ -1060,6 +1061,8 @@ export function MediaTimeline({
       return;
     }
     if (data.kind === "transcript" && data.source_index !== undefined) {
+      action_context_menu_prepared_ref.current = true;
+      set_context_time(action.start);
       const context_selection = selected_transcript_index_set.has(
         data.source_index,
       )
@@ -1076,6 +1079,25 @@ export function MediaTimeline({
       return;
     }
     event.preventDefault();
+  }
+
+  function prepare_timeline_context_menu(event: MouseEvent<HTMLDivElement>) {
+    if (action_context_menu_prepared_ref.current) {
+      action_context_menu_prepared_ref.current = false;
+      return;
+    }
+    set_context_marker_id(null);
+    set_context_transcript_indices([]);
+    if (event.clientX === 0 && event.clientY === 0) {
+      set_context_time(bounded_time);
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const pointer_x = event.clientX - bounds.left;
+    const time =
+      (viewport.scroll_left + pointer_x - TIMELINE_START_LEFT) /
+      viewport.zoom_pixels_per_second;
+    set_context_time(Math.min(Math.max(time, 0), duration));
   }
 
   async function persist_marker_bounds(
@@ -1178,24 +1200,9 @@ export function MediaTimeline({
         current_time={bounded_time}
         current_time_output_ref={current_time_output_ref}
         duration={duration}
-        is_paused={is_paused}
-        playback_rate={playback_rate}
         minimum_zoom_pixels_per_second={minimum_zoom_pixels_per_second}
         zoom_pixels_per_second={viewport.zoom_pixels_per_second}
-        on_toggle_playback={on_toggle_playback}
-        on_playback_rate_change={on_playback_rate_change}
-        on_add_marker={(seconds) => void add_marker_and_select(seconds)}
         on_zoom_change={zoom_to}
-        on_set_range_start={() =>
-          on_set_focus_in?.(
-            selected_action_range?.start_seconds ?? bounded_time,
-          )
-        }
-        on_set_range_end={() =>
-          on_set_focus_out?.(selected_action_range?.end_seconds ?? bounded_time)
-        }
-        on_clear_range={() => on_clear_focus?.()}
-        has_range_selection={focus_selection !== null}
         tools={toolbar_tools}
         context_sources={
           on_add_agent_context ? (
@@ -1303,7 +1310,8 @@ export function MediaTimeline({
                   ? start_marquee
                   : undefined
               }
-              aria-label="时间线画布；双击标记轨道空白处添加标记，方括号设置范围，Enter 编辑片段，Shift+F10 打开菜单"
+              onContextMenu={prepare_timeline_context_menu}
+              aria-label="时间线画布；Ctrl+M 添加标记，方括号设置范围，右键或 Shift+F10 打开菜单"
               aria-description={timeline_lod_accessible_description(
                 timeline_lod,
               )}
@@ -1415,8 +1423,8 @@ export function MediaTimeline({
               </output>
             </div>
           </ContextMenuTrigger>
-          {context_marker ? (
-            <ContextMenuContent className="min-w-48">
+          <ContextMenuContent className="min-w-48">
+            {context_marker ? (
               <ContextMenuGroup>
                 <ContextMenuLabel>标记重要程度</ContextMenuLabel>
                 <ContextMenuRadioGroup
@@ -1440,15 +1448,13 @@ export function MediaTimeline({
                   ))}
                 </ContextMenuRadioGroup>
               </ContextMenuGroup>
-            </ContextMenuContent>
-          ) : context_transcript_indices.length > 0 ? (
-            <ContextMenuContent className="min-w-48">
-              <ContextMenuLabel>
-                {context_transcript_indices.length === 1
-                  ? "字幕"
-                  : `已选择 ${context_transcript_indices.length} 条字幕`}
-              </ContextMenuLabel>
+            ) : context_transcript_indices.length > 0 ? (
               <ContextMenuGroup>
+                <ContextMenuLabel>
+                  {context_transcript_indices.length === 1
+                    ? "字幕"
+                    : `已选择 ${context_transcript_indices.length} 条字幕`}
+                </ContextMenuLabel>
                 <ContextMenuItem
                   onSelect={() =>
                     on_request_transcript_correction(context_transcript_indices)
@@ -1483,8 +1489,49 @@ export function MediaTimeline({
                   </ContextMenuItem>
                 ) : null}
               </ContextMenuGroup>
-            </ContextMenuContent>
-          ) : null}
+            ) : null}
+            {context_marker || context_transcript_indices.length > 0 ? (
+              <ContextMenuSeparator />
+            ) : null}
+            <ContextMenuGroup>
+              <ContextMenuLabel>时间线操作</ContextMenuLabel>
+              <ContextMenuItem
+                onSelect={() => void add_marker_and_select(context_time)}
+              >
+                <Flag aria-hidden="true" />
+                添加标记
+                <ContextMenuShortcut>Ctrl+M</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem
+                disabled={!on_set_focus_in}
+                onSelect={() =>
+                  on_set_focus_in?.(
+                    selected_action_range?.start_seconds ?? context_time,
+                  )
+                }
+              >
+                设置范围起点
+                <ContextMenuShortcut>[</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem
+                disabled={!on_set_focus_out}
+                onSelect={() =>
+                  on_set_focus_out?.(
+                    selected_action_range?.end_seconds ?? context_time,
+                  )
+                }
+              >
+                设置范围终点
+                <ContextMenuShortcut>]</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem
+                disabled={focus_selection === null || !on_clear_focus}
+                onSelect={() => on_clear_focus?.()}
+              >
+                清除范围
+              </ContextMenuItem>
+            </ContextMenuGroup>
+          </ContextMenuContent>
         </ContextMenu>
       </div>
 
