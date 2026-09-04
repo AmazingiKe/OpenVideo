@@ -20,27 +20,26 @@ vi.mock("@/shared/api", () => ({
 }));
 
 vi.mock("@/features/player/Player", () => ({
-  Player: forwardRef<PlayerHandle, Record<string, unknown>>(function Player(
-    props,
-    ref,
-  ) {
-    player_render(props);
-    useImperativeHandle(ref, () => ({
-      current_time: () => 0,
-      pause: player_pause,
-      play: vi.fn(),
-      begin_scrub: vi.fn(),
-      update_scrub: vi.fn(),
-      commit_scrub: vi.fn(),
-      cancel_scrub: vi.fn(),
-      seek_to: vi.fn(),
-      set_volume: vi.fn(),
-      step_frame: vi.fn(),
-      toggle_captions: vi.fn(),
-      toggle_playback: player_toggle,
-    }));
-    return <div data-testid="summary-player" />;
-  }),
+  Player: forwardRef<PlayerHandle, Record<string, unknown>>(
+    function Player(props, ref) {
+      player_render(props);
+      useImperativeHandle(ref, () => ({
+        current_time: () => 0,
+        pause: player_pause,
+        play: vi.fn(),
+        begin_scrub: vi.fn(),
+        update_scrub: vi.fn(),
+        commit_scrub: vi.fn(),
+        cancel_scrub: vi.fn(),
+        seek_to: vi.fn(),
+        set_volume: vi.fn(),
+        step_frame: vi.fn(),
+        toggle_captions: vi.fn(),
+        toggle_playback: player_toggle,
+      }));
+      return <div data-testid="summary-player" />;
+    },
+  ),
 }));
 
 describe("SummaryMediaShelf", () => {
@@ -80,8 +79,9 @@ describe("SummaryMediaShelf", () => {
         transcript={null}
       />,
     );
-    const on_time_change = player_render.mock.lastCall?.[0]
-      .on_time_change as (seconds: number) => void;
+    const on_time_change = player_render.mock.lastCall?.[0].on_time_change as (
+      seconds: number,
+    ) => void;
 
     act(() => on_time_change(65.432));
     expect(screen.getByLabelText("总结参考视频当前时间")).toHaveTextContent(

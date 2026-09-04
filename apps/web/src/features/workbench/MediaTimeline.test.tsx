@@ -1035,6 +1035,45 @@ describe("MediaTimeline", () => {
     );
   });
 
+  it("keeps the captured playhead visible beyond the ruler and follows it on release", () => {
+    const { result, scrub_update, scrub_commit } = render_timeline();
+    const ruler = screen.getByRole("slider", { name: "时间线播放头" });
+    const playhead = result.container.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    );
+    if (!playhead) throw new Error("Missing playback head");
+    vi.spyOn(ruler, "getBoundingClientRect").mockReturnValue({
+      x: 16,
+      y: 0,
+      left: 16,
+      top: 0,
+      right: 816,
+      bottom: 32,
+      width: 800,
+      height: 32,
+      toJSON: () => undefined,
+    });
+    ruler.setPointerCapture = vi.fn();
+    ruler.releasePointerCapture = vi.fn();
+
+    fireEvent.pointerDown(ruler, {
+      button: 0,
+      clientX: 416,
+      pointerId: 7,
+    });
+    fireEvent.pointerMove(ruler, { clientX: 1_216, pointerId: 7 });
+
+    expect(scrub_update).toHaveBeenLastCalledWith(14.8);
+    expect(playhead).toHaveAttribute("data-visible", "true");
+    expect(playhead.style.transform).toBe("translate3d(1008px, 0, 0)");
+
+    fireEvent.pointerUp(ruler, { clientX: 1_216, pointerId: 7 });
+
+    expect(scrub_commit).toHaveBeenCalledWith(14.8);
+    expect(playhead).toHaveAttribute("data-visible", "true");
+    expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
+  });
+
   it("cancels lost pointer capture without committing a video seek", () => {
     const { scrub_start, scrub_cancel, scrub_commit, seek_to } =
       render_timeline();

@@ -37,6 +37,11 @@ type TimelineScrollPosition = {
   scrollTop: number;
 };
 
+type PlayheadPositionOptions = {
+  follow_viewport?: boolean;
+  keep_visible?: boolean;
+};
+
 type MediaTimelineViewportOptions = {
   asset_id: string | null;
   bounded_time: number;
@@ -130,22 +135,37 @@ export function use_media_timeline_viewport({
       : update_timeline_render_window(parameters);
   }, [canvas_width, duration, render_window, viewport, wheel_zoom_is_active]);
 
-  const position_playhead = useCallback((time: number) => {
-    const playhead = playhead_ref.current;
-    if (!playhead) return;
-    const current_viewport = viewport_ref.current;
-    const playhead_x =
-      TIMELINE_START_LEFT +
-      time * current_viewport.zoom_pixels_per_second -
-      current_viewport.scroll_left;
-    playhead.style.transform = `translate3d(${playhead_x}px, 0, 0)`;
-    const is_visible =
-      playhead_x >= 0 && playhead_x <= render_metrics_ref.current.canvas_width;
-    const visibility = String(is_visible);
-    if (playhead.dataset.visible !== visibility) {
-      playhead.dataset.visible = visibility;
-    }
-  }, []);
+  const position_playhead = useCallback(
+    (time: number, keep_visible = false) => {
+      const playhead = playhead_ref.current;
+      if (!playhead) return;
+      const current_viewport = viewport_ref.current;
+      const calculated_playhead_x =
+        TIMELINE_START_LEFT +
+        time * current_viewport.zoom_pixels_per_second -
+        current_viewport.scroll_left;
+      const canvas_width = render_metrics_ref.current.canvas_width;
+      const right_visible_edge = Math.max(
+        TIMELINE_START_LEFT,
+        canvas_width - TIMELINE_START_LEFT,
+      );
+      const playhead_x = keep_visible
+        ? Math.min(
+            Math.max(calculated_playhead_x, TIMELINE_START_LEFT),
+            right_visible_edge,
+          )
+        : calculated_playhead_x;
+      playhead.style.transform = `translate3d(${playhead_x}px, 0, 0)`;
+      const is_visible =
+        keep_visible ||
+        (calculated_playhead_x >= 0 && calculated_playhead_x <= canvas_width);
+      const visibility = String(is_visible);
+      if (playhead.dataset.visible !== visibility) {
+        playhead.dataset.visible = visibility;
+      }
+    },
+    [],
+  );
 
   const reset_editor_render_window = useCallback(() => {
     const next_render_window = create_timeline_render_window({
@@ -161,12 +181,12 @@ export function use_media_timeline_viewport({
   }, []);
 
   const set_playhead_time = useCallback(
-    (time: number, follow_viewport = false) => {
+    (time: number, options: PlayheadPositionOptions = {}) => {
       playhead_time_ref.current = time;
       const wheel_frame_is_pending =
         pending_wheel_frame_ref.current !== null ||
         pending_wheel_events_ref.current.length > 0;
-      if (follow_viewport && !wheel_frame_is_pending) {
+      if (options.follow_viewport && !wheel_frame_is_pending) {
         const current_viewport = viewport_ref.current;
         const next_scroll_left = calculate_playhead_follow_scroll_left({
           time,
@@ -189,7 +209,7 @@ export function use_media_timeline_viewport({
           set_viewport(next_viewport);
         }
       }
-      position_playhead(time);
+      position_playhead(time, options.keep_visible);
     },
     [position_playhead],
   );
@@ -256,7 +276,9 @@ export function use_media_timeline_viewport({
     const should_follow_viewport =
       bounded_time !== previous_bounded_time_ref.current;
     previous_bounded_time_ref.current = bounded_time;
-    set_playhead_time(bounded_time, should_follow_viewport);
+    set_playhead_time(bounded_time, {
+      follow_viewport: should_follow_viewport,
+    });
   }, [bounded_time, duration, set_playhead_time]);
 
   useLayoutEffect(() => {
@@ -327,7 +349,7 @@ export function use_media_timeline_viewport({
         typeof reported_time === "number" && Number.isFinite(reported_time)
           ? Math.min(metrics.duration, Math.max(0, reported_time))
           : fallback_time;
-      set_playhead_time(playback_time, true);
+      set_playhead_time(playback_time, { follow_viewport: true });
       if (playback_time >= metrics.duration) {
         playhead_frame_ref.current = null;
         return;

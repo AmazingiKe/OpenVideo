@@ -1706,7 +1706,7 @@ export function MediaTimeline({
     event.currentTarget.setPointerCapture(event.pointerId);
     const time = ruler_time_from_pointer(event.clientX);
     ruler_scrub_time_ref.current = time;
-    set_playhead_time(time);
+    set_playhead_time(time, { keep_visible: true });
     update_ruler_scrub_feedback(event.currentTarget, time);
     on_scrub_start_bounded(time);
   }
@@ -1715,7 +1715,7 @@ export function MediaTimeline({
     if (ruler_pointer_id_ref.current !== event.pointerId) return;
     const time = ruler_time_from_pointer(event.clientX);
     ruler_scrub_time_ref.current = time;
-    set_playhead_time(time);
+    set_playhead_time(time, { keep_visible: true });
     update_ruler_scrub_feedback(event.currentTarget, time);
     on_scrub_update_bounded(time);
   }
@@ -1727,7 +1727,10 @@ export function MediaTimeline({
     ruler_bounds_ref.current = null;
     ruler_scrub_time_ref.current = time;
     event.currentTarget.releasePointerCapture(event.pointerId);
-    set_playhead_time(time);
+    set_playhead_time(time, {
+      follow_viewport: true,
+      keep_visible: true,
+    });
     update_ruler_scrub_feedback(event.currentTarget, time);
     on_scrub_commit_bounded(time);
   }
@@ -1741,7 +1744,7 @@ export function MediaTimeline({
       duration,
     );
     ruler_scrub_time_ref.current = presented_time;
-    set_playhead_time(presented_time);
+    set_playhead_time(presented_time, { follow_viewport: true });
     update_ruler_scrub_feedback(event.currentTarget, presented_time);
     on_scrub_cancel();
   }

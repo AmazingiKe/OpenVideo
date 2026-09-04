@@ -20,8 +20,8 @@ vi.mock("@/shared/api", () => ({
 }));
 
 vi.mock("@/features/player/Player", () => ({
-  Player: forwardRef(function Player(props) {
-    player_render(props);
+  Player: forwardRef(function Player(props, ref) {
+    player_render(props, ref);
     return <div data-testid="marker-player" />;
   }),
 }));
