@@ -20,7 +20,13 @@ describe("LocalPreferencesProvider", () => {
     act(() => {
       first_render.result.current.set_assistant_open(false);
       first_render.result.current.set_color_scheme("dark");
-      first_render.result.current.set_summary_media_expanded(true);
+      first_render.result.current.set_summary_player_geometry({
+        x: 16,
+        y: 24,
+        width: 400,
+        height: 280,
+      });
+      first_render.result.current.set_summary_player_open(true);
       first_render.result.current.set_video_library_open(true);
     });
 
@@ -28,7 +34,13 @@ describe("LocalPreferencesProvider", () => {
       expect(read_local_preferences()).toEqual({
         assistant_open: false,
         color_scheme: "dark",
-        summary_media_expanded: true,
+        summary_player_geometry: {
+          x: 16,
+          y: 24,
+          width: 400,
+          height: 280,
+        },
+        summary_player_open: true,
         video_library_open: true,
       }),
     );
@@ -41,7 +53,13 @@ describe("LocalPreferencesProvider", () => {
     expect(restored_render.result.current.preferences).toEqual({
       assistant_open: false,
       color_scheme: "dark",
-      summary_media_expanded: true,
+      summary_player_geometry: {
+        x: 16,
+        y: 24,
+        width: 400,
+        height: 280,
+      },
+      summary_player_open: true,
       video_library_open: true,
     });
   });
@@ -51,7 +69,8 @@ describe("LocalPreferencesProvider", () => {
     expect(read_local_preferences()).toEqual({
       assistant_open: null,
       color_scheme: null,
-      summary_media_expanded: null,
+      summary_player_geometry: null,
+      summary_player_open: null,
       video_library_open: null,
     });
 
@@ -61,14 +80,16 @@ describe("LocalPreferencesProvider", () => {
         version: 1,
         assistant_open: "yes",
         color_scheme: "sepia",
-        summary_media_expanded: "yes",
+        summary_player_geometry: { x: 16, y: 24, width: "wide", height: 280 },
+        summary_player_open: "yes",
         video_library_open: true,
       }),
     );
     expect(read_local_preferences()).toEqual({
       assistant_open: null,
       color_scheme: null,
-      summary_media_expanded: null,
+      summary_player_geometry: null,
+      summary_player_open: null,
       video_library_open: true,
     });
   });

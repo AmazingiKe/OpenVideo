@@ -568,6 +568,13 @@ export type SummaryDocument = {
   created_at: string;
   updated_at: string;
 };
+
+export type SummaryPlayerGeometry = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 export type SummarySaveMetadata = {
   operation_id: string;
   client_id: string;
