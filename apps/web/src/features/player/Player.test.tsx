@@ -160,6 +160,16 @@ describe("Player", () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("00:00:12.000");
   });
 
+  it("can hide precision controls for compact embedded players", () => {
+    render(<Player src="/video.mp4" precision_controls_enabled={false} />);
+
+    expect(
+      screen.queryByRole("group", { name: "精确定位" }),
+    ).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByLabelText("OpenVideo 播放器"), { key: "[" });
+    expect(media.remote.pause).not.toHaveBeenCalled();
+  });
+
   it("exposes playback commands through the stable player handle", () => {
     const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();

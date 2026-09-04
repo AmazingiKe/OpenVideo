@@ -1,4 +1,4 @@
-import { act, forwardRef, useImperativeHandle } from "react";
+import { forwardRef, useImperativeHandle } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -70,7 +70,7 @@ describe("FloatingSummaryPlayer", () => {
     expect(on_open_change).toHaveBeenCalledWith(true);
   });
 
-  it("controls playback and reports precise time from the floating header", () => {
+  it("controls playback without adding a duplicate precision overlay", () => {
     const on_open_change = vi.fn();
     render(
       <FloatingSummaryPlayer
@@ -82,17 +82,15 @@ describe("FloatingSummaryPlayer", () => {
         transcript={null}
       />,
     );
-    const on_time_change = player_render.mock.lastCall?.[0].on_time_change as (
-      seconds: number,
-    ) => void;
-
-    act(() => on_time_change(65.432));
     fireEvent.click(screen.getByRole("button", { name: "播放总结参考视频" }));
     fireEvent.click(screen.getByRole("button", { name: "最小化参考视频" }));
 
-    expect(screen.getByLabelText("总结参考视频当前时间")).toHaveTextContent(
-      "00:01:05.432",
-    );
+    expect(player_render.mock.lastCall?.[0]).toMatchObject({
+      precision_controls_enabled: false,
+    });
+    expect(
+      screen.queryByLabelText("总结参考视频当前时间"),
+    ).not.toBeInTheDocument();
     expect(player_toggle).toHaveBeenCalledOnce();
     expect(on_open_change).toHaveBeenCalledWith(false);
   });
@@ -173,6 +171,33 @@ describe("FloatingSummaryPlayer", () => {
       y: 180,
       width: 500,
       height: 340,
+    });
+
+    const northwest_resize_handle = screen.getByRole("button", {
+      name: "向左上调整参考视频窗口大小",
+    });
+    fireEvent.pointerDown(northwest_resize_handle, {
+      button: 0,
+      clientX: 220,
+      clientY: 180,
+      pointerId: 3,
+    });
+    fireEvent.pointerMove(northwest_resize_handle, {
+      clientX: 160,
+      clientY: 140,
+      pointerId: 3,
+    });
+    fireEvent.pointerUp(northwest_resize_handle, {
+      clientX: 160,
+      clientY: 140,
+      pointerId: 3,
+    });
+
+    expect(on_geometry_change).toHaveBeenLastCalledWith({
+      x: 160,
+      y: 140,
+      width: 560,
+      height: 380,
     });
   });
 });

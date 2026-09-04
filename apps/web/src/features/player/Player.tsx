@@ -101,6 +101,7 @@ type PlayerProps = {
   subtitle_display?: SubtitleDisplaySettings;
   evidence_range?: AgentEvidenceRange | null;
   storyboard?: ScrubPreviewStoryboard | null;
+  precision_controls_enabled?: boolean;
   playback_rate?: number;
   volume?: number;
   on_time_change?: (seconds: number) => void;
@@ -121,6 +122,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     subtitle_display = DEFAULT_SUBTITLE_DISPLAY_SETTINGS,
     evidence_range = null,
     storyboard = null,
+    precision_controls_enabled = true,
     playback_rate,
     volume,
     on_time_change,
@@ -503,61 +505,65 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     <div
       className="openvideo_player_shell"
       ref={player_shell_ref}
-      onKeyDownCapture={handle_frame_shortcut}
+      onKeyDownCapture={
+        precision_controls_enabled ? handle_frame_shortcut : undefined
+      }
       onPointerDownCapture={hold_player_timeline_controls}
       onPointerUpCapture={release_player_timeline_controls}
       onPointerCancelCapture={release_player_timeline_controls}
       onLostPointerCapture={release_player_timeline_controls}
     >
-      <div
-        className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-md border bg-card/95 p-1 text-card-foreground shadow-sm max-[600px]:top-2 max-[600px]:right-2"
-        role="group"
-        aria-label="精确定位"
-      >
-        <Button
-          type="button"
-          variant="secondary"
-          size="icon-xs"
-          aria-label="上一帧"
-          aria-keyshortcuts={PREVIOUS_FRAME_SHORTCUT}
-          title="上一帧（[）"
-          onClick={() => step_frame("previous")}
+      {precision_controls_enabled ? (
+        <div
+          className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-md border bg-card/95 p-1 text-card-foreground shadow-sm max-[600px]:top-2 max-[600px]:right-2"
+          role="group"
+          aria-label="精确定位"
         >
-          <StepBack aria-hidden="true" />
-        </Button>
-        <output
-          className="min-w-24 px-1 text-center font-mono text-xs tabular-nums max-[600px]:min-w-20 max-[600px]:text-[10px]"
-          aria-label="当前精确时间"
-          aria-live="polite"
-        >
-          {precise_time_label}
-        </output>
-        <Button
-          type="button"
-          variant="secondary"
-          size="icon-xs"
-          aria-label="下一帧"
-          aria-keyshortcuts={NEXT_FRAME_SHORTCUT}
-          title="下一帧（]）"
-          onClick={() => step_frame("next")}
-        >
-          <StepForward aria-hidden="true" />
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="icon-xs"
-          aria-label="复制当前精确时间"
-          title="复制当前精确时间"
-          onClick={copy_precise_time}
-        >
-          {copied_time ? (
-            <Check aria-hidden="true" />
-          ) : (
-            <ClipboardCopy aria-hidden="true" />
-          )}
-        </Button>
-      </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-xs"
+            aria-label="上一帧"
+            aria-keyshortcuts={PREVIOUS_FRAME_SHORTCUT}
+            title="上一帧（[）"
+            onClick={() => step_frame("previous")}
+          >
+            <StepBack aria-hidden="true" />
+          </Button>
+          <output
+            className="min-w-24 px-1 text-center font-mono text-xs tabular-nums max-[600px]:min-w-20 max-[600px]:text-[10px]"
+            aria-label="当前精确时间"
+            aria-live="polite"
+          >
+            {precise_time_label}
+          </output>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-xs"
+            aria-label="下一帧"
+            aria-keyshortcuts={NEXT_FRAME_SHORTCUT}
+            title="下一帧（]）"
+            onClick={() => step_frame("next")}
+          >
+            <StepForward aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-xs"
+            aria-label="复制当前精确时间"
+            title="复制当前精确时间"
+            onClick={copy_precise_time}
+          >
+            {copied_time ? (
+              <Check aria-hidden="true" />
+            ) : (
+              <ClipboardCopy aria-hidden="true" />
+            )}
+          </Button>
+        </div>
+      ) : null}
       <MediaPlayer
         className="openvideo_player"
         src={{ src, type: "video/mp4" }}

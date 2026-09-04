@@ -1,7 +1,6 @@
 import {
   Captions,
   GripHorizontal,
-  Maximize2,
   Minimize2,
   Pause,
   PictureInPicture2,
@@ -19,7 +18,6 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Player, type PlayerHandle } from "@/features/player/Player";
-import { format_precise_media_time } from "@/features/player/format_media_time";
 import { record_scrub_preview_metrics } from "@/features/player/scrub_preview_diagnostics";
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_settings";
 import { use_storyboard_preview } from "@/features/player/use_storyboard_preview";
@@ -55,12 +53,62 @@ type ContainerSize = {
 };
 
 type PointerOperation = {
+  kind: "move" | ResizeDirection;
   pointer_id: number;
   pointer_x: number;
   pointer_y: number;
   initial_geometry: SummaryPlayerGeometry;
   current_geometry: SummaryPlayerGeometry;
 };
+
+type ResizeDirection = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
+
+const RESIZE_HANDLES: ReadonlyArray<{
+  direction: ResizeDirection;
+  label: string;
+  class_name: string;
+}> = [
+  {
+    direction: "n",
+    label: "向上调整参考视频窗口大小",
+    class_name: "absolute top-0 right-4 left-4 h-2 cursor-ns-resize",
+  },
+  {
+    direction: "e",
+    label: "向右调整参考视频窗口大小",
+    class_name: "absolute top-4 right-0 bottom-4 w-2 cursor-ew-resize",
+  },
+  {
+    direction: "s",
+    label: "向下调整参考视频窗口大小",
+    class_name: "absolute right-4 bottom-0 left-4 h-2 cursor-ns-resize",
+  },
+  {
+    direction: "w",
+    label: "向左调整参考视频窗口大小",
+    class_name: "absolute top-4 bottom-4 left-0 w-2 cursor-ew-resize",
+  },
+  {
+    direction: "ne",
+    label: "向右上调整参考视频窗口大小",
+    class_name: "absolute top-0 right-0 size-4 cursor-nesw-resize",
+  },
+  {
+    direction: "se",
+    label: "调整参考视频窗口大小",
+    class_name: "absolute right-0 bottom-0 size-4 cursor-nwse-resize",
+  },
+  {
+    direction: "sw",
+    label: "向左下调整参考视频窗口大小",
+    class_name: "absolute bottom-0 left-0 size-4 cursor-nesw-resize",
+  },
+  {
+    direction: "nw",
+    label: "向左上调整参考视频窗口大小",
+    class_name: "absolute top-0 left-0 size-4 cursor-nwse-resize",
+  },
+];
 
 export function FloatingSummaryPlayer({
   asset,
@@ -80,7 +128,6 @@ export function FloatingSummaryPlayer({
   const [geometry, set_geometry] = useState<SummaryPlayerGeometry | null>(
     stored_geometry,
   );
-  const [current_time, set_current_time] = useState(0);
   const [paused, set_paused] = useState(true);
   const [captions_enabled, set_captions_enabled] = useState(true);
   const { storyboard, request_storyboard } = use_storyboard_preview(asset);
@@ -92,7 +139,6 @@ export function FloatingSummaryPlayer({
   }, [stored_geometry]);
 
   useEffect(() => {
-    set_current_time(0);
     set_paused(true);
     set_captions_enabled(true);
   }, [asset?.asset_id]);
@@ -153,11 +199,15 @@ export function FloatingSummaryPlayer({
     );
   }
 
-  function begin_pointer_operation(event: PointerEvent<HTMLButtonElement>) {
+  function begin_pointer_operation(
+    event: PointerEvent<HTMLButtonElement>,
+    kind: PointerOperation["kind"],
+  ) {
     if (event.button !== 0 || compact) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     pointer_operation_ref.current = {
+      kind,
       pointer_id: event.pointerId,
       pointer_x: event.clientX,
       pointer_y: event.clientY,
@@ -166,10 +216,7 @@ export function FloatingSummaryPlayer({
     };
   }
 
-  function move_pointer_operation(
-    event: PointerEvent<HTMLButtonElement>,
-    operation: "move" | "resize",
-  ) {
+  function move_pointer_operation(event: PointerEvent<HTMLButtonElement>) {
     const pointer_operation = pointer_operation_ref.current;
     if (
       !pointer_operation ||
@@ -179,22 +226,23 @@ export function FloatingSummaryPlayer({
     }
     const delta_x = event.clientX - pointer_operation.pointer_x;
     const delta_y = event.clientY - pointer_operation.pointer_y;
-    const next_geometry =
-      operation === "move"
-        ? {
-            ...pointer_operation.initial_geometry,
-            x: pointer_operation.initial_geometry.x + delta_x,
-            y: pointer_operation.initial_geometry.y + delta_y,
-          }
-        : {
-            ...pointer_operation.initial_geometry,
-            width: pointer_operation.initial_geometry.width + delta_x,
-            height: pointer_operation.initial_geometry.height + delta_y,
-          };
-    pointer_operation.current_geometry = fit_player_geometry(
-      next_geometry,
-      container_size,
-    );
+    pointer_operation.current_geometry =
+      pointer_operation.kind === "move"
+        ? fit_player_geometry(
+            {
+              ...pointer_operation.initial_geometry,
+              x: pointer_operation.initial_geometry.x + delta_x,
+              y: pointer_operation.initial_geometry.y + delta_y,
+            },
+            container_size,
+          )
+        : resize_player_geometry(
+            pointer_operation.initial_geometry,
+            pointer_operation.kind,
+            delta_x,
+            delta_y,
+            container_size,
+          );
     set_geometry(pointer_operation.current_geometry);
   }
 
@@ -251,13 +299,13 @@ export function FloatingSummaryPlayer({
             title={compact ? asset.title : "拖动或使用方向键移动播放器"}
             disabled={compact}
             onKeyDown={move_with_keyboard}
-            onPointerDown={begin_pointer_operation}
-            onPointerMove={(event) => move_pointer_operation(event, "move")}
+            onPointerDown={(event) => begin_pointer_operation(event, "move")}
+            onPointerMove={move_pointer_operation}
             onPointerUp={finish_pointer_operation}
             onPointerCancel={finish_pointer_operation}
           >
             <GripHorizontal aria-hidden="true" />
-            <span className="truncate">{asset?.title}</span>
+            <span className="truncate">{asset.title}</span>
           </button>
           <Button
             type="button"
@@ -272,12 +320,6 @@ export function FloatingSummaryPlayer({
               <Pause aria-hidden="true" />
             )}
           </Button>
-          <output
-            className="min-w-20 px-1 text-center font-mono text-xs text-muted-foreground tabular-nums"
-            aria-label="总结参考视频当前时间"
-          >
-            {format_precise_media_time(current_time)}
-          </output>
           <Button
             type="button"
             variant="ghost"
@@ -289,34 +331,15 @@ export function FloatingSummaryPlayer({
             <Captions aria-hidden="true" />
           </Button>
           {!compact ? (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="恢复播放器默认位置和大小"
-                onClick={reset_geometry}
-              >
-                <RotateCcw aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="cursor-nwse-resize"
-                aria-label="调整参考视频窗口大小"
-                title="拖动或使用方向键调整播放器大小"
-                onKeyDown={resize_with_keyboard}
-                onPointerDown={begin_pointer_operation}
-                onPointerMove={(event) =>
-                  move_pointer_operation(event, "resize")
-                }
-                onPointerUp={finish_pointer_operation}
-                onPointerCancel={finish_pointer_operation}
-              >
-                <Maximize2 aria-hidden="true" />
-              </Button>
-            </>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="恢复播放器默认位置和大小"
+              onClick={reset_geometry}
+            >
+              <RotateCcw aria-hidden="true" />
+            </Button>
           ) : null}
           <Button
             type="button"
@@ -337,15 +360,38 @@ export function FloatingSummaryPlayer({
             subtitle_display={
               asset.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS
             }
+            precision_controls_enabled={false}
             captions_enabled={captions_enabled}
             storyboard={storyboard}
-            on_time_change={set_current_time}
             on_pause_change={set_paused}
             on_captions_change={set_captions_enabled}
             on_scrub_preview_metrics={record_scrub_preview_metrics}
             on_scrub_preview_unavailable={request_storyboard}
           />
         </div>
+        {!compact
+          ? RESIZE_HANDLES.map((handle) => (
+              <button
+                key={handle.direction}
+                type="button"
+                className={cn(
+                  "border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-focus-ring",
+                  handle.class_name,
+                )}
+                aria-label={handle.label}
+                tabIndex={handle.direction === "se" ? 0 : -1}
+                onKeyDown={
+                  handle.direction === "se" ? resize_with_keyboard : undefined
+                }
+                onPointerDown={(event) =>
+                  begin_pointer_operation(event, handle.direction)
+                }
+                onPointerMove={move_pointer_operation}
+                onPointerUp={finish_pointer_operation}
+                onPointerCancel={finish_pointer_operation}
+              />
+            ))
+          : null}
       </section>
     </div>
   );
@@ -429,6 +475,52 @@ function fit_player_geometry(
     ),
     width,
     height,
+  };
+}
+
+function resize_player_geometry(
+  geometry: SummaryPlayerGeometry,
+  direction: ResizeDirection,
+  delta_x: number,
+  delta_y: number,
+  container_size: ContainerSize,
+): SummaryPlayerGeometry {
+  const maximum_right = container_size.width - PLAYER_EDGE_INSET_PX;
+  const maximum_bottom = container_size.height - PLAYER_EDGE_INSET_PX;
+  let left = geometry.x;
+  let top = geometry.y;
+  let right = geometry.x + geometry.width;
+  let bottom = geometry.y + geometry.height;
+
+  if (direction.includes("e")) {
+    right = clamp(right + delta_x, left + PLAYER_MIN_WIDTH_PX, maximum_right);
+  }
+  if (direction.includes("w")) {
+    left = clamp(
+      left + delta_x,
+      PLAYER_EDGE_INSET_PX,
+      right - PLAYER_MIN_WIDTH_PX,
+    );
+  }
+  if (direction.includes("s")) {
+    bottom = clamp(
+      bottom + delta_y,
+      top + PLAYER_MIN_HEIGHT_PX,
+      maximum_bottom,
+    );
+  }
+  if (direction.includes("n")) {
+    top = clamp(
+      top + delta_y,
+      PLAYER_EDGE_INSET_PX,
+      bottom - PLAYER_MIN_HEIGHT_PX,
+    );
+  }
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
   };
 }
 
