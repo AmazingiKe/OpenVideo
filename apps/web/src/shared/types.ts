@@ -575,6 +575,10 @@ export type SummaryPlayerGeometry = {
   width: number;
   height: number;
 };
+export type SummaryPlayerState = {
+  geometry: SummaryPlayerGeometry | null;
+  open: boolean;
+};
 export type SummarySaveMetadata = {
   operation_id: string;
   client_id: string;

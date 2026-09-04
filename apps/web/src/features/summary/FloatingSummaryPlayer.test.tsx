@@ -7,7 +7,6 @@ import type { MediaAsset } from "@/shared/types";
 import { FloatingSummaryPlayer } from "./FloatingSummaryPlayer";
 
 const player_render = vi.hoisted(() => vi.fn());
-const player_toggle = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ setQueryData: vi.fn() }),
@@ -34,7 +33,7 @@ vi.mock("@/features/player/Player", () => ({
         set_volume: vi.fn(),
         step_frame: vi.fn(),
         toggle_captions: vi.fn(),
-        toggle_playback: player_toggle,
+        toggle_playback: vi.fn(),
       }));
       return <div data-testid="summary-player" />;
     },
@@ -44,7 +43,6 @@ vi.mock("@/features/player/Player", () => ({
 describe("FloatingSummaryPlayer", () => {
   beforeEach(() => {
     player_render.mockClear();
-    player_toggle.mockClear();
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -70,7 +68,7 @@ describe("FloatingSummaryPlayer", () => {
     expect(on_open_change).toHaveBeenCalledWith(true);
   });
 
-  it("controls playback without adding a duplicate precision overlay", () => {
+  it("keeps playback and precision controls out of the floating header", () => {
     const on_open_change = vi.fn();
     render(
       <FloatingSummaryPlayer
@@ -82,7 +80,6 @@ describe("FloatingSummaryPlayer", () => {
         transcript={null}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "播放总结参考视频" }));
     fireEvent.click(screen.getByRole("button", { name: "最小化参考视频" }));
 
     expect(player_render.mock.lastCall?.[0]).toMatchObject({
@@ -91,7 +88,12 @@ describe("FloatingSummaryPlayer", () => {
     expect(
       screen.queryByLabelText("总结参考视频当前时间"),
     ).not.toBeInTheDocument();
-    expect(player_toggle).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("button", { name: "播放总结参考视频" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "暂停总结参考视频" }),
+    ).not.toBeInTheDocument();
     expect(on_open_change).toHaveBeenCalledWith(false);
   });
 

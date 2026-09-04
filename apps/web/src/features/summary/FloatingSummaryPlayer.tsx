@@ -2,9 +2,7 @@ import {
   Captions,
   GripHorizontal,
   Minimize2,
-  Pause,
   PictureInPicture2,
-  Play,
   RotateCcw,
 } from "lucide-react";
 import {
@@ -128,7 +126,6 @@ export function FloatingSummaryPlayer({
   const [geometry, set_geometry] = useState<SummaryPlayerGeometry | null>(
     stored_geometry,
   );
-  const [paused, set_paused] = useState(true);
   const [captions_enabled, set_captions_enabled] = useState(true);
   const { storyboard, request_storyboard } = use_storyboard_preview(asset);
   const compact = container_size.width <= PLAYER_COMPACT_MAX_WIDTH_PX;
@@ -136,10 +133,9 @@ export function FloatingSummaryPlayer({
 
   useEffect(() => {
     set_geometry(stored_geometry);
-  }, [stored_geometry]);
+  }, [asset?.asset_id, stored_geometry]);
 
   useEffect(() => {
-    set_paused(true);
     set_captions_enabled(true);
   }, [asset?.asset_id]);
 
@@ -311,19 +307,6 @@ export function FloatingSummaryPlayer({
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={paused ? "播放总结参考视频" : "暂停总结参考视频"}
-            onClick={() => player_ref.current?.toggle_playback()}
-          >
-            {paused ? (
-              <Play aria-hidden="true" />
-            ) : (
-              <Pause aria-hidden="true" />
-            )}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
             aria-label="切换总结参考视频字幕"
             aria-pressed={captions_enabled}
             onClick={() => player_ref.current?.toggle_captions()}
@@ -363,7 +346,6 @@ export function FloatingSummaryPlayer({
             precision_controls_enabled={false}
             captions_enabled={captions_enabled}
             storyboard={storyboard}
-            on_pause_change={set_paused}
             on_captions_change={set_captions_enabled}
             on_scrub_preview_metrics={record_scrub_preview_metrics}
             on_scrub_preview_unavailable={request_storyboard}

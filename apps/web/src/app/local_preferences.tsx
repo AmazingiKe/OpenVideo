@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { apply_user_color_scheme, type ColorScheme } from "@/color_scheme";
-import type { SummaryPlayerGeometry } from "@/shared/types";
+import type { SummaryPlayerGeometry, SummaryPlayerState } from "@/shared/types";
 
 export const LOCAL_PREFERENCES_STORAGE_KEY = "openvideo.local-preferences";
 
@@ -19,8 +19,7 @@ const LOCAL_PREFERENCES_VERSION = 1;
 export type LocalPreferences = {
   assistant_open: boolean | null;
   color_scheme: ColorScheme | null;
-  summary_player_geometry: SummaryPlayerGeometry | null;
-  summary_player_open: boolean | null;
+  summary_player_states: Record<string, SummaryPlayerState>;
   video_library_open: boolean | null;
 };
 
@@ -28,8 +27,11 @@ type LocalPreferencesContextValue = {
   preferences: LocalPreferences;
   set_assistant_open: (open: boolean) => void;
   set_color_scheme: (color_scheme: ColorScheme) => void;
-  set_summary_player_geometry: (geometry: SummaryPlayerGeometry) => void;
-  set_summary_player_open: (open: boolean) => void;
+  set_summary_player_geometry: (
+    asset_id: string,
+    geometry: SummaryPlayerGeometry,
+  ) => void;
+  set_summary_player_open: (asset_id: string, open: boolean) => void;
   set_video_library_open: (open: boolean) => void;
 };
 
@@ -37,16 +39,14 @@ type StoredLocalPreferences = {
   version: typeof LOCAL_PREFERENCES_VERSION;
   assistant_open?: boolean;
   color_scheme?: ColorScheme;
-  summary_player_geometry?: SummaryPlayerGeometry;
-  summary_player_open?: boolean;
+  summary_player_states?: Record<string, SummaryPlayerState>;
   video_library_open?: boolean;
 };
 
 const EMPTY_LOCAL_PREFERENCES: LocalPreferences = {
   assistant_open: null,
   color_scheme: null,
-  summary_player_geometry: null,
-  summary_player_open: null,
+  summary_player_states: {},
   video_library_open: null,
 };
 
@@ -75,14 +75,38 @@ export function LocalPreferencesProvider({
     set_preferences((current) => ({ ...current, color_scheme }));
   }, []);
   const set_summary_player_geometry = useCallback(
-    (summary_player_geometry: SummaryPlayerGeometry) => {
-      set_preferences((current) => ({ ...current, summary_player_geometry }));
+    (asset_id: string, geometry: SummaryPlayerGeometry) => {
+      set_preferences((current) => {
+        const current_state = current.summary_player_states[asset_id] ?? {
+          geometry: null,
+          open: false,
+        };
+        return {
+          ...current,
+          summary_player_states: {
+            ...current.summary_player_states,
+            [asset_id]: { ...current_state, geometry },
+          },
+        };
+      });
     },
     [],
   );
   const set_summary_player_open = useCallback(
-    (summary_player_open: boolean) => {
-      set_preferences((current) => ({ ...current, summary_player_open }));
+    (asset_id: string, open: boolean) => {
+      set_preferences((current) => {
+        const current_state = current.summary_player_states[asset_id] ?? {
+          geometry: null,
+          open: false,
+        };
+        return {
+          ...current,
+          summary_player_states: {
+            ...current.summary_player_states,
+            [asset_id]: { ...current_state, open },
+          },
+        };
+      });
     },
     [],
   );
@@ -147,13 +171,9 @@ export function read_local_preferences(
         stored.color_scheme === "light" || stored.color_scheme === "dark"
           ? stored.color_scheme
           : null,
-      summary_player_geometry: parse_summary_player_geometry(
-        stored.summary_player_geometry,
+      summary_player_states: parse_summary_player_states(
+        stored.summary_player_states,
       ),
-      summary_player_open:
-        typeof stored.summary_player_open === "boolean"
-          ? stored.summary_player_open
-          : null,
       video_library_open:
         typeof stored.video_library_open === "boolean"
           ? stored.video_library_open
@@ -178,11 +198,8 @@ function persist_local_preferences(
   if (preferences.color_scheme !== null) {
     stored.color_scheme = preferences.color_scheme;
   }
-  if (preferences.summary_player_geometry !== null) {
-    stored.summary_player_geometry = preferences.summary_player_geometry;
-  }
-  if (preferences.summary_player_open !== null) {
-    stored.summary_player_open = preferences.summary_player_open;
+  if (Object.keys(preferences.summary_player_states).length > 0) {
+    stored.summary_player_states = preferences.summary_player_states;
   }
   if (preferences.video_library_open !== null) {
     stored.video_library_open = preferences.video_library_open;
@@ -225,6 +242,25 @@ function parse_summary_player_geometry(
     return null;
   }
   return { x, y, width, height };
+}
+
+function parse_summary_player_states(
+  value: unknown,
+): Record<string, SummaryPlayerState> {
+  if (!is_record(value)) return {};
+  const states: Record<string, SummaryPlayerState> = {};
+  for (const [asset_id, state] of Object.entries(value)) {
+    if (!asset_id || !is_record(state) || typeof state.open !== "boolean") {
+      continue;
+    }
+    const geometry =
+      state.geometry === null
+        ? null
+        : parse_summary_player_geometry(state.geometry);
+    if (state.geometry !== null && geometry === null) continue;
+    states[asset_id] = { geometry, open: state.open };
+  }
+  return states;
 }
 
 function is_finite_number(value: unknown): value is number {
