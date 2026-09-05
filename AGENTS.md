@@ -11,7 +11,7 @@
 
 ## 代码质量（AI 必须遵守）
 
-本项目的架构分为 core / maya / tools / ui 四层。以下规则用于约束 AI 生成或重构的代码，防止出现"结构正确但难以阅读"的产物。
+本项目的后端按 core（领域模型与持久化）/ llm（模型接入与调度）/ tools（媒体与分析工具）/ ui（API 路由）组织，业务服务负责流程编排；前端位于 apps/web。以下规则用于约束 AI 生成或重构的代码，防止出现"结构正确但难以阅读"的产物。
 
 ### 1. 单一命名，禁止别名
 
@@ -84,21 +84,22 @@ class DataManager:
 
 ### 8. 导入规范：禁止跨包相对导入
 
-- 跨包导入（core / maya / tools / ui 之间）必须使用绝对导入，以包名 `arnold_magic_node` 开头。
-- 禁止跨包使用 `..` 相对导入（如 `from ..core.xxx`、`from ..maya.xxx`），因为它要求读者先定位当前文件层级，不直观。
+- 后端跨包导入（core / llm / tools / ui 之间）必须使用绝对导入，以包名 `openvideo` 开头。
+- 禁止跨包使用 `..` 相对导入（如 `from ..core.library import MediaLibrary`、`from ..llm.capability_resolver import CapabilityResolver`），因为它要求读者先定位当前文件层级，不直观。
 - 同一包内相邻模块可用单点相对导入 `from .xxx import`。
 
 反例（禁止）：
 
 ```python
-from ..core.magic_connection import build_magic_connection_plan
-from ..maya.magic_connection import MayaMagicConnectionExecutor
+from ..core.library import MediaLibrary
+from ..llm.capability_resolver import CapabilityResolver
 ```
 
 正例：
 
 ```python
-from arnold_magic_node.core.magic_connection import build_magic_connection_plan
+from openvideo.core.library import MediaLibrary
+from openvideo.llm.capability_resolver import CapabilityResolver
 ```
 
 ### 9. 架构克制：按需架构、内聚不散
@@ -164,7 +165,7 @@ for node in cmds.ls(type="file"):
 - 所有对外持久化的标识符（资源、任务、片段、标记等）必须使用 **UUIDv7**（RFC 9562），禁止 `uuid4`、`crypto.randomUUID()` 或自增整数作为对外标识符。
 - UUIDv7 生成必须走统一工具，禁止在业务代码中各自实现：
   - 后端：`openvideo.core.identifiers.uuid7`
-  - 前端：`apps/web/src/identifiers.ts` 的 `uuid7`
+  - 前端：`apps/web/src/shared/identifiers.ts` 的 `uuid7`
 - 对外标识符格式为「语义前缀 + uuid7 十六进制」，例如 `asset-{uuid7.hex}`、`job-{uuid7.hex}`；校验时按前缀 + 定长十六进制处理，不允许把前缀或用户输入拼进文件路径。
 - 新增标识符字段时同样使用 UUIDv7，不得引入其他 ID 方案。
 
