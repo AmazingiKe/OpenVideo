@@ -31,7 +31,6 @@ vi.mock("@/features/player/Player", () => ({
         cancel_scrub: vi.fn(),
         seek_to: vi.fn(),
         set_volume: vi.fn(),
-        step_frame: vi.fn(),
         toggle_captions: vi.fn(),
         toggle_playback: vi.fn(),
       }));
@@ -68,7 +67,7 @@ describe("FloatingSummaryPlayer", () => {
     expect(on_open_change).toHaveBeenCalledWith(true);
   });
 
-  it("keeps playback and precision controls out of the floating header", () => {
+  it("keeps playback controls out of the floating header", () => {
     const on_open_change = vi.fn();
     render(
       <FloatingSummaryPlayer
@@ -82,9 +81,6 @@ describe("FloatingSummaryPlayer", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "最小化参考视频" }));
 
-    expect(player_render.mock.lastCall?.[0]).toMatchObject({
-      precision_controls_enabled: false,
-    });
     expect(
       screen.queryByLabelText("总结参考视频当前时间"),
     ).not.toBeInTheDocument();

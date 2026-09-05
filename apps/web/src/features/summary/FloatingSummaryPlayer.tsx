@@ -343,7 +343,6 @@ export function FloatingSummaryPlayer({
             subtitle_display={
               asset.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS
             }
-            precision_controls_enabled={false}
             captions_enabled={captions_enabled}
             storyboard={storyboard}
             on_captions_change={set_captions_enabled}
