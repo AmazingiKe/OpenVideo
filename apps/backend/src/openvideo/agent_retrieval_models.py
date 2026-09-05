@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import hashlib
@@ -30,14 +31,13 @@ RERANKER_MODEL_WEIGHT_SHA256 = (
 )
 MODELSCOPE_MODEL_REVISION = "master"
 RETRIEVAL_MODEL_NAME = "OpenVideo/Qwen3-Embedding-Reranker-0.6B"
-RETRIEVAL_MODEL_VERSION = (
-    f"{EMBEDDING_MODEL_REVISION}.{RERANKER_MODEL_REVISION}"
-)
+RETRIEVAL_MODEL_VERSION = f"{EMBEDDING_MODEL_REVISION}.{RERANKER_MODEL_REVISION}"
 EMBEDDING_DIMENSIONS = 512
 EMBEDDING_BATCH_SIZE = 8
 RERANKER_BATCH_SIZE = 4
 EMBEDDING_MAX_TOKENS = 512
 RERANKER_MAX_TOKENS = 1_024
+RERANKER_LOGITS_TO_KEEP = 1
 RETRIEVAL_INSTRUCTION = (
     "Given a question about a video library, retrieve time-aligned passages "
     "that provide evidence for the answer"
@@ -133,16 +133,24 @@ class NeuralRetrievalModels:
         texts: Sequence[str],
         report_progress: ProgressReporter,
     ) -> list[list[float]]:
+        if not texts:
+            return []
         self.prepare_embedding(report_progress)
-        vectors: list[list[float]] = []
+        text_counts = Counter(texts)
+        unique_texts = sorted(text_counts, key=len)
+        vectors_by_text: dict[str, list[float]] = {}
         total = len(texts)
-        with self._lock:
-            for start in range(0, total, EMBEDDING_BATCH_SIZE):
-                batch = texts[start : start + EMBEDDING_BATCH_SIZE]
-                vectors.extend(self._encode(batch, is_query=False))
-                report_progress("embedding_documents", min(start + len(batch), total), total)
+        processed = 0
+        for start in range(0, len(unique_texts), EMBEDDING_BATCH_SIZE):
+            batch = unique_texts[start : start + EMBEDDING_BATCH_SIZE]
+            # 相近长度共用批次减少填充；批次之间释放模型锁，让前台查询可以穿插。
+            with self._lock:
+                batch_vectors = self._encode(batch, is_query=False)
+            vectors_by_text.update(zip(batch, batch_vectors, strict=True))
+            processed += sum(text_counts[text] for text in batch)
+            report_progress("embedding_documents", processed, total)
         self.prepare_reranker(report_progress)
-        return vectors
+        return [vectors_by_text[text] for text in texts]
 
     def encode_query(
         self,
@@ -191,8 +199,10 @@ class NeuralRetrievalModels:
         )
         inputs = {name: value.to(self._device) for name, value in inputs.items()}
         with torch.inference_mode():
-            output = self._embedding_model(**inputs)
-            pooled = _last_token_pool(output.last_hidden_state, inputs["attention_mask"])
+            output = self._embedding_model(**inputs, use_cache=False)
+            pooled = _last_token_pool(
+                output.last_hidden_state, inputs["attention_mask"]
+            )
             pooled = pooled[:, : self.dimensions]
             normalized = torch.nn.functional.normalize(pooled.float(), p=2, dim=1)
         return normalized.cpu().tolist()
@@ -255,7 +265,12 @@ class NeuralRetrievalModels:
         true_token_id = tokenizer("yes", add_special_tokens=False).input_ids[0]
         false_token_id = tokenizer("no", add_special_tokens=False).input_ids[0]
         with torch.inference_mode():
-            logits = self._reranker_model(**inputs).logits[:, -1, :]
+            output = self._reranker_model(
+                **inputs,
+                use_cache=False,
+                logits_to_keep=RERANKER_LOGITS_TO_KEEP,
+            )
+            logits = output.logits[:, -1, :]
             binary_logits = torch.stack(
                 [logits[:, false_token_id], logits[:, true_token_id]],
                 dim=1,
@@ -374,9 +389,7 @@ def _download_model_snapshot(spec: RetrievalModelSpec, directory: Path) -> None:
             )
             return
         except Exception as huggingface_error:
-            message = (
-                f"{spec.repository} 无法从官方 ModelScope 或 Hugging Face 下载"
-            )
+            message = f"{spec.repository} 无法从官方 ModelScope 或 Hugging Face 下载"
             raise RetrievalModelError(message) from ExceptionGroup(
                 message,
                 [modelscope_error, huggingface_error],

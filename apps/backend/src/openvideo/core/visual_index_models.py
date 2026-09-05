@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -21,6 +22,16 @@ TERMINAL_VISUAL_INDEX_STATES = {
     VisualIndexState.READY,
     VisualIndexState.ERROR,
 }
+
+
+@dataclass(frozen=True)
+class VisualFrameEmbedding:
+    """把可复用向量与真实帧内容绑定，路径或时间变化不冒充内容变化。"""
+
+    relative_path: str
+    seconds: float
+    content_digest: str
+    vector: list[float]
 
 
 class VisualIndexStatus(BaseModel):

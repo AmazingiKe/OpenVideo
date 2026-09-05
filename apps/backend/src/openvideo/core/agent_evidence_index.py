@@ -25,8 +25,28 @@ SEMANTIC_MAX_FEATURES = 2_048
 SEMANTIC_MAX_DIMENSIONS = 64
 SEMANTIC_BATCH_SIZE = 128
 QUERY_CANDIDATE_MULTIPLIER = 6
-NEURAL_RERANK_WEIGHT = 0.55
+RECIPROCAL_RANK_CONSTANT = 60
+DIVERSITY_RELEVANCE_RATIO = 0.5
+DIVERSITY_RELEVANCE_WEIGHT = 0.85
+LEXICAL_RELEVANCE_WEIGHT = 0.64
+SEMANTIC_RELEVANCE_WEIGHT = 0.36
+LEXICAL_RANK_DECAY = 0.18
+EXACT_PHRASE_BONUS = 0.08
 MEMORY_ASSET_BONUS = 0.08
+LEXICAL_TRIGRAM_LENGTH = 3
+LEXICAL_QUERY_MAX_CHARACTERS = 512
+LEXICAL_QUERY_MAX_TERMS = 64
+LEXICAL_TERM_PATTERN = re.compile(r"[a-z0-9_]+|[\u3400-\u9fff]+", re.IGNORECASE)
+LEXICAL_CJK_PATTERN = re.compile(r"^[\u3400-\u9fff]+$")
+LEXICAL_STOP_WORDS = frozenset(
+    {"the", "and", "for", "with", "what", "why", "how", "should", "does", "are"}
+)
+NEIGHBOR_MAX_GAP_SECONDS = 30
+NEIGHBORS_PER_ANCHOR = 2
+NEIGHBOR_RELEVANCE_WEIGHT = 0.35
+NEIGHBOR_MIN_RELEVANCE = 0.08
+TRANSCRIPT_SOURCE_KEY_PREFIX = "transcript:"
+SEGMENT_SOURCE_KEY_PREFIX = "segment:"
 STALE_CONTENT_DIGEST = ""
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+|[\u3400-\u9fff]", re.IGNORECASE)
 
@@ -193,9 +213,13 @@ def replace_asset_evidence_projection(
     """只替换一个素材的词法投影，旧语义代际保持可用直到新代际切换。"""
 
     existing = {
-        row["source_key"]: (row["document_id"], row["source_version"])
+        row["source_key"]: (
+            row["document_id"],
+            row["source_version"],
+            row["source_position"],
+        )
         for row in connection.execute(
-            "SELECT document_id, source_key, source_version "
+            "SELECT document_id, source_key, source_version, source_position "
             "FROM agent_evidence_documents WHERE asset_id = ?",
             (asset.asset_id,),
         )
@@ -218,40 +242,40 @@ def replace_asset_evidence_projection(
         unchanged = previous is not None and previous[1] == source_version
         projection_changed = projection_changed or not unchanged
         document_id = previous[0] if unchanged else f"evidence-{uuid7().hex}"
+        if unchanged:
+            if previous[2] != position:
+                connection.execute(
+                    "UPDATE agent_evidence_documents SET source_position = ? "
+                    "WHERE document_id = ?",
+                    (position, document_id),
+                )
+            continue
         if previous is not None:
             connection.execute(
                 "DELETE FROM agent_evidence_fts WHERE document_id = ?", (previous[0],)
             )
-        if unchanged:
             connection.execute(
-                "UPDATE agent_evidence_documents SET source_position = ? "
-                "WHERE document_id = ?",
-                (position, document_id),
+                "DELETE FROM agent_evidence_documents WHERE document_id = ?",
+                (previous[0],),
             )
-        else:
-            if previous is not None:
-                connection.execute(
-                    "DELETE FROM agent_evidence_documents WHERE document_id = ?",
-                    (previous[0],),
-                )
-            connection.execute(
-                "INSERT INTO agent_evidence_documents "
-                "(document_id, asset_id, source_key, source_type, source_version, "
-                "source_position, start_seconds, end_seconds, title, text) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    document_id,
-                    asset.asset_id,
-                    source_key,
-                    source_type.value,
-                    source_version,
-                    position,
-                    start,
-                    end,
-                    title,
-                    text,
-                ),
-            )
+        connection.execute(
+            "INSERT INTO agent_evidence_documents "
+            "(document_id, asset_id, source_key, source_type, source_version, "
+            "source_position, start_seconds, end_seconds, title, text) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                document_id,
+                asset.asset_id,
+                source_key,
+                source_type.value,
+                source_version,
+                position,
+                start,
+                end,
+                title,
+                text,
+            ),
+        )
         connection.execute(
             "INSERT INTO agent_evidence_fts(document_id, asset_id, title, text) "
             "VALUES (?, ?, ?, ?)",
@@ -303,10 +327,10 @@ def rebuild_semantic_index(
     """后台构建完整语义代际，新索引提交前继续保留旧代际。"""
 
     rows = connection.execute(
-        "SELECT document_id, title, text FROM agent_evidence_documents "
+        "SELECT document_id, source_version, title, text FROM agent_evidence_documents "
         "ORDER BY asset_id, start_seconds, source_type"
     ).fetchall()
-    digest = _content_digest(connection)
+    digest = _content_digest(connection, rows=rows)
     total = len(rows)
     with connection:
         _write_status(
@@ -369,12 +393,24 @@ def rebuild_semantic_index(
         else:
             if dimensions is None or dimensions <= 0:
                 raise ValueError("神经语义索引必须声明向量维度")
-            report_progress("loading_embedding_model", 0, 0)
-            vectors = encode_documents(
-                [f"{row['title'] or ''}\n{row['text']}" for row in rows],
-                report_progress,
+            vectors_by_document = _reusable_neural_vectors(
+                connection, model_name, model_version, dimensions
             )
-            _validate_neural_vectors(vectors, total, dimensions)
+            pending_rows = [
+                row for row in rows if row["document_id"] not in vectors_by_document
+            ]
+            if pending_rows:
+                report_progress("loading_embedding_model", 0, 0)
+                pending_vectors = encode_documents(
+                    [f"{row['title'] or ''}\n{row['text']}" for row in pending_rows],
+                    report_progress,
+                )
+                _validate_neural_vectors(pending_vectors, len(pending_rows), dimensions)
+                vectors_by_document.update(
+                    (row["document_id"], vector)
+                    for row, vector in zip(pending_rows, pending_vectors, strict=True)
+                )
+            vectors = [vectors_by_document[row["document_id"]] for row in rows]
             vocabulary = {}
             inverse_document_frequency = []
             projection = []
@@ -461,7 +497,7 @@ def search_indexed_evidence(
     reranker: NeuralReranker | None = None,
 ) -> list[IndexedEvidenceDocument]:
     scoped_asset_ids = tuple(dict.fromkeys(asset_ids))
-    if not scoped_asset_ids:
+    if not scoped_asset_ids or limit <= 0:
         return []
     if not query or not query.strip():
         return _overview_documents(
@@ -494,22 +530,27 @@ def search_indexed_evidence(
         connection, scoped_asset_ids, normalized_query, candidate_limit
     )
     scores: dict[str, float] = {}
+    fusion_scores: dict[str, float] = {}
     reasons: dict[str, list[str]] = {}
     rows: dict[str, sqlite3.Row] = {}
     for rank, row in enumerate(lexical):
         document_id = row["document_id"]
         rows[document_id] = row
-        scores[document_id] = scores.get(document_id, 0.0) + 0.64 / (1 + rank * 0.18)
+        scores[document_id] = scores.get(
+            document_id, 0.0
+        ) + LEXICAL_RELEVANCE_WEIGHT / (1 + rank * LEXICAL_RANK_DECAY)
+        fusion_scores[document_id] = 1 / (RECIPROCAL_RANK_CONSTANT + rank + 1)
         reasons.setdefault(document_id, []).append("FTS5 关键词匹配")
-    for row, similarity, model_kind in semantic:
+    for rank, (row, similarity, model_kind) in enumerate(semantic, start=1):
         document_id = row["document_id"]
         rows[document_id] = row
-        scores[document_id] = scores.get(document_id, 0.0) + 0.36 * similarity
-        reason = (
-            "神经语义向量匹配"
-            if model_kind == "neural"
-            else "资料库语义向量匹配"
+        scores[document_id] = (
+            scores.get(document_id, 0.0) + SEMANTIC_RELEVANCE_WEIGHT * similarity
         )
+        fusion_scores[document_id] = fusion_scores.get(document_id, 0.0) + 1 / (
+            RECIPROCAL_RANK_CONSTANT + rank
+        )
+        reason = "神经语义向量匹配" if model_kind == "neural" else "资料库语义向量匹配"
         reasons.setdefault(document_id, []).append(reason)
     for row in _memory_context_documents(
         connection,
@@ -520,6 +561,7 @@ def search_indexed_evidence(
         document_id = row["document_id"]
         rows.setdefault(document_id, row)
         scores.setdefault(document_id, 0.0)
+        fusion_scores.setdefault(document_id, 0.0)
         reasons.setdefault(document_id, []).append("已验证项目记忆定位")
     for document_id, row in rows.items():
         if row["asset_id"] in memory_assets:
@@ -527,16 +569,19 @@ def search_indexed_evidence(
             reasons.setdefault(document_id, []).append("项目记忆增强排序")
         haystack = f"{row['title'] or ''} {row['text']}".casefold()
         if normalized_query in haystack:
-            scores[document_id] += 0.08
+            scores[document_id] += EXACT_PHRASE_BONUS
             reasons.setdefault(document_id, []).append("完整短语匹配")
     ranked = sorted(
         rows.values(),
         key=lambda row: (
+            -fusion_scores[row["document_id"]],
             -scores[row["document_id"]],
             row["start_seconds"],
+            row["asset_id"],
             row["source_type"],
+            row["source_key"],
         ),
-    )
+    )[:candidate_limit]
     if reranker is not None and ranked:
         rerank_scores = reranker(
             normalized_query,
@@ -546,37 +591,30 @@ def search_indexed_evidence(
             raise ValueError("神经重排返回数量与候选数量不一致")
         for row, rerank_score in zip(ranked, rerank_scores, strict=True):
             document_id = row["document_id"]
-            hybrid_score = min(1.0, max(0.0, scores[document_id]))
+            if not math.isfinite(rerank_score):
+                raise ValueError("神经重排包含非有限数值")
             neural_score = min(1.0, max(0.0, float(rerank_score)))
-            scores[document_id] = (
-                (1 - NEURAL_RERANK_WEIGHT) * hybrid_score
-                + NEURAL_RERANK_WEIGHT * neural_score
-            )
+            # RRF 只选择候选；正文相关性仍取独立的交叉编码分数，不能把名次当置信度。
+            scores[document_id] = neural_score
             reasons.setdefault(document_id, []).append("神经交叉编码重排")
         ranked.sort(
             key=lambda row: (
                 -scores[row["document_id"]],
+                -fusion_scores[row["document_id"]],
                 row["start_seconds"],
+                row["asset_id"],
                 row["source_type"],
+                row["source_key"],
             )
         )
-    direct_limit = min(
-        limit,
-        max(
-            1,
-            (limit * 2 + 2) // 3,
-            len({row["asset_id"] for row in ranked}),
-            len({row["source_type"] for row in ranked}),
-        ),
-    )
-    ranked = _select_diverse_rows(ranked, direct_limit)
+    diverse_rows = _select_diverse_rows(ranked, scores, limit)
     documents = [
         _indexed_document(
             row,
             min(1.0, scores[row["document_id"]]),
             tuple(dict.fromkeys(reasons[row["document_id"]])),
         )
-        for row in ranked
+        for row in diverse_rows
     ]
     return _append_neighbors(
         connection,
@@ -588,26 +626,41 @@ def search_indexed_evidence(
     )
 
 
-def _select_diverse_rows(ranked: list[sqlite3.Row], limit: int) -> list[sqlite3.Row]:
+def _select_diverse_rows(
+    ranked: list[sqlite3.Row], scores: dict[str, float], limit: int
+) -> list[sqlite3.Row]:
+    """在相关候选中减少重复内容，不能为凑齐来源而引入低相关证据。"""
+
+    if not ranked or limit <= 0:
+        return []
+    minimum_score = (
+        max(scores[row["document_id"]] for row in ranked) * DIVERSITY_RELEVANCE_RATIO
+    )
+    candidates = [row for row in ranked if scores[row["document_id"]] >= minimum_score]
+    tokens = {
+        row["document_id"]: set(_semantic_tokens(row["text"])) for row in candidates
+    }
     selected = []
-    selected_ids = set()
-    used_assets = set()
-    used_sources = set()
-    for row in ranked:
-        if row["asset_id"] in used_assets and row["source_type"] in used_sources:
-            continue
-        selected.append(row)
-        selected_ids.add(row["document_id"])
-        used_assets.add(row["asset_id"])
-        used_sources.add(row["source_type"])
-        if len(selected) == limit:
-            return selected
-    for row in ranked:
-        if row["document_id"] in selected_ids:
-            continue
-        selected.append(row)
-        if len(selected) == limit:
-            break
+    while candidates and len(selected) < limit:
+        if not selected:
+            choice = candidates[0]
+        else:
+
+            def marginal_relevance(row: sqlite3.Row) -> float:
+                row_tokens = tokens[row["document_id"]]
+                redundancy = max(
+                    len(row_tokens & tokens[previous["document_id"]])
+                    / max(1, len(row_tokens | tokens[previous["document_id"]]))
+                    for previous in selected
+                )
+                return (
+                    DIVERSITY_RELEVANCE_WEIGHT * scores[row["document_id"]]
+                    - (1 - DIVERSITY_RELEVANCE_WEIGHT) * redundancy
+                )
+
+            choice = max(candidates, key=marginal_relevance)
+        selected.append(choice)
+        candidates.remove(choice)
     return selected
 
 
@@ -682,8 +735,7 @@ def ensure_semantic_index_target(
     """目标模型变化时只标记待重建，旧代际继续服务到原子切换。"""
 
     active = connection.execute(
-        "SELECT model_name, model_version FROM agent_semantic_models "
-        "WHERE active = 1"
+        "SELECT model_name, model_version FROM agent_semantic_models WHERE active = 1"
     ).fetchone()
     matches = bool(
         active
@@ -885,6 +937,31 @@ def _mark_semantic_index_stale(connection: sqlite3.Connection) -> None:
     )
 
 
+def _reusable_neural_vectors(
+    connection: sqlite3.Connection,
+    model_name: str,
+    model_version: str,
+    dimensions: int,
+) -> dict[str, list[float]]:
+    """未变证据保留文档标识，只有同一神经模型的完整有效向量可跨代际复用。"""
+    rows = connection.execute(
+        "SELECT e.document_id, e.vector FROM agent_evidence_embeddings e "
+        "JOIN agent_semantic_models m ON m.model_id = e.model_id "
+        "WHERE m.active = 1 AND m.model_kind = 'neural' "
+        "AND m.model_name = ? AND m.model_version = ? AND m.dimensions = ?",
+        (model_name, model_version, dimensions),
+    ).fetchall()
+    vectors: dict[str, list[float]] = {}
+    for row in rows:
+        try:
+            vector = _blob_floats(row["vector"])
+        except (TypeError, ValueError):
+            continue
+        if len(vector) == dimensions and all(math.isfinite(value) for value in vector):
+            vectors[row["document_id"]] = vector
+    return vectors
+
+
 def _validate_neural_vectors(
     vectors: list[list[float]],
     expected_count: int,
@@ -908,22 +985,58 @@ def _lexical_matches(
 ) -> list[sqlite3.Row]:
     placeholders = ", ".join("?" for _ in asset_ids)
     range_sql, range_parameters = _range_filter(start_seconds, end_seconds)
-    if len(query.replace(" ", "")) < 3:
+    if len(query.replace(" ", "")) < LEXICAL_TRIGRAM_LENGTH:
+        escaped_query = (
+            query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
         rows = connection.execute(
             "SELECT * FROM agent_evidence_documents WHERE asset_id IN ("
-            f"{placeholders}) {range_sql} AND (title LIKE ? OR text LIKE ?) "
-            "ORDER BY start_seconds LIMIT ?",
-            (*asset_ids, *range_parameters, f"%{query}%", f"%{query}%", limit),
+            f"{placeholders}) {range_sql} AND (title LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\') "
+            "ORDER BY start_seconds, asset_id, source_type, source_key LIMIT ?",
+            (
+                *asset_ids,
+                *range_parameters,
+                f"%{escaped_query}%",
+                f"%{escaped_query}%",
+                limit,
+            ),
         ).fetchall()
         return rows
-    match_query = '"' + query.replace('"', '""') + '"'
+    terms = _lexical_query_terms(query)
+    if not terms:
+        return []
+    match_query = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
     return connection.execute(
         "SELECT d.* FROM agent_evidence_fts "
         "JOIN agent_evidence_documents d USING(document_id) "
         f"WHERE agent_evidence_fts MATCH ? AND d.asset_id IN ({placeholders}) "
-        f"{range_sql} ORDER BY bm25(agent_evidence_fts) LIMIT ?",
+        f"{range_sql} ORDER BY bm25(agent_evidence_fts), d.start_seconds, "
+        "d.asset_id, d.source_type, d.source_key LIMIT ?",
         (match_query, *asset_ids, *range_parameters, limit),
     ).fetchall()
+
+
+def _lexical_query_terms(query: str) -> list[str]:
+    """FTS trigram 的整句短语无法召回换序问句，补充有界词项并保持中文局部匹配。"""
+
+    bounded_query = query[:LEXICAL_QUERY_MAX_CHARACTERS]
+    terms = [bounded_query]
+    for term in LEXICAL_TERM_PATTERN.findall(bounded_query):
+        if len(term) < LEXICAL_TRIGRAM_LENGTH or term in LEXICAL_STOP_WORDS:
+            continue
+        terms.append(term)
+        if LEXICAL_CJK_PATTERN.fullmatch(term):
+            terms.extend(
+                term[start : start + LEXICAL_TRIGRAM_LENGTH]
+                for start in range(len(term) - LEXICAL_TRIGRAM_LENGTH + 1)
+            )
+    unique_terms = list(dict.fromkeys(terms))
+    if len(unique_terms) <= LEXICAL_QUERY_MAX_TERMS:
+        return unique_terms
+    return [
+        unique_terms[index * (len(unique_terms) - 1) // (LEXICAL_QUERY_MAX_TERMS - 1)]
+        for index in range(LEXICAL_QUERY_MAX_TERMS)
+    ]
 
 
 def _semantic_matches(
@@ -972,7 +1085,15 @@ def _semantic_matches(
         )
         for row in rows
     ]
-    scored.sort(key=lambda item: (-item[1], item[0]["start_seconds"]))
+    scored.sort(
+        key=lambda item: (
+            -item[1],
+            item[0]["start_seconds"],
+            item[0]["asset_id"],
+            item[0]["source_type"],
+            item[0]["source_key"],
+        )
+    )
     return [item for item in scored[:limit] if item[1] > 0]
 
 
@@ -1054,23 +1175,50 @@ def _append_neighbors(
     end_seconds: float | None,
     limit: int,
 ) -> list[IndexedEvidenceDocument]:
+    if len(documents) >= limit:
+        return documents
     selected_ids = {document.document_id for document in documents}
-    neighbors = []
-    for document in documents[: max(1, limit // 2)]:
-        rows = connection.execute(
-            "SELECT * FROM agent_evidence_documents "
-            "WHERE asset_id = ? AND source_type = ? "
-            "AND source_position IN (?, ?)",
+    neighbor_groups = []
+    for document in documents:
+        if document.retrieval_relation != "direct":
+            continue
+        source = connection.execute(
+            "SELECT source_key FROM agent_evidence_documents WHERE document_id = ?",
+            (document.document_id,),
+        ).fetchone()
+        if source is None:
+            continue
+        family = (
+            TRANSCRIPT_SOURCE_KEY_PREFIX
+            if source["source_key"].startswith(TRANSCRIPT_SOURCE_KEY_PREFIX)
+            else SEGMENT_SOURCE_KEY_PREFIX
+        )
+        parameters = (document.asset_id, document.source_type.value, f"{family}%")
+        previous = connection.execute(
+            "SELECT * FROM agent_evidence_documents WHERE asset_id = ? AND source_type = ? "
+            "AND source_key LIKE ? AND end_seconds BETWEEN ? AND ? "
+            "ORDER BY end_seconds DESC, start_seconds DESC, source_key LIMIT 1",
             (
-                document.asset_id,
-                document.source_type.value,
-                document.source_position - 1,
-                document.source_position + 1,
+                *parameters,
+                document.start_seconds - NEIGHBOR_MAX_GAP_SECONDS,
+                document.start_seconds,
             ),
-        ).fetchall()
-        for row in rows:
+        ).fetchone()
+        following = connection.execute(
+            "SELECT * FROM agent_evidence_documents WHERE asset_id = ? AND source_type = ? "
+            "AND source_key LIKE ? AND start_seconds BETWEEN ? AND ? "
+            "ORDER BY start_seconds, end_seconds, source_key LIMIT 1",
+            (
+                *parameters,
+                document.end_seconds,
+                document.end_seconds + NEIGHBOR_MAX_GAP_SECONDS,
+            ),
+        ).fetchone()
+        group = []
+        for row in (previous, following):
             if (
-                row["document_id"] in selected_ids
+                row is None
+                or row["document_id"] in selected_ids
                 or row["asset_id"] not in asset_ids
                 or not _ranges_intersect(
                     row["start_seconds"],
@@ -1080,16 +1228,28 @@ def _append_neighbors(
                 )
             ):
                 continue
-            selected_ids.add(row["document_id"])
-            neighbors.append(
+            group.append(
                 _indexed_document(
                     row,
-                    max(0.08, document.relevance_score * 0.35),
+                    max(
+                        NEIGHBOR_MIN_RELEVANCE,
+                        document.relevance_score * NEIGHBOR_RELEVANCE_WEIGHT,
+                    ),
                     ("邻近上下文",),
                     "neighbor",
                 )
             )
-    return [*documents, *neighbors[: max(0, limit - len(documents))]]
+        neighbor_groups.append(group)
+    neighbors = []
+    for position in range(NEIGHBORS_PER_ANCHOR):
+        for group in neighbor_groups:
+            if position >= len(group) or len(documents) + len(neighbors) >= limit:
+                continue
+            neighbor = group[position]
+            if neighbor.document_id not in selected_ids:
+                selected_ids.add(neighbor.document_id)
+                neighbors.append(neighbor)
+    return [*documents, *neighbors]
 
 
 def _indexed_document(
@@ -1308,12 +1468,19 @@ def _source_version(
     ).hexdigest()
 
 
-def _content_digest(connection: sqlite3.Connection) -> str:
+def _content_digest(
+    connection: sqlite3.Connection, *, rows: list[sqlite3.Row] | None = None
+) -> str:
+    ordered_rows = (
+        connection.execute(
+            "SELECT document_id, source_version FROM agent_evidence_documents "
+            "ORDER BY document_id"
+        )
+        if rows is None
+        else sorted(rows, key=lambda row: row["document_id"])
+    )
     digest = hashlib.sha256()
-    for row in connection.execute(
-        "SELECT document_id, source_version FROM agent_evidence_documents "
-        "ORDER BY document_id"
-    ):
+    for row in ordered_rows:
         digest.update(row["document_id"].encode("utf-8"))
         digest.update(row["source_version"].encode("ascii"))
     return digest.hexdigest()

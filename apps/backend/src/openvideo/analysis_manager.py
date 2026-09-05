@@ -487,31 +487,6 @@ class AnalysisManager:
                     or job.operation == AnalysisOperation.TRANSCRIPTION
                 )
                 if should_transcribe:
-                    if job.operation == AnalysisOperation.INITIALIZATION:
-                        descriptor = require_transcription_adapter(
-                            transcription_options
-                        )
-                        if not is_transcription_model_installed(
-                            descriptor,
-                            self.settings.models_root_directory,
-                        ):
-                            self._update_job(
-                                job_id,
-                                AnalysisStage.PREPARING_TRANSCRIPTION_MODEL,
-                                1,
-                                f"正在准备本地转录模型：{descriptor.name}",
-                            )
-                            await asyncio.to_thread(
-                                self._model_installer,
-                                descriptor,
-                                self.settings.models_root_directory,
-                                lambda downloaded, total: self._report_model_progress(
-                                    job_id,
-                                    descriptor.name,
-                                    downloaded,
-                                    total,
-                                ),
-                            )
                     saved_metadata = self.library.load_transcription_metadata(
                         asset.asset_id
                     )
@@ -536,7 +511,7 @@ class AnalysisManager:
                         )
                     )
                     self._update_job(
-                        job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频"
+                        job_id, AnalysisStage.EXTRACTING_AUDIO, 0, "正在读取平台字幕"
                     )
                     work_directory = self.library.temporary_directory(job_id)
                     transcription_result = await asyncio.to_thread(
@@ -547,13 +522,8 @@ class AnalysisManager:
                         work_directory,
                         self.settings.ffmpeg_path,
                         self.settings.ffmpeg_bin_dir,
-                        self._transcriber(
-                            transcription_options,
-                            lambda progress: self._report_transcription_progress(
-                                job_id,
-                                progress,
-                            ),
-                            self._transcription_context(asset),
+                        lambda: self._prepare_transcriber(
+                            job, transcription_options, asset
                         ),
                     )
                     transcript = _bound_transcript_to_media(
@@ -743,17 +713,39 @@ class AnalysisManager:
             raise AnalysisPrerequisiteError("分析任务使用的 AI 模型已被删除")
         return LiteLlmVision(model)
 
-    def _transcriber(
+    def _prepare_transcriber(
         self,
+        job: AnalysisJob,
         options: TranscriptionOptions,
-        progress_reporter: Callable[[TranscriptionProgress], None],
-        context: str,
+        asset: MediaAsset,
     ) -> Transcriber:
+        """仅在平台字幕缺失后准备本地识别，显式转录仍沿用已验证的模型配置。"""
+        if job.operation == AnalysisOperation.INITIALIZATION:
+            descriptor = require_transcription_adapter(options)
+            if not is_transcription_model_installed(
+                descriptor, self.settings.models_root_directory
+            ):
+                self._update_job(
+                    job.job_id,
+                    AnalysisStage.PREPARING_TRANSCRIPTION_MODEL,
+                    1,
+                    f"正在准备本地转录模型：{descriptor.name}",
+                )
+                self._model_installer(
+                    descriptor,
+                    self.settings.models_root_directory,
+                    lambda downloaded, total: self._report_model_progress(
+                        job.job_id, descriptor.name, downloaded, total
+                    ),
+                )
+        self._update_job(job.job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
         return create_transcriber(
             options,
             self.settings.models_root_directory,
-            progress_reporter=progress_reporter,
-            context=context,
+            progress_reporter=lambda progress: self._report_transcription_progress(
+                job.job_id, progress
+            ),
+            context=self._transcription_context(asset),
         )
 
     def _transcription_context(self, asset: MediaAsset) -> str:

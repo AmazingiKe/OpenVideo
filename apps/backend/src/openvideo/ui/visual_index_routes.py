@@ -22,7 +22,7 @@ def register_visual_index_routes(
         response_model=VisualIndexStatus,
         status_code=status.HTTP_202_ACCEPTED,
     )
-    def prepare_visual_index(
+    async def prepare_visual_index(
         request: VisualIndexPrepareRequest,
     ) -> VisualIndexStatus:
         try:

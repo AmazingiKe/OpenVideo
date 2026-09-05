@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,16 +20,19 @@ from openvideo.core.media_models import (
 )
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.settings import Settings
-from openvideo.tools.transcribe import TranscriptionResult
+from openvideo.tools import transcribe as transcribe_module
+from openvideo.tools.transcribe import AudioExtractionResult
 
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("has_platform_subtitles", [False, True])
 async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     tmp_path: Path,
     monkeypatch,
+    has_platform_subtitles: bool,
 ):
     library_path = tmp_path / "library"
     library_path.mkdir()
@@ -55,8 +59,28 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         models_directory=str(tmp_path / "models"),
     )
     installer_calls = []
+    transcription_steps = []
+    generated_transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[
+            TranscriptSegment(
+                start_seconds=0,
+                end_seconds=20,
+                text="讲解透视投影与消失点",
+            )
+        ],
+    )
+
+    def platform_subtitles(*_args):
+        transcription_steps.append("subtitles")
+        return generated_transcript if has_platform_subtitles else None
+
+    monkeypatch.setattr(
+        transcribe_module, "extract_platform_subtitles", platform_subtitles
+    )
 
     def install_model(descriptor, models_root_directory, report_progress):
+        transcription_steps.append("install")
         installer_calls.append(descriptor.model)
         report_progress(50, 100)
         model_directory = (
@@ -70,8 +94,13 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
 
     def create_test_transcriber(options, models_root_directory, **kwargs):
         del options, models_root_directory
+        transcription_steps.append("create")
         transcription_contexts.append(kwargs["context"])
-        return object()
+        return SimpleNamespace(
+            output_source="test-local",
+            transcribe=lambda *_args: generated_transcript,
+            close=lambda: transcription_steps.append("close"),
+        )
 
     monkeypatch.setattr(
         analysis_manager_module,
@@ -79,21 +108,9 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         create_test_transcriber,
     )
     monkeypatch.setattr(
-        analysis_manager_module,
-        "transcribe_media",
-        lambda *args: TranscriptionResult(
-            transcript=Transcript(
-                asset_id=ASSET_ID,
-                segments=[
-                    TranscriptSegment(
-                        start_seconds=0,
-                        end_seconds=20,
-                        text="讲解透视投影与消失点",
-                    )
-                ],
-            ),
-            output_source="test-local",
-        ),
+        transcribe_module,
+        "extract_audio",
+        lambda *_args: AudioExtractionResult(audio_path=tmp_path / "audio.wav"),
     )
     captured_pipeline = {}
 
@@ -164,7 +181,9 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     assert completed is not None
     assert completed.operation == AnalysisOperation.INITIALIZATION
     assert completed.stage == AnalysisStage.COMPLETE
-    assert transcription_contexts == ["GAMES101 第一讲；现代计算机图形学；闫令琪"]
+    assert transcription_contexts == (
+        [] if has_platform_subtitles else ["GAMES101 第一讲；现代计算机图形学；闫令琪"]
+    )
     assert completed.strategy.depth == AnalysisDepth.DEEP
     assert {
         AnalysisCapability.TRANSCRIPT,
@@ -173,7 +192,12 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         AnalysisCapability.KEY_FRAMES,
         AnalysisCapability.OCR,
     }.issubset(completed.capabilities)
-    assert installer_calls == ["small"]
+    assert installer_calls == ([] if has_platform_subtitles else ["small"])
+    assert transcription_steps == (
+        ["subtitles"]
+        if has_platform_subtitles
+        else ["subtitles", "install", "create", "close"]
+    )
     assert transcript is not None
     assert segments[0].ocr_text == "画面公式与消失点"
     assert segments[0].key_frame_paths == ["artifacts/frames/chapter.jpg"]

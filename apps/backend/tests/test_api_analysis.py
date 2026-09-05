@@ -332,7 +332,7 @@ def test_transcription_reports_real_audio_progress_and_latest_text(
     finish_transcription = Event()
 
     def transcribe_with_progress(*args, **_kwargs):
-        transcriber = args[-1]
+        transcriber = args[-1]()
         transcriber.progress_reporter(
             TranscriptionProgress(
                 completed_seconds=30,

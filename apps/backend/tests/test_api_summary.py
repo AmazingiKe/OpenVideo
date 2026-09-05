@@ -1,6 +1,8 @@
 import json
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 from fastapi.testclient import TestClient
 import pytest
@@ -9,7 +11,7 @@ from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAsset, MediaAssetStatus, SourcePlatform
-from openvideo.core.summary_files import markdown_digest
+from openvideo.core.summary_files import load_summary_manifest, markdown_digest
 from openvideo.core.summary_models import SummaryDocumentCreate
 from openvideo.settings import Settings
 from openvideo.ui.api import create_app
@@ -17,6 +19,7 @@ from openvideo.ui.api import create_app
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
 MODEL_ID = "model-01890f4c7a2b7cc298c4dc0c0c07398f"
+MEDIA_GENERATION_WAIT_SECONDS = 10
 
 
 def create_client(tmp_path: Path) -> TestClient:
@@ -309,6 +312,156 @@ def test_agent_summary_batch_restores_all_files_when_manifest_commit_fails(
         root["document_id"],
         chapter["document_id"],
     }
+
+
+def test_media_generation_preserves_concurrent_document_edits(
+    tmp_path: Path,
+    monkeypatch,
+):
+    generation_started = Event()
+    finish_generation = Event()
+    generated_paths: list[Path] = []
+
+    def pause_media_generation(_playback, output_path, *_arguments):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"image")
+        generated_paths.append(output_path)
+        generation_started.set()
+        assert finish_generation.wait(MEDIA_GENERATION_WAIT_SECONDS)
+
+    monkeypatch.setattr(
+        "openvideo.summary_manager.generate_summary_media", pause_media_generation
+    )
+    with create_client(tmp_path) as client:
+        _root, chapter = initialize_documents(client)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            media_response = executor.submit(
+                client.post,
+                "/api/summary-media",
+                json={
+                    "document_id": chapter["document_id"],
+                    "expected_revision": chapter["revision"],
+                    "media_type": "image",
+                    "start_seconds": 5,
+                    "insert_after": "正文。",
+                    "caption": "重点画面",
+                },
+            )
+            try:
+                assert generation_started.wait(MEDIA_GENERATION_WAIT_SECONDS)
+                edited_markdown = chapter["markdown"] + "\n抽帧期间新增的笔记。\n"
+                edited_response = client.patch(
+                    f"/api/summary-documents/{chapter['document_id']}",
+                    json={**save_metadata(1), "markdown": edited_markdown},
+                )
+                assert edited_response.status_code == 200, edited_response.text
+            finally:
+                finish_generation.set()
+            response = media_response.result(timeout=MEDIA_GENERATION_WAIT_SECONDS)
+
+        manager = client.app.state.summary_manager
+        reloaded = manager.library.load_summary_document(chapter["document_id"])
+        asset_directory = manager.library.asset_directory(ASSET_ID)
+        manifest = load_summary_manifest(asset_directory)
+        persisted_markdown = (
+            asset_directory / "summary" / chapter["relative_path"]
+        ).read_text(encoding="utf-8")
+        assert manager.library.load_summary_media(ASSET_ID) == []
+
+    assert response.status_code == 409, response.text
+    assert reloaded is not None
+    assert reloaded.markdown == edited_markdown
+    assert reloaded.revision == edited_response.json()["revision"]
+    assert persisted_markdown == edited_markdown
+    assert manifest.media == []
+    assert len(generated_paths) == 1
+    assert not generated_paths[0].exists()
+
+
+@pytest.mark.parametrize("use_child", [False, True])
+def test_media_insertion_persists_current_document_and_artifact(
+    tmp_path: Path,
+    monkeypatch,
+    use_child: bool,
+):
+    def generate_media(_playback, output_path, *_arguments):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"image")
+
+    monkeypatch.setattr(
+        "openvideo.summary_manager.generate_summary_media", generate_media
+    )
+    with create_client(tmp_path) as client:
+        root, chapter = initialize_documents(client)
+        document = chapter if use_child else root
+        response = client.post(
+            "/api/summary-media",
+            json={
+                "document_id": document["document_id"],
+                "expected_revision": document["revision"],
+                "media_type": "image",
+                "start_seconds": 5,
+                "insert_after": "正文。" if use_child else None,
+                "caption": "重点画面",
+            },
+        )
+        assert response.status_code == 201, response.text
+        payload = response.json()
+        artifact = payload["artifact"]
+        updated = payload["document"]
+        markdown_directory = "../assets" if use_child else "assets"
+        image_markdown = f"![重点画面]({markdown_directory}/{artifact['media_id']}.jpg)"
+        manager = client.app.state.summary_manager
+        reloaded = manager.library.load_summary_document(document["document_id"])
+        asset_directory = manager.library.asset_directory(ASSET_ID)
+        manifest = load_summary_manifest(asset_directory)
+
+        assert reloaded is not None
+        assert reloaded.markdown == updated["markdown"]
+        assert reloaded.revision == document["revision"] + 1
+        assert document["markdown"].rstrip() in updated["markdown"]
+        assert image_markdown in updated["markdown"]
+        assert [item.media_id for item in manifest.media] == [artifact["media_id"]]
+        assert (asset_directory / artifact["relative_path"]).is_file()
+
+
+def test_media_insertion_cleans_generated_file_when_anchor_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+):
+    generated_paths: list[Path] = []
+
+    def generate_media(_playback, output_path, *_arguments):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"image")
+        generated_paths.append(output_path)
+
+    monkeypatch.setattr(
+        "openvideo.summary_manager.generate_summary_media", generate_media
+    )
+    with create_client(tmp_path) as client:
+        _root, chapter = initialize_documents(client)
+        response = client.post(
+            "/api/summary-media",
+            json={
+                "document_id": chapter["document_id"],
+                "expected_revision": chapter["revision"],
+                "media_type": "image",
+                "start_seconds": 5,
+                "insert_after": "不存在的段落。",
+                "caption": "重点画面",
+            },
+        )
+        manager = client.app.state.summary_manager
+        reloaded = manager.library.load_summary_document(chapter["document_id"])
+        assert manager.library.load_summary_media(ASSET_ID) == []
+
+    assert response.status_code == 422, response.text
+    assert reloaded is not None
+    assert reloaded.markdown == chapter["markdown"]
+    assert reloaded.revision == chapter["revision"]
+    assert len(generated_paths) == 1
+    assert not generated_paths[0].exists()
 
 
 def test_legacy_summary_is_not_migrated(tmp_path: Path):

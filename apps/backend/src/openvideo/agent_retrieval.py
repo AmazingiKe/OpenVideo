@@ -131,7 +131,9 @@ def _build_search_result(
         end_seconds,
         duration_seconds,
     )
-    temporal_coverage = _temporal_coverage(items, range_start, range_end)
+    uncovered_ranges = _uncovered_time_ranges(items, range_start, range_end)
+    uncovered_duration = sum(end - start for start, end in uncovered_ranges)
+    temporal_coverage = 1 - uncovered_duration / (range_end - range_start)
     conflicts = _find_conflicts(items)
     conflicting_evidence_ids = {
         evidence_id for conflict in conflicts for evidence_id in conflict.evidence_ids
@@ -169,12 +171,22 @@ def _build_search_result(
             source_types=source_coverage,
         ),
     )
+    answer_instruction = _answer_instruction(confidence, items, conflicts)
+    if not normalized_query and uncovered_ranges:
+        ranges_text = "、".join(
+            f"{start:.3f}–{end:.3f} 秒" for start, end in uncovered_ranges
+        )
+        answer_instruction += (
+            f"当前概览抽样尚未覆盖：{ranges_text}。若需完整概括当前检索范围，按这些时间段传入 "
+            "start_seconds/end_seconds 补充检索；这表示本次未召回证据，"
+            "不代表视频中没有相关内容。覆盖率仅反映时间抽样分布，不是全文阅读比例。"
+        )
     return AgentEvidenceSearchResult(
         confidence=confidence,
         confidence_reasons=confidence_reasons,
         answer_status=answer_status,
         evidence_bundle=evidence_bundle,
-        answer_instruction=_answer_instruction(confidence, items, conflicts),
+        answer_instruction=answer_instruction,
     )
 
 
@@ -353,12 +365,13 @@ def _coverage_range(
     return start, max(start + 0.001, end)
 
 
-def _temporal_coverage(
+def _uncovered_time_ranges(
     evidence: list[AgentEvidenceItem], range_start: float, range_end: float
-) -> float:
-    if not evidence or range_end <= range_start:
-        return 0.0
-    covered = 0
+) -> list[tuple[float, float]]:
+    """给概览抽样的空白时间桶提供补查范围，不能据此断言视频缺少内容。"""
+    if range_end <= range_start:
+        return []
+    uncovered: list[tuple[float, float]] = []
     for bucket in range(TEMPORAL_BUCKET_COUNT):
         bucket_start = (
             range_start + (range_end - range_start) * bucket / TEMPORAL_BUCKET_COUNT
@@ -367,17 +380,16 @@ def _temporal_coverage(
             range_start
             + (range_end - range_start) * (bucket + 1) / TEMPORAL_BUCKET_COUNT
         )
-        if any(
-            _ranges_intersect(
-                item.start_seconds,
-                item.end_seconds,
-                bucket_start,
-                bucket_end,
-            )
+        covered = any(
+            max(item.start_seconds, bucket_start) < min(item.end_seconds, bucket_end)
             for item in evidence
-        ):
-            covered += 1
-    return covered / TEMPORAL_BUCKET_COUNT
+        )
+        if not covered:
+            if uncovered and uncovered[-1][1] == bucket_start:
+                uncovered[-1] = (uncovered[-1][0], bucket_end)
+            else:
+                uncovered.append((bucket_start, bucket_end))
+    return uncovered
 
 
 def _normalize_text(value: str) -> str:

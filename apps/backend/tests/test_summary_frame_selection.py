@@ -34,7 +34,7 @@ def test_frame_quality_requires_stable_time_mapping(tmp_path: Path):
         filter_candidate_frames([tmp_path / "frame.jpg"], [])
 
 
-def test_scene_refinement_lowers_threshold_until_enough_boundaries(
+def test_scene_refinement_reuses_one_scan_for_all_thresholds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     media_path = tmp_path / "video.mp4"
@@ -46,9 +46,12 @@ def test_scene_refinement_lowers_threshold_until_enough_boundaries(
 
     def run(command, **_kwargs):
         commands.append(command)
-        filter_value = command[command.index("-vf") + 1]
-        points = [2.0] if "0.42" in filter_value else [2.0, 6.0, 12.0, 17.0]
-        stderr = "\n".join(f"showinfo pts_time:{point}" for point in points)
+        points = [(2.0, 0.5), (6.0, 0.35), (12.0, 0.3), (17.0, 0.32)]
+        stderr = "\n".join(
+            f"[metadata] frame:0 pts:0 pts_time:{point}\n"
+            f"[metadata] lavfi.scene_score={score}"
+            for point, score in points
+        )
         return subprocess.CompletedProcess(command, 0, "", stderr)
 
     monkeypatch.setattr("openvideo.tools.scenes.subprocess.run", run)
@@ -63,10 +66,10 @@ def test_scene_refinement_lowers_threshold_until_enough_boundaries(
 
     assert len(candidates) == 5
     assert all(10 < seconds < 30 for seconds in candidates)
-    assert len(commands) == 2
+    assert len(commands) == 1
     assert all("-skip_frame" in command for command in commands)
     assert all("nokey" in command for command in commands)
-    assert all("0.16" not in command[command.index("-vf") + 1] for command in commands)
+    assert "0.16" in commands[0][commands[0].index("-vf") + 1]
 
 
 def _draw_interface_frame(path: Path, offset: int) -> None:

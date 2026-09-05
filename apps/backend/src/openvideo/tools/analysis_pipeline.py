@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Callable, Sequence
-from math import isfinite
+from itertools import pairwise
+from math import ceil, isfinite
 from pathlib import Path
 
 from openvideo.core.analysis import (
@@ -25,8 +27,14 @@ from openvideo.tools.vision import VisionDescriber, VisionDescriptionError
 
 FRAMES_DIRECTORY_NAME = "frames"
 MIN_CHAPTER_FRAME_COUNT = 2
-MAX_CHAPTER_FRAME_COUNT = 12
+MAX_CHAPTER_CONTEXT_FRAME_COUNT = 12
+# 密集界面切换需要额外代表帧，仍限制异常切点检测带来的工作量。
+MAX_CHAPTER_FRAME_COUNT = 36
 SECONDS_PER_ADAPTIVE_FRAME = 30
+SCENE_FRAME_MARGIN_SECONDS = 0.25
+SCENE_FRAME_MARGIN_FRACTION = 0.25
+# 标记密集时仍为全章上下文保留至少三分之一的名额。
+CONTEXT_FRAME_BUDGET_FRACTION = 1 / 3
 MAX_PROMPT_TRANSCRIPT_CHARACTERS = 6000
 TITLE_MAX_CHARACTERS = 32
 VISUAL_ONLY_CHAPTER_SECONDS = 120
@@ -170,31 +178,9 @@ def _extract_event_frames(
     settings: Settings,
     scene_boundaries: Sequence[float] = (),
 ) -> list[Path]:
-    duration = max(moment.end_seconds - moment.start_seconds, 0.1)
-    scene_points = [
-        boundary
-        for boundary in scene_boundaries
-        if moment.start_seconds < boundary < moment.end_seconds
-    ]
-    frame_count = max(
-        MIN_CHAPTER_FRAME_COUNT,
-        min(
-            MAX_CHAPTER_FRAME_COUNT,
-            round(duration / SECONDS_PER_ADAPTIVE_FRAME) + len(scene_points) + 1,
-        ),
-    )
-    contextual_time_points = [
-        moment.start_seconds + duration * (index + 0.5) / frame_count
-        for index in range(frame_count)
-    ]
-    marker_time_points = [
-        influence.anchor_seconds
-        for influence in moment.marker_influences
-        if moment.start_seconds <= influence.anchor_seconds <= moment.end_seconds
-    ]
-    time_points = sorted(
-        dict.fromkeys((*contextual_time_points, *scene_points, *marker_time_points))
-    )
+    time_points = _select_event_frame_times(moment, scene_boundaries)
+    if not time_points:
+        return []
     try:
         return extract_frames(
             media_path,
@@ -205,6 +191,126 @@ def _extract_event_frames(
         )
     except FrameExtractionError:
         return []
+
+
+def _select_event_frame_times(
+    moment: TimelineMoment,
+    scene_boundaries: Sequence[float],
+) -> list[float]:
+    """借鉴 AKS 的预算与覆盖目标，以标记、场景覆盖和最远点作本地启发式。
+
+    此处不使用论文的视觉语义评分，场景内取点也只避开已知切点。
+    """
+    start_seconds = moment.start_seconds
+    end_seconds = moment.end_seconds
+    if (
+        not isfinite(start_seconds)
+        or not isfinite(end_seconds)
+        or start_seconds < 0
+        or end_seconds <= start_seconds
+    ):
+        return []
+    duration = end_seconds - start_seconds
+    scene_points = sorted(
+        {
+            boundary
+            for boundary in scene_boundaries
+            if isfinite(boundary) and start_seconds < boundary < end_seconds
+        }
+    )
+    scene_edges = [start_seconds, *scene_points, end_seconds]
+    contextual_count = max(
+        MIN_CHAPTER_FRAME_COUNT,
+        min(
+            MAX_CHAPTER_CONTEXT_FRAME_COUNT,
+            round(duration / SECONDS_PER_ADAPTIVE_FRAME) + len(scene_points) + 1,
+        ),
+    )
+    ranked_markers = sorted(
+        (
+            influence
+            for influence in moment.marker_influences
+            if isfinite(influence.anchor_seconds)
+            and start_seconds <= influence.anchor_seconds <= end_seconds
+        ),
+        key=lambda influence: (
+            -influence.importance,
+            -influence.event_weight,
+            influence.anchor_seconds,
+        ),
+    )
+    marker_times = list(
+        dict.fromkeys(
+            _stable_frame_time(influence.anchor_seconds, scene_edges)
+            for influence in ranked_markers
+        )
+    )
+    frame_budget = min(
+        MAX_CHAPTER_CONTEXT_FRAME_COUNT, contextual_count + len(marker_times)
+    )
+    reserved_context = max(
+        MIN_CHAPTER_FRAME_COUNT, ceil(frame_budget * CONTEXT_FRAME_BUDGET_FRACTION)
+    )
+    contextual_count = max(contextual_count, reserved_context)
+    candidates = {
+        _stable_frame_time(
+            start_seconds + duration * ((index + 0.5) / contextual_count),
+            scene_edges,
+        )
+        for index in range(contextual_count)
+    }
+    if not marker_times and not scene_points:
+        return sorted(candidates)
+    selected = marker_times[: frame_budget - reserved_context]
+    for index in range(reserved_context):
+        seconds = _stable_frame_time(
+            start_seconds + duration * ((index + 0.5) / reserved_context),
+            scene_edges,
+        )
+        if seconds not in selected:
+            selected.append(seconds)
+    candidates.update(
+        scene_start + (scene_end - scene_start) / 2
+        for scene_start, scene_end in pairwise(scene_edges)
+    )
+    candidates.update(marker_times)
+    candidates.difference_update(selected)
+    candidate_scenes = {
+        seconds: bisect_right(scene_edges, seconds) - 1 for seconds in candidates
+    }
+    selected_scenes = {bisect_right(scene_edges, seconds) - 1 for seconds in selected}
+    unrepresented_scenes = set(candidate_scenes.values()) - selected_scenes
+    # 统一压到上下文预算会丢失仅在短场景出现的文字，按实际场景补足代表帧。
+    frame_budget = min(
+        MAX_CHAPTER_FRAME_COUNT,
+        max(frame_budget, len(selected) + len(unrepresented_scenes)),
+    )
+    # 已保留全章上下文，余量先补短场景，避免纯时间距离漏掉短暂内容。
+    while candidates and len(selected) < frame_budget:
+        chosen = max(
+            candidates,
+            key=lambda seconds: (
+                candidate_scenes[seconds] not in selected_scenes,
+                min(abs(seconds - existing) for existing in selected),
+                -seconds,
+            ),
+        )
+        selected.append(chosen)
+        selected_scenes.add(candidate_scenes[chosen])
+        candidates.remove(chosen)
+    return sorted(selected)
+
+
+def _stable_frame_time(seconds: float, scene_edges: list[float]) -> float:
+    """标记命中切点时移入后一个场景，短镜头按自身长度缩小安全边距。"""
+    scene_index = min(bisect_right(scene_edges, seconds) - 1, len(scene_edges) - 2)
+    scene_start = scene_edges[scene_index]
+    scene_end = scene_edges[scene_index + 1]
+    margin = min(
+        SCENE_FRAME_MARGIN_SECONDS,
+        (scene_end - scene_start) * SCENE_FRAME_MARGIN_FRACTION,
+    )
+    return min(max(seconds, scene_start + margin), scene_end - margin)
 
 
 def _describe_event(

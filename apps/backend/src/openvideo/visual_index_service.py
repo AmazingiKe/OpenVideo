@@ -9,9 +9,11 @@ from datetime import UTC, datetime
 import gc
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
-from threading import RLock
+import re
+from threading import Event, RLock
 
 from huggingface_hub import snapshot_download
 from PIL import Image
@@ -37,6 +39,8 @@ VISUAL_MODEL_WEIGHT_FILE_NAME = "model.safetensors"
 VISUAL_MODEL_IDLE_SECONDS = 300
 VISUAL_INDEX_BATCH_SIZE = 8
 VISUAL_TEXT_MAX_TOKENS = 64
+VISUAL_MODEL_DIMENSIONS = 768
+FRAME_FILE_TIME_PATTERN = re.compile(r"^frame_\d+_(?P<seconds>\d+(?:\.\d+)?)s\.[^.]+$")
 
 
 ProgressReporter = Callable[[int, int], None]
@@ -56,6 +60,7 @@ class VisualEncoder:
 
     model_name = VISUAL_MODEL_NAME
     model_revision = VISUAL_MODEL_REVISION
+    dimensions = VISUAL_MODEL_DIMENSIONS
 
     def __init__(self, root_directory: Path) -> None:
         self.root_directory = root_directory.resolve()
@@ -68,11 +73,11 @@ class VisualEncoder:
         self._model = None
         self._device = None
         self._lock = RLock()
+        self._loaded = Event()
 
     @property
     def loaded(self) -> bool:
-        with self._lock:
-            return self._model is not None
+        return self._loaded.is_set()
 
     def prepare(self) -> None:
         with self._lock:
@@ -96,16 +101,17 @@ class VisualEncoder:
             self._processor = processor
             self._model = model
             self._device = device
+            self._loaded.set()
 
     def encode_images(
         self,
         image_paths: Sequence[Path],
         report_progress: ProgressReporter,
     ) -> list[list[float]]:
-        self.prepare()
         vectors: list[list[float]] = []
         total = len(image_paths)
         with self._lock:
+            self.prepare()
             for start in range(0, total, VISUAL_INDEX_BATCH_SIZE):
                 batch_paths = image_paths[start : start + VISUAL_INDEX_BATCH_SIZE]
                 images = []
@@ -124,8 +130,8 @@ class VisualEncoder:
         return vectors
 
     def encode_text(self, query: str) -> list[float]:
-        self.prepare()
         with self._lock:
+            self.prepare()
             inputs = self._processor(
                 text=[query],
                 padding="max_length",
@@ -141,6 +147,7 @@ class VisualEncoder:
 
     def unload(self) -> None:
         with self._lock:
+            self._loaded.clear()
             self._processor = None
             self._model = None
             self._device = None
@@ -211,6 +218,10 @@ class VisualIndexService:
         self._unload_task: asyncio.Task[None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = RLock()
+        self._pending_assets: set[str] = set()
+        self._pending_all_assets = False
+        self._asset_waiters: dict[str, list[asyncio.Future[bool]]] = {}
+        self._frame_digests: dict[Path, tuple[tuple[int, int, int], str]] = {}
 
     def status(self) -> VisualIndexStatus:
         persisted = self.library.load_visual_index_status()
@@ -218,23 +229,77 @@ class VisualIndexService:
             model_name=self.encoder.model_name,
             model_revision=self.encoder.model_revision,
         )
+        if (
+            status.model_name != self.encoder.model_name
+            or status.model_revision != self.encoder.model_revision
+        ):
+            status = VisualIndexStatus(
+                model_name=self.encoder.model_name,
+                model_revision=self.encoder.model_revision,
+            )
         return status.model_copy(update={"model_loaded": self.encoder.loaded})
 
     def prepare(self, asset_id: str | None = None) -> VisualIndexStatus:
         if asset_id is not None and self.library.get(asset_id) is None:
             raise ValueError("视频素材不存在")
         with self._lock:
+            self._loop = asyncio.get_running_loop()
+            if asset_id is None:
+                self._pending_all_assets = True
+            else:
+                self._pending_assets.add(asset_id)
             if self._task is not None and not self._task.done():
                 return self.status()
-            self._loop = asyncio.get_running_loop()
-            current = self.status()
-            self._task = asyncio.create_task(
-                self._load_only()
-                if current.state == VisualIndexState.READY
-                and current.indexed_frames > 0
-                else self._build(asset_id)
+            if self._unload_task is not None:
+                self._unload_task.cancel()
+                self._unload_task = None
+            self._save_status(
+                state=VisualIndexState.INDEXING,
+                progress_percent=0,
+                message="正在检查当前视频的画面索引",
+                error_message=None,
             )
+            self._task = asyncio.create_task(self._build())
         return self.status()
+
+    async def ensure_ready(self, asset_id: str) -> bool:
+        """等待请求素材完成增量检查，单个消费者取消时仍保留共享后台任务。"""
+        if self.library.get(asset_id) is None:
+            return False
+        completion = asyncio.get_running_loop().create_future()
+        self._asset_waiters.setdefault(asset_id, []).append(completion)
+        try:
+            self.prepare(asset_id)
+            return await completion
+        finally:
+            if not completion.done():
+                completion.cancel()
+            waiters = self._asset_waiters.get(asset_id)
+            if waiters is not None and completion in waiters:
+                waiters.remove(completion)
+                if not waiters:
+                    self._asset_waiters.pop(asset_id)
+
+    def is_ready(self, asset_id: str) -> bool:
+        """按当前关键帧内容判断素材覆盖，整体状态不代表每个视频均已建索引。"""
+        embeddings = self.library.load_visual_frame_embeddings(
+            asset_id=asset_id,
+            model_name=self.encoder.model_name,
+            model_revision=self.encoder.model_revision,
+            dimensions=self.encoder.dimensions,
+        )
+        if not embeddings:
+            return False
+        frames = self._frame_references(asset_id)
+        current = {
+            (frame.relative_path, frame.seconds, frame.content_digest)
+            for frame in frames
+        }
+        cached = {
+            (item.relative_path, item.seconds, item.content_digest)
+            for item in embeddings
+        }
+        return bool(current) and current == cached
 
     def unload(self) -> VisualIndexStatus:
         if self._unload_task is not None:
@@ -249,142 +314,201 @@ class VisualIndexService:
         query: str,
         limit: int = 6,
     ) -> list[VisualFrameMatch]:
-        vectors = self.library.load_visual_frame_vectors(
+        if limit <= 0 or not query.strip():
+            return []
+        embeddings = self.library.load_visual_frame_embeddings(
             asset_id=asset_id,
             model_name=self.encoder.model_name,
             model_revision=self.encoder.model_revision,
+            dimensions=self.encoder.dimensions,
         )
-        if not vectors:
+        if not embeddings:
+            return []
+        current_frames = {
+            frame.relative_path: frame
+            for frame in self._frame_references(asset_id, verify_content=False)
+        }
+        embeddings = [
+            item
+            for item in embeddings
+            if item.relative_path in current_frames
+            and current_frames[item.relative_path].content_digest == item.content_digest
+        ]
+        if not embeddings:
             return []
         query_vector = self.encoder.encode_text(query)
-        matches = [
-            VisualFrameMatch(
-                asset_id=asset_id,
-                relative_path=relative_path,
-                seconds=seconds,
-                similarity=sum(
-                    left * right
-                    for left, right in zip(query_vector, vector, strict=True)
-                ),
+        if len(query_vector) != self.encoder.dimensions or not all(
+            math.isfinite(value) for value in query_vector
+        ):
+            return []
+        matches = []
+        for item in embeddings:
+            score = sum(
+                left * right
+                for left, right in zip(query_vector, item.vector, strict=True)
             )
-            for relative_path, seconds, vector in vectors
-            if len(query_vector) == len(vector)
-        ]
+            matches.append(
+                VisualFrameMatch(
+                    asset_id=asset_id,
+                    relative_path=item.relative_path,
+                    seconds=current_frames[item.relative_path].seconds,
+                    similarity=max(-1.0, min(1.0, score)),
+                )
+            )
         matches.sort(key=lambda item: (-item.similarity, item.seconds))
         self._schedule_unload_threadsafe()
         return matches[:limit]
 
-    async def _build(self, asset_id: str | None) -> None:
+    async def _build(self) -> None:
+        completed: dict[str, int] = {}
+        failures: dict[str, str] = {}
+        batch_waiters: dict[str, list[asyncio.Future[bool]]] = {}
         try:
-            frames = self._frame_references(asset_id)
+            while True:
+                with self._lock:
+                    requested_assets = self._pending_assets
+                    self._pending_assets = set()
+                    if self._pending_all_assets:
+                        requested_assets.update(
+                            asset.asset_id for asset in self.library.list()
+                        )
+                        self._pending_all_assets = False
+                    batch_waiters = {
+                        asset_id: self._asset_waiters.pop(asset_id, [])
+                        for asset_id in requested_assets
+                    }
+                for asset_id in sorted(requested_assets):
+                    ready = False
+                    try:
+                        frame_count = await self._build_asset(asset_id)
+                        completed[asset_id] = frame_count
+                        failures.pop(asset_id, None)
+                        ready = (
+                            bool(frame_count) and self.library.get(asset_id) is not None
+                        )
+                    except Exception as error:
+                        if self.library.get(asset_id) is None:
+                            completed[asset_id] = 0
+                            failures.pop(asset_id, None)
+                        else:
+                            failures[asset_id] = str(error) or "视觉索引准备失败"
+                    finally:
+                        for completion in batch_waiters.pop(asset_id, []):
+                            if not completion.done():
+                                completion.set_result(ready)
+                with self._lock:
+                    if not self._pending_assets and not self._pending_all_assets:
+                        break
+            indexed = sum(completed.values())
+            self._save_status(
+                state=VisualIndexState.ERROR if failures else VisualIndexState.READY,
+                progress_percent=100,
+                message="部分视频的视觉索引准备失败"
+                if failures
+                else f"视觉索引已就绪，共 {indexed} 帧",
+                indexed_frames=indexed,
+                total_frames=indexed,
+                error_message="；".join(failures.values()) if failures else None,
+            )
+        except asyncio.CancelledError:
+            raise
+        finally:
+            for waiters in (*batch_waiters.values(), *self._asset_waiters.values()):
+                for completion in waiters:
+                    if not completion.done():
+                        completion.set_result(False)
+            self._asset_waiters.clear()
+            if self.encoder.loaded:
+                self._schedule_unload()
+
+    async def _build_asset(self, asset_id: str) -> int:
+        if self.library.get(asset_id) is None:
+            return 0
+        frames = await asyncio.to_thread(self._frame_references, asset_id)
+        embeddings = self.library.load_visual_frame_embeddings(
+            asset_id=asset_id,
+            model_name=self.encoder.model_name,
+            model_revision=self.encoder.model_revision,
+            dimensions=self.encoder.dimensions,
+        )
+        vectors_by_digest = {item.content_digest: item.vector for item in embeddings}
+        pending: dict[str, VisualFrameReference] = {}
+        for frame in frames:
+            if frame.content_digest not in vectors_by_digest:
+                pending.setdefault(frame.content_digest, frame)
+        if pending:
             self._save_status(
                 state=VisualIndexState.DOWNLOADING,
-                progress_percent=2,
+                progress_percent=0,
                 message="正在按需准备 SigLIP2 视觉模型",
                 indexed_frames=0,
-                total_frames=len(frames),
+                total_frames=len(pending),
                 error_message=None,
             )
             await asyncio.to_thread(self.encoder.prepare)
-            self._save_status(
-                state=VisualIndexState.LOADING,
-                progress_percent=8,
-                message="视觉模型已加载，正在准备关键帧",
-                indexed_frames=0,
-                total_frames=len(frames),
-            )
-            grouped: dict[str, list[VisualFrameReference]] = {}
-            for frame in frames:
-                grouped.setdefault(frame.asset_id, []).append(frame)
-            indexed = 0
-            total = len(frames)
-            for current_asset_id, asset_frames in grouped.items():
 
-                def report(processed: int, _batch_total: int) -> None:
-                    current = indexed + processed
-                    self._save_status(
-                        state=VisualIndexState.INDEXING,
-                        progress_percent=8 + 90 * current / max(total, 1),
-                        message=f"正在建立画面索引 {current}/{total}",
-                        indexed_frames=current,
-                        total_frames=total,
+            def report(processed: int, total: int) -> None:
+                self._save_status(
+                    state=VisualIndexState.INDEXING,
+                    progress_percent=100 * processed / max(total, 1),
+                    message=f"正在计算新增画面 {processed}/{total}",
+                    indexed_frames=processed,
+                    total_frames=total,
+                )
+
+            vectors = await asyncio.to_thread(
+                self.encoder.encode_images,
+                [frame.absolute_path for frame in pending.values()],
+                report,
+            )
+            if len(vectors) != len(pending):
+                raise ValueError("视觉向量数量与新增关键帧数量不一致")
+            vectors_by_digest.update(zip(pending, vectors, strict=True))
+        return await asyncio.to_thread(
+            self._commit_asset_frames, asset_id, frames, vectors_by_digest
+        )
+
+    def _commit_asset_frames(
+        self,
+        asset_id: str,
+        frames: list[VisualFrameReference],
+        vectors_by_digest: dict[str, list[float]],
+    ) -> int:
+        """提交前重查实际帧内容，并阻止素材编辑穿过校验与原子替换之间。"""
+        with self.library._lock:
+            if self.library.get(asset_id) is None:
+                return 0
+            if frames != self._frame_references(asset_id):
+                raise ValueError("关键帧在索引期间发生变化，请重新准备视觉索引")
+            self.library.replace_visual_frame_embeddings(
+                asset_id=asset_id,
+                model_name=self.encoder.model_name,
+                model_revision=self.encoder.model_revision,
+                dimensions=self.encoder.dimensions,
+                frames=[
+                    (
+                        frame.relative_path,
+                        frame.seconds,
+                        frame.content_digest,
+                        vectors_by_digest[frame.content_digest],
                     )
-
-                vectors = await asyncio.to_thread(
-                    self.encoder.encode_images,
-                    [frame.absolute_path for frame in asset_frames],
-                    report,
-                )
-                self.library.replace_visual_frame_embeddings(
-                    asset_id=current_asset_id,
-                    model_name=self.encoder.model_name,
-                    model_revision=self.encoder.model_revision,
-                    dimensions=len(vectors[0]) if vectors else 0,
-                    frames=[
-                        (
-                            frame.relative_path,
-                            frame.seconds,
-                            frame.content_digest,
-                            vector,
-                        )
-                        for frame, vector in zip(asset_frames, vectors, strict=True)
-                    ],
-                )
-                indexed += len(vectors)
-            self._save_status(
-                state=VisualIndexState.READY,
-                progress_percent=100,
-                message=f"视觉索引已就绪，共 {indexed} 帧",
-                indexed_frames=indexed,
-                total_frames=total,
+                    for frame in frames
+                ],
             )
-            self._schedule_unload()
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            self._save_status(
-                state=VisualIndexState.ERROR,
-                progress_percent=100,
-                message="视觉索引准备失败",
-                error_message=str(error) or "视觉索引准备失败",
-            )
-
-    async def _load_only(self) -> None:
-        current = self.status()
-        try:
-            self._save_status(
-                state=VisualIndexState.LOADING,
-                progress_percent=96,
-                message="正在按需加载视觉模型",
-                error_message=None,
-            )
-            await asyncio.to_thread(self.encoder.prepare)
-            self._save_status(
-                state=VisualIndexState.READY,
-                progress_percent=100,
-                message=f"视觉索引已就绪，共 {current.indexed_frames} 帧",
-            )
-            self._schedule_unload()
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            self._save_status(
-                state=VisualIndexState.ERROR,
-                progress_percent=100,
-                message="视觉模型加载失败",
-                error_message=str(error) or "视觉模型加载失败",
-            )
+            return len(frames)
 
     def _frame_references(
         self,
         asset_id: str | None,
+        *,
+        verify_content: bool = True,
     ) -> list[VisualFrameReference]:
         assets = (
             [self.library.get(asset_id)]
             if asset_id is not None
             else self.library.list()
         )
-        references: list[VisualFrameReference] = []
+        references: dict[tuple[str, str], VisualFrameReference] = {}
         for asset in assets:
             if asset is None:
                 continue
@@ -402,16 +526,37 @@ class VisualIndexService:
                         * (position + 1)
                         / (frame_count + 1)
                     )
-                    references.append(
-                        VisualFrameReference(
-                            asset_id=asset.asset_id,
-                            relative_path=relative_path,
-                            absolute_path=absolute_path,
-                            seconds=round(seconds, 3),
-                            content_digest=_frame_digest(absolute_path),
-                        )
+                    filename_time = FRAME_FILE_TIME_PATTERN.fullmatch(
+                        absolute_path.name
                     )
-        return references
+                    if filename_time is not None:
+                        seconds = float(filename_time.group("seconds"))
+                    try:
+                        content_digest = self._frame_content_digest(
+                            absolute_path, verify_content=verify_content
+                        )
+                    except OSError:
+                        continue
+                    reference = VisualFrameReference(
+                        asset_id=asset.asset_id,
+                        relative_path=relative_path,
+                        absolute_path=absolute_path,
+                        seconds=round(seconds, 3),
+                        content_digest=content_digest,
+                    )
+                    references.setdefault((asset.asset_id, relative_path), reference)
+        return list(references.values())
+
+    def _frame_content_digest(self, path: Path, *, verify_content: bool) -> str:
+        """重建强校验内容，连续搜索仅复用文件元数据仍一致的校验结果。"""
+        stat = path.stat()
+        signature = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        cached = self._frame_digests.get(path)
+        if not verify_content and cached is not None and cached[0] == signature:
+            return cached[1]
+        digest = _sha256(path)
+        self._frame_digests[path] = (signature, digest)
+        return digest
 
     def _save_status(self, **updates: object) -> None:
         status = self.status().model_copy(
@@ -459,9 +604,3 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _frame_digest(path: Path) -> str:
-    stat = path.stat()
-    value = f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}"
-    return hashlib.sha256(value.encode()).hexdigest()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from array import array
 import json
+import math
 import sqlite3
 from datetime import UTC, datetime
 from typing import Literal
@@ -53,7 +54,7 @@ from openvideo.core.summary_models import (
     SummaryIllustrationJob,
     SummaryMediaArtifact,
 )
-from openvideo.core.visual_index_models import VisualIndexStatus
+from openvideo.core.visual_index_models import VisualFrameEmbedding, VisualIndexStatus
 
 AGENT_CHANGES_DIRECTORY_NAME = "agent-changes"
 AGENT_CHANGE_VERSION_PATTERN = "agent-version-*.json"
@@ -122,6 +123,20 @@ class LibraryGeneratedStorageMixin:
         frames: list[tuple[str, float, str, list[float]]],
     ) -> None:
         self._validate_asset_id(asset_id)
+        if frames and dimensions <= 0:
+            raise ValueError("视觉向量维度必须大于零")
+        encoded_frames = []
+        for relative_path, seconds, content_digest, vector in frames:
+            stored_vector = array("f", vector)
+            if len(stored_vector) != dimensions or not all(
+                math.isfinite(value) for value in stored_vector
+            ):
+                raise ValueError("视觉向量维度或数值无效")
+            if not any(stored_vector):
+                raise ValueError("视觉向量不能为空向量")
+            encoded_frames.append(
+                (relative_path, seconds, content_digest, stored_vector.tobytes())
+            )
         now = datetime.now(UTC).isoformat()
         with self._lock, self._db():
             self._db().execute(
@@ -141,40 +156,57 @@ class LibraryGeneratedStorageMixin:
                         model_name,
                         model_revision,
                         dimensions,
-                        array("f", vector).tobytes(),
+                        vector,
                         content_digest,
                         now,
                     )
-                    for relative_path, seconds, content_digest, vector in frames
+                    for relative_path, seconds, content_digest, vector in encoded_frames
                 ],
             )
 
-    def load_visual_frame_vectors(
+    def load_visual_frame_embeddings(
         self,
         *,
         asset_id: str,
         model_name: str,
         model_revision: str,
-    ) -> list[tuple[str, float, list[float]]]:
+        dimensions: int,
+    ) -> list[VisualFrameEmbedding]:
         self._validate_asset_id(asset_id)
-        rows = (
-            self._db()
-            .execute(
-                "SELECT relative_path, seconds, dimensions, vector "
-                "FROM visual_frame_embeddings WHERE asset_id = ? "
-                "AND model_name = ? AND model_revision = ? ORDER BY seconds",
-                (asset_id, model_name, model_revision),
+        with self._lock:
+            rows = (
+                self._db()
+                .execute(
+                    "SELECT relative_path, seconds, content_digest, vector "
+                    "FROM visual_frame_embeddings WHERE asset_id = ? "
+                    "AND model_name = ? AND model_revision = ? AND dimensions = ? "
+                    "ORDER BY seconds",
+                    (asset_id, model_name, model_revision, dimensions),
+                )
+                .fetchall()
             )
-            .fetchall()
-        )
-        vectors: list[tuple[str, float, list[float]]] = []
+        embeddings: list[VisualFrameEmbedding] = []
         for row in rows:
             vector = array("f")
-            vector.frombytes(row["vector"])
-            if len(vector) != row["dimensions"]:
+            try:
+                vector.frombytes(row["vector"])
+            except (TypeError, ValueError):
                 continue
-            vectors.append((row["relative_path"], row["seconds"], vector.tolist()))
-        return vectors
+            if (
+                len(vector) != dimensions
+                or not all(math.isfinite(value) for value in vector)
+                or not any(vector)
+            ):
+                continue
+            embeddings.append(
+                VisualFrameEmbedding(
+                    relative_path=row["relative_path"],
+                    seconds=row["seconds"],
+                    content_digest=row["content_digest"],
+                    vector=vector.tolist(),
+                )
+            )
+        return embeddings
 
     def rebuild_agent_semantic_index(
         self,
@@ -308,12 +340,16 @@ class LibraryGeneratedStorageMixin:
         self._validate_asset_id(asset_id)
         document_ids = {document.document_id for document in documents}
         with self._lock, self._db():
-            rows = self._db().execute(
-                "SELECT document_id FROM summary_documents "
-                "WHERE asset_id = ? AND document_id IN "
-                f"({', '.join('?' for _ in document_ids)})",
-                (asset_id, *document_ids),
-            ).fetchall()
+            rows = (
+                self._db()
+                .execute(
+                    "SELECT document_id FROM summary_documents "
+                    "WHERE asset_id = ? AND document_id IN "
+                    f"({', '.join('?' for _ in document_ids)})",
+                    (asset_id, *document_ids),
+                )
+                .fetchall()
+            )
             if {row["document_id"] for row in rows} != document_ids:
                 raise ValueError("总结文档索引缺失")
             self._db().executemany(

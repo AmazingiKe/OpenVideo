@@ -137,3 +137,43 @@ def test_evidence_item_rejects_an_empty_time_range():
             retrieval_relation="direct",
             relevance_score=1,
         )
+
+
+@pytest.mark.parametrize(
+    ("starts", "coverage", "missing_range"),
+    [
+        ([0, 60], 0.5, "20.000–60.000 秒"),
+        ([], 0.0, "0.000–80.000 秒"),
+        ([0, 20, 40, 60], 1.0, None),
+    ],
+)
+def test_overview_reports_uncovered_ranges_without_counting_boundary_contact(
+    starts, coverage, missing_range
+):
+    result = retrieve_indexed_evidence(
+        documents=[
+            evidence(AgentEvidenceSource.TRANSCRIPT, start, f"主题 {start}")
+            for start in starts
+        ],
+        query=None,
+        start_seconds=None,
+        end_seconds=None,
+        limit=8,
+        duration_seconds=80,
+    )
+
+    assert result.evidence_bundle.coverage.temporal == coverage
+    if missing_range is None:
+        assert "尚未覆盖" not in result.answer_instruction
+    else:
+        assert missing_range in result.answer_instruction
+        assert "不代表视频中没有相关内容" in result.answer_instruction
+
+
+def test_keyword_search_does_not_request_unrelated_full_video_coverage():
+    result = retrieve(
+        evidence(AgentEvidenceSource.TRANSCRIPT, 10, "透视投影"),
+        query="透视投影",
+    )
+
+    assert "尚未覆盖" not in result.answer_instruction

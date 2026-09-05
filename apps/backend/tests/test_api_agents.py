@@ -16,6 +16,7 @@ from openvideo.agent_tooling import (
     ARTIFACT_EVIDENCE_GATE_KEY,
     AgentRunContext,
     CorrectTranscriptInput,
+    EvidenceSearchInput,
     ListSummaryDocumentsInput,
     ProposeMarkerChangesInput,
     ProposeSummaryEditInput,
@@ -41,6 +42,7 @@ from openvideo.core.agent_governance_models import AgentPermissionMode
 from openvideo.core.agent_evidence_index import IndexedEvidenceDocument
 from openvideo.core.agent_evidence_models import AgentEvidenceSource
 from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.event_analysis_models import FocusSelection
 from openvideo.core.analysis_models import (
     AnalysisCapability,
     AnalysisJob,
@@ -56,7 +58,7 @@ from openvideo.core.media_models import (
     MediaSegment,
     SourcePlatform,
 )
-from openvideo.core.summary_models import SummaryDocument
+from openvideo.core.summary_models import SummaryDocument, SummaryDocumentCreate
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.llm.agno_executor import AgnoAgentExecutor
 from openvideo.llm.capability_resolver import CapabilityResolver
@@ -1911,6 +1913,81 @@ def test_empty_root_uses_adaptive_summary_initialization_instruction(tmp_path: P
     assert "按视频实际内容密度决定结构和篇幅" in definition.prompt
     assert "suggested_subdocuments" in definition.prompt
     assert "批准后系统会根据最终文档树自动规划配图" in definition.prompt
+    assert "read_markers" in definition.allowed_tools
+
+
+@pytest.mark.parametrize("time_range", [(None, None), (10, 20)])
+def test_summary_search_uses_explicit_range_instead_of_saved_focus(
+    tmp_path: Path, monkeypatch, time_range
+):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        service.library.save_focus_selection(
+            FocusSelection(
+                selection_id=f"focus-selection-{uuid7().hex}",
+                asset_id=ASSET_ID,
+                in_seconds=30,
+                out_seconds=40,
+            )
+        )
+        captured = {}
+
+        def search(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr(service.library, "search_agent_evidence", search)
+        context = SimpleNamespace(
+            session=SimpleNamespace(asset_id=ASSET_ID),
+            retrieval_scope="current_asset",
+            evidence=RunEvidenceState(),
+        )
+        start_seconds, end_seconds = time_range
+        result = service._search_evidence(
+            context,
+            EvidenceSearchInput(start_seconds=start_seconds, end_seconds=end_seconds),
+        )
+
+    assert captured["start_seconds"] == start_seconds
+    assert captured["end_seconds"] == end_seconds
+    assert result["focus_selection"]["in_seconds"] == 30
+
+
+def test_summary_edit_reserves_budget_for_all_chapters(tmp_path: Path, monkeypatch):
+    captured = {}
+
+    async def capture_execution(_self, *_args, **kwargs):
+        captured.update(kwargs)
+        return AgentExecutionResult(content="测试预算")
+
+    monkeypatch.setattr(AgnoAgentExecutor, "run", capture_execution)
+    with create_client(tmp_path) as client:
+        root = client.post(
+            f"/api/media/assets/{ASSET_ID}/summary-documents/init"
+        ).json()
+        client.app.state.summary_manager.apply_agent_edit(
+            root["document_id"],
+            root["revision"],
+            "# 概览",
+            [SummaryDocumentCreate(title=f"章节 {index}") for index in range(3)],
+        )
+        session = client.post(
+            "/api/agent-sessions",
+            json={"agent_id": "summary", "asset_id": ASSET_ID},
+        ).json()
+        response = client.post(
+            f"/api/agent-sessions/{session['session_id']}/runs",
+            json={
+                "request_key": f"request-{uuid7().hex}",
+                "ai_model_id": MODEL_ID,
+                "content": "修改所有章节的结论",
+                "task_input": {"intent": "edit", "document_id": root["document_id"]},
+            },
+        )
+        assert response.status_code == 202, response.text
+        client.get(f"/api/agent-runs/{response.json()['run_id']}/events")
+
+    assert 10 <= captured["max_tool_calls"] <= 24
 
 
 def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(

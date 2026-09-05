@@ -21,6 +21,7 @@ from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAsset, SourcePlatform
 from openvideo.tools.transcribe import (
     AUTOMATIC_COMPUTE_TYPE,
+    AudioExtractionResult,
     AutomaticFallbackTranscriber,
     CPU_DEVICE_NAME,
     DEFAULT_WHISPER_COMPUTE_TYPE,
@@ -48,6 +49,7 @@ from openvideo.tools.transcribe import (
     create_transcriber,
     extract_audio,
     resolve_whisper_model_source,
+    transcribe_media,
 )
 
 
@@ -69,7 +71,11 @@ def test_parses_json3_subtitles_with_timestamps(tmp_path: Path):
                         "dDurationMs": 1800,
                         "segs": [{"utf8": "第一句"}, {"utf8": " 内容"}],
                     },
-                    {"tStartMs": 5000, "dDurationMs": 1000, "segs": [{"utf8": "第二句"}]},
+                    {
+                        "tStartMs": 5000,
+                        "dDurationMs": 1000,
+                        "segs": [{"utf8": "第二句"}],
+                    },
                 ]
             }
         ),
@@ -93,6 +99,53 @@ def test_extract_audio_requires_existing_media(tmp_path: Path):
         )
 
 
+@pytest.mark.parametrize("failure_stage", [None, "audio", "transcription"])
+def test_deferred_transcriber_is_closed_after_success_or_failure(
+    tmp_path: Path, monkeypatch, failure_stage: str | None
+):
+    closed = []
+    expected_transcript = Transcript(asset_id=TRANSCRIPT_ASSET_ID)
+    monkeypatch.setattr(
+        "openvideo.tools.transcribe.extract_platform_subtitles", lambda *_args: None
+    )
+
+    def audio(*_args):
+        if failure_stage == "audio":
+            raise TranscriptionFailure("音频提取失败")
+        return AudioExtractionResult(audio_path=tmp_path / "audio.wav")
+
+    def transcribe(*_args):
+        if failure_stage == "transcription":
+            raise TranscriptionFailure("识别失败")
+        return expected_transcript
+
+    monkeypatch.setattr("openvideo.tools.transcribe.extract_audio", audio)
+
+    def factory():
+        return SimpleNamespace(
+            output_source="test-local",
+            transcribe=transcribe,
+            close=lambda: closed.append(True),
+        )
+
+    arguments = (
+        tmp_path / "video.mp4",
+        TRANSCRIPT_ASSET_ID,
+        "https://example.com/video",
+        tmp_path / "work",
+        None,
+    )
+    if failure_stage is None:
+        result = transcribe_media(*arguments, transcriber_factory=factory)
+        assert result.transcript == expected_transcript
+        assert result.output_source == "test-local"
+    else:
+        with pytest.raises(TranscriptionFailure):
+            transcribe_media(*arguments, transcriber_factory=factory)
+
+    assert closed == [True]
+
+
 def test_transcript_model_serializes_segments():
     transcript = Transcript(asset_id=TRANSCRIPT_ASSET_ID)
 
@@ -101,7 +154,13 @@ def test_transcript_model_serializes_segments():
 
 def test_library_roundtrips_transcript(tmp_path: Path):
     library = MediaLibrary.initialize_directory(tmp_path)
-    library.save(MediaAsset(asset_id=TRANSCRIPT_ASSET_ID, source_url="https://example.com/video", source_platform=SourcePlatform.YOUTUBE))
+    library.save(
+        MediaAsset(
+            asset_id=TRANSCRIPT_ASSET_ID,
+            source_url="https://example.com/video",
+            source_platform=SourcePlatform.YOUTUBE,
+        )
+    )
     transcript = Transcript(
         asset_id=TRANSCRIPT_ASSET_ID,
         language="zh",
@@ -267,7 +326,9 @@ def test_automatic_fallback_uses_installed_alternative_without_confirmation(
             return Transcript(
                 asset_id=asset_id,
                 language="zh",
-                segments=[TranscriptSegment(start_seconds=0, end_seconds=1, text="完整")],
+                segments=[
+                    TranscriptSegment(start_seconds=0, end_seconds=1, text="完整")
+                ],
             )
 
         def close(self):
@@ -286,7 +347,9 @@ def test_automatic_fallback_uses_installed_alternative_without_confirmation(
 def test_faster_whisper_auto_device_falls_back_to_cpu(tmp_path: Path, monkeypatch):
     class UnavailableCudaModel:
         def transcribe(self, *_args, **_kwargs):
-            raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+            raise RuntimeError(
+                "Library cublas64_12.dll is not found or cannot be loaded"
+            )
 
     cpu_model = SimpleNamespace(
         transcribe=lambda *_args, **_kwargs: (
@@ -554,7 +617,7 @@ def test_qwen_transcriber_adds_chunk_offset(tmp_path: Path, monkeypatch):
                                 text="一句。",
                                 start_time=0.5,
                                 end_time=1.0,
-                            )
+                            ),
                         ]
                     ),
                 )
@@ -626,9 +689,7 @@ def test_qwen_splits_text_at_silence_break():
 def test_qwen_rejects_empty_timestamp_result(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "openvideo.tools.transcribe._load_qwen_audio_chunks",
-        lambda _: iter(
-            [QwenAudioChunk(numpy.zeros(16_000), 16_000, 0.0, 1.0)]
-        ),
+        lambda _: iter([QwenAudioChunk(numpy.zeros(16_000), 16_000, 0.0, 1.0)]),
     )
     transcriber = Qwen3AsrTranscriber(
         "qwen3-asr-0.6b", tmp_path, "zh", "cuda", "float16"
@@ -686,7 +747,9 @@ def test_sensevoice_device_resolution_and_oom_translation():
     with pytest.raises(TranscriptionFailure, match="CUDA"):
         _resolve_sensevoice_device("cuda", False)
 
-    error = _runtime_transcription_failure("Qwen3-ASR", RuntimeError("CUDA out of memory"))
+    error = _runtime_transcription_failure(
+        "Qwen3-ASR", RuntimeError("CUDA out of memory")
+    )
     assert str(error) == "Qwen3-ASR 显存不足，请改用更小的模型"
 
 

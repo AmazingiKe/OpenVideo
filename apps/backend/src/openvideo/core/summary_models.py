@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from openvideo.core.agent_evidence_models import AgentEvidenceSource
 
 
+MAXIMUM_ILLUSTRATION_SLOT_COUNT = 8
+
+
 class SummaryProject(BaseModel):
     """描述素材唯一的当前笔记。"""
 
@@ -133,9 +136,11 @@ class SummaryIllustrationJob(BaseModel):
     stage: SummaryIllustrationStage = SummaryIllustrationStage.PENDING
     progress_percent: float = Field(default=0, ge=0, le=100)
     message: str = "正在准备配图"
-    slots: list[SummaryIllustrationSlot] = Field(default_factory=list, max_length=6)
-    inserted_count: int = Field(default=0, ge=0, le=6)
-    skipped_count: int = Field(default=0, ge=0, le=6)
+    slots: list[SummaryIllustrationSlot] = Field(
+        default_factory=list, max_length=MAXIMUM_ILLUSTRATION_SLOT_COUNT
+    )
+    inserted_count: int = Field(default=0, ge=0, le=MAXIMUM_ILLUSTRATION_SLOT_COUNT)
+    skipped_count: int = Field(default=0, ge=0, le=MAXIMUM_ILLUSTRATION_SLOT_COUNT)
     metrics: SummaryIllustrationMetrics = Field(
         default_factory=SummaryIllustrationMetrics
     )

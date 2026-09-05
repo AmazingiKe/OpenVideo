@@ -175,11 +175,9 @@ class Transcriber(Protocol):
     engine: TranscriptionEngine
     output_source: str
 
-    def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
-        ...
+    def transcribe(self, audio_path: Path, asset_id: str) -> Transcript: ...
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -292,9 +290,10 @@ def transcribe_media(
     work_directory: Path,
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None = None,
-    transcriber: Transcriber | None = None,
+    transcriber_factory: Callable[[], Transcriber] | None = None,
 ) -> TranscriptionResult:
-    """先复用平台字幕，缺失时提取音频并交给 ASR 实现。"""
+    """先复用平台字幕，缺失时才准备 ASR，避免为现成字幕下载或加载模型。"""
+    transcriber = None
     try:
         subtitle_transcript = extract_platform_subtitles(
             source_url,
@@ -302,13 +301,14 @@ def transcribe_media(
         )
         if subtitle_transcript:
             return TranscriptionResult(
-                transcript=subtitle_transcript.model_copy(update={"asset_id": asset_id}),
+                transcript=subtitle_transcript.model_copy(
+                    update={"asset_id": asset_id}
+                ),
                 output_source="platform_subtitles",
             )
-        if transcriber is None:
-            raise TranscriptionFailure(
-                "视频没有可用字幕；请配置本地 ASR 后重试"
-            )
+        if transcriber_factory is None:
+            raise TranscriptionFailure("视频没有可用字幕；请配置本地 ASR 后重试")
+        transcriber = transcriber_factory()
         audio = extract_audio(
             media_path,
             work_directory / "audio",
@@ -934,8 +934,7 @@ def _qwen_result_language_codes(language: str) -> list[str]:
     unsupported = [name for name in language_names if name not in QWEN_LANGUAGE_CODES]
     if unsupported:
         raise TranscriptionFailure(
-            "Qwen ForcedAligner 不支持自动识别到的语言："
-            + "、".join(unsupported)
+            "Qwen ForcedAligner 不支持自动识别到的语言：" + "、".join(unsupported)
         )
     return [QWEN_LANGUAGE_CODES[name] for name in language_names]
 
@@ -1244,8 +1243,7 @@ def _qwen_quality_is_acceptable(quality: QwenChunkQuality) -> bool:
         return True
     return (
         quality.covered_speech_ratio >= QWEN_MIN_SPEECH_COVERAGE
-        and quality.max_uncovered_speech_seconds
-        <= QWEN_MAX_UNCOVERED_SPEECH_SECONDS
+        and quality.max_uncovered_speech_seconds <= QWEN_MAX_UNCOVERED_SPEECH_SECONDS
     )
 
 
@@ -1321,7 +1319,9 @@ def _sensevoice_transcript(results: object, asset_id: str) -> Transcript:
     if not isinstance(sentence_info, list) or not sentence_info:
         raise TranscriptionFailure("SenseVoice 未返回有效的分段时间戳")
     result_text = result.get(SENSEVOICE_TEXT_FIELD)
-    fallback_labels = _sensevoice_labels(result_text if isinstance(result_text, str) else "")
+    fallback_labels = _sensevoice_labels(
+        result_text if isinstance(result_text, str) else ""
+    )
     segments: list[TranscriptSegment] = []
     languages: list[str] = []
     for sentence in sentence_info:

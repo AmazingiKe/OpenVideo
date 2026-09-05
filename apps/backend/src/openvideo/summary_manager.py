@@ -624,6 +624,7 @@ class SummaryManager:
                 self.settings.ffmpeg_bin_dir,
             )
         except SummaryMediaError as error:
+            output_path.unlink(missing_ok=True)
             raise SummaryError(str(error)) from error
         artifact = SummaryMediaArtifact(
             media_id=media_id,
@@ -636,27 +637,38 @@ class SummaryManager:
             end_seconds=end_seconds,
             **(provenance.model_dump() if provenance is not None else {}),
         )
-        markdown_path = (
-            f"assets/{media_id}{suffix}"
-            if document.parent_document_id is None
-            else f"../assets/{media_id}{suffix}"
-        )
-        updated_markdown = _insert_markdown(
-            document.markdown,
-            request.insert_after,
-            f"![{request.caption}]({markdown_path})",
-        )
-        updated = self.update_document(
-            document.document_id,
-            SummaryDocumentUpdate(
-                operation_id=f"summary-operation-{uuid7().hex}",
-                client_id=f"summary-client-{uuid7().hex}",
-                client_sequence=1,
-                markdown=updated_markdown,
-            ),
-        )
-        self.library.save_summary_media(artifact)
-        return artifact, updated
+        with self.library._lock:
+            try:
+                # 抽帧期间允许编辑，落盘前必须重新核对版本以免覆盖新正文。
+                document = self._require_document(request.document_id)
+                if document.revision != request.expected_revision:
+                    raise SummaryRevisionConflictError(
+                        "文档版本冲突，请重新选择插入位置"
+                    )
+                markdown_path = (
+                    f"assets/{media_id}{suffix}"
+                    if document.parent_document_id is None
+                    else f"../assets/{media_id}{suffix}"
+                )
+                updated_markdown = _insert_markdown(
+                    document.markdown,
+                    request.insert_after,
+                    f"![{request.caption}]({markdown_path})",
+                )
+            except SummaryError:
+                output_path.unlink(missing_ok=True)
+                raise
+            updated = self.update_document(
+                document.document_id,
+                SummaryDocumentUpdate(
+                    operation_id=f"summary-operation-{uuid7().hex}",
+                    client_id=f"summary-client-{uuid7().hex}",
+                    client_sequence=1,
+                    markdown=updated_markdown,
+                ),
+            )
+            self.library.save_summary_media(artifact)
+            return artifact, updated
 
     def export(
         self,
