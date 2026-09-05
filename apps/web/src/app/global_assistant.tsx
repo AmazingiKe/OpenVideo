@@ -15,6 +15,7 @@ import { useLocation } from "react-router-dom";
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { use_local_preferences } from "@/app/local_preferences";
 import { workspace_route } from "@/app/workspace_routes";
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 import {
   AgentPanel,
   type AgentInvocationRequest,
@@ -165,15 +166,15 @@ export function GlobalAssistantRegistration({
 }: {
   binding: GlobalAssistantBinding;
 }) {
+  const is_workspace_active = useContext(WorkspaceActiveContext);
   const location = useLocation();
   const { register } = require_global_assistant_registry();
   const workspace_path =
     workspace_route(location.pathname)?.path ?? location.pathname;
 
-  useEffect(
-    () => register(workspace_path, binding),
-    [binding, register, workspace_path],
-  );
+  useEffect(() => {
+    if (is_workspace_active) return register(workspace_path, binding);
+  }, [binding, is_workspace_active, register, workspace_path]);
   return null;
 }
 

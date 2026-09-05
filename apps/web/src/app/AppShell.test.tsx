@@ -38,9 +38,9 @@ describe("AppShell", () => {
     },
   );
 
-  it("keeps document pages scrollable", () => {
+  it("leaves scrolling to each retained page", () => {
     const workspace = render_shell("/library");
 
-    expect(workspace).toHaveClass("overflow-auto");
+    expect(workspace).toHaveClass("overflow-hidden");
   });
 });

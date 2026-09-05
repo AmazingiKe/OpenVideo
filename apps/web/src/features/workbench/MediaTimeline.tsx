@@ -19,6 +19,7 @@ import {
   type PointerEvent,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -28,6 +29,7 @@ import {
 } from "react";
 
 import { AgentContextSource } from "@/components/AgentContextSource";
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 import {
   renew_context_attachment_draft,
   type AgentContextAttachmentDraft,
@@ -413,6 +415,7 @@ export function MediaTimeline({
   on_delete_event_analysis,
   on_request_transcription,
 }: MediaTimelineProps) {
+  const is_workspace_active = useContext(WorkspaceActiveContext);
   const [selected_marker_id, set_selected_marker_id] = useState<string | null>(
     null,
   );
@@ -824,6 +827,7 @@ export function MediaTimeline({
 
   useEffect(() => {
     function handle_marker_shortcut(event: globalThis.KeyboardEvent) {
+      if (!is_workspace_active) return;
       if (event.repeat || is_text_editing_target(event.target)) return;
       if (event.ctrlKey && event.key.toLowerCase() === "m") {
         event.preventDefault();
@@ -871,6 +875,7 @@ export function MediaTimeline({
     return () => window.removeEventListener("keydown", handle_marker_shortcut);
   }, [
     add_marker_and_select,
+    is_workspace_active,
     bounded_time,
     on_update_marker,
     on_set_focus_in,

@@ -10,6 +10,7 @@ import {
   use_global_assistant_controls,
 } from "@/app/global_assistant";
 import { LocalPreferencesProvider } from "@/app/local_preferences";
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 
 vi.mock("@/app/asset_catalog", () => ({
   use_asset_catalog: () => ({
@@ -148,5 +149,38 @@ describe("GlobalAssistantLayout", () => {
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getAllByLabelText("助手面板")).toHaveLength(1);
+  });
+
+  it("ignores assistant bindings from retained hidden workspaces", async () => {
+    set_compact_layout(false);
+    render_assistant(
+      <>
+        <WorkspaceActiveContext.Provider value={true}>
+          <GlobalAssistantRegistration
+            binding={{
+              agent_id: "marker",
+              asset_id: null,
+              context_label: "当前标记",
+            }}
+          />
+        </WorkspaceActiveContext.Provider>
+        <WorkspaceActiveContext.Provider value={false}>
+          <GlobalAssistantRegistration
+            binding={{
+              agent_id: "summary",
+              asset_id: null,
+              context_label: "隐藏总结",
+            }}
+          />
+        </WorkspaceActiveContext.Provider>
+      </>,
+    );
+    await waitFor(() => {
+      expect(screen.getByLabelText("助手面板")).toHaveAttribute(
+        "data-agent-id",
+        "marker",
+      );
+      expect(screen.getByLabelText("助手面板")).toHaveTextContent("当前标记");
+    });
   });
 });

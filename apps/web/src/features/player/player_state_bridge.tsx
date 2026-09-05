@@ -5,7 +5,9 @@ import {
   useMediaRemote,
   useMediaStore,
 } from "@vidstack/react";
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
+
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 
 export type PlayerController = {
   current_time: () => number;
@@ -36,11 +38,18 @@ export function PlayerStateBridge({
   on_playback_rate_change,
   on_volume_change,
 }: PlayerStateBridgeProps) {
+  const is_workspace_active = useContext(WorkspaceActiveContext);
   const player = useMediaPlayer();
   const provider = useMediaProvider();
   const remote = useMediaRemote();
   const store = useMediaStore();
   const last_reported_ref = useRef(-1);
+
+  useEffect(() => {
+    if (!is_workspace_active && player && !store.paused) {
+      void player.pause();
+    }
+  }, [is_workspace_active, player, store.paused]);
 
   useEffect(() => {
     if (!player) return;
@@ -73,7 +82,7 @@ export function PlayerStateBridge({
   }, [player, provider]);
 
   useEffect(() => {
-    if (!on_time_change) return;
+    if (!is_workspace_active || !on_time_change) return;
     if (provider && isVideoProvider(provider)) {
       const video = provider.video;
       let callback_id = 0;
@@ -92,7 +101,7 @@ export function PlayerStateBridge({
       last_reported_ref.current = store.currentTime;
       on_time_change(store.currentTime);
     }
-  }, [provider, store.currentTime, on_time_change]);
+  }, [is_workspace_active, provider, store.currentTime, on_time_change]);
 
   useEffect(() => {
     on_pause_change?.(store.paused);

@@ -144,6 +144,7 @@ export function FloatingSummaryPlayer({
     if (!container) return;
     const update_size = () => {
       const bounds = container.getBoundingClientRect();
+      if (bounds.width === 0 || bounds.height === 0) return;
       set_container_size({ width: bounds.width, height: bounds.height });
     };
     update_size();

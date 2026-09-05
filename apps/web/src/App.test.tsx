@@ -990,7 +990,7 @@ describe("App", () => {
     );
   });
 
-  it("recreates an independent player after returning to its workspace", async () => {
+  it("retains the same independent player when returning to its workspace", async () => {
     vi.mocked(get_health).mockResolvedValue({
       status: "ready",
       dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
@@ -1013,15 +1013,15 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("link", { name: "标记" }));
-    expect(await screen.findByTestId("player")).toBeInTheDocument();
+    const player = await screen.findByTestId("player");
+    expect(player).toBeVisible();
 
     fireEvent.click(screen.getByRole("link", { name: "视频库" }));
-    await waitFor(() =>
-      expect(screen.queryByTestId("player")).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(player).not.toBeVisible());
 
     fireEvent.click(screen.getByRole("link", { name: "标记" }));
-    expect(await screen.findByTestId("player")).toBeInTheDocument();
+    expect(await screen.findByTestId("player")).toBe(player);
+    expect(player).toBeVisible();
   });
 
   it("does not load media data on the settings page", async () => {

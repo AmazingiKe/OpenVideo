@@ -33,10 +33,8 @@ export function AppShell() {
           ) : null}
           <main
             className={cn(
-              "row-start-2 min-h-0",
-              uses_fixed_workspace_layout
-                ? "overflow-hidden"
-                : "overflow-auto bg-surface-subtle",
+              "row-start-2 min-h-0 overflow-hidden",
+              !uses_fixed_workspace_layout && "bg-surface-subtle",
             )}
           >
             <Outlet />

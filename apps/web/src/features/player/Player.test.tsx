@@ -3,9 +3,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Player, type PlayerHandle } from "./Player";
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 
 const media = vi.hoisted(() => ({
   player: {
+    pause: vi.fn(),
     currentTime: 12,
     paused: true,
     controls: {
@@ -105,6 +107,31 @@ beforeEach(() => {
 });
 
 describe("Player", () => {
+  it("pauses on workspace exit without replacing the player or resuming on return", () => {
+    const player_ref = createRef<PlayerHandle>();
+    const { rerender } = render(
+      <WorkspaceActiveContext.Provider value={true}>
+        <Player ref={player_ref} src="/video.mp4" />
+      </WorkspaceActiveContext.Provider>,
+    );
+    const provider = screen.getByTestId("media-provider");
+    media.store.paused = false;
+    act(() => player_ref.current?.begin_scrub(30));
+    rerender(
+      <WorkspaceActiveContext.Provider value={false}>
+        <Player ref={player_ref} src="/video.mp4" />
+      </WorkspaceActiveContext.Provider>,
+    );
+    expect(media.remote.pause).toHaveBeenCalled();
+    expect(media.player.pause).toHaveBeenCalled();
+    rerender(
+      <WorkspaceActiveContext.Provider value={true}>
+        <Player ref={player_ref} src="/video.mp4" />
+      </WorkspaceActiveContext.Provider>,
+    );
+    expect(screen.getByTestId("media-provider")).toBe(provider);
+    expect(media.remote.play).not.toHaveBeenCalled();
+  });
   it("renders the complete bottom controls without the hidden large play button", () => {
     render(
       <Player

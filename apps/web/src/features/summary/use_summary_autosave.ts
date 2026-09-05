@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
+
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 
 import { update_summary_document } from "@/shared/api";
 import type { SummaryDocument, SummarySaveMetadata } from "@/shared/types";
@@ -52,6 +54,7 @@ export function use_summary_autosave({
   on_recovery_target,
   on_local_draft_error,
 }: UseSummaryAutosaveOptions) {
+  const is_workspace_active = useContext(WorkspaceActiveContext);
   const [title, set_title] = useState("");
   const [markdown, set_markdown] = useState("");
   const [dirty, set_dirty] = useState(false);
@@ -232,18 +235,18 @@ export function use_summary_autosave({
               { title: request.title, markdown: request.markdown },
               request.metadata,
             );
-          on_document_saved_ref.current(updated);
-          const response_matches =
-            updated.title === request.title &&
-            updated.markdown === request.markdown;
-          save_request_ref.current = null;
-          if (!response_matches) {
-            retry_attempt_ref.current = Math.min(
-              retry_attempt_ref.current + 1,
-              RETRY_DELAYS_MS.length - 1,
-            );
-            set_status("failed");
-            return false;
+            on_document_saved_ref.current(updated);
+            const response_matches =
+              updated.title === request.title &&
+              updated.markdown === request.markdown;
+            save_request_ref.current = null;
+            if (!response_matches) {
+              retry_attempt_ref.current = Math.min(
+                retry_attempt_ref.current + 1,
+                RETRY_DELAYS_MS.length - 1,
+              );
+              set_status("failed");
+              return false;
             }
             confirmed_version_ref.current = Math.max(
               confirmed_version_ref.current,
@@ -332,6 +335,7 @@ export function use_summary_autosave({
   useEffect(() => {
     const manual_notice_timeout = manual_notice_timeout_ref;
     const handle_keydown = (event: KeyboardEvent) => {
+      if (!is_workspace_active) return;
       if (
         !(event.ctrlKey || event.metaKey) ||
         event.key.toLowerCase() !== "s"
@@ -351,7 +355,7 @@ export function use_summary_autosave({
         window.clearTimeout(manual_notice_timeout.current);
       }
     };
-  }, [flush]);
+  }, [flush, is_workspace_active]);
 
   const retry = useCallback(() => void flush(), [flush]);
   const has_unsaved_changes = useCallback(() => dirty_ref.current, []);

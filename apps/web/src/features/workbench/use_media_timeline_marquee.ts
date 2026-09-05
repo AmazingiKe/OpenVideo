@@ -1,9 +1,12 @@
 import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
+  useContext,
   useRef,
   useState,
 } from "react";
+
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 
 import {
   TIMELINE_RULER_HEIGHT,
@@ -38,6 +41,7 @@ export function use_media_timeline_marquee({
   on_clear_selection,
   on_commit_selection,
 }: MediaTimelineMarqueeOptions) {
+  const is_workspace_active = useContext(WorkspaceActiveContext);
   const interaction_ref = useRef<TimelineMarqueeInteraction | null>(null);
   const latest_options_ref = useRef({
     on_clear_selection,
@@ -52,6 +56,11 @@ export function use_media_timeline_marquee({
   const [announcement, set_announcement] = useState("");
 
   useEffect(() => {
+    if (!is_workspace_active) {
+      interaction_ref.current = null;
+      set_interaction(null);
+      return;
+    }
     function update_interaction(event: globalThis.PointerEvent) {
       const active_interaction = interaction_ref.current;
       if (
@@ -154,7 +163,7 @@ export function use_media_timeline_marquee({
       window.removeEventListener("pointercancel", cancel_pointer_interaction);
       window.removeEventListener("keydown", cancel_with_keyboard);
     };
-  }, []);
+  }, [is_workspace_active]);
 
   function start_marquee(event: ReactPointerEvent<HTMLDivElement>) {
     if (

@@ -10,6 +10,7 @@ import "@vidstack/react/player/styles/plyr/theme.css";
 import {
   forwardRef,
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -22,6 +23,7 @@ import type {
   SubtitleDisplaySettings,
   TranscriptSegment,
 } from "@/shared/types";
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 import {
   PlayerStateBridge,
   type PlayerController,
@@ -126,6 +128,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   },
   ref,
 ) {
+  const is_workspace_active = useContext(WorkspaceActiveContext);
   // 用 ref 保存 player/remote 方法，避免 useImperativeHandle 随 player 变化重建
   const seek_fn_ref = useRef<((seconds: number) => void) | null>(null);
   const toggle_playback_fn_ref = useRef<(() => void) | null>(null);
@@ -305,6 +308,24 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     if (resume_after_seek_ref.current) play_fn_ref.current?.();
     resume_after_seek_ref.current = false;
   }, [cancel_seek_preview, clear_scrub_preview, has_active_preview]);
+
+  useEffect(() => {
+    if (is_workspace_active) return;
+    // 切页时取消拖动后的自动续播，保留媒体实例及当前位置。
+    resume_after_seek_ref.current = false;
+    pending_seek_ref.current = false;
+    presented_frame_cancel_ref.current?.();
+    presented_frame_cancel_ref.current = null;
+    cancel_seek_preview();
+    clear_scrub_preview();
+    release_controls_visibility();
+    pause_fn_ref.current?.();
+  }, [
+    is_workspace_active,
+    cancel_seek_preview,
+    clear_scrub_preview,
+    release_controls_visibility,
+  ]);
 
   useImperativeHandle(
     ref,

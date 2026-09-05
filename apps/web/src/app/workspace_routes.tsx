@@ -11,7 +11,6 @@ type WorkspaceRoute = {
   path: WorkspacePath;
   component: LazyExoticComponent<ComponentType>;
   load_component: () => PageModule;
-  preserve_state_when_hidden: boolean;
 };
 
 const load_markers_page = () =>
@@ -37,23 +36,18 @@ export const WORKSPACE_ROUTES: WorkspaceRoute[] = [
     path: "/library",
     component: lazy(load_library_page),
     load_component: load_library_page,
-    preserve_state_when_hidden: true,
   },
   {
     label: "标记",
     path: MARKERS_ROUTE_PATH,
     component: lazy(load_markers_page),
     load_component: load_markers_page,
-    // Vidstack 的 React 桥接层不能在 Activity 隐藏后重新挂载。
-    preserve_state_when_hidden: false,
   },
   {
     label: "总结",
     path: SUMMARY_ROUTE_PATH,
     component: lazy(load_summary_page),
     load_component: load_summary_page,
-    // 总结页同样包含独立播放器，切换时必须完整销毁播放器实例。
-    preserve_state_when_hidden: false,
   },
 ];
 

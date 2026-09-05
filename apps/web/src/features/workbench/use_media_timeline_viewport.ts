@@ -1,12 +1,15 @@
 import type { TimelineState } from "@xzdarcy/react-timeline-editor";
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 
 import {
   DEFAULT_ZOOM_PIXELS_PER_SECOND,
@@ -79,6 +82,7 @@ export function use_media_timeline_viewport({
   playback_rate,
   read_playback_time,
 }: MediaTimelineViewportOptions) {
+  const is_workspace_active = useContext(WorkspaceActiveContext);
   const timeline_ref = useRef<TimelineState>(null);
   const timeline_host_ref = useRef<HTMLDivElement>(null);
   const playhead_ref = useRef<HTMLDivElement>(null);
@@ -328,6 +332,8 @@ export function use_media_timeline_viewport({
       return;
     }
 
+    if (!is_workspace_active) return;
+
     playhead_anchor_ref.current = {
       media_time: playhead_time_ref.current,
       frame_time: performance.now(),
@@ -365,7 +371,7 @@ export function use_media_timeline_viewport({
         playhead_frame_ref.current = null;
       }
     };
-  }, [asset_id, is_paused, set_playhead_time]);
+  }, [asset_id, is_paused, is_workspace_active, set_playhead_time]);
 
   useLayoutEffect(() => {
     set_render_window((current) =>
@@ -596,6 +602,7 @@ export function use_media_timeline_viewport({
   }, [commit_pending_scroll, commit_zoom_viewport]);
 
   function handle_timeline_scroll(position: TimelineScrollPosition) {
+    if (!is_workspace_active) return;
     synchronized_scroll_ref.current = {
       scroll_left: position.scrollLeft,
       scroll_top: position.scrollTop,
