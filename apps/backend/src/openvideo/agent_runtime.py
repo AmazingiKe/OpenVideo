@@ -393,25 +393,25 @@ class AgentRuntime:
                 "updated_at": started_at,
             }
         )
-        self.store.repository.save_agent_run(running)
-        self.store.append(
-            run.session_id,
-            run.run_id,
-            AgentEventType.RUN_STATUS,
-            {
-                "stage": "running",
-                "input": display_content
-                if display_content is not None
-                else user_content,
-                **(input_metadata or {}),
-            },
-        )
-        history_user_content = (
-            display_content.strip()
-            if display_content is not None
-            else user_content.strip()
-        ) or "执行当前任务。"
         try:
+            self.store.repository.save_agent_run(running)
+            self.store.append(
+                run.session_id,
+                run.run_id,
+                AgentEventType.RUN_STATUS,
+                {
+                    "stage": "running",
+                    "input": display_content
+                    if display_content is not None
+                    else user_content,
+                    **(input_metadata or {}),
+                },
+            )
+            history_user_content = (
+                display_content.strip()
+                if display_content is not None
+                else user_content.strip()
+            ) or "执行当前任务。"
             return await asyncio.wait_for(
                 self._run_agent(
                     running,
@@ -427,41 +427,41 @@ class AgentRuntime:
                 timeout=run_timeout_seconds,
             )
         except (AgentCancelledError, asyncio.CancelledError):
-            return self._finish(
+            return self.finish(
                 running, AgentRunStage.CANCELLED, "cancelled", "用户已取消 Agent 运行"
             )
         except TimeoutError:
-            return self._finish(
+            return self.finish(
                 running,
                 AgentRunStage.FAILED,
                 "run_timeout",
                 f"Agent 运行超过 {run_timeout_seconds:g} 秒",
             )
         except AgentRuntimeError as error:
-            return self._finish(running, AgentRunStage.FAILED, error.code, str(error))
+            return self.finish(running, AgentRunStage.FAILED, error.code, str(error))
         except ToolCallingUnsupportedError as error:
-            return self._finish(
+            return self.finish(
                 running,
                 AgentRunStage.FAILED,
                 "tool_calling_unsupported",
                 f"当前模型已确认不支持工具调用：{error}",
             )
         except FeatureCombinationUnsupportedError as error:
-            return self._finish(
+            return self.finish(
                 running,
                 AgentRunStage.FAILED,
                 "feature_combination_unsupported",
                 f"当前模型参数组合不受支持：{error}",
             )
         except ProviderRequestError as error:
-            return self._finish(
+            return self.finish(
                 running,
                 AgentRunStage.FAILED,
                 "provider_request_error",
                 f"模型服务请求失败：{error}",
             )
         except Exception as error:
-            return self._finish(
+            return self.finish(
                 running,
                 AgentRunStage.FAILED,
                 "agent_runtime_error",
@@ -557,7 +557,7 @@ class AgentRuntime:
                 **completion_payload,
             },
         )
-        return self._finish(run, stage)
+        return self.finish(run, stage)
 
     def _append_executor_event(self, run: AgentRun, event: LlmAgentEvent) -> None:
         tracker = self._metric_trackers[run.run_id]
@@ -611,13 +611,15 @@ class AgentRuntime:
             raise AgentCancelledError()
         self.cancellation.raise_if_cancelled()
 
-    def _finish(
+    def finish(
         self,
         run: AgentRun,
         stage: AgentRunStage,
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> AgentRun:
+        """统一落盘结束事件与指标，也供任务回调修复异常退出的运行。"""
+
         completed_at = datetime.now(UTC)
         tracker = self._metric_trackers.get(run.run_id)
         metrics = (

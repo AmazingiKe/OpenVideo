@@ -35,6 +35,7 @@ from openvideo.core.agent_runtime_models import (
     AgentFocusContext,
     AgentMode,
     AgentRunCreate,
+    AgentRunStage,
     AgentSession,
     AgentSessionCreate,
     AgentToolCall,
@@ -2182,6 +2183,7 @@ def test_completed_run_releases_runtime_when_bookkeeping_fails(
             AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
         )
         run = new_agent_run(session.session_id, f"request-{uuid7().hex}", MODEL_ID)
+        run = run.model_copy(update={"stage": AgentRunStage.COMPLETE})
         service.library.save_agent_run(run)
         service.store.append(
             session.session_id,
@@ -2207,7 +2209,11 @@ def test_completed_run_releases_runtime_when_bookkeeping_fails(
         )
         monkeypatch.setattr(target, method, fail)
         with pytest.raises(RuntimeError, match="bookkeeping failed"):
-            service._complete_run(run.run_id, service.settings.ai_model(MODEL_ID), None)
+            service._complete_run(
+                run.run_id,
+                service.settings.ai_model(MODEL_ID),
+                SimpleNamespace(result=lambda: run),
+            )
         assert run.run_id not in service._tasks
         assert run.run_id not in service._runtimes
 
@@ -2309,5 +2315,57 @@ def test_completed_creation_does_not_reserve_capacity_before_callback(
                     )
             finally:
                 service._run_creations.pop(previous_key)
+
+        client.portal.call(scenario)
+
+
+@pytest.mark.parametrize("outcome", ["failed", "cancelled", "unfinished"])
+def test_abnormal_task_completion_is_terminal_and_allows_next_request(
+    tmp_path, monkeypatch, outcome
+):
+    async def exit_early(_runtime, run, *_args, **_kwargs):
+        if outcome == "cancelled":
+            raise asyncio.CancelledError
+        if outcome == "failed":
+            raise RuntimeError("unexpected startup failure")
+        return run
+
+    monkeypatch.setattr("openvideo.agent_runtime.AgentRuntime.run", exit_early)
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+
+        async def scenario():
+            for _ in range(2):
+                run = await service.create_run(
+                    session.session_id,
+                    AgentRunCreate(
+                        request_key=f"request-{uuid7().hex}",
+                        ai_model_id=MODEL_ID,
+                        content="test",
+                    ),
+                )
+
+                async def finished():
+                    while run.run_id in service._tasks:
+                        await asyncio.sleep(0)
+
+                await asyncio.wait_for(finished(), timeout=2)
+                persisted = service.run(run.run_id)
+                assert persisted.stage == (
+                    "cancelled" if outcome == "cancelled" else "failed"
+                )
+                assert persisted.completed_at is not None
+                assert (
+                    service.library.load_agent_run_checkpoint(run.run_id).retry_allowed
+                    is True
+                )
+                assert run.run_id not in service._runtimes
+                assert service.run_events(run.run_id)[-1].event_type in {
+                    AgentEventType.RUN_FAILED,
+                    AgentEventType.RUN_CANCELLED,
+                }
 
         client.portal.call(scenario)

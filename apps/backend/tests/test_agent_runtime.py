@@ -518,3 +518,36 @@ async def test_tool_loop_limit_finishes_with_actionable_error():
     assert finished.stage == "failed"
     assert finished.error_code == "tool_call_limit"
     assert repository.events[run.session_id][-1].event_type == AgentEventType.RUN_FAILED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["save", "event"])
+async def test_startup_persistence_error_finishes_run_and_cleans_runtime(
+    monkeypatch, failure_point
+):
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(content="unused")
+    )
+    method_name = "save_agent_run" if failure_point == "save" else "append_agent_event"
+    original = (
+        repository.save_agent_run
+        if failure_point == "save"
+        else repository.append_agent_event
+    )
+    failed = False
+
+    def fail_once(*args, **kwargs):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise RuntimeError("startup persistence failed")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(repository, method_name, fail_once)
+    finished = await runtime.run(run, model, profile, definition, "test")
+    assert finished.stage == "failed"
+    assert finished.error_code == "agent_runtime_error"
+    assert repository.runs[run.run_id].stage == "failed"
+    assert not runtime._active_tasks
+    assert not runtime._cancel_events
+    assert not runtime._metric_trackers

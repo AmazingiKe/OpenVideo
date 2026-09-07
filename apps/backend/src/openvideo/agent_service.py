@@ -991,10 +991,24 @@ class AgentService:
         self,
         run_id: str,
         model: AiModelConfiguration,
-        _task: asyncio.Task[AgentRun],
+        task: asyncio.Task[AgentRun],
     ) -> None:
         try:
+            stopped_stage = AgentRunStage.FAILED
+            error_code = "agent_runtime_error"
+            error_message = "助手异常退出，未记录结束状态"
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                stopped_stage = AgentRunStage.CANCELLED
+                error_code = "cancelled"
+                error_message = "助手在完成前被取消"
+            except Exception as error:
+                error_message = str(error) or error_message
             run = self.library.load_agent_run(run_id)
+            if run is not None and run.stage not in TERMINAL_AGENT_RUN_STAGES:
+                runtime = self._runtimes[run_id]
+                run = runtime.finish(run, stopped_stage, error_code, error_message)
             if run is not None:
                 self.library.update_agent_run_checkpoint(
                     run_id,
