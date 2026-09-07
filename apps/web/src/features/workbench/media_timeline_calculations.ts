@@ -19,9 +19,6 @@ const WHEEL_DELTA_MODE_PIXEL = 0;
 const WHEEL_DELTA_MODE_LINE = 1;
 const WHEEL_DELTA_MODE_PAGE = 2;
 const WHEEL_LINE_HEIGHT_PIXELS = 16;
-const MINIMUM_WHEEL_FRAME_FACTOR = 0.8;
-const MAXIMUM_WHEEL_FRAME_FACTOR = 1.25;
-const WHEEL_ZOOM_EPSILON = 1e-9;
 export const TIMELINE_START_LEFT = 16;
 export const TIMELINE_ROW_HEIGHT = 48;
 export const TIMELINE_COMPACT_ROW_HEIGHT = 32;
@@ -30,7 +27,7 @@ export const TIMELINE_MAXIMUM_ROW_HEIGHT = 160;
 export const TIMELINE_RULER_HEIGHT = 32;
 const TIMELINE_FIT_END_PADDING_PIXELS = 16;
 const RENDER_WINDOW_BUFFER_VIEWPORTS = 0.5;
-const RENDER_WINDOW_COVERAGE_MARGIN_VIEWPORTS = 0.1;
+const RENDER_WINDOW_MAXIMUM_VIEWPORTS = 3;
 const RENDER_WINDOW_MOVEMENT_THRESHOLD_VIEWPORTS = 0.25;
 
 export const TIMELINE_TRACK_IDS = {
@@ -309,7 +306,8 @@ export function normalize_wheel_delta(
   return delta;
 }
 
-export function consume_timeline_wheel_zoom_frame({
+/** 每帧消化全部输入，保留各次指针锚点，避免反向操作仍在追赶旧事件。 */
+export function calculate_timeline_wheel_zoom({
   viewport,
   events,
   scale_count,
@@ -317,74 +315,25 @@ export function consume_timeline_wheel_zoom_frame({
   viewport: TimelineZoomViewport;
   events: TimelineWheelZoomEvent[];
   scale_count: number;
-}): {
-  viewport: TimelineZoomViewport;
-  remaining_events: TimelineWheelZoomEvent[];
-} {
-  const viewport_width = events[0]?.viewport_width ?? 0;
-  const minimum_zoom_pixels_per_second = calculate_minimum_timeline_zoom(
-    viewport_width,
-    scale_count,
-  );
-  const frame_minimum_zoom = Math.max(
-    minimum_zoom_pixels_per_second,
-    viewport.zoom_pixels_per_second * MINIMUM_WHEEL_FRAME_FACTOR,
-  );
-  const frame_maximum_zoom = Math.min(
-    MAXIMUM_ZOOM_PIXELS_PER_SECOND,
-    viewport.zoom_pixels_per_second * MAXIMUM_WHEEL_FRAME_FACTOR,
-  );
+}): TimelineZoomViewport {
   let next_viewport = viewport;
-
-  for (let event_index = 0; event_index < events.length; event_index += 1) {
-    const wheel_event = events[event_index];
-    if (!wheel_event) continue;
-    let remaining_delta = wheel_event.logarithmic_delta;
-    if (Math.abs(remaining_delta) <= WHEEL_ZOOM_EPSILON) continue;
-
-    const requested_zoom =
-      next_viewport.zoom_pixels_per_second * Math.exp(remaining_delta);
-    const frame_limited_zoom = Math.min(
-      frame_maximum_zoom,
-      Math.max(frame_minimum_zoom, requested_zoom),
-    );
-    const calculated_viewport = calculate_zoom_viewport({
+  for (const event of events) {
+    if (
+      !Number.isFinite(event.logarithmic_delta) ||
+      event.logarithmic_delta === 0
+    )
+      continue;
+    next_viewport = calculate_zoom_viewport({
       viewport: next_viewport,
-      requested_zoom: frame_limited_zoom,
-      anchor_x: wheel_event.anchor_x,
-      viewport_width: wheel_event.viewport_width,
+      requested_zoom:
+        next_viewport.zoom_pixels_per_second *
+        Math.exp(event.logarithmic_delta),
+      anchor_x: event.anchor_x,
+      viewport_width: event.viewport_width,
       scale_count,
     });
-    const applied_delta = Math.log(
-      calculated_viewport.zoom_pixels_per_second /
-        next_viewport.zoom_pixels_per_second,
-    );
-    next_viewport = calculated_viewport;
-    remaining_delta -= applied_delta;
-
-    if (Math.abs(remaining_delta) <= WHEEL_ZOOM_EPSILON) continue;
-    const reached_global_limit =
-      (remaining_delta > 0 &&
-        next_viewport.zoom_pixels_per_second >=
-          MAXIMUM_ZOOM_PIXELS_PER_SECOND) ||
-      (remaining_delta < 0 &&
-        next_viewport.zoom_pixels_per_second <=
-          calculate_minimum_timeline_zoom(
-            wheel_event.viewport_width,
-            scale_count,
-          ));
-    if (reached_global_limit) continue;
-
-    return {
-      viewport: next_viewport,
-      remaining_events: [
-        { ...wheel_event, logarithmic_delta: remaining_delta },
-        ...events.slice(event_index + 1),
-      ],
-    };
   }
-
-  return { viewport: next_viewport, remaining_events: [] };
+  return next_viewport;
 }
 
 export function create_timeline_render_window({
@@ -443,69 +392,18 @@ export function update_timeline_render_window({
   const near_right_edge =
     render_window.end_seconds < duration &&
     render_window.end_seconds - visible_range.end_seconds < movement_threshold;
-  if (!invalid_bounds && !near_left_edge && !near_right_edge) {
-    return render_window;
-  }
-  return create_timeline_render_window({ viewport, canvas_width, duration });
-}
-
-export function extend_timeline_render_window({
-  render_window,
-  viewport,
-  canvas_width,
-  duration,
-}: {
-  render_window: TimelineRenderWindow;
-  viewport: TimelineZoomViewport;
-  canvas_width: number;
-  duration: number;
-}): TimelineRenderWindow {
-  const visible_duration = canvas_width / viewport.zoom_pixels_per_second;
-  const visible_range = calculate_timeline_visible_range({
-    viewport,
-    canvas_width,
-    duration,
-  });
-  const coverage_margin =
-    visible_duration * RENDER_WINDOW_COVERAGE_MARGIN_VIEWPORTS;
-  const required_start = Math.max(
-    0,
-    visible_range.start_seconds - coverage_margin,
-  );
-  const required_end = Math.min(
-    duration,
-    visible_range.end_seconds + coverage_margin,
-  );
-  const bounded_render_window = {
-    start_seconds: Math.min(duration, Math.max(0, render_window.start_seconds)),
-    end_seconds: Math.min(duration, Math.max(0, render_window.end_seconds)),
-  };
-  const covers_visible_range =
-    bounded_render_window.start_seconds <= required_start &&
-    bounded_render_window.end_seconds >= required_end;
+  const oversized_window =
+    render_window.end_seconds - render_window.start_seconds >
+    visible_duration * RENDER_WINDOW_MAXIMUM_VIEWPORTS;
   if (
-    covers_visible_range &&
-    timeline_render_windows_equal(render_window, bounded_render_window)
+    !invalid_bounds &&
+    !near_left_edge &&
+    !near_right_edge &&
+    !oversized_window
   ) {
     return render_window;
   }
-  if (covers_visible_range) return bounded_render_window;
-
-  const expanded_window = create_timeline_render_window({
-    viewport,
-    canvas_width,
-    duration,
-  });
-  return {
-    start_seconds: Math.min(
-      bounded_render_window.start_seconds,
-      expanded_window.start_seconds,
-    ),
-    end_seconds: Math.max(
-      bounded_render_window.end_seconds,
-      expanded_window.end_seconds,
-    ),
-  };
+  return create_timeline_render_window({ viewport, canvas_width, duration });
 }
 
 function calculate_timeline_visible_range({
@@ -538,28 +436,66 @@ function calculate_timeline_visible_range({
   };
 }
 
-export function timeline_render_windows_equal(
-  first: TimelineRenderWindow,
-  second: TimelineRenderWindow,
-): boolean {
-  return (
-    first.start_seconds === second.start_seconds &&
-    first.end_seconds === second.end_seconds
-  );
-}
+type TimelineRowWindowIndex = {
+  actions: TimelineAction[];
+  maximum_ends: number[];
+};
 
+const TIMELINE_ROW_WINDOW_INDEXES = new WeakMap<
+  TimelineAction[],
+  TimelineRowWindowIndex
+>();
+
+/** 只读轨道复用索引；标记由编辑器原地修改，必须按实时范围裁剪。 */
 export function filter_timeline_rows_for_window(
   rows: TimelineRow[],
   render_window: TimelineRenderWindow,
 ): TimelineRow[] {
   return rows.map((row) => {
+    if (row.id === TIMELINE_TRACK_IDS.marker) {
+      return {
+        ...row,
+        actions: row.actions.filter(
+          (action) =>
+            action.end >= render_window.start_seconds &&
+            action.start <= render_window.end_seconds,
+        ),
+      };
+    }
+    let index = TIMELINE_ROW_WINDOW_INDEXES.get(row.actions);
+    if (!index) {
+      const actions = [...row.actions].sort(
+        (first, second) => first.start - second.start,
+      );
+      let maximum_end = -Infinity;
+      const maximum_ends = actions.map((action) => {
+        maximum_end = Math.max(maximum_end, action.end);
+        return maximum_end;
+      });
+      index = { actions, maximum_ends };
+      TIMELINE_ROW_WINDOW_INDEXES.set(row.actions, index);
+    }
+    let left = 0;
+    let right = index.actions.length;
+    while (left < right) {
+      const middle = Math.floor((left + right) / 2);
+      if (index.maximum_ends[middle] < render_window.start_seconds)
+        left = middle + 1;
+      else right = middle;
+    }
+    const actions: TimelineAction[] = [];
+    for (
+      let action_index = left;
+      action_index < index.actions.length;
+      action_index += 1
+    ) {
+      const action = index.actions[action_index];
+      if (action.start > render_window.end_seconds) break;
+      if (action.end >= render_window.start_seconds) actions.push(action);
+    }
     return {
       ...row,
-      actions: row.actions.filter(
-        (action) =>
-          action.end >= render_window.start_seconds &&
-          action.start <= render_window.end_seconds,
-      ),
+      actions,
     };
   });
 }

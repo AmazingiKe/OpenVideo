@@ -440,6 +440,67 @@ export const ZoomBelowDefault: Story = {
   },
 };
 
+export const ContinuousViewportUpdates: Story = {
+  args: {
+    duration_seconds: 2_000,
+    initial_time: 0,
+    initial_markers: [],
+    analysis_segments: [],
+    transcript_segments: Array.from({ length: 2_000 }, (_, index) => ({
+      start_seconds: index,
+      end_seconds: index + 1,
+      text: `连续滚动片段 ${index}`,
+      emotion: null,
+      audio_events: [],
+    })),
+  },
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    const canvas = story.getByLabelText(/时间线画布/);
+    const grid = canvas.querySelector<HTMLElement>(
+      ".timeline-editor-edit-area .ReactVirtualized__Grid",
+    )!;
+    const frame = () => new Promise(requestAnimationFrame);
+    const scroll_positions = [800, 8_000, 16_000, 800];
+    let zoom = DEFAULT_ZOOM_PIXELS_PER_SECOND;
+    for (const scroll_left of scroll_positions) {
+      grid.scrollLeft = scroll_left;
+      grid.dispatchEvent(new Event("scroll"));
+      await frame();
+      expect(
+        grid.querySelector<HTMLElement>(
+          ".ReactVirtualized__Grid__innerScrollContainer",
+        )?.style.pointerEvents,
+      ).not.toBe("none");
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", {
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+          clientX: canvas.getBoundingClientRect().left + 200,
+          deltaY: -50,
+        }),
+      );
+      zoom *= Math.exp(0.05);
+      await frame();
+      await frame();
+      const visible_index = Math.ceil(grid.scrollLeft / zoom);
+      const action = story.getByRole("button", {
+        name: new RegExp(`^转写：连续滚动片段 ${visible_index}，`),
+      });
+      const block = action.closest<HTMLElement>(".timeline-editor-action")!;
+      expect(getComputedStyle(block).transitionProperty).toBe("none");
+      expect(Math.abs(block.getBoundingClientRect().width - zoom)).toBeLessThan(
+        1,
+      );
+      const expected_left = 16 + visible_index * zoom - grid.scrollLeft;
+      const actual_left =
+        block.getBoundingClientRect().left - grid.getBoundingClientRect().left;
+      expect(Math.abs(actual_left - expected_left)).toBeLessThan(1);
+    }
+  },
+};
+
 export const AdjacentChaptersOverview: Story = {
   args: {
     analysis_segments: ADJACENT_ANALYSIS_SEGMENTS,

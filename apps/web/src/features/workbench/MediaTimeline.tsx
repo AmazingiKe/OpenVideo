@@ -553,15 +553,16 @@ export function MediaTimeline({
     zoom: number;
     threshold: number;
   } | null>(null);
-  const [ruler_major_interval_seconds, set_ruler_major_interval_seconds] =
-    useState(() =>
-      select_timeline_ruler_interval(viewport.zoom_pixels_per_second, null),
-    );
-  useLayoutEffect(() => {
-    set_ruler_major_interval_seconds((current) =>
-      select_timeline_ruler_interval(viewport.zoom_pixels_per_second, current),
-    );
-  }, [viewport.zoom_pixels_per_second]);
+  const [previous_ruler_interval, set_previous_ruler_interval] = useState<
+    number | null
+  >(null);
+  const ruler_major_interval_seconds = select_timeline_ruler_interval(
+    viewport.zoom_pixels_per_second,
+    previous_ruler_interval,
+  );
+  if (previous_ruler_interval !== ruler_major_interval_seconds) {
+    set_previous_ruler_interval(ruler_major_interval_seconds);
+  }
   const marker_source_row = useMemo(
     () =>
       sort_timeline_rows(
@@ -708,22 +709,23 @@ export function MediaTimeline({
       viewport.zoom_pixels_per_second,
     ],
   );
+  const independent_editor_rows = useMemo(
+    () =>
+      aggregation.independent_rows.map((row) => ({
+        ...row,
+        actions: row.actions.map((action) =>
+          selected_actions_by_id.get(action.id)!,
+        ),
+      })),
+    [aggregation.independent_rows, selected_actions_by_id],
+  );
   const editor_data = useMemo(
     () =>
       filter_timeline_rows_for_window(
-        aggregation.independent_rows.map((row) => ({
-          ...row,
-          actions: row.actions.map((action) =>
-            selected_actions_by_id.get(action.id)!,
-          ),
-        })),
+        independent_editor_rows,
         editor_render_window,
       ),
-    [
-      aggregation.independent_rows,
-      selected_actions_by_id,
-      editor_render_window,
-    ],
+    [independent_editor_rows, editor_render_window],
   );
   const evidence_start_seconds = Math.min(
     Math.max(evidence_range?.start_seconds ?? 0, 0),

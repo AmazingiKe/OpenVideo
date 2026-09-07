@@ -87,11 +87,16 @@ export const MediaTimelineAggregateCanvas = memo(
       const context = canvas.getContext("2d");
       if (!context) return;
       const device_pixel_ratio = Math.max(window.devicePixelRatio || 1, 1);
-      canvas.width = Math.max(1, Math.round(canvas_width * device_pixel_ratio));
-      canvas.height = Math.max(
+      const bitmap_width = Math.max(
+        1,
+        Math.round(canvas_width * device_pixel_ratio),
+      );
+      const bitmap_height = Math.max(
         1,
         Math.round(canvas_height * device_pixel_ratio),
       );
+      if (canvas.width !== bitmap_width) canvas.width = bitmap_width;
+      if (canvas.height !== bitmap_height) canvas.height = bitmap_height;
       let paint_style = paint_style_ref.current;
       if (!paint_style) {
         const computed_style = getComputedStyle(canvas);

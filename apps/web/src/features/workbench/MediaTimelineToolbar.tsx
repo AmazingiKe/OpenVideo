@@ -5,7 +5,9 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -18,7 +20,7 @@ import {
 } from "./media_timeline_calculations";
 
 const ZOOM_BUTTON_FACTOR = 1.25;
-const ZOOM_SLIDER_STEP = 0.1;
+const ZOOM_SLIDER_STEPS = 1_000;
 
 type MediaTimelineToolbarProps = {
   current_time: number;
@@ -49,6 +51,18 @@ export function MediaTimelineToolbar({
   const scheduled_zoom_ref = useRef<number | null>(null);
   const zoom_frame_ref = useRef<number | null>(null);
   const on_zoom_change_ref = useRef(on_zoom_change);
+  const [preview_zoom, set_preview_zoom] = useState(zoom_pixels_per_second);
+  const zoom_logarithmic_range = Math.log(
+    MAXIMUM_ZOOM_PIXELS_PER_SECOND / minimum_zoom_pixels_per_second,
+  );
+  const slider_position =
+    (Math.log(preview_zoom / minimum_zoom_pixels_per_second) /
+      zoom_logarithmic_range) *
+    ZOOM_SLIDER_STEPS;
+
+  useLayoutEffect(() => {
+    set_preview_zoom(zoom_pixels_per_second);
+  }, [zoom_pixels_per_second]);
 
   useLayoutEffect(() => {
     on_zoom_change_ref.current = on_zoom_change;
@@ -79,10 +93,13 @@ export function MediaTimelineToolbar({
     zoom_frame_ref.current = null;
     const scheduled_zoom = scheduled_zoom_ref.current;
     scheduled_zoom_ref.current = null;
-    if (scheduled_zoom !== null) on_zoom_change_ref.current(scheduled_zoom);
+    if (scheduled_zoom !== null) {
+      flushSync(() => on_zoom_change_ref.current(scheduled_zoom));
+    }
   }
 
   function schedule_zoom(zoom: number) {
+    set_preview_zoom(zoom);
     scheduled_zoom_ref.current = zoom;
     if (zoom_frame_ref.current !== null) return;
     zoom_frame_ref.current = window.requestAnimationFrame(apply_scheduled_zoom);
@@ -146,14 +163,22 @@ export function MediaTimelineToolbar({
           <Minus data-icon="inline-start" aria-hidden="true" />
         </Button>
         <Slider
-          value={[zoom_pixels_per_second]}
-          min={minimum_zoom_pixels_per_second}
-          max={MAXIMUM_ZOOM_PIXELS_PER_SECOND}
-          step={ZOOM_SLIDER_STEP}
-          onValueChange={([zoom = DEFAULT_ZOOM_PIXELS_PER_SECOND]) =>
-            schedule_zoom(zoom)
+          value={[slider_position]}
+          min={0}
+          max={ZOOM_SLIDER_STEPS}
+          step={1}
+          onValueChange={([position = 0]) =>
+            schedule_zoom(
+              position === ZOOM_SLIDER_STEPS
+                ? MAXIMUM_ZOOM_PIXELS_PER_SECOND
+                : minimum_zoom_pixels_per_second *
+                    Math.exp(
+                      (position / ZOOM_SLIDER_STEPS) * zoom_logarithmic_range,
+                    ),
+            )
           }
           aria-label="时间线缩放比例"
+          aria-valuetext={`${format_timeline_zoom(preview_zoom)} px/s`}
         />
         <Button
           type="button"

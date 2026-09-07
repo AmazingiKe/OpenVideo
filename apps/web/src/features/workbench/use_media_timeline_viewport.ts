@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { format_timeline_time } from "./timeline_time";
 import { WorkspaceActiveContext } from "@/app/workspace_activity";
@@ -20,11 +21,9 @@ import {
   calculate_zoom_viewport,
   calculate_timeline_range_viewport,
   type TimelineSelectionRange,
-  consume_timeline_wheel_zoom_frame,
+  calculate_timeline_wheel_zoom,
   create_timeline_render_window,
-  extend_timeline_render_window,
   normalize_wheel_delta,
-  timeline_render_windows_equal,
   update_timeline_render_window,
   type TimelineViewportState,
   type TimelineWheelZoomEvent,
@@ -32,7 +31,6 @@ import {
 } from "./media_timeline_calculations";
 
 const ALT_WHEEL_ZOOM_SENSITIVITY = -0.001;
-const WHEEL_ZOOM_IDLE_MILLISECONDS = 100;
 const DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS = 1024;
 const SCROLL_SYNC_EPSILON_PIXELS = 0.5;
 const VIRTUALIZED_GRID_SELECTOR = ".ReactVirtualized__Grid";
@@ -101,11 +99,6 @@ export function use_media_timeline_viewport({
   const playback_time_reader_ref = useRef(read_playback_time);
   const pending_wheel_events_ref = useRef<TimelineWheelZoomEvent[]>([]);
   const pending_wheel_frame_ref = useRef<number | null>(null);
-  const pending_wheel_idle_ref = useRef<number | null>(null);
-  const pending_scroll_frame_ref = useRef<number | null>(null);
-  const pending_scroll_position_ref = useRef<TimelineScrollPosition | null>(
-    null,
-  );
   const synchronized_scroll_ref = useRef({ scroll_left: 0, scroll_top: 0 });
   const [viewport, set_viewport] = useState<TimelineViewportState>({
     zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
@@ -121,7 +114,7 @@ export function use_media_timeline_viewport({
     () => calculate_minimum_timeline_zoom(canvas_width, scale_count),
     [canvas_width, scale_count],
   );
-  const [render_window, set_render_window] = useState(() =>
+  const render_window_ref = useRef(
     create_timeline_render_window({
       viewport: {
         zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
@@ -132,16 +125,19 @@ export function use_media_timeline_viewport({
     }),
   );
   const render_metrics_ref = useRef({ canvas_width, duration });
-  const wheel_zoom_is_active =
-    pending_wheel_frame_ref.current !== null ||
-    pending_wheel_idle_ref.current !== null ||
-    pending_wheel_events_ref.current.length > 0;
-  const editor_render_window = useMemo(() => {
-    const parameters = { render_window, viewport, canvas_width, duration };
-    return wheel_zoom_is_active
-      ? extend_timeline_render_window(parameters)
-      : update_timeline_render_window(parameters);
-  }, [canvas_width, duration, render_window, viewport, wheel_zoom_is_active]);
+  const editor_render_window = useMemo(
+    () =>
+      update_timeline_render_window({
+        render_window: render_window_ref.current,
+        viewport,
+        canvas_width,
+        duration,
+      }),
+    [canvas_width, duration, viewport],
+  );
+  useLayoutEffect(() => {
+    render_window_ref.current = editor_render_window;
+  }, [editor_render_window]);
 
   const position_playhead = useCallback(
     (time: number, keep_visible = false) => {
@@ -215,45 +211,8 @@ export function use_media_timeline_viewport({
     if (pending_wheel_frame_ref.current !== null) {
       window.cancelAnimationFrame(pending_wheel_frame_ref.current);
     }
-    if (pending_wheel_idle_ref.current !== null) {
-      window.clearTimeout(pending_wheel_idle_ref.current);
-    }
     pending_wheel_frame_ref.current = null;
-    pending_wheel_idle_ref.current = null;
     pending_wheel_events_ref.current = [];
-  }, []);
-
-  const cancel_pending_scroll = useCallback(() => {
-    if (pending_scroll_frame_ref.current !== null) {
-      window.cancelAnimationFrame(pending_scroll_frame_ref.current);
-    }
-    pending_scroll_frame_ref.current = null;
-    pending_scroll_position_ref.current = null;
-  }, []);
-
-  const commit_pending_scroll = useCallback(() => {
-    if (pending_scroll_frame_ref.current !== null) {
-      window.cancelAnimationFrame(pending_scroll_frame_ref.current);
-    }
-    pending_scroll_frame_ref.current = null;
-    const pending_position = pending_scroll_position_ref.current;
-    pending_scroll_position_ref.current = null;
-    if (!pending_position) return;
-    set_viewport((current) => {
-      if (
-        current.scroll_left === pending_position.scrollLeft &&
-        current.scroll_top === pending_position.scrollTop
-      ) {
-        return current;
-      }
-      const updated_viewport = {
-        ...current,
-        scroll_left: pending_position.scrollLeft,
-        scroll_top: pending_position.scrollTop,
-      };
-      viewport_ref.current = updated_viewport;
-      return updated_viewport;
-    });
   }, []);
 
   useLayoutEffect(() => {
@@ -288,7 +247,6 @@ export function use_media_timeline_viewport({
 
   useEffect(() => {
     cancel_pending_wheel_zoom();
-    cancel_pending_scroll();
     const initial_viewport: TimelineViewportState = {
       zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
       scroll_left: 0,
@@ -296,21 +254,18 @@ export function use_media_timeline_viewport({
     };
     viewport_ref.current = initial_viewport;
     set_viewport(initial_viewport);
-    set_render_window(
-      create_timeline_render_window({
-        viewport: initial_viewport,
-        canvas_width: render_metrics_ref.current.canvas_width,
-        duration: render_metrics_ref.current.duration,
-      }),
-    );
-  }, [asset_id, cancel_pending_scroll, cancel_pending_wheel_zoom]);
+    render_window_ref.current = create_timeline_render_window({
+      viewport: initial_viewport,
+      canvas_width: render_metrics_ref.current.canvas_width,
+      duration: render_metrics_ref.current.duration,
+    });
+  }, [asset_id, cancel_pending_wheel_zoom]);
 
   useEffect(() => {
     return () => {
-      cancel_pending_scroll();
       cancel_pending_wheel_zoom();
     };
-  }, [cancel_pending_scroll, cancel_pending_wheel_zoom]);
+  }, [cancel_pending_wheel_zoom]);
 
   useEffect(() => {
     if (is_paused) {
@@ -365,14 +320,6 @@ export function use_media_timeline_viewport({
       }
     };
   }, [asset_id, is_paused, is_workspace_active, set_playhead_time]);
-
-  useLayoutEffect(() => {
-    set_render_window((current) =>
-      timeline_render_windows_equal(current, editor_render_window)
-        ? current
-        : editor_render_window,
-    );
-  }, [editor_render_window]);
 
   useLayoutEffect(() => {
     viewport_ref.current = viewport;
@@ -492,7 +439,6 @@ export function use_media_timeline_viewport({
 
   const zoom_to_range = useCallback(
     (range: TimelineSelectionRange) => {
-      commit_pending_scroll();
       cancel_pending_wheel_zoom();
       const metrics = render_metrics_ref.current;
       const next_viewport = calculate_timeline_range_viewport(
@@ -501,20 +447,12 @@ export function use_media_timeline_viewport({
         metrics.duration,
       );
       commit_zoom_viewport(next_viewport);
-      set_render_window(
-        create_timeline_render_window({
-          viewport: next_viewport,
-          canvas_width: metrics.canvas_width,
-          duration: metrics.duration,
-        }),
-      );
     },
-    [commit_pending_scroll, cancel_pending_wheel_zoom, commit_zoom_viewport],
+    [cancel_pending_wheel_zoom, commit_zoom_viewport],
   );
 
   const zoom_to = useCallback(
     (requested_zoom: number, anchor_x?: number) => {
-      commit_pending_scroll();
       cancel_pending_wheel_zoom();
       const measured_width =
         timeline_host_ref.current?.getBoundingClientRect().width ?? 0;
@@ -528,76 +466,31 @@ export function use_media_timeline_viewport({
         scale_count,
       });
       commit_zoom_viewport(next_viewport);
-      set_render_window(
-        create_timeline_render_window({
-          viewport: next_viewport,
-          canvas_width: viewport_width,
-          duration: render_metrics_ref.current.duration,
-        }),
-      );
     },
-    [
-      cancel_pending_wheel_zoom,
-      canvas_width,
-      commit_pending_scroll,
-      commit_zoom_viewport,
-    ],
+    [cancel_pending_wheel_zoom, canvas_width, commit_zoom_viewport],
   );
 
   useEffect(() => {
     const timeline_host = timeline_host_ref.current;
-    if (!timeline_host) return;
+    if (!timeline_host || !is_workspace_active) return;
     const timeline_element = timeline_host;
-
-    function settle_render_window_after_wheel() {
-      if (pending_wheel_idle_ref.current !== null) {
-        window.clearTimeout(pending_wheel_idle_ref.current);
-      }
-      pending_wheel_idle_ref.current = window.setTimeout(() => {
-        pending_wheel_idle_ref.current = null;
-        if (
-          pending_wheel_frame_ref.current !== null ||
-          pending_wheel_events_ref.current.length > 0
-        ) {
-          return;
-        }
-        const settled_window = create_timeline_render_window({
-          viewport: viewport_ref.current,
-          canvas_width: render_metrics_ref.current.canvas_width,
-          duration: render_metrics_ref.current.duration,
-        });
-        set_render_window((current) =>
-          timeline_render_windows_equal(current, settled_window)
-            ? current
-            : settled_window,
-        );
-      }, WHEEL_ZOOM_IDLE_MILLISECONDS);
-    }
 
     function flush_pending_wheel_zoom() {
       pending_wheel_frame_ref.current = null;
-      const scale_count = Math.ceil(render_metrics_ref.current.duration);
-      const frame_result = consume_timeline_wheel_zoom_frame({
+      const next_viewport = calculate_timeline_wheel_zoom({
         viewport: viewport_ref.current,
         events: pending_wheel_events_ref.current,
-        scale_count,
+        scale_count: Math.ceil(render_metrics_ref.current.duration),
       });
-      pending_wheel_events_ref.current = frame_result.remaining_events;
-      commit_zoom_viewport(frame_result.viewport);
-      if (pending_wheel_events_ref.current.length > 0) {
-        pending_wheel_frame_ref.current = window.requestAnimationFrame(
-          flush_pending_wheel_zoom,
-        );
-        return;
-      }
-      settle_render_window_after_wheel();
+      pending_wheel_events_ref.current = [];
+      // 当前动画帧内完成轨道几何与滚动同步，避免 React 调度到下一次绘制。
+      flushSync(() => commit_zoom_viewport(next_viewport));
     }
 
     function zoom_with_alt(event: globalThis.WheelEvent) {
       if (!event.altKey) return;
       event.preventDefault();
       event.stopPropagation();
-      commit_pending_scroll();
       const bounds = timeline_element.getBoundingClientRect();
       const viewport_width =
         bounds.width > 0
@@ -615,10 +508,6 @@ export function use_media_timeline_viewport({
         anchor_x: event.clientX - bounds.left,
         viewport_width,
       });
-      if (pending_wheel_idle_ref.current !== null) {
-        window.clearTimeout(pending_wheel_idle_ref.current);
-        pending_wheel_idle_ref.current = null;
-      }
       if (pending_wheel_frame_ref.current !== null) return;
       pending_wheel_frame_ref.current = window.requestAnimationFrame(
         flush_pending_wheel_zoom,
@@ -629,9 +518,11 @@ export function use_media_timeline_viewport({
       capture: true,
       passive: false,
     });
-    return () =>
+    return () => {
       timeline_element.removeEventListener("wheel", zoom_with_alt, true);
-  }, [commit_pending_scroll, commit_zoom_viewport]);
+      cancel_pending_wheel_zoom();
+    };
+  }, [cancel_pending_wheel_zoom, commit_zoom_viewport, is_workspace_active]);
 
   function handle_timeline_scroll(position: TimelineScrollPosition) {
     if (!is_workspace_active) return;
@@ -645,11 +536,13 @@ export function use_media_timeline_viewport({
       scroll_top: position.scrollTop,
     };
     viewport_ref.current = latest_viewport;
-    pending_scroll_position_ref.current = position;
-    if (pending_scroll_frame_ref.current !== null) return;
-
-    pending_scroll_frame_ref.current = window.requestAnimationFrame(
-      commit_pending_scroll,
+    position_playhead(playhead_time_ref.current);
+    set_viewport((current) =>
+      current.scroll_left === latest_viewport.scroll_left &&
+      current.scroll_top === latest_viewport.scroll_top &&
+      current.zoom_pixels_per_second === latest_viewport.zoom_pixels_per_second
+        ? current
+        : latest_viewport,
     );
   }
 

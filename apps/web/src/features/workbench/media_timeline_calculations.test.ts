@@ -16,9 +16,9 @@ import {
   calculate_minimum_timeline_zoom,
   calculate_playhead_follow_scroll_left,
   calculate_zoom_viewport,
-  consume_timeline_wheel_zoom_frame,
+  calculate_timeline_wheel_zoom,
   create_timeline_render_window,
-  extend_timeline_render_window,
+  update_timeline_render_window,
   filter_timeline_rows_for_window,
   hit_test_timeline_marquee,
   normalize_wheel_delta,
@@ -119,16 +119,14 @@ describe("media timeline calculations", () => {
     expect(normalize_wheel_delta(Number.NaN, 0, 600)).toBe(0);
   });
 
-  it("limits one wheel frame and preserves unconsumed input", () => {
-    const result = consume_timeline_wheel_zoom_frame({
+  it("consumes a wheel burst without retaining input for later frames", () => {
+    const result = calculate_timeline_wheel_zoom({
       viewport: { zoom_pixels_per_second: 80, scroll_left: 0 },
       events: [{ logarithmic_delta: 2, anchor_x: 200, viewport_width: 800 }],
       scale_count: 120,
     });
 
-    expect(result.viewport.zoom_pixels_per_second).toBe(100);
-    expect(result.remaining_events).toHaveLength(1);
-    expect(result.remaining_events[0]?.logarithmic_delta).toBeGreaterThan(0);
+    expect(result.zoom_pixels_per_second).toBe(MAXIMUM_ZOOM_PIXELS_PER_SECOND);
   });
 
   it("creates and extends render windows without exceeding media bounds", () => {
@@ -138,7 +136,7 @@ describe("media timeline calculations", () => {
       canvas_width: 1_000,
       duration: 60,
     });
-    const extended = extend_timeline_render_window({
+    const extended = update_timeline_render_window({
       render_window: { start_seconds: 0, end_seconds: 2 },
       viewport,
       canvas_width: 1_000,
@@ -149,6 +147,106 @@ describe("media timeline calculations", () => {
     expect(created.end_seconds).toBeLessThanOrEqual(60);
     expect(extended.start_seconds).toBeLessThanOrEqual(created.start_seconds);
     expect(extended.end_seconds).toBeGreaterThanOrEqual(created.end_seconds);
+  });
+
+  it("shrinks an overview buffer during zoom and covers a distant scroll immediately", () => {
+    const viewport = { zoom_pixels_per_second: 100, scroll_left: 50_000 };
+    const window = update_timeline_render_window({
+      render_window: { start_seconds: 0, end_seconds: 2_000 },
+      viewport,
+      canvas_width: 1_000,
+      duration: 2_000,
+    });
+    expect(window.end_seconds - window.start_seconds).toBeCloseTo(20);
+    expect(window.start_seconds).toBeLessThan(500);
+    expect(window.end_seconds).toBeGreaterThan(510);
+    const moved = update_timeline_render_window({
+      render_window: window,
+      viewport: { ...viewport, scroll_left: 150_000 },
+      canvas_width: 1_000,
+      duration: 2_000,
+    });
+    expect(moved.start_seconds).toBeLessThan(1_500);
+    expect(moved.end_seconds).toBeGreaterThan(1_510);
+    expect(moved.end_seconds - moved.start_seconds).toBeCloseTo(20);
+  });
+
+  it("matches an overlap scan across repeated indexed queries and source replacement", () => {
+    const actions = Array.from({ length: 1_000 }, (_, index) => ({
+      id: String(index),
+      start: index,
+      end: index % 17 === 0 ? index + 400 : index + 1,
+      effectId: "event",
+    })).reverse();
+    const rows = [{ id: "track", actions }];
+    for (const start_seconds of [0, 500, 999, 100, 1_400]) {
+      const end_seconds = start_seconds + 10;
+      const expected = actions
+        .filter(
+          (action) =>
+            action.start <= end_seconds && action.end >= start_seconds,
+        )
+        .sort((first, second) => first.start - second.start);
+      expect(
+        filter_timeline_rows_for_window(rows, { start_seconds, end_seconds })[0]
+          .actions,
+      ).toEqual(expected);
+    }
+    const edited_rows = [
+      { ...rows[0], actions: [{ ...actions[0], start: 0, end: 2 }] },
+    ];
+    expect(
+      filter_timeline_rows_for_window(edited_rows, {
+        start_seconds: 0,
+        end_seconds: 10,
+      })[0].actions,
+    ).toEqual(edited_rows[0].actions);
+  });
+
+  it("reuses the index instead of scanning the whole track on each pan", () => {
+    let reads = 0;
+    const rows = [
+      {
+        id: "track",
+        actions: Array.from({ length: 10_000 }, (_, index) => ({
+          id: String(index),
+          get start() {
+            reads += 1;
+            return index;
+          },
+          get end() {
+            reads += 1;
+            return index + 1;
+          },
+          effectId: "event",
+        })),
+      },
+    ];
+    filter_timeline_rows_for_window(rows, {
+      start_seconds: 0,
+      end_seconds: 10,
+    });
+    reads = 0;
+    const visible = filter_timeline_rows_for_window(rows, {
+      start_seconds: 5_000,
+      end_seconds: 5_010,
+    });
+    expect(visible[0].actions).toHaveLength(12);
+    expect(reads).toBeLessThan(50);
+  });
+
+  it("follows marker bounds changed in place while saving a drag", () => {
+    const action = { id: "marker", start: 0, end: 1, effectId: "marker" };
+    const rows = [{ id: TIMELINE_TRACK_IDS.marker, actions: [action] }];
+    const window = { start_seconds: 10, end_seconds: 20 };
+    expect(
+      filter_timeline_rows_for_window(rows, window)[0].actions,
+    ).toHaveLength(0);
+    action.start = 12;
+    action.end = 13;
+    expect(filter_timeline_rows_for_window(rows, window)[0].actions).toEqual([
+      action,
+    ]);
   });
 
   it("clips markers and read-only tracks to the buffered window", () => {
