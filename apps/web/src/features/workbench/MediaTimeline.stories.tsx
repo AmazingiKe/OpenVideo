@@ -12,7 +12,10 @@ import type {
   TranscriptSegment,
 } from "@/shared/types";
 import { MediaTimeline } from "./MediaTimeline";
-import { DEFAULT_ZOOM_PIXELS_PER_SECOND } from "./media_timeline_calculations";
+import {
+  DEFAULT_ZOOM_PIXELS_PER_SECOND,
+  TIMELINE_START_LEFT,
+} from "./media_timeline_calculations";
 
 const ASSET_ID = "019d3f8a-2b1c-7000-8000-000000000001";
 const ZOOM_OUT_TO_MINIMUM_WHEEL_DELTA = 100_000;
@@ -333,6 +336,69 @@ export const FullThreeTracks: Story = {
   },
 };
 
+export const ScrollSynchronization: Story = {
+  args: { initial_time: 6 },
+  parameters: {
+    docs: {
+      description: {
+        story: "原生滚动后的第一帧，标尺刻度、网格、轨道片段和播放头保持对齐。",
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const host = canvasElement.querySelector<HTMLElement>(
+      ".media_timeline_canvas",
+    )!;
+    const scroll_container = host.querySelector<HTMLElement>(
+      ".timeline-editor-edit-area .ReactVirtualized__Grid",
+    )!;
+    const ruler = host.querySelector<HTMLCanvasElement>(
+      ".timeline_ruler_canvas",
+    )!;
+    const context = ruler.getContext("2d")!;
+    const transcript = within(host).getByRole("button", {
+      name: /转写：介绍投影矩阵的基本结构/,
+    }).parentElement!;
+    const playhead = host.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    )!;
+    await new Promise(requestAnimationFrame);
+
+    const transcript_start_seconds = 2;
+    const playhead_seconds = 6;
+    for (const scroll_left of [55, 110, 165, 110, 55, 0]) {
+      scroll_container.scrollLeft = scroll_left;
+      await new Promise(requestAnimationFrame);
+      const expected_x =
+        TIMELINE_START_LEFT +
+        transcript_start_seconds * DEFAULT_ZOOM_PIXELS_PER_SECOND -
+        scroll_container.scrollLeft;
+      const grid_positions = [
+        ...host.querySelectorAll<HTMLElement>(".timeline_grid_line"),
+      ].map((line) => parseFloat(line.style.left));
+      expect(grid_positions).toContain(expected_x);
+      expect(
+        transcript.getBoundingClientRect().left -
+          host.getBoundingClientRect().left,
+      ).toBeCloseTo(expected_x, 0);
+      expect(new DOMMatrixReadOnly(playhead.style.transform).m41).toBeCloseTo(
+        TIMELINE_START_LEFT +
+          playhead_seconds * DEFAULT_ZOOM_PIXELS_PER_SECOND -
+          scroll_container.scrollLeft,
+        0,
+      );
+      const pixel_ratio = ruler.width / ruler.getBoundingClientRect().width;
+      const tick_pixel = context.getImageData(
+        Math.round(expected_x * pixel_ratio),
+        ruler.height - 1,
+        1,
+        1,
+      ).data;
+      expect(tick_pixel[3]).toBeGreaterThan(0);
+    }
+  },
+};
+
 export const DynamicAnalysisTracks: Story = {
   args: {
     event_analyses: EVENT_ANALYSES,
@@ -355,13 +421,11 @@ export const DynamicAnalysisTracks: Story = {
     expect(track_labels).not.toBeNull();
 
     editor_grid.scrollTop = 48;
-    editor_grid.dispatchEvent(new Event("scroll", { bubbles: true }));
-    await waitFor(() => {
-      expect(editor_grid.scrollTop).toBeGreaterThan(0);
-      expect(track_labels?.style.transform).toBe(
-        `translate3d(0px, -${editor_grid.scrollTop}px, 0px)`,
-      );
-    });
+    await new Promise(requestAnimationFrame);
+    expect(editor_grid.scrollTop).toBeGreaterThan(0);
+    expect(track_labels?.style.transform).toBe(
+      `translate3d(0px, -${editor_grid.scrollTop}px, 0px)`,
+    );
   },
 };
 
@@ -472,8 +536,20 @@ export const ContinuousViewportUpdates: Story = {
     let zoom = DEFAULT_ZOOM_PIXELS_PER_SECOND;
     for (const scroll_left of scroll_positions) {
       grid.scrollLeft = scroll_left;
-      grid.dispatchEvent(new Event("scroll"));
       await frame();
+      const scrolled_index = Math.ceil(grid.scrollLeft / zoom);
+      const scrolled_action = story.getByRole("button", {
+        name: new RegExp(`^转写：连续滚动片段 ${scrolled_index}，`),
+      });
+      const scrolled_block = scrolled_action.closest<HTMLElement>(
+        ".timeline-editor-action",
+      )!;
+      const expected_scrolled_left =
+        TIMELINE_START_LEFT + scrolled_index * zoom - grid.scrollLeft;
+      expect(
+        scrolled_block.getBoundingClientRect().left -
+          grid.getBoundingClientRect().left,
+      ).toBeCloseTo(expected_scrolled_left, 0);
       expect(
         grid.querySelector<HTMLElement>(
           ".ReactVirtualized__Grid__innerScrollContainer",

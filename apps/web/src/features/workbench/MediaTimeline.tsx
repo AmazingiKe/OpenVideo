@@ -530,6 +530,7 @@ export function MediaTimeline({
     canvas_width,
     editor_render_window,
     handle_timeline_scroll,
+    handle_timeline_scroll_capture,
     minimum_zoom_pixels_per_second,
     playhead_ref,
     set_playhead_time,
@@ -1423,6 +1424,7 @@ export function MediaTimeline({
             <div
               ref={timeline_host_ref}
               className="media_timeline_canvas"
+              onScrollCapture={handle_timeline_scroll_capture}
               onPointerDownCapture={start_marquee}
               onContextMenu={prepare_timeline_context_menu}
               aria-label="时间线画布；Ctrl+M 添加标记，方括号设置范围，右键转写轨道可转录，Shift+F10 打开菜单"

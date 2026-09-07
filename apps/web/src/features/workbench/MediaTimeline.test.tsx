@@ -1178,7 +1178,7 @@ describe("MediaTimeline", () => {
     expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
   });
 
-  it("pages playback to the left when it reaches the right viewport edge", () => {
+  it("pages the editor and playhead together before the playback frame returns", () => {
     const animation_frames = install_animation_frame_mock();
     const { result } = render_timeline({
       current_time: 0,
@@ -1191,10 +1191,13 @@ describe("MediaTimeline", () => {
     if (!playhead) throw new Error("Missing playback head");
     timeline_mock.set_scroll_left.mockClear();
 
-    animation_frames.run_next_frame();
-
-    expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(1_040);
-    expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
+    const pending_frame = animation_frames.frames.entries().next().value!;
+    animation_frames.frames.delete(pending_frame[0]);
+    act(() => {
+      pending_frame[1](performance.now());
+      expect(timeline_mock.set_scroll_left).toHaveBeenCalledWith(1_040);
+      expect(playhead.style.transform).toBe("translate3d(16px, 0, 0)");
+    });
   });
 
   it("scrubs across the full ruler and commits the aligned time on release", () => {

@@ -1,5 +1,6 @@
 import type { TimelineState } from "@xzdarcy/react-timeline-editor";
 import {
+  type UIEvent,
   useCallback,
   useContext,
   useEffect,
@@ -34,6 +35,8 @@ const ALT_WHEEL_ZOOM_SENSITIVITY = -0.001;
 const DEFAULT_TIMELINE_CANVAS_WIDTH_PIXELS = 1024;
 const SCROLL_SYNC_EPSILON_PIXELS = 0.5;
 const VIRTUALIZED_GRID_SELECTOR = ".ReactVirtualized__Grid";
+const EDITOR_SCROLL_CONTAINER_SELECTOR =
+  ".timeline-editor-edit-area .ReactVirtualized__Grid";
 const VIRTUALIZED_GRID_ROLE_SELECTOR = '[role="row"], [role="gridcell"]';
 
 type TimelineScrollPosition = {
@@ -44,6 +47,7 @@ type TimelineScrollPosition = {
 type PlayheadPositionOptions = {
   follow_viewport?: boolean;
   keep_visible?: boolean;
+  synchronous_viewport?: boolean;
 };
 
 type MediaTimelineViewportOptions = {
@@ -199,7 +203,11 @@ export function use_media_timeline_viewport({
             scroll_left: next_scroll_left,
           };
           viewport_ref.current = next_viewport;
-          set_viewport(next_viewport);
+          if (options.synchronous_viewport) {
+            flushSync(() => set_viewport(next_viewport));
+          } else {
+            set_viewport(next_viewport);
+          }
         }
       }
       position_playhead(time, options.keep_visible);
@@ -303,7 +311,10 @@ export function use_media_timeline_viewport({
         typeof reported_time === "number" && Number.isFinite(reported_time)
           ? Math.min(metrics.duration, Math.max(0, reported_time))
           : fallback_time;
-      set_playhead_time(playback_time, { follow_viewport: true });
+      set_playhead_time(playback_time, {
+        follow_viewport: true,
+        synchronous_viewport: true,
+      });
       if (playback_time >= metrics.duration) {
         playhead_frame_ref.current = null;
         return;
@@ -546,11 +557,27 @@ export function use_media_timeline_viewport({
     );
   }
 
+  function handle_timeline_scroll_capture(event: UIEvent<HTMLDivElement>) {
+    const target = event.target;
+    if (
+      !is_workspace_active ||
+      !(target instanceof HTMLElement) ||
+      !target.matches(EDITOR_SCROLL_CONTAINER_SELECTOR) ||
+      (target.scrollLeft === viewport.scroll_left &&
+        target.scrollTop === viewport.scroll_top)
+    ) {
+      return;
+    }
+    // 原生滚动已移动轨道，必须在本次绘制前同步外层；库回调还会在提交阶段触发，不能在那里强制刷新。
+    flushSync(() => handle_timeline_scroll(target));
+  }
+
   return {
     current_time_output_ref,
     canvas_width,
     editor_render_window,
     handle_timeline_scroll,
+    handle_timeline_scroll_capture,
     minimum_zoom_pixels_per_second,
     playhead_ref,
     set_playhead_time,
