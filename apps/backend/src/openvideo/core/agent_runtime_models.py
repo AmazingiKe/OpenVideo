@@ -246,18 +246,6 @@ class AgentToolCall(BaseModel):
     arguments: dict[str, Any]
 
 
-class AgentModelResponse(BaseModel):
-    content: str = ""
-    tool_calls: list[AgentToolCall] = Field(default_factory=list)
-
-
-class AgentContextMessage(BaseModel):
-    role: Literal["user", "assistant", "tool"]
-    content: str
-    tool_call_id: str | None = None
-    tool_calls: list[dict[str, Any]] | None = None
-
-
 class AgentContextAttachment(BaseModel):
     """把用户可见选择绑定到单条消息，同时保留可复现的来源快照。"""
 
