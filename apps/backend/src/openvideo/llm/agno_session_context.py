@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from time import time
 from typing import Any
@@ -38,7 +39,7 @@ class AgnoSessionContext:
         self,
         session_id: str,
         agent_id: str,
-        historical_messages: list[dict[str, Any]],
+        historical_messages_loader: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> bool:
         if await self.database.get_session(session_id) is not None:
             return False
@@ -52,7 +53,7 @@ class AgnoSessionContext:
                 runs=self._historical_runs(
                     session_id,
                     agent_id,
-                    historical_messages,
+                    historical_messages_loader() if historical_messages_loader else [],
                     created_at,
                 ),
                 created_at=created_at,
@@ -72,9 +73,6 @@ class AgnoSessionContext:
         session.updated_at = int(time())
         await self.database.upsert_session(session)
         return True
-
-    async def close(self) -> None:
-        await self.database.close()
 
     @staticmethod
     def _historical_runs(

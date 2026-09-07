@@ -20,7 +20,11 @@ from agno.run.agent import (
 )
 from agno.tools.function import Function
 
-from openvideo.core.agent_runtime_models import AgentDefinition, AgentMode, AgentToolCall
+from openvideo.core.agent_runtime_models import (
+    AgentDefinition,
+    AgentMode,
+    AgentToolCall,
+)
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.llm.agno_session_context import (
@@ -86,7 +90,7 @@ class AgentExecutor(Protocol):
         *,
         max_tool_calls: int,
         tool_timeout_seconds: float,
-        historical_messages: list[dict[str, Any]] | None = None,
+        historical_messages_loader: Callable[[], list[dict[str, Any]]] | None = None,
         run_context: str | None = None,
         session_id: str | None = None,
     ) -> AgentExecutionResult: ...
@@ -109,7 +113,7 @@ class AgnoAgentExecutor:
         *,
         max_tool_calls: int,
         tool_timeout_seconds: float,
-        historical_messages: list[dict[str, Any]] | None = None,
+        historical_messages_loader: Callable[[], list[dict[str, Any]]] | None = None,
         run_context: str | None = None,
         session_id: str | None = None,
     ) -> AgentExecutionResult:
@@ -117,7 +121,7 @@ class AgnoAgentExecutor:
             await self.session_context.ensure_session(
                 session_id,
                 definition.agent_id,
-                historical_messages or [],
+                historical_messages_loader,
             )
         required_tool_chain = self._required_tool_chain(definition)
         recovery_reserve = min(
@@ -133,7 +137,6 @@ class AgnoAgentExecutor:
             on_event,
             max_tool_calls=max_tool_calls - recovery_reserve,
             tool_timeout_seconds=tool_timeout_seconds,
-            reasoning_enabled=False,
             run_context=run_context,
             session_id=session_id,
         )
@@ -170,7 +173,6 @@ class AgnoAgentExecutor:
             on_event,
             max_tool_calls=remaining_tool_calls,
             tool_timeout_seconds=tool_timeout_seconds,
-            reasoning_enabled=False,
             forced_tool_name=forced_tool_name,
             run_context=run_context,
             session_id=session_id,
@@ -252,7 +254,6 @@ class AgnoAgentExecutor:
         *,
         max_tool_calls: int,
         tool_timeout_seconds: float,
-        reasoning_enabled: bool,
         forced_tool_name: str | None = None,
         run_context: str | None = None,
         session_id: str | None = None,
@@ -281,7 +282,6 @@ class AgnoAgentExecutor:
                         publish_event,
                         max_tool_calls=max_tool_calls,
                         tool_timeout_seconds=tool_timeout_seconds,
-                        reasoning_enabled=reasoning_enabled,
                         forced_tool_name=forced_tool_name,
                         run_context=run_context,
                         session_id=session_id,
@@ -306,7 +306,6 @@ class AgnoAgentExecutor:
         *,
         max_tool_calls: int,
         tool_timeout_seconds: float,
-        reasoning_enabled: bool,
         forced_tool_name: str | None = None,
         run_context: str | None = None,
         session_id: str | None = None,
@@ -321,7 +320,7 @@ class AgnoAgentExecutor:
         agno_model = create_agent_model(
             model,
             profile,
-            reasoning_enabled=reasoning_enabled,
+            reasoning_enabled=False,
             forced_tool_name=forced_tool_name,
         )
         agent = Agent(
@@ -347,7 +346,7 @@ class AgnoAgentExecutor:
             tool_choice=(
                 agent_tool_choice(
                     profile,
-                    reasoning_enabled=reasoning_enabled,
+                    reasoning_enabled=False,
                     forced_tool_name=forced_tool_name,
                 )
                 if agno_tools

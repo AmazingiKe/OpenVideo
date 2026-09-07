@@ -53,24 +53,24 @@ async def test_session_history_survives_context_recreation(tmp_path):
     imported = await first_context.ensure_session(
         "session-first",
         "summary",
-        [
+        lambda: [
             {"role": "user", "content": "第一问"},
             {"role": "assistant", "content": "第一答"},
             {"role": "user", "content": "第二问"},
             {"role": "assistant", "content": "第二答"},
         ],
     )
-    await first_context.close()
+    await first_context.database.close()
 
     second_context = AgnoSessionContext(database_path)
     imported_again = await second_context.ensure_session(
         "session-first",
         "summary",
-        [],
+        lambda: pytest.fail("已有会话不应再次加载迁移历史"),
     )
     session = await second_context.database.get_session("session-first")
     messages = session.get_messages(last_n_runs=3) if session else []
-    await second_context.close()
+    await second_context.database.close()
 
     assert imported is True
     assert imported_again is False
@@ -108,7 +108,7 @@ async def test_agno_agent_loads_previous_run_from_same_session(tmp_path):
         telemetry=False,
     )
     await second_agent.arun("第二问")
-    await context.close()
+    await context.database.close()
 
     assert second_model.requests == [
         [
@@ -125,7 +125,7 @@ async def test_sessions_keep_independent_history(tmp_path):
     await context.ensure_session(
         "session-first",
         "summary",
-        [
+        lambda: [
             {"role": "user", "content": "甲"},
             {"role": "assistant", "content": "甲答"},
         ],
@@ -133,7 +133,7 @@ async def test_sessions_keep_independent_history(tmp_path):
     await context.ensure_session(
         "session-second",
         "summary",
-        [
+        lambda: [
             {"role": "user", "content": "乙"},
             {"role": "assistant", "content": "乙答"},
         ],
@@ -141,7 +141,7 @@ async def test_sessions_keep_independent_history(tmp_path):
 
     first_session = await context.database.get_session("session-first")
     second_session = await context.database.get_session("session-second")
-    await context.close()
+    await context.database.close()
 
     assert first_session is not None
     assert second_session is not None
@@ -161,7 +161,7 @@ async def test_manual_compaction_persists_agno_summary(tmp_path, monkeypatch):
     await context.ensure_session(
         "session-first",
         "summary",
-        [
+        lambda: [
             {"role": "user", "content": "旧问题"},
             {"role": "assistant", "content": "旧答案"},
         ],
@@ -182,11 +182,11 @@ async def test_manual_compaction_persists_agno_summary(tmp_path, monkeypatch):
         "session-first",
         cast(Model, object()),
     )
-    await context.close()
+    await context.database.close()
 
     reopened_context = AgnoSessionContext(tmp_path / "agent-context.sqlite3")
     session = await reopened_context.database.get_session("session-first")
-    await reopened_context.close()
+    await reopened_context.database.close()
 
     assert compressed is True
     assert session is not None

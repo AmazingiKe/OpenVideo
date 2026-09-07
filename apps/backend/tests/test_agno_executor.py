@@ -145,7 +145,7 @@ async def test_executor_delegates_session_history_and_compression_to_agno(
         lambda _event: None,
         max_tool_calls=4,
         tool_timeout_seconds=5,
-        historical_messages=[
+        historical_messages_loader=lambda: [
             {"role": "user", "content": "上一问"},
             {"role": "assistant", "content": "上一答"},
         ],
@@ -153,7 +153,7 @@ async def test_executor_delegates_session_history_and_compression_to_agno(
         session_id="session-test",
     )
     imported_session = await session_context.database.get_session("session-test")
-    await session_context.close()
+    await session_context.database.close()
 
     assert captured_agent is not None
     assert captured_agent.db is session_context.database

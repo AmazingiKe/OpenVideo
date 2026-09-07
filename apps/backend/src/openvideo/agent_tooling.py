@@ -351,18 +351,6 @@ class AgentRunContext:
         return payload
 
 
-def ranges_intersect(
-    start: float,
-    end: float,
-    range_start: float | None,
-    range_end: float | None,
-) -> bool:
-    return not (
-        (range_start is not None and end < range_start)
-        or (range_end is not None and start > range_end)
-    )
-
-
 def build_proposed_marker(
     asset_id: str,
     requested: ProposedMarkerChangeInput,

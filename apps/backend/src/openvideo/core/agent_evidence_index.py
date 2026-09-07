@@ -13,6 +13,7 @@ import re
 import sqlite3
 from typing import Callable, Iterable, Literal, Sequence
 
+from openvideo.core.time_range import ranges_intersect
 from openvideo.core.agent_evidence_models import AgentEvidenceSource
 from openvideo.core.identifiers import uuid7
 from openvideo.core.media_models import MediaAsset, MediaSegment
@@ -1220,7 +1221,7 @@ def _append_neighbors(
                 row is None
                 or row["document_id"] in selected_ids
                 or row["asset_id"] not in asset_ids
-                or not _ranges_intersect(
+                or not ranges_intersect(
                     row["start_seconds"],
                     row["end_seconds"],
                     start_seconds,
@@ -1414,18 +1415,6 @@ def _range_filter(
     return (
         ("AND " + " AND ".join(clauses)) if clauses else "",
         tuple(parameters),
-    )
-
-
-def _ranges_intersect(
-    start: float,
-    end: float,
-    range_start: float | None,
-    range_end: float | None,
-) -> bool:
-    return not (
-        (range_start is not None and end < range_start)
-        or (range_end is not None and start > range_end)
     )
 
 

@@ -134,11 +134,6 @@ class AgentSessionStore:
             self.on_append(event)
         return event
 
-    def events(self, session_id: str, *, after_sequence: int = 0) -> list[AgentEvent]:
-        return self.repository.load_agent_events(
-            session_id, after_sequence=after_sequence
-        )
-
     def historical_messages(
         self,
         session_id: str,
@@ -146,7 +141,7 @@ class AgentSessionStore:
         exclude_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
-        for event in self.events(session_id):
+        for event in self.repository.load_agent_events(session_id):
             if event.run_id == exclude_run_id:
                 continue
             payload = event.payload
@@ -485,10 +480,6 @@ class AgentRuntime:
         tool_timeout_seconds: float,
     ) -> AgentRun:
         self._raise_if_cancelled(cancel_event)
-        historical_messages = self.store.historical_messages(
-            run.session_id,
-            exclude_run_id=run.run_id,
-        )
         result = await self.executor.run(
             model,
             profile,
@@ -498,7 +489,9 @@ class AgentRuntime:
             lambda event: self._append_executor_event(run, event),
             max_tool_calls=max_tool_calls,
             tool_timeout_seconds=tool_timeout_seconds,
-            historical_messages=historical_messages,
+            historical_messages_loader=lambda: self.store.historical_messages(
+                run.session_id, exclude_run_id=run.run_id
+            ),
             run_context=current_user_content,
             session_id=run.session_id,
         )

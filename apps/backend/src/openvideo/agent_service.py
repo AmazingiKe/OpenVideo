@@ -10,6 +10,9 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any, Protocol
 
+from pydantic import BaseModel
+
+from openvideo.core.time_range import ranges_intersect
 from openvideo.agent_permission_policy import PermissionPolicy
 from openvideo.agent_intent_router import (
     AgentIntent,
@@ -25,6 +28,8 @@ from openvideo.agent_runtime import (
     AgentSessionStore,
     AgentTool,
     AgentToolRegistry,
+    ToolHandler,
+    ToolPrerequisite,
     new_agent_run,
 )
 from openvideo.agent_registry import (
@@ -55,7 +60,6 @@ from openvideo.agent_tooling import (
     build_proposed_marker,
     markdown_diff,
     marker_digest,
-    ranges_intersect,
     rewrite_segment_references,
     transcript_digest,
     validate_marker_bounds,
@@ -259,7 +263,7 @@ class AgentService:
                 self.retrieval_models.model_name,
                 self.retrieval_models.model_version,
             )
-        self._schedule_semantic_index()
+        self.refresh_index()
 
     def definitions(self) -> list[AgentDefinitionAvailability]:
         models = self.settings.online_ai_models
@@ -327,7 +331,7 @@ class AgentService:
         await self.agno_session_context.ensure_session(
             session_id,
             session.agent_id,
-            self.store.historical_messages(session_id),
+            lambda: self.store.historical_messages(session_id),
         )
         compressed = await self.agno_session_context.compact_session(
             session_id,
@@ -552,7 +556,7 @@ class AgentService:
                 raise AgentNotFoundError("媒体资源不存在") from error
             if asset is None:
                 raise AgentNotFoundError("媒体资源不存在")
-        self._schedule_semantic_index()
+        self.refresh_index()
         status = self.library.agent_evidence_index_status()
         coverage = self.library.agent_evidence_index_coverage(asset_id)
         initialization = self._latest_initialization(asset_id)
@@ -919,14 +923,11 @@ class AgentService:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         if self._semantic_index_task is not None:
             await asyncio.gather(self._semantic_index_task, return_exceptions=True)
-        await self.agno_session_context.close()
+        await self.agno_session_context.database.close()
 
     def refresh_index(self) -> None:
         """证据来源提交后立即安排新代际，避免依赖界面轮询触发。"""
 
-        self._schedule_semantic_index()
-
-    def _schedule_semantic_index(self) -> None:
         if self.retrieval_models is None:
             return
         status = self.library.agent_evidence_index_status()
@@ -953,7 +954,7 @@ class AgentService:
         except (asyncio.CancelledError, Exception):
             return
         if not self._closing:
-            self._schedule_semantic_index()
+            self.refresh_index()
 
     def _rebuild_semantic_index(self) -> EvidenceIndexStatus:
         if self.retrieval_models is None:
@@ -1303,21 +1304,25 @@ class AgentService:
             ),
             required_capabilities={AgentCapability.TOOLS},
             tools=[
-                AgentToolDescriptor(name="read_markers", description="读取现有标记"),
                 AgentToolDescriptor(
-                    name="search_evidence", description="搜索转录与分析证据"
+                    name="read_markers", description="读取当前视频全部正式标记。"
                 ),
                 AgentToolDescriptor(
-                    name="inspect_frames", description="检查指定时间范围画面"
+                    name="search_evidence",
+                    description="搜索带时间戳的转录、分析、OCR 与视觉描述；不传时间范围时检索全片，局部问题须显式传入范围。",
+                ),
+                AgentToolDescriptor(
+                    name="inspect_frames",
+                    description="抽取指定时间范围的自适应代表画面并回答问题。",
                 ),
                 AgentToolDescriptor(
                     name="propose_marker_changes",
-                    description="生成整批标记变更审批预览",
+                    description="创建一批待整体接受或拒绝的标记变更预览。",
                     prerequisites=["read_markers", "search_evidence"],
                 ),
                 AgentToolDescriptor(
                     name="correct_transcript",
-                    description="按要求修正、翻译或统一字幕文字",
+                    description="按用户要求处理指定字幕片段并生成修改预览。",
                 ),
             ],
             result_type=MARKER_ARTIFACT_TYPE,
@@ -1336,27 +1341,33 @@ class AgentService:
             required_capabilities={AgentCapability.TOOLS},
             tools=[
                 AgentToolDescriptor(
-                    name="read_markers", description="读取用户正式标记与重要程度"
+                    name="read_markers",
+                    description="读取当前视频全部正式标记及重要程度，用于确定总结重点。",
                 ),
-                AgentToolDescriptor(name="search_evidence", description="搜索视频证据"),
                 AgentToolDescriptor(
-                    name="inspect_frames", description="检查指定时间范围画面"
+                    name="search_evidence",
+                    description="搜索带时间戳的转录、分析与画面文字；不传时间范围时检索全片，局部问题须显式传入范围。",
+                ),
+                AgentToolDescriptor(
+                    name="inspect_frames",
+                    description="抽取指定时间范围的编号候选画面并回答选帧问题。",
                 ),
                 AgentToolDescriptor(
                     name="list_summary_documents",
-                    description="列出当前视频的总结文档结构",
+                    description="列出当前视频的总结文档结构；可按总结版本筛选。",
                 ),
                 AgentToolDescriptor(
-                    name="read_summary_document", description="读取总结文档"
+                    name="read_summary_document",
+                    description="读取当前视频的一篇总结文档。",
                 ),
                 AgentToolDescriptor(
                     name="propose_summary_edit",
-                    description="生成总结修改审批预览",
+                    description="创建总结文档修改预览。",
                     prerequisites=["read_summary_document"],
                 ),
                 AgentToolDescriptor(
                     name="propose_summary_media",
-                    description="生成总结图片或 GIF 插入预览",
+                    description="创建一个经过画面检查的图片或 GIF 插入预览。",
                     prerequisites=[
                         "read_summary_document",
                         "search_evidence",
@@ -1369,14 +1380,14 @@ class AgentService:
         return [
             RegisteredAgent(
                 marker,
-                self._marker_tools,
+                self._tools,
                 self._approve_marker_artifact,
                 None,
                 self._marker_run_definition,
             ),
             RegisteredAgent(
                 summary,
-                self._summary_tools,
+                self._tools,
                 self._approve_summary_artifact,
                 self._validate_summary_session,
                 self._summary_run_definition,
@@ -1600,141 +1611,82 @@ class AgentService:
             }
         )
 
-    def _marker_tools(
+    def _tools(
         self, context: AgentRunContext, definition: AgentDefinition
     ) -> AgentToolRegistry:
-        registry = AgentToolRegistry()
-        registry.register(
-            AgentTool(
-                "read_markers",
-                "读取当前视频全部正式标记。",
+        bindings: dict[
+            str, tuple[type[BaseModel], ToolHandler, ToolPrerequisite | None]
+        ] = {
+            "read_markers": (
                 ReadMarkersInput,
                 lambda _: self._read_markers(context),
-            )
-        )
-        registry.register(
-            AgentTool(
-                "search_evidence",
-                "搜索带时间戳的转录、分析、OCR 与视觉描述；不传时间范围时检索全片，局部问题须显式传入范围。",
+                None,
+            ),
+            "search_evidence": (
                 EvidenceSearchInput,
                 lambda parameters: self._search_evidence(context, parameters),
-            )
-        )
-        registry.register(
-            AgentTool(
-                "inspect_frames",
-                "抽取指定时间范围的自适应代表画面并回答问题。",
+                None,
+            ),
+            "inspect_frames": (
                 InspectFramesInput,
                 lambda parameters: self._inspect_frames(context, parameters),
-                prerequisite=lambda: (
+                lambda: (
                     context.evidence.evidence_read,
                     "检查画面前必须先搜索转录或已有分析",
                 ),
-            )
-        )
-        registry.register(
-            AgentTool(
-                "propose_marker_changes",
-                "创建一批待整体接受或拒绝的标记变更预览。",
+            ),
+            "propose_marker_changes": (
                 ProposeMarkerChangesInput,
                 lambda parameters: self._propose_marker_changes(context, parameters),
-                prerequisite=lambda: (
+                lambda: (
                     context.evidence.markers_read and context.evidence.evidence_read,
                     "生成标记建议前必须读取现有标记和相关时间范围证据",
                 ),
-            )
-        )
-        registry.register(
-            AgentTool(
-                "correct_transcript",
-                "按用户要求处理指定字幕片段并生成修改预览。",
+            ),
+            "correct_transcript": (
                 CorrectTranscriptInput,
                 lambda parameters: self._correct_transcript(context, parameters),
-            )
-        )
-        return registry
-
-    def _summary_tools(
-        self, context: AgentRunContext, definition: AgentDefinition
-    ) -> AgentToolRegistry:
+                None,
+            ),
+            "list_summary_documents": (
+                ListSummaryDocumentsInput,
+                lambda parameters: self._list_summary_documents(context, parameters),
+                None,
+            ),
+            "read_summary_document": (
+                ReadSummaryDocumentInput,
+                lambda parameters: self._read_summary(context, parameters),
+                None,
+            ),
+            "propose_summary_edit": (
+                ProposeSummaryEditInput,
+                lambda parameters: self._propose_summary_edit(context, parameters),
+                lambda: (
+                    bool(context.evidence.summary_read_document_ids),
+                    "生成总结建议前必须读取目标文档",
+                ),
+            ),
+            "propose_summary_media": (
+                ProposeSummaryMediaInput,
+                lambda parameters: self._propose_summary_media(context, parameters),
+                lambda: (
+                    bool(context.evidence.summary_read_document_ids)
+                    and context.evidence.evidence_read
+                    and context.evidence.frames_inspected,
+                    "生成媒体建议前必须读取文档、检索证据并检查候选画面",
+                ),
+            ),
+        }
         registry = AgentToolRegistry()
-        if "read_markers" in definition.allowed_tools:
+        for descriptor in definition.tools:
+            parameters_model, handler, prerequisite = bindings[descriptor.name]
             registry.register(
                 AgentTool(
-                    "read_markers",
-                    "读取当前视频全部正式标记及重要程度，用于确定总结重点。",
-                    ReadMarkersInput,
-                    lambda _: self._read_markers(context),
-                )
-            )
-        if "list_summary_documents" in definition.allowed_tools:
-            registry.register(
-                AgentTool(
-                    "list_summary_documents",
-                    "列出当前视频的总结文档结构；可按总结版本筛选。",
-                    ListSummaryDocumentsInput,
-                    lambda parameters: self._list_summary_documents(
-                        context, parameters
-                    ),
-                )
-            )
-        if "search_evidence" in definition.allowed_tools:
-            registry.register(
-                AgentTool(
-                    "search_evidence",
-                    "搜索带时间戳的转录、分析与画面文字；不传时间范围时检索全片，局部问题须显式传入范围。",
-                    EvidenceSearchInput,
-                    lambda parameters: self._search_evidence(context, parameters),
-                )
-            )
-        if "inspect_frames" in definition.allowed_tools:
-            registry.register(
-                AgentTool(
-                    "inspect_frames",
-                    "抽取指定时间范围的编号候选画面并回答选帧问题。",
-                    InspectFramesInput,
-                    lambda parameters: self._inspect_frames(context, parameters),
-                    prerequisite=lambda: (
-                        context.evidence.evidence_read,
-                        "检查画面前必须先搜索转录或已有分析",
-                    ),
-                )
-            )
-        if "read_summary_document" in definition.allowed_tools:
-            registry.register(
-                AgentTool(
-                    "read_summary_document",
-                    "读取当前视频的一篇总结文档。",
-                    ReadSummaryDocumentInput,
-                    lambda parameters: self._read_summary(context, parameters),
-                )
-            )
-        if "propose_summary_edit" in definition.allowed_tools:
-            registry.register(
-                AgentTool(
-                    "propose_summary_edit",
-                    "创建总结文档修改预览。",
-                    ProposeSummaryEditInput,
-                    lambda parameters: self._propose_summary_edit(context, parameters),
-                    prerequisite=lambda: (
-                        bool(context.evidence.summary_read_document_ids),
-                        "生成总结建议前必须读取目标文档",
-                    ),
-                )
-            )
-        if "propose_summary_media" in definition.allowed_tools:
-            registry.register(
-                AgentTool(
-                    "propose_summary_media",
-                    "创建一个经过画面检查的图片或 GIF 插入预览。",
-                    ProposeSummaryMediaInput,
-                    lambda parameters: self._propose_summary_media(context, parameters),
-                    prerequisite=lambda: (
-                        bool(context.evidence.summary_read_document_ids)
-                        and context.evidence.evidence_read
-                        and context.evidence.frames_inspected,
-                        "生成媒体建议前必须读取文档、检索证据并检查候选画面",
-                    ),
+                    descriptor.name,
+                    descriptor.description,
+                    parameters_model,
+                    handler,
+                    prerequisite,
                 )
             )
         return registry
@@ -1766,7 +1718,7 @@ class AgentService:
     def _search_evidence(
         self, context: AgentRunContext, parameters: EvidenceSearchInput
     ) -> dict[str, Any]:
-        self._schedule_semantic_index()
+        self.refresh_index()
         if context.retrieval_scope == AgentRetrievalScope.LIBRARY:
             return self._search_library_evidence(context, parameters)
         focus_selection = self.library.load_focus_selection(context.session.asset_id)

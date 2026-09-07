@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 import re
 from typing import Iterable
 
+from openvideo.core.time_range import ranges_intersect
 from openvideo.core.agent_evidence_index import IndexedEvidenceDocument
 from openvideo.core.agent_evidence_models import (
     AgentEvidenceBundle,
@@ -423,18 +424,6 @@ def _has_negation(value: str) -> bool:
     return any(term in normalized for term in NEGATION_TERMS)
 
 
-def _ranges_intersect(
-    start: float,
-    end: float,
-    range_start: float | None,
-    range_end: float | None,
-) -> bool:
-    return not (
-        (range_start is not None and end < range_start)
-        or (range_end is not None and start > range_end)
-    )
-
-
 def _overlap_ratio(left: RetrievalCandidate, right: RetrievalCandidate) -> float:
     intersection = max(
         0.0,
@@ -448,7 +437,7 @@ def _overlap_ratio(left: RetrievalCandidate, right: RetrievalCandidate) -> float
 
 
 def _item_ranges_overlap(left: AgentEvidenceItem, right: AgentEvidenceItem) -> bool:
-    return _ranges_intersect(
+    return ranges_intersect(
         left.start_seconds,
         left.end_seconds,
         right.start_seconds,
