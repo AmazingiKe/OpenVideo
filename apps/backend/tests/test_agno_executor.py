@@ -31,6 +31,61 @@ class EchoInput(BaseModel):
     text: str
 
 
+@pytest.mark.asyncio
+async def test_real_session_keeps_completed_history_across_runs(monkeypatch, tmp_path):
+    import asyncio
+    from agno.models.openai import OpenAIChat
+    from agno.models.response import ModelResponse
+    from agno.run.base import RunStatus
+
+    requests = []
+
+    async def invoke_stream(self, messages, **_kwargs):
+        requests.append([message.content for message in messages])
+        yield ModelResponse(content="Remembered answer")
+
+    async def invoke(self, *_args, **_kwargs):
+        return ModelResponse(
+            content='{"summary":"Remembered conversation","topics":[]}'
+        )
+
+    monkeypatch.setattr(OpenAIChat, "ainvoke_stream", invoke_stream)
+    monkeypatch.setattr(OpenAIChat, "ainvoke", invoke)
+    monkeypatch.setattr(
+        "openvideo.llm.agno_executor.create_agent_model",
+        lambda *_args, **_kwargs: OpenAIChat(id="test", api_key="test"),
+    )
+    context = AgnoSessionContext(tmp_path / "context.sqlite3")
+    try:
+        for content in (
+            "Remember blue whale forty two",
+            "What did I ask you to remember?",
+        ):
+            result = await AgnoAgentExecutor(context).run(
+                online_model(),
+                text_profile(),
+                chat_definition(),
+                [{"role": "user", "content": content}],
+                AgentToolRegistry(),
+                lambda _event: None,
+                max_tool_calls=4,
+                tool_timeout_seconds=1,
+                session_id="session-history",
+            )
+            assert result.content == "Remembered answer"
+        # 取消持久化由 SDK 后台任务执行，需检查收尾之后的最终状态。
+        await asyncio.sleep(0.1)
+        session = await context.database.get_session("session-history")
+        assert [run.status for run in session.runs] == [RunStatus.completed] * 2
+        assert "Remember blue whale forty two" in requests[1]
+        assert any(
+            message.content == "Remember blue whale forty two"
+            for message in session.get_messages()
+        )
+    finally:
+        await context.database.close()
+
+
 def chat_definition() -> AgentDefinition:
     return AgentDefinition(
         agent_id="test",

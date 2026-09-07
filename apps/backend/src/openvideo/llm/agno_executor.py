@@ -638,7 +638,7 @@ class AgnoAgentExecutor:
                         content="".join(content_parts),
                     )
                 )
-                break
+                # 正常耗尽流，让 Agno 完成收尾；提前关闭会被 SDK 按取消覆盖历史。
         return AgentExecutionResult(
             content="".join(content_parts),
             reasoning_content="".join(reasoning_parts),
