@@ -102,6 +102,7 @@ def test_router_ignores_extra_metadata_but_keeps_only_validated_fields(monkeypat
         "intent": "edit",
         "model_role": "complex",
         "reason": "生成提案",
+        "needs_evidence": True,
     }
 
 

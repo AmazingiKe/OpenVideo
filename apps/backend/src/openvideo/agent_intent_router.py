@@ -19,7 +19,7 @@ from openvideo.tools.llm import LlmCompletionError, complete_text
 
 
 ROUTING_TIMEOUT_SECONDS = 20
-ROUTING_MAX_TOKENS = 160
+ROUTING_MAX_TOKENS = 256
 ROUTING_FORMAT_ATTEMPTS = 2
 ROUTING_HISTORY_MAX_MESSAGES = 6
 ROUTING_HISTORY_MESSAGE_MAX_CHARACTERS = 1_600
@@ -40,6 +40,7 @@ class AgentIntentRoute(BaseModel):
     intent: AgentIntent
     model_role: AgentModelRole
     reason: str = Field(min_length=1, max_length=160)
+    needs_evidence: bool = True
 
     @model_validator(mode="after")
     def validate_text_model_role(self) -> "AgentIntentRoute":
@@ -92,7 +93,10 @@ def route_agent_intent(
                 "model_role 只能是 fast 或 complex。跨视频、全片综合、冲突判断、多步修改和"
                 "复杂推理选择 complex，短问答、定位和提取选择 fast。请求含糊时选择 chat，"
                 "让主助手继续澄清。reason 只写不超过 160 字的决策摘要，不复述用户正文。"
-                '输出格式：{"intent":"chat","model_role":"fast","reason":"简短理由"}。'
+                "needs_evidence 表示本轮是否回答视频或文档内容：这类问题一律为 true，"
+                "包括‘刚才第二种适合什么场景’等内容追问。仅寒暄、回忆聊天中的口令、"
+                "确认用户要求或澄清问题时为 false，不把聊天记忆当成视频检索问题。"
+                '输出格式：{"intent":"chat","model_role":"fast","reason":"简短理由","needs_evidence":true}。'
             ),
         },
         {
@@ -129,7 +133,7 @@ def route_agent_intent(
                     {"role": "assistant", "content": raw_route},
                     {
                         "role": "user",
-                        "content": "上次输出不符合格式。请重新判断原始请求，只返回 intent、model_role、reason，取值遵守系统规则。",
+                        "content": "上次输出不符合格式。请重新判断原始请求，按系统要求的字段和取值返回 JSON。",
                     },
                 ]
             )

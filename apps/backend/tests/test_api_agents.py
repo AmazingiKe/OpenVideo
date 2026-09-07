@@ -1767,12 +1767,24 @@ def test_marker_run_mode_separates_questions_from_change_proposals(tmp_path: Pat
             "search_evidence",
             "inspect_frames",
         )
-        assert question_definition.required_tools == set()
+        assert question_definition.required_tools == {"search_evidence"}
         assert question_definition.requires_approval is False
         assert "propose_marker_changes" not in question_definition.allowed_tools
         assert proposal_definition.allowed_tools == registered.definition.allowed_tools
         assert proposal_definition.required_tools == {"propose_marker_changes"}
         assert proposal_definition.requires_approval is True
+        conversation_definition = registered.run_definition(
+            registered.definition,
+            AgentRunCreate(
+                request_key=f"request-{uuid7().hex}",
+                ai_model_id=MODEL_ID,
+                content="我让你记住的口令是什么？",
+                task_input={"intent": "chat", "needs_evidence": False},
+            ),
+            profile,
+        )
+        assert conversation_definition.required_tools == set()
+        assert "propose_marker_changes" not in conversation_definition.allowed_tools
 
         transcript_definition = registered.run_definition(
             registered.definition,
