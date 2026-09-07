@@ -31,3 +31,4 @@ class AgentExecutionResult(BaseModel):
     tool_call_count: int = Field(default=0, ge=0)
     retry_count: int = Field(default=0, ge=0)
     tool_limit_reached: bool = False
+    tool_results: list[LlmAgentEvent] = Field(default_factory=list)

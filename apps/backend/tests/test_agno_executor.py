@@ -232,12 +232,26 @@ async def test_native_history_tool_reads_earlier_than_the_context_window(
         profile = text_profile().model_copy(
             update={"capabilities": ModelCapabilities(tools=Support.YES)}
         )
+        registry = AgentToolRegistry()
+        registry.register(
+            AgentTool(
+                "echo",
+                "Search",
+                EchoInput,
+                lambda _: pytest.fail("Only history should be read"),
+            )
+        )
+        definition = chat_definition().model_copy(
+            update={
+                "tools": [AgentToolDescriptor(name="echo", description="Search")],
+            }
+        )
         result = await AgnoAgentExecutor(context).run(
             online_model(),
             profile,
-            chat_definition(),
+            definition,
             [{"role": "user", "content": "Recall the first instruction"}],
-            AgentToolRegistry(),
+            registry,
             lambda _event: None,
             max_tool_calls=2,
             tool_timeout_seconds=1,
@@ -878,8 +892,13 @@ async def test_failed_tool_can_retry_after_prerequisite_is_satisfied():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer_after_search", [False, True])
-async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_search):
+@pytest.mark.parametrize(
+    "answer_after_search,requires_approval",
+    [(False, False), (True, False), (False, True)],
+)
+async def test_real_agno_loop_stops_repeated_searches(
+    monkeypatch, answer_after_search, requires_approval
+):
     import asyncio
     from agno.models.openai import OpenAIChat
     from agno.models.response import ModelResponse
@@ -894,7 +913,13 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
     async def invoke_stream(self, *_args, **_kwargs):
         nonlocal request_count
         request_count += 1
-        assert request_count <= 5, "Model requests must stop within the tool budget"
+        assert request_count <= 6, (
+            "Only one final answer is allowed after the tool budget"
+        )
+        if request_count == 6:
+            assert not _kwargs.get("tools")
+            yield ModelResponse(content="Final answer")
+            return
         if answer_after_search and request_count == 2:
             yield ModelResponse(content="Checking another source first")
         if answer_after_search and request_count == 3:
@@ -940,6 +965,7 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
         update={
             "tools": [AgentToolDescriptor(name="echo", description="Search")],
             "required_tools": {"echo"},
+            "requires_approval": requires_approval,
         }
     )
     events = []
@@ -958,15 +984,19 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
         timeout=5,
     )
     assert execution_count == (2 if answer_after_search else 1)
-    assert request_count == (3 if answer_after_search else 5)
-    assert result.tool_limit_reached is not answer_after_search
-    if answer_after_search:
-        assert result.content == "Final answer"
-        assert [
-            event.content
-            for event in events
-            if event.event_type == LlmAgentEventType.TEXT_DELTA
-        ] == ["Final answer"]
+    if requires_approval:
+        assert request_count == 5
+        assert result.tool_limit_reached is True
+        assert not result.content
+        return
+    assert request_count == (3 if answer_after_search else 6)
+    assert result.tool_limit_reached is False
+    assert result.content == "Final answer"
+    assert [
+        event.content
+        for event in events
+        if event.event_type == LlmAgentEventType.TEXT_DELTA
+    ] == ["Final answer"]
 
 
 @pytest.mark.asyncio
