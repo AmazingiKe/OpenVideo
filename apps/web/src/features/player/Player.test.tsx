@@ -107,6 +107,52 @@ beforeEach(() => {
 });
 
 describe("Player", () => {
+  it("publishes native progress previews immediately and restores the clock on cancellation", () => {
+    const player_ref = createRef<PlayerHandle>();
+    const on_time_change = vi.fn();
+    render(
+      <Player
+        ref={player_ref}
+        src="/video.mp4"
+        on_time_change={on_time_change}
+      />,
+    );
+    on_time_change.mockClear();
+    act(() => media.events.seeking_request?.(18.125));
+    expect(on_time_change).toHaveBeenLastCalledWith(18.125);
+    expect(player_ref.current?.current_time()).toBe(18.125);
+    act(() => media.events.seeking_request?.(28.625));
+    expect(on_time_change).toHaveBeenLastCalledWith(28.625);
+    expect(player_ref.current?.current_time()).toBe(28.625);
+    expect(media.remote.seek).not.toHaveBeenCalled();
+    expect(media.player.currentTime).toBe(12);
+    act(() => player_ref.current?.cancel_scrub());
+    expect(on_time_change).toHaveBeenLastCalledWith(12);
+    expect(player_ref.current?.current_time()).toBe(12);
+  });
+
+  it("ignores an older seek confirmation after a new drag has started", () => {
+    const player_ref = createRef<PlayerHandle>();
+    const on_time_change = vi.fn();
+    render(
+      <Player
+        ref={player_ref}
+        src="/video.mp4"
+        on_time_change={on_time_change}
+      />,
+    );
+    act(() => media.events.seeking_request?.(16));
+    act(() => media.events.seek_request?.(16));
+    act(() => media.events.seeking_request?.(20));
+    on_time_change.mockClear();
+    media.player.currentTime = 16;
+    act(() => media.events.seeked?.());
+    expect(player_ref.current?.current_time()).toBe(20);
+    expect(on_time_change).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("OpenVideo 播放器")).toHaveAttribute(
+      "data-scrubbing",
+    );
+  });
   it("pauses on workspace exit without replacing the player or resuming on return", () => {
     const player_ref = createRef<PlayerHandle>();
     const { rerender } = render(
@@ -184,7 +230,7 @@ describe("Player", () => {
     expect(player_ref.current?.current_time()).toBe(12);
     act(() => player_ref.current?.seek_to(8));
     expect(media.remote.seek).toHaveBeenCalledWith(8);
-    expect(on_time_change).not.toHaveBeenCalled();
+    expect(on_time_change).toHaveBeenLastCalledWith(8);
 
     act(() => player_ref.current?.toggle_playback());
     expect(media.remote.play).toHaveBeenCalledOnce();
@@ -193,7 +239,7 @@ describe("Player", () => {
     expect(media.remote.pause).toHaveBeenCalledOnce();
   });
 
-  it("keeps the presented media clock unchanged until a scrub commits", () => {
+  it("reports the scrub clock while ignoring stale presented times", () => {
     const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();
     const { rerender } = render(
@@ -208,10 +254,11 @@ describe("Player", () => {
     act(() => player_ref.current?.begin_scrub(16));
     act(() => player_ref.current?.update_scrub(16));
 
-    expect(player_ref.current?.current_time()).toBe(12);
+    expect(player_ref.current?.current_time()).toBe(16);
     expect(media.player.currentTime).toBe(12);
     expect(media.remote.seek).not.toHaveBeenCalled();
-    expect(on_time_change).not.toHaveBeenCalled();
+    expect(on_time_change).toHaveBeenLastCalledWith(16);
+    on_time_change.mockClear();
 
     media.store.currentTime = 13;
     rerender(
@@ -221,7 +268,7 @@ describe("Player", () => {
         on_time_change={on_time_change}
       />,
     );
-    expect(player_ref.current?.current_time()).toBe(12);
+    expect(player_ref.current?.current_time()).toBe(16);
     expect(on_time_change).not.toHaveBeenCalled();
   });
 
@@ -431,12 +478,12 @@ describe("Player", () => {
 
     expect(screen.getByLabelText("视频字幕")).toHaveTextContent("当前字幕");
     expect(media.player.currentTime).toBe(12);
-    expect(player_ref.current?.current_time()).toBe(12);
+    expect(player_ref.current?.current_time()).toBe(16);
     expect(media.remote.seek).not.toHaveBeenCalled();
-    expect(on_time_change).not.toHaveBeenCalled();
+    expect(on_time_change).toHaveBeenLastCalledWith(16);
 
     act(() => media.events.seek_request?.(16));
-    expect(on_time_change).not.toHaveBeenCalled();
+    expect(on_time_change).toHaveBeenLastCalledWith(16);
     expect(player_ref.current?.current_time()).toBe(16);
     media.player.currentTime = 16;
     media.store.currentTime = 16;

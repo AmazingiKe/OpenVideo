@@ -1,8 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
+import { Player, type PlayerHandle } from "@/features/player/Player";
+import { format_timeline_time } from "./timeline_time";
 import type {
   EventAnalysis,
   FocusSelection,
@@ -173,6 +175,7 @@ const EVENT_ANALYSES: EventAnalysis[] = [
 ];
 
 type TimelineStoryProps = {
+  with_player?: boolean;
   duration_seconds: number;
   initial_time: number;
   initial_markers: MediaMarker[];
@@ -185,6 +188,7 @@ type TimelineStoryProps = {
 };
 
 function TimelineStory({
+  with_player = false,
   duration_seconds,
   initial_time,
   initial_markers,
@@ -195,6 +199,8 @@ function TimelineStory({
   focus_selection,
   marker_error,
 }: TimelineStoryProps) {
+  const player_ref = useRef<PlayerHandle>(null);
+  const [is_paused, set_is_paused] = useState(true);
   const [current_time, set_current_time] = useState(initial_time);
   const [markers, set_markers] = useState(initial_markers);
   const [selected_marker_ids, set_selected_marker_ids] = useState<Set<string>>(
@@ -235,51 +241,84 @@ function TimelineStory({
   }
 
   return (
-    <div className="h-64 w-full" data-testid="timeline-story-frame">
-      <MediaTimeline
-        asset_id={ASSET_ID}
-        duration_seconds={duration_seconds}
-        current_time={current_time}
-        is_paused
-        playback_rate={1}
-        transcript={{
-          asset_id: ASSET_ID,
-          language: "zh",
-          created_at: "2026-08-27T00:00:00Z",
-          segments: transcript_segments,
-        }}
-        segments={analysis_segments}
-        event_analyses={event_analyses}
-        focus_selection={range_selection}
-        markers={markers}
-        candidate_markers={candidate_markers}
-        selected_marker_ids={selected_marker_ids}
-        selected_transcript_indices={selected_transcript_indices}
-        analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
-        marker_error={marker_error}
-        on_scrub_start={set_current_time}
-        on_scrub_update={set_current_time}
-        on_scrub_commit={set_current_time}
-        on_scrub_cancel={() => undefined}
-        on_seek={set_current_time}
-        on_selected_transcript_indices_change={set_selected_transcript_indices}
-        on_selected_marker_ids_change={set_selected_marker_ids}
-        on_set_focus_in={(seconds) => set_range_endpoint("in_seconds", seconds)}
-        on_set_focus_out={(seconds) =>
-          set_range_endpoint("out_seconds", seconds)
-        }
-        on_clear_focus={() => set_range_selection(null)}
-        on_request_transcript_correction={() => undefined}
-        on_add_marker={async () => undefined}
-        on_update_marker={update_marker}
-        on_delete_marker={async (marker_id) =>
-          set_markers((current) =>
-            current.filter((marker) => marker.marker_id !== marker_id),
-          )
-        }
-        on_update_transcript={async () => undefined}
-        on_request_transcription={() => undefined}
-      />
+    <div className="flex flex-col gap-4">
+      {with_player ? (
+        <div className="h-96">
+          <Player
+            ref={player_ref}
+            src="https://files.vidstack.io/sprite-fight/720p.mp4"
+            on_time_change={set_current_time}
+            on_pause_change={set_is_paused}
+          />
+        </div>
+      ) : null}
+      <div className="h-64 w-full" data-testid="timeline-story-frame">
+        <MediaTimeline
+          asset_id={ASSET_ID}
+          duration_seconds={duration_seconds}
+          current_time={current_time}
+          is_paused={is_paused}
+          read_playback_time={
+            with_player
+              ? () => player_ref.current?.current_time() ?? current_time
+              : undefined
+          }
+          playback_rate={1}
+          transcript={{
+            asset_id: ASSET_ID,
+            language: "zh",
+            created_at: "2026-08-27T00:00:00Z",
+            segments: transcript_segments,
+          }}
+          segments={analysis_segments}
+          event_analyses={event_analyses}
+          focus_selection={range_selection}
+          markers={markers}
+          candidate_markers={candidate_markers}
+          selected_marker_ids={selected_marker_ids}
+          selected_transcript_indices={selected_transcript_indices}
+          analysis_strategy={DEFAULT_ANALYSIS_STRATEGY}
+          marker_error={marker_error}
+          on_scrub_start={(time) => {
+            if (with_player) player_ref.current?.begin_scrub(time);
+            else set_current_time(time);
+          }}
+          on_scrub_update={(time) => {
+            if (with_player) player_ref.current?.update_scrub(time);
+            else set_current_time(time);
+          }}
+          on_scrub_commit={(time) => {
+            if (with_player) player_ref.current?.commit_scrub(time);
+            else set_current_time(time);
+          }}
+          on_scrub_cancel={() => player_ref.current?.cancel_scrub()}
+          on_seek={(time) => {
+            if (with_player) player_ref.current?.seek_to(time);
+            else set_current_time(time);
+          }}
+          on_selected_transcript_indices_change={
+            set_selected_transcript_indices
+          }
+          on_selected_marker_ids_change={set_selected_marker_ids}
+          on_set_focus_in={(seconds) =>
+            set_range_endpoint("in_seconds", seconds)
+          }
+          on_set_focus_out={(seconds) =>
+            set_range_endpoint("out_seconds", seconds)
+          }
+          on_clear_focus={() => set_range_selection(null)}
+          on_request_transcript_correction={() => undefined}
+          on_add_marker={async () => undefined}
+          on_update_marker={update_marker}
+          on_delete_marker={async (marker_id) =>
+            set_markers((current) =>
+              current.filter((marker) => marker.marker_id !== marker_id),
+            )
+          }
+          on_update_transcript={async () => undefined}
+          on_request_transcription={() => undefined}
+        />
+      </div>
     </div>
   );
 }
@@ -291,6 +330,7 @@ const meta = {
     layout: "fullscreen",
   },
   args: {
+    with_player: false,
     duration_seconds: 90,
     initial_time: 16,
     initial_markers: [POINT_MARKER, RANGE_MARKER],
@@ -421,6 +461,107 @@ export const ScrollSynchronization: Story = {
         1,
       ).data;
       expect(tick_pixel[3]).toBeGreaterThan(0);
+    }
+  },
+};
+
+export const PlayerProgressSynchronization: Story = {
+  args: { with_player: true, initial_time: 0, duration_seconds: 720 },
+  play: async ({ canvasElement, userEvent: user_event }) => {
+    const story = within(canvasElement);
+    const player = story.getByLabelText("OpenVideo 播放器");
+    const video = player.querySelector("video")!;
+    const progress = await story.findByRole("slider", { name: "播放进度" });
+    await waitFor(
+      () => {
+        expect(video.duration).toBeGreaterThan(0);
+        expect(player).toHaveAttribute("data-can-play");
+        expect(progress).not.toHaveAttribute("aria-disabled", "true");
+      },
+      { timeout: 15_000 },
+    );
+    await user_event.hover(player);
+    await waitFor(() => {
+      const controls = player.querySelector<HTMLElement>(".plyr__controls")!;
+      expect(
+        new DOMMatrixReadOnly(getComputedStyle(controls).transform).m42,
+      ).toBe(0);
+      expect(getComputedStyle(controls).opacity).toBe("1");
+    });
+    const host = story.getByLabelText(/时间线画布/);
+    host.dispatchEvent(
+      new WheelEvent("wheel", {
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+        deltaY: -2_000,
+        clientX: host.getBoundingClientRect().left + TIMELINE_START_LEFT,
+      }),
+    );
+    await new Promise(requestAnimationFrame);
+    const grid = host.querySelector<HTMLElement>(
+      ".timeline-editor-edit-area .ReactVirtualized__Grid",
+    )!;
+    const playhead = host.querySelector<HTMLElement>(
+      ".media_timeline_playhead",
+    )!;
+    let requested_time = 0;
+    const record_request = (event: Event) => {
+      requested_time = (event as CustomEvent<number>).detail;
+    };
+    player.addEventListener("media-seeking-request", record_request);
+    const bounds = progress.getBoundingClientRect();
+    const initial_media_time = video.currentTime;
+    try {
+      await user_event.pointer({
+        target: progress,
+        keys: "[MouseLeft>]",
+        coords: {
+          clientX: bounds.left + bounds.width * 0.2,
+          clientY: bounds.top + bounds.height / 2,
+        },
+      });
+      for (const fraction of [0.65, 0.8, 0.4]) {
+        await user_event.pointer({
+          target: progress,
+          coords: {
+            clientX: bounds.left + bounds.width * fraction,
+            clientY: bounds.top + bounds.height / 2,
+          },
+        });
+        await new Promise(requestAnimationFrame);
+        expect(requested_time).toBeCloseTo(video.duration * fraction, 0);
+        expect(story.getByLabelText("当前播放时间")).toHaveTextContent(
+          format_timeline_time(requested_time),
+        );
+        expect(new DOMMatrixReadOnly(playhead.style.transform).m41).toBeCloseTo(
+          TIMELINE_START_LEFT +
+            requested_time * timeline_story_zoom(canvasElement) -
+            grid.scrollLeft,
+          0,
+        );
+        expect(playhead).toHaveAttribute("data-visible", "true");
+        expect(video.currentTime).toBe(initial_media_time);
+      }
+      await user_event.keyboard("[BracketLeft]");
+      const start = host.querySelector<HTMLElement>('[data-edge="start"]')!;
+      expect(parseFloat(start.style.left)).toBeCloseTo(
+        new DOMMatrixReadOnly(playhead.style.transform).m41,
+        0,
+      );
+      await user_event.pointer({
+        target: progress,
+        keys: "[/MouseLeft]",
+        coords: {
+          clientX: bounds.left + bounds.width * 0.4,
+          clientY: bounds.top + bounds.height / 2,
+        },
+      });
+      await waitFor(() =>
+        expect(video.currentTime).toBeCloseTo(requested_time, 0),
+      );
+    } finally {
+      player.removeEventListener("media-seeking-request", record_request);
     }
   },
 };

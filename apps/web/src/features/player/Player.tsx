@@ -1,8 +1,14 @@
-import { MediaPlayer, MediaProvider } from "@vidstack/react";
+import {
+  MediaPlayer,
+  MediaProvider,
+  TimeSlider,
+  useMediaState,
+} from "@vidstack/react";
 import "@vidstack/react/player/styles/base.css";
 import {
   PlyrLayout,
   plyrLayoutIcons,
+  usePlyrLayoutContext,
   type PlyrControl,
   type PlyrLayoutTranslations,
 } from "@vidstack/react/player/layouts/plyr";
@@ -40,6 +46,8 @@ import type { ScrubPreviewMetrics } from "./use_scrub_frame_preview";
 import type { ScrubPreviewStoryboard } from "./scrub_preview_protocol";
 
 const SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS = 1_500;
+// 预览解码已有任务合并，进度反馈不再额外等待播放器默认的节流窗口。
+const PROGRESS_SEEK_THROTTLE_MILLISECONDS = 0;
 const MEDIA_TIME_SLIDER_SELECTOR = "[data-media-time-slider]";
 const PLAYER_CONTROLS: PlyrControl[] = [
   "play",
@@ -154,6 +162,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const active_source_ref = useRef(src);
   const player_shell_ref = useRef<HTMLDivElement>(null);
   const current_time_value_ref = useRef(0);
+  const scrub_origin_time_ref = useRef(0);
   const pending_seek_ref = useRef(false);
   const on_time_change_ref = useRef(on_time_change);
   const {
@@ -168,6 +177,12 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   useEffect(() => {
     on_time_change_ref.current = on_time_change;
   }, [on_time_change]);
+
+  // 播放头跟随拖动目标，字幕仍由实际呈现的视频帧驱动。
+  const publish_current_time = useCallback((seconds: number) => {
+    current_time_value_ref.current = seconds;
+    on_time_change_ref.current?.(seconds);
+  }, []);
 
   const toggle_captions = useCallback(() => {
     const enabled = !captions_enabled;
@@ -249,12 +264,22 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       const preview_was_active = has_active_preview();
       const bounded_time = begin_seek_preview(seconds);
       if (!preview_was_active) {
+        scrub_origin_time_ref.current = current_time_value_ref.current;
         resume_after_seek_ref.current = !current_paused_ref.current;
         pause_fn_ref.current?.();
       }
+      presented_frame_cancel_ref.current?.();
+      presented_frame_cancel_ref.current = null;
+      pending_seek_ref.current = false;
+      publish_current_time(bounded_time);
       request_scrub_preview(bounded_time);
     },
-    [begin_seek_preview, has_active_preview, request_scrub_preview],
+    [
+      begin_seek_preview,
+      has_active_preview,
+      publish_current_time,
+      request_scrub_preview,
+    ],
   );
 
   const update_scrub = useCallback(
@@ -263,12 +288,15 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
         begin_scrub(seconds);
         return;
       }
-      request_scrub_preview(begin_seek_preview(seconds));
+      const bounded_time = begin_seek_preview(seconds);
+      publish_current_time(bounded_time);
+      request_scrub_preview(bounded_time);
     },
     [
       begin_scrub,
       begin_seek_preview,
       has_active_preview,
+      publish_current_time,
       request_scrub_preview,
     ],
   );
@@ -283,12 +311,12 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     (seconds: number) => {
       const bounded_time = Math.max(0, seconds);
       end_scrub_preview();
-      current_time_value_ref.current = bounded_time;
       pending_seek_ref.current = true;
       commit_seek_preview();
+      publish_current_time(bounded_time);
       return bounded_time;
     },
-    [commit_seek_preview, end_scrub_preview],
+    [commit_seek_preview, end_scrub_preview, publish_current_time],
   );
 
   const commit_scrub = useCallback(
@@ -302,20 +330,35 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   const cancel_scrub = useCallback(() => {
     if (!has_active_preview()) return;
+    const restored_time = pending_seek_ref.current
+      ? current_time_value_ref.current
+      : scrub_origin_time_ref.current;
     cancel_seek_preview();
     pending_seek_ref.current = false;
+    presented_frame_cancel_ref.current?.();
+    presented_frame_cancel_ref.current = null;
     clear_scrub_preview();
+    publish_current_time(restored_time);
     if (resume_after_seek_ref.current) play_fn_ref.current?.();
     resume_after_seek_ref.current = false;
-  }, [cancel_seek_preview, clear_scrub_preview, has_active_preview]);
+  }, [
+    cancel_seek_preview,
+    clear_scrub_preview,
+    has_active_preview,
+    publish_current_time,
+  ]);
 
   useEffect(() => {
     if (is_workspace_active) return;
+    const should_restore_time =
+      has_active_preview() && !pending_seek_ref.current;
     // 切页时取消拖动后的自动续播，保留媒体实例及当前位置。
     resume_after_seek_ref.current = false;
     pending_seek_ref.current = false;
     presented_frame_cancel_ref.current?.();
     presented_frame_cancel_ref.current = null;
+    if (should_restore_time)
+      publish_current_time(scrub_origin_time_ref.current);
     cancel_seek_preview();
     clear_scrub_preview();
     release_controls_visibility();
@@ -325,6 +368,8 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     cancel_seek_preview,
     clear_scrub_preview,
     release_controls_visibility,
+    has_active_preview,
+    publish_current_time,
   ]);
 
   useImperativeHandle(
@@ -393,6 +438,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   );
 
   const confirm_presented_seek = useCallback(() => {
+    if (!pending_seek_ref.current) return;
     presented_frame_cancel_ref.current?.();
     const finish = (media_time: number) => {
       presented_frame_cancel_ref.current = null;
@@ -442,7 +488,10 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       ref={player_shell_ref}
       onPointerDownCapture={hold_player_timeline_controls}
       onPointerUpCapture={release_player_timeline_controls}
-      onPointerCancelCapture={release_player_timeline_controls}
+      onPointerCancelCapture={(event) => {
+        if (event_targets_media_time_slider(event)) cancel_scrub();
+        release_player_timeline_controls(event);
+      }}
       onLostPointerCapture={release_player_timeline_controls}
     >
       <MediaPlayer
@@ -477,6 +526,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
           markers={plyr_markers}
           controls={PLAYER_CONTROLS}
           invertTime={false}
+          slots={{ timeSlider: <PlayerProgress /> }}
         />
         <PlayerStateBridge
           on_player_ready={on_player_ready}
@@ -489,6 +539,47 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     </div>
   );
 });
+
+function PlayerProgress() {
+  const {
+    markers,
+    seekTime: seek_time,
+    previewTime: preview_time,
+  } = usePlyrLayoutContext();
+  const duration = useMediaState("duration");
+  return (
+    <div className="plyr__controls__item plyr__progress__container">
+      <div className="plyr__progress">
+        <TimeSlider.Root
+          className="plyr__slider"
+          keyStep={seek_time}
+          seekingRequestThrottle={PROGRESS_SEEK_THROTTLE_MILLISECONDS}
+          pauseWhileDragging={false}
+          aria-label={PLAYER_TRANSLATIONS.Seek}
+          data-plyr="seek"
+          onMediaSeekingRequest={(time) => preview_time.set(time)}
+        >
+          <div className="plyr__slider__track" />
+          <div className="plyr__slider__thumb" />
+          <div className="plyr__slider__buffer" />
+          <span className="plyr__tooltip">
+            <TimeSlider.Value />
+          </span>
+          {Number.isFinite(duration) && duration > 0
+            ? markers?.map((marker) => (
+                <span
+                  key={`${marker.time}:${marker.label}`}
+                  className="plyr__progress__marker"
+                  title={marker.label}
+                  style={{ left: `${(marker.time / duration) * 100}%` }}
+                />
+              ))
+            : null}
+        </TimeSlider.Root>
+      </div>
+    </div>
+  );
+}
 
 function event_targets_media_time_slider(
   event: ReactPointerEvent<HTMLDivElement>,
