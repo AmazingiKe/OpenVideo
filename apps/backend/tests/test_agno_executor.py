@@ -752,3 +752,76 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
             for event in events
             if event.event_type == LlmAgentEventType.TEXT_DELTA
         ] == ["Final answer"]
+
+
+@pytest.mark.asyncio
+async def test_unknown_tools_cannot_bypass_model_request_budget(monkeypatch):
+    import asyncio
+    from agno.models.openai import OpenAIChat
+    from agno.models.response import ModelResponse
+    from openai.types.chat.chat_completion_chunk import (
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
+    )
+
+    request_count = 0
+
+    async def invoke_stream(self, *_args, **_kwargs):
+        nonlocal request_count
+        request_count += 1
+        assert request_count <= 4
+        yield ModelResponse(
+            tool_calls=[
+                ChoiceDeltaToolCall(
+                    index=0,
+                    id=f"unknown-{request_count}",
+                    type="function",
+                    function=ChoiceDeltaToolCallFunction(
+                        name="unknown_search", arguments="{}"
+                    ),
+                )
+            ]
+        )
+
+    async def invoke(self, *_args, **_kwargs):
+        return ModelResponse(content="Compressed test result")
+
+    monkeypatch.setattr(OpenAIChat, "ainvoke_stream", invoke_stream)
+    monkeypatch.setattr(OpenAIChat, "ainvoke", invoke)
+    monkeypatch.setattr(
+        "openvideo.llm.agno_executor.create_agent_model",
+        lambda *_args, **_kwargs: OpenAIChat(id="test", api_key="test"),
+    )
+    definition = chat_definition().model_copy(
+        update={
+            "tools": [AgentToolDescriptor(name="echo", description="Search")],
+            "required_tools": {"echo"},
+        }
+    )
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            "echo",
+            "Search",
+            EchoInput,
+            lambda _: pytest.fail("Unknown tools must not execute"),
+        )
+    )
+    result = await asyncio.wait_for(
+        AgnoAgentExecutor().run(
+            online_model(),
+            text_profile(),
+            definition,
+            [{"role": "user", "content": "Search"}],
+            registry,
+            lambda _: None,
+            max_tool_calls=4,
+            tool_timeout_seconds=1,
+        ),
+        timeout=5,
+    )
+    assert result.tool_limit_reached is True
+    assert result.successful_tools == set()
+    assert result.content == ""
+    assert request_count == 4
+    assert result.retry_count == 0

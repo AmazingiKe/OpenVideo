@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Protocol, cast
@@ -396,20 +397,21 @@ class AgnoAgentExecutor:
         agno_messages = [_message(value) for value in messages]
         try:
             stream = cast(
-                AsyncIterator[RunOutputEvent],
+                AsyncGenerator[RunOutputEvent, None],
                 agent.arun(
                     agno_messages,
                     stream=True,
                     stream_events=True,
                 ),
             )
-            return await self._consume(
-                stream,
-                on_event,
-                required_tools=definition.required_tools,
-                tool_state=tool_state,
-                has_tools=bool(definition.tools),
-            )
+            async with aclosing(stream):
+                return await self._consume(
+                    stream,
+                    on_event,
+                    required_tools=definition.required_tools,
+                    tool_state=tool_state,
+                    has_tools=bool(definition.tools),
+                )
         except asyncio.CancelledError:
             raise
         except (FeatureCombinationUnsupportedError, ProviderRequestError):
@@ -483,6 +485,9 @@ class AgnoAgentExecutor:
         content_parts: list[str] = []
         response_text: list[str] = []
         received_text = False
+        model_request_count = 0
+        # 每次工具调用最多对应一轮模型请求，并为最后的纯文本回答保留一轮。
+        max_model_requests = tool_state.max_tool_calls + 1
         reasoning_parts: list[str] = []
         successful_tools: set[str] = set()
         seen_tool_calls: set[str] = set()
@@ -523,6 +528,10 @@ class AgnoAgentExecutor:
 
         async for event in stream:
             if isinstance(event, ModelRequestStartedEvent):
+                if model_request_count >= max_model_requests:
+                    tool_state.limit_reached = True
+                    break
+                model_request_count += 1
                 response_text.clear()
             elif isinstance(event, RunContentEvent):
                 if isinstance(event.content, str) and event.content:
