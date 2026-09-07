@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import re
@@ -2118,3 +2119,64 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
         assert len(requests) == 1
         assert requests[0].start_seconds == 12.5
         assert requests[0].caption == "透视投影示意图"
+
+
+@pytest.mark.parametrize("concurrent_limit", [1, 3])
+def test_routing_reserves_capacity_and_shares_duplicate_requests(
+    tmp_path, monkeypatch, concurrent_limit
+):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        service.settings.agent = service.settings.agent.model_copy(
+            update={"max_concurrent_runs": concurrent_limit}
+        )
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        other_session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+
+        async def scenario():
+            started = asyncio.Event()
+            release = asyncio.Event()
+            routing_calls = 0
+
+            async def route(*_args):
+                nonlocal routing_calls
+                routing_calls += 1
+                started.set()
+                await release.wait()
+                raise RuntimeError("routing failed")
+
+            monkeypatch.setattr(service, "_route_request", route)
+            request = AgentRunCreate(
+                request_key=f"request-{uuid7().hex}",
+                ai_model_id=MODEL_ID,
+                content="test",
+            )
+            first = asyncio.create_task(service.create_run(session.session_id, request))
+            await started.wait()
+            assert service.has_active_jobs()
+            duplicate = asyncio.create_task(
+                service.create_run(session.session_id, request)
+            )
+            rejected_session = other_session if concurrent_limit == 1 else session
+            with pytest.raises(AgentConflictError):
+                await service.create_run(
+                    rejected_session.session_id,
+                    request.model_copy(
+                        update={"request_key": f"request-{uuid7().hex}"}
+                    ),
+                )
+            await asyncio.sleep(0)
+            assert routing_calls == 1
+            release.set()
+            results = await asyncio.gather(first, duplicate, return_exceptions=True)
+            assert all(isinstance(result, RuntimeError) for result in results)
+            assert not service.has_active_jobs()
+            with pytest.raises(RuntimeError, match="routing failed"):
+                await service.create_run(session.session_id, request)
+            assert routing_calls == 2
+
+        client.portal.call(scenario)

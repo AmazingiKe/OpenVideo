@@ -252,6 +252,7 @@ class AgentService:
             library.library_path / AGNO_CONTEXT_DATABASE_FILE_NAME
         )
         self._tasks: dict[str, asyncio.Task[AgentRun]] = {}
+        self._run_creations: dict[str, tuple[str, asyncio.Task[AgentRun]]] = {}
         self._semantic_index_task: asyncio.Task[EvidenceIndexStatus] | None = None
         self._closing = False
         self._runtimes: dict[str, AgentRuntime] = {}
@@ -368,6 +369,52 @@ class AgentService:
             if existing.session_id != session_id:
                 raise AgentConflictError("请求键已被其他会话使用")
             return existing
+        if self._closing:
+            raise AgentConflictError("助手服务正在关闭")
+        pending = self._run_creations.get(request.request_key)
+        if pending is not None:
+            creation_session, creation_task = pending
+            if creation_session != session_id:
+                raise AgentConflictError("请求键已被其他会话使用")
+            return await asyncio.shield(creation_task)
+        active_run_count = sum(not task.done() for task in self._tasks.values()) + len(
+            self._run_creations
+        )
+        concurrent_limit = self.settings.agent.max_concurrent_runs
+        if registered.definition.mode == AgentMode.TASK:
+            concurrent_limit = max(1, concurrent_limit - 1)
+        if active_run_count >= concurrent_limit:
+            raise AgentConflictError("Agent 并行任务已达到用户设置的上限")
+        if any(
+            creation_session == session_id
+            for creation_session, _ in self._run_creations.values()
+        ):
+            raise AgentConflictError("当前会话已有正在判断意图的请求")
+        if any(
+            run.stage not in TERMINAL_AGENT_RUN_STAGES
+            for run in self.library.load_agent_runs(session_id)
+        ):
+            raise AgentConflictError("当前会话已有正在运行的任务")
+        creation_task = asyncio.create_task(
+            self._create_run(session, registered, request)
+        )
+        self._run_creations[request.request_key] = (session_id, creation_task)
+
+        def release_slot(completed: asyncio.Task[AgentRun]) -> None:
+            self._run_creations.pop(request.request_key, None)
+            if not completed.cancelled():
+                completed.exception()
+
+        creation_task.add_done_callback(release_slot)
+        return await asyncio.shield(creation_task)
+
+    async def _create_run(
+        self,
+        session: AgentSession,
+        registered: RegisteredAgent,
+        request: AgentRunCreate,
+    ) -> AgentRun:
+        session_id = session.session_id
         if "thinking_mode" not in request.model_fields_set:
             request = request.model_copy(
                 update={"thinking_mode": self.settings.agent.default_thinking_mode}
@@ -390,22 +437,6 @@ class AgentService:
                     }
                 }
             )
-        existing = self.library.load_agent_run_by_request_key(request.request_key)
-        if existing is not None:
-            if existing.session_id != session_id:
-                raise AgentConflictError("请求键已被其他会话使用")
-            return existing
-        active_run_count = sum(not task.done() for task in self._tasks.values())
-        concurrent_limit = self.settings.agent.max_concurrent_runs
-        if registered.definition.mode == AgentMode.TASK:
-            concurrent_limit = max(1, concurrent_limit - 1)
-        if active_run_count >= concurrent_limit:
-            raise AgentConflictError("Agent 并行任务已达到用户设置的上限")
-        if any(
-            run.stage not in TERMINAL_AGENT_RUN_STAGES
-            for run in self.library.load_agent_runs(session_id)
-        ):
-            raise AgentConflictError("当前会话已有正在运行的任务")
         model_role = self._select_model_role(request, route)
         model_id = role_model_ids[model_role] or request.ai_model_id
         model = self.settings.ai_model(model_id)
@@ -914,6 +945,10 @@ class AgentService:
 
     async def close(self) -> None:
         self._closing = True
+        creations = [task for _, task in self._run_creations.values()]
+        for task in creations:
+            task.cancel()
+        await asyncio.gather(*creations, return_exceptions=True)
         for signal in self._run_event_signals.values():
             signal.set()
         self._run_event_signals.clear()
@@ -1008,9 +1043,19 @@ class AgentService:
         return capabilities
 
     def has_active_jobs(self) -> bool:
-        return any(not task.done() for task in self._tasks.values())
+        return bool(self._run_creations) or any(
+            not task.done() for task in self._tasks.values()
+        )
 
     async def cancel_assets(self, asset_ids: set[str]) -> bool:
+        creations = [
+            task
+            for session_id, task in self._run_creations.values()
+            if self._require_session(session_id).asset_id in asset_ids
+        ]
+        for task in creations:
+            task.cancel()
+        await asyncio.gather(*creations, return_exceptions=True)
         targets = [
             run.run_id
             for session in self.library.load_agent_sessions()
