@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, within } from "storybook/test";
+import { useState } from "react";
+import { expect, fn, waitFor, within } from "storybook/test";
 
 import { unknown_model_profile, type AiModelSummary } from "@/shared/types";
 import { AgentComposer } from "./AgentComposer";
@@ -63,14 +64,14 @@ const meta = {
   },
   decorators: [
     (Story) => (
-      <div className="flex min-h-[640px] w-96 max-w-full items-end bg-background p-4 text-foreground">
+      <div className="flex min-h-160 w-full max-w-96 items-end bg-background p-4 text-foreground">
         <div className="w-full">
           <Story />
         </div>
       </div>
     ),
   ],
-  parameters: { layout: "centered" },
+  parameters: { layout: "fullscreen" },
 } satisfies Meta<typeof AgentComposer>;
 
 export default meta;
@@ -139,6 +140,10 @@ export const FullAccessStatus: Story = {
 };
 
 export const SlashCommands: Story = {
+  render: function CommandComposer(args) {
+    const [value, set_value] = useState(args.value);
+    return <AgentComposer {...args} value={value} on_change={set_value} />;
+  },
   args: {
     value: "/",
     commands: [
@@ -157,17 +162,34 @@ export const SlashCommands: Story = {
       },
     ],
   },
-  play: async ({ canvas }) => {
-    await expect(
-      canvas.getByRole("listbox", { name: "助手命令" }),
-    ).toBeVisible();
+  play: async ({ canvasElement, userEvent }) => {
+    const canvas = within(canvasElement.ownerDocument.body);
+    await waitFor(() =>
+      expect(canvas.getByRole("listbox", { name: "助手命令" })).toBeVisible(),
+    );
     await expect(
       canvas.getByRole("option", { name: /修正选中字幕/ }),
     ).toBeVisible();
     await expect(
       canvas.getByRole("option", { name: /处理全部字幕/ }),
     ).toBeVisible();
+    const composer = canvas.getByRole("textbox", { name: "助手指令" });
+    await userEvent.click(composer);
+    await userEvent.clear(composer);
+    await userEvent.type(composer, "/模型");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(
+        canvas.getByRole("dialog", { name: "模型与思考强度" }),
+      ).toBeVisible(),
+    );
+    await expect(composer).toHaveValue("");
   },
+};
+
+export const SlashCommandsEmpty: Story = {
+  args: { value: "/不存在的指令" },
+  render: SlashCommands.render,
 };
 
 export const CompactControls: Story = {

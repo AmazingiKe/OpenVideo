@@ -1,9 +1,13 @@
 import {
   ArrowUp,
+  Box,
+  Brain,
   ChevronDown,
   Crosshair,
   Pin,
   Plus,
+  Search,
+  Slash,
   ShieldCheck,
   SlidersHorizontal,
   Square,
@@ -11,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   useId,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -30,6 +35,7 @@ import {
 } from "@/components/ui/field";
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
   PopoverDescription,
   PopoverHeader,
@@ -99,6 +105,20 @@ const PERMISSION_MODE_OPTIONS = [
   description: string;
 }>;
 
+type ComposerControl = "model" | "retrieval" | "context";
+type ComposerCommand = Pick<
+  AgentCommand,
+  "name" | "label" | "description" | "disabled" | "disabled_reason"
+> & {
+  icon: typeof Slash;
+  control?: ComposerControl;
+};
+
+type ComposerControlProps = {
+  open: boolean;
+  on_open_change: (open: boolean) => void;
+};
+
 export function AgentComposer({
   value,
   commands = [],
@@ -161,6 +181,10 @@ export function AgentComposer({
   const busy = pending || submitting;
   const control_id = useId();
   const textarea_ref = useRef<HTMLTextAreaElement>(null);
+  const command_list_ref = useRef<HTMLDivElement>(null);
+  const [open_control, set_open_control] = useState<ComposerControl | null>(
+    null,
+  );
   const [context_drop_active, set_context_drop_active] = useState(false);
   const [highlighted_command_index, set_highlighted_command_index] =
     useState(0);
@@ -169,17 +193,81 @@ export function AgentComposer({
   >(null);
   const selected_permission_option =
     find_permission_mode_option(permission_mode);
-  const command_suggestions = useMemo(
-    () => agent_command_suggestions(value, commands),
-    [commands, value],
-  );
+  const command_suggestions = useMemo(() => {
+    const settings: ComposerCommand[] = [
+      {
+        name: "模型",
+        label: "模型",
+        description:
+          models.find((model) => model.model_id === model_id)?.name ??
+          "选择执行模型",
+        icon: Box,
+        control: "model",
+      },
+      {
+        name: "思考",
+        label: "思考强度",
+        description:
+          THINKING_MODE_OPTIONS.find((option) => option.value === thinking_mode)
+            ?.label ?? "自动",
+        icon: Brain,
+        control: "model",
+      },
+      {
+        name: "检索",
+        label: "检索范围",
+        description: retrieval_scope === "library" ? "资料库" : "当前视频",
+        icon: Search,
+        control: "retrieval",
+      },
+      {
+        name: "权限",
+        label: "权限",
+        description: selected_permission_option.label,
+        icon: ShieldCheck,
+        control: "retrieval",
+      },
+      {
+        name: "上下文",
+        label: "添加上下文",
+        description: "引用时间线选区或文档内容",
+        icon: Plus,
+        control: "context",
+      },
+    ];
+    const query = value.match(/^\/([^\s]*)$/u)?.[1];
+    if (query === undefined) return [];
+    return [
+      ...agent_command_suggestions(value, commands).map((command) => ({
+        ...command,
+        icon: Slash,
+      })),
+      ...settings.filter(
+        (command) =>
+          command.name.includes(query) || command.label.includes(query),
+      ),
+    ];
+  }, [
+    commands,
+    value,
+    models,
+    model_id,
+    thinking_mode,
+    retrieval_scope,
+    selected_permission_option.label,
+  ]);
   const command_menu_open =
-    command_suggestions.length > 0 && dismissed_command_value !== value;
+    !disabled && /^\/[^\s]*$/u.test(value) && dismissed_command_value !== value;
   const active_command_index = Math.min(
     highlighted_command_index,
     Math.max(0, command_suggestions.length - 1),
   );
   const active_command = selected_agent_command(value, commands);
+  useEffect(() => {
+    command_list_ref.current
+      ?.querySelector('[aria-selected="true"]')
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [active_command_index, command_menu_open]);
   const active_command_instruction = active_command
     ? value.trim().slice(`/${active_command.name}`.length).trim()
     : "";
@@ -191,13 +279,24 @@ export function AgentComposer({
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (command_menu_open) {
+      const command = command_suggestions[active_command_index];
+      if (command) select_command(command);
+      return;
+    }
     if (value.trim() && !disabled && !busy && !command_instruction_missing) {
       on_submit();
     }
   }
 
-  function select_command(command: AgentCommand) {
-    if (command.disabled) return;
+  function select_command(command: ComposerCommand) {
+    if (command.disabled || disabled) return;
+    if (command.control) {
+      on_change("");
+      set_dismissed_command_value(value);
+      set_open_control(command.control);
+      return;
+    }
     on_change(`/${command.name} `);
     set_dismissed_command_value(null);
     window.requestAnimationFrame(() => textarea_ref.current?.focus());
@@ -232,60 +331,235 @@ export function AgentComposer({
       }}
       onDrop={drop_attachment}
     >
-      <div
-        className={cn(
-          "flex flex-col gap-2 rounded-3xl border bg-card p-2 transition-[border-color,box-shadow] focus-within:border-focus focus-within:ring-3 focus-within:ring-focus-ring",
-          context_drop_active && "border-focus ring-3 ring-focus-ring",
-        )}
-        data-slot="agent-composer-surface"
+      <Popover
+        open={command_menu_open}
+        onOpenChange={(open) => {
+          if (!open) set_dismissed_command_value(value);
+        }}
       >
-        {context_drop_active ? (
-          <p
-            className="px-2 pt-2 text-center text-xs font-medium text-focus"
-            role="status"
-          >
-            松开即可添加为可见上下文
-          </p>
-        ) : null}
-        <div className="flex min-w-0 flex-wrap items-center gap-1 px-1 pt-1">
-          <Badge variant="secondary">
-            {retrieval_scope === "library" ? "资料库" : "当前视频"}
-          </Badge>
-          <Badge
-            variant={
-              permission_mode === "full_access" ? "destructive" : "outline"
-            }
-            aria-label={`权限状态：${selected_permission_option.label}`}
-          >
-            {selected_permission_option.label}
-          </Badge>
-          {focus_context ? (
-            <Badge
-              variant="outline"
-              className="max-w-full min-w-0"
-              aria-label={`当前聚焦：${focus_context.label}`}
-              title={focus_context.label}
-            >
-              <Crosshair data-icon="inline-start" />
-              <span className="truncate">{focus_context.label}</span>
-            </Badge>
-          ) : null}
-        </div>
-        {attachments.length > 0 ? (
-          <div className="px-2 pt-2">
-            <AgentContextAttachments
-              attachments={attachments}
-              on_remove={on_remove_attachment}
-              label="当前消息的上下文附件"
-            />
-          </div>
-        ) : null}
-        {command_menu_open ? (
+        <PopoverAnchor asChild>
           <div
+            className={cn(
+              "flex flex-col gap-2 rounded-3xl border bg-card p-2 transition-[border-color,box-shadow] focus-within:border-focus focus-within:ring-3 focus-within:ring-focus-ring",
+              context_drop_active && "border-focus ring-3 ring-focus-ring",
+            )}
+            data-slot="agent-composer-surface"
+          >
+            {context_drop_active ? (
+              <p
+                className="px-2 pt-2 text-center text-xs font-medium text-focus"
+                role="status"
+              >
+                松开即可添加为可见上下文
+              </p>
+            ) : null}
+            <div className="flex min-w-0 flex-wrap items-center gap-1 px-1 pt-1">
+              <Badge variant="secondary">
+                {retrieval_scope === "library" ? "资料库" : "当前视频"}
+              </Badge>
+              <Badge
+                variant={
+                  permission_mode === "full_access" ? "destructive" : "outline"
+                }
+                aria-label={`权限状态：${selected_permission_option.label}`}
+              >
+                {selected_permission_option.label}
+              </Badge>
+              {focus_context ? (
+                <Badge
+                  variant="outline"
+                  className="max-w-full min-w-0"
+                  aria-label={`当前聚焦：${focus_context.label}`}
+                  title={focus_context.label}
+                >
+                  <Crosshair data-icon="inline-start" />
+                  <span className="truncate">{focus_context.label}</span>
+                </Badge>
+              ) : null}
+            </div>
+            {attachments.length > 0 ? (
+              <div className="px-2 pt-2">
+                <AgentContextAttachments
+                  attachments={attachments}
+                  on_remove={on_remove_attachment}
+                  label="当前消息的上下文附件"
+                />
+              </div>
+            ) : null}
+            <FieldGroup className="gap-2">
+              <Field data-disabled={disabled || undefined}>
+                <FieldLabel
+                  className="sr-only"
+                  htmlFor={`${control_id}-composer`}
+                >
+                  助手指令
+                </FieldLabel>
+                <Textarea
+                  ref={textarea_ref}
+                  id={`${control_id}-composer`}
+                  value={value}
+                  onChange={(event) => {
+                    set_dismissed_command_value(null);
+                    set_highlighted_command_index(0);
+                    on_change(event.target.value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing) return;
+                    if (command_menu_open) {
+                      if (
+                        event.key === "ArrowDown" ||
+                        event.key === "ArrowUp"
+                      ) {
+                        event.preventDefault();
+                        const offset = event.key === "ArrowDown" ? 1 : -1;
+                        for (
+                          let step = 1;
+                          step <= command_suggestions.length;
+                          step += 1
+                        ) {
+                          const next_index =
+                            (active_command_index +
+                              offset * step +
+                              command_suggestions.length) %
+                            command_suggestions.length;
+                          if (!command_suggestions[next_index].disabled) {
+                            set_highlighted_command_index(next_index);
+                            break;
+                          }
+                        }
+                        return;
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        set_dismissed_command_value(value);
+                        return;
+                      }
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        const command =
+                          command_suggestions[active_command_index];
+                        if (command) select_command(command);
+                        return;
+                      }
+                    }
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      if (
+                        value.trim() &&
+                        !disabled &&
+                        !busy &&
+                        !command_instruction_missing
+                      ) {
+                        on_submit();
+                      }
+                    }
+                  }}
+                  aria-autocomplete="list"
+                  aria-haspopup="listbox"
+                  aria-controls={
+                    command_menu_open ? `${control_id}-commands` : undefined
+                  }
+                  aria-activedescendant={
+                    command_menu_open && command_suggestions.length > 0
+                      ? `${control_id}-command-${active_command_index}`
+                      : undefined
+                  }
+                  placeholder={`${placeholder} 输入 / 查看指令`}
+                  rows={2}
+                  disabled={disabled}
+                  variant="ghost"
+                  className="max-h-40 min-h-20 resize-none"
+                />
+                {command_instruction_missing && active_command ? (
+                  <FieldDescription className="px-2 text-destructive">
+                    请在 /{active_command.name} 后说明具体处理要求。
+                  </FieldDescription>
+                ) : null}
+              </Field>
+              <div className="flex min-w-0 items-center justify-between gap-2 px-1 pb-1">
+                <div className="flex min-w-0 items-center gap-1">
+                  <ContextAttachmentHelp
+                    attachment_count={attachments.length}
+                    open={open_control === "context"}
+                    on_open_change={(open) =>
+                      set_open_control(open ? "context" : null)
+                    }
+                  />
+                  <RetrievalScopeControl
+                    open={open_control === "retrieval"}
+                    on_open_change={(open) =>
+                      set_open_control(open ? "retrieval" : null)
+                    }
+                    control_id={control_id}
+                    retrieval_scope={retrieval_scope}
+                    on_retrieval_scope_change={on_retrieval_scope_change}
+                    library_scope_enabled={library_scope_enabled}
+                    scope_pinned={scope_pinned}
+                    on_scope_pinned_change={on_scope_pinned_change}
+                    permission_mode={permission_mode}
+                    on_permission_mode_change={on_permission_mode_change}
+                    permission_mode_saving={permission_mode_saving}
+                    permission_mode_error={permission_mode_error}
+                  />
+                </div>
+                <div className="flex min-w-0 items-center justify-end gap-1">
+                  <ModelThinkingControl
+                    open={open_control === "model"}
+                    on_open_change={(open) =>
+                      set_open_control(open ? "model" : null)
+                    }
+                    control_id={control_id}
+                    models={models}
+                    model_id={model_id}
+                    on_model_change={on_model_change}
+                    thinking_mode={thinking_mode}
+                    on_thinking_mode_change={on_thinking_mode_change}
+                    thinking_modes_enabled={thinking_modes_enabled}
+                  />
+                  <Button
+                    type={pending && on_cancel ? "button" : "submit"}
+                    size="icon-lg"
+                    className="rounded-full"
+                    disabled={
+                      disabled ||
+                      submitting ||
+                      command_instruction_missing ||
+                      (pending ? !on_cancel : !value.trim())
+                    }
+                    aria-label={pending && on_cancel ? "停止助手" : "发送指令"}
+                    onClick={pending && on_cancel ? on_cancel : undefined}
+                  >
+                    {pending && on_cancel ? (
+                      <Square />
+                    ) : submitting ? (
+                      <Spinner />
+                    ) : (
+                      <ArrowUp />
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </FieldGroup>
+          </div>
+        </PopoverAnchor>
+        <PopoverContent
+          side="top"
+          align="start"
+          sideOffset={8}
+          className="max-h-(--radix-popover-content-available-height) w-(--radix-popover-trigger-width) gap-0 overflow-hidden rounded-3xl p-2"
+          aria-label="助手指令菜单"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          onInteractOutside={(event) => {
+            if (event.target === textarea_ref.current) event.preventDefault();
+          }}
+        >
+          <div
+            ref={command_list_ref}
             id={`${control_id}-commands`}
-            className="mx-1 overflow-hidden rounded-xl border bg-popover p-1 shadow-md"
             role="listbox"
             aria-label="助手命令"
+            className="max-h-80 overflow-y-auto overscroll-contain"
           >
             {command_suggestions.map((command, index) => (
               <button
@@ -293,164 +567,56 @@ export function AgentComposer({
                 id={`${control_id}-command-${index}`}
                 type="button"
                 role="option"
+                tabIndex={-1}
                 aria-selected={index === active_command_index}
                 disabled={command.disabled}
                 className={cn(
-                  "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-focus-strong disabled:cursor-not-allowed disabled:opacity-50",
+                  "flex min-h-10 w-full items-center gap-2 rounded-2xl px-2 py-2 text-left text-sm transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-focus-strong disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none",
                   index === active_command_index && "bg-accent",
                 )}
-                onMouseEnter={() => set_highlighted_command_index(index)}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => {
+                  if (!command.disabled) set_highlighted_command_index(index);
+                }}
                 onClick={() => select_command(command)}
               >
-                <span className="shrink-0 font-mono text-sm font-medium text-foreground">
-                  /{command.name}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium">
-                    {command.label}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">
-                    {command.disabled_reason ?? command.description}
-                  </span>
+                <command.icon
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <span className="shrink-0 font-medium">{command.label}</span>
+                <span
+                  className="min-w-0 truncate text-muted-foreground"
+                  title={command.disabled_reason ?? command.description}
+                >
+                  {command.disabled_reason ?? command.description}
                 </span>
               </button>
             ))}
           </div>
-        ) : null}
-        <FieldGroup className="gap-2">
-          <Field data-disabled={disabled || undefined}>
-            <FieldLabel className="sr-only" htmlFor={`${control_id}-composer`}>
-              助手指令
-            </FieldLabel>
-            <Textarea
-              ref={textarea_ref}
-              id={`${control_id}-composer`}
-              value={value}
-              onChange={(event) => {
-                set_dismissed_command_value(null);
-                set_highlighted_command_index(0);
-                on_change(event.target.value);
-              }}
-              onKeyDown={(event) => {
-                if (command_menu_open) {
-                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                    event.preventDefault();
-                    const offset = event.key === "ArrowDown" ? 1 : -1;
-                    set_highlighted_command_index(
-                      (current) =>
-                        (current + offset + command_suggestions.length) %
-                        command_suggestions.length,
-                    );
-                    return;
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    set_dismissed_command_value(value);
-                    return;
-                  }
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    const command = command_suggestions[active_command_index];
-                    if (command) select_command(command);
-                    return;
-                  }
-                }
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  if (
-                    value.trim() &&
-                    !disabled &&
-                    !busy &&
-                    !command_instruction_missing
-                  ) {
-                    on_submit();
-                  }
-                }
-              }}
-              aria-autocomplete="list"
-              aria-haspopup="listbox"
-              aria-controls={
-                command_menu_open ? `${control_id}-commands` : undefined
-              }
-              aria-activedescendant={
-                command_menu_open
-                  ? `${control_id}-command-${active_command_index}`
-                  : undefined
-              }
-              placeholder={placeholder}
-              rows={2}
-              disabled={disabled}
-              variant="ghost"
-              className="max-h-40 min-h-20 resize-none"
-            />
-            {command_instruction_missing && active_command ? (
-              <FieldDescription className="px-2 text-destructive">
-                请在 /{active_command.name} 后说明具体处理要求。
-              </FieldDescription>
-            ) : null}
-          </Field>
-          <div className="flex min-w-0 items-center justify-between gap-2 px-1 pb-1">
-            <div className="flex min-w-0 items-center gap-1">
-              <ContextAttachmentHelp attachment_count={attachments.length} />
-              <RetrievalScopeControl
-                control_id={control_id}
-                retrieval_scope={retrieval_scope}
-                on_retrieval_scope_change={on_retrieval_scope_change}
-                library_scope_enabled={library_scope_enabled}
-                scope_pinned={scope_pinned}
-                on_scope_pinned_change={on_scope_pinned_change}
-                permission_mode={permission_mode}
-                on_permission_mode_change={on_permission_mode_change}
-                permission_mode_saving={permission_mode_saving}
-                permission_mode_error={permission_mode_error}
-              />
-            </div>
-            <div className="flex min-w-0 items-center justify-end gap-1">
-              <ModelThinkingControl
-                control_id={control_id}
-                models={models}
-                model_id={model_id}
-                on_model_change={on_model_change}
-                thinking_mode={thinking_mode}
-                on_thinking_mode_change={on_thinking_mode_change}
-                thinking_modes_enabled={thinking_modes_enabled}
-              />
-              <Button
-                type={pending && on_cancel ? "button" : "submit"}
-                size="icon-lg"
-                className="rounded-full"
-                disabled={
-                  disabled ||
-                  submitting ||
-                  command_instruction_missing ||
-                  (pending ? !on_cancel : !value.trim())
-                }
-                aria-label={pending && on_cancel ? "停止助手" : "发送指令"}
-                onClick={pending && on_cancel ? on_cancel : undefined}
-              >
-                {pending && on_cancel ? (
-                  <Square />
-                ) : submitting ? (
-                  <Spinner />
-                ) : (
-                  <ArrowUp />
-                )}
-              </Button>
-            </div>
-          </div>
-        </FieldGroup>
-      </div>
+          {command_suggestions.length === 0 ? (
+            <p
+              role="status"
+              className="px-2 py-4 text-sm text-muted-foreground"
+            >
+              没有匹配的指令
+            </p>
+          ) : null}
+        </PopoverContent>
+      </Popover>
     </form>
   );
 }
 
 function ContextAttachmentHelp({
   attachment_count,
+  open,
+  on_open_change,
 }: {
   attachment_count: number;
-}) {
+} & ComposerControlProps) {
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={on_open_change}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -486,6 +652,8 @@ function ContextAttachmentHelp({
 }
 
 function RetrievalScopeControl({
+  open,
+  on_open_change,
   control_id,
   retrieval_scope,
   on_retrieval_scope_change,
@@ -507,7 +675,7 @@ function RetrievalScopeControl({
   on_permission_mode_change?: (permission_mode: AgentPermissionMode) => void;
   permission_mode_saving: boolean;
   permission_mode_error: string | null;
-}) {
+} & ComposerControlProps) {
   const selected_index = RETRIEVAL_SCOPE_OPTIONS.findIndex(
     (option) => option.value === retrieval_scope,
   );
@@ -518,7 +686,7 @@ function RetrievalScopeControl({
     selected_permission_option,
   );
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={on_open_change}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -688,6 +856,8 @@ function find_permission_mode_option(permission_mode: AgentPermissionMode) {
 }
 
 function ModelThinkingControl({
+  open,
+  on_open_change,
   control_id,
   models,
   model_id,
@@ -703,7 +873,7 @@ function ModelThinkingControl({
   thinking_mode: AgentThinkingMode;
   on_thinking_mode_change: (mode: AgentThinkingMode) => void;
   thinking_modes_enabled: boolean;
-}) {
+} & ComposerControlProps) {
   const selected_index = THINKING_MODE_OPTIONS.findIndex(
     (option) => option.value === thinking_mode,
   );
@@ -711,7 +881,7 @@ function ModelThinkingControl({
   const selected_model_name =
     models.find((model) => model.model_id === model_id)?.name ?? "没有可用模型";
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={on_open_change}>
       <PopoverTrigger asChild>
         <Button
           type="button"

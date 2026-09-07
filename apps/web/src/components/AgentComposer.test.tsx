@@ -310,6 +310,7 @@ describe("AgentComposer", () => {
   });
 
   it("offers slash commands and requires details for full transcript processing", () => {
+    const on_submit = vi.fn();
     function CommandComposer() {
       const [value, set_value] = useState("");
       return (
@@ -331,7 +332,7 @@ describe("AgentComposer", () => {
             },
           ]}
           on_change={set_value}
-          on_submit={vi.fn()}
+          on_submit={on_submit}
           models={MODELS}
           model_id={MODEL_ID}
           on_model_change={vi.fn()}
@@ -366,5 +367,35 @@ describe("AgentComposer", () => {
       target: { value: "/处理全部字幕 翻译成中文并保留专业术语" },
     });
     expect(screen.getByRole("button", { name: "发送指令" })).toBeEnabled();
+
+    fireEvent.change(composer, { target: { value: "/模型" } });
+    fireEvent.keyDown(composer, { key: "Enter", isComposing: true });
+    expect(composer).toHaveValue("/模型");
+    expect(
+      screen.queryByRole("dialog", { name: "模型与思考强度" }),
+    ).not.toBeInTheDocument();
+    fireEvent.keyDown(composer, { key: "Enter" });
+    expect(
+      screen.getByRole("dialog", { name: "模型与思考强度" }),
+    ).toBeVisible();
+    expect(composer).toHaveValue("");
+    expect(on_submit).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "模型与思考强度" }), {
+      key: "Escape",
+    });
+    fireEvent.change(composer, { target: { value: "/" } });
+    fireEvent.keyDown(composer, { key: "ArrowDown" });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    expect(composer).toHaveValue("/处理全部字幕 ");
+
+    fireEvent.change(composer, { target: { value: "/不存在" } });
+    expect(screen.getByRole("status")).toHaveTextContent("没有匹配的指令");
+    fireEvent.keyDown(composer, { key: "Enter" });
+    expect(on_submit).not.toHaveBeenCalled();
+    fireEvent.keyDown(composer, { key: "Escape" });
+    expect(
+      screen.queryByRole("listbox", { name: "助手命令" }),
+    ).not.toBeInTheDocument();
   });
 });
