@@ -825,3 +825,82 @@ async def test_unknown_tools_cannot_bypass_model_request_budget(monkeypatch):
     assert result.content == ""
     assert request_count == 4
     assert result.retry_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_succeeds", [True, False])
+async def test_parallel_identical_tools_share_execution_and_allow_later_retry(
+    first_succeeds,
+):
+    import asyncio
+
+    execution_count = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def execute(parameters):
+        nonlocal execution_count
+        execution_count += 1
+        started.set()
+        await release.wait()
+        return {
+            "ok": first_succeeds or execution_count > 1,
+            "artifact": execution_count,
+        }
+
+    registry = AgentToolRegistry()
+    registry.register(AgentTool("echo", "Generate artifact", EchoInput, execute))
+    definition = chat_definition().model_copy(
+        update={
+            "tools": [AgentToolDescriptor(name="echo", description="Generate artifact")]
+        }
+    )
+    state = AgentToolExecutionState(4)
+    function = AgnoAgentExecutor._tools(registry, definition, 1, state)[0]
+    first = asyncio.create_task(function.entrypoint(text="same"))
+    await started.wait()
+    second = asyncio.create_task(function.entrypoint(text="same"))
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(first, second)
+    assert results[0] == results[1]
+    assert execution_count == 1
+    retried = json.loads(await function.entrypoint(text="same"))
+    assert retried["ok"] is True
+    assert execution_count == (1 if first_succeeds else 2)
+    assert not state.in_flight
+
+
+@pytest.mark.asyncio
+async def test_cancelling_shared_tool_cancels_execution_and_clears_pending_state():
+    import asyncio
+
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def execute(_parameters):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    registry = AgentToolRegistry()
+    registry.register(AgentTool("echo", "Generate artifact", EchoInput, execute))
+    definition = chat_definition().model_copy(
+        update={
+            "tools": [AgentToolDescriptor(name="echo", description="Generate artifact")]
+        }
+    )
+    state = AgentToolExecutionState(4)
+    function = AgnoAgentExecutor._tools(registry, definition, 1, state)[0]
+    first = asyncio.create_task(function.entrypoint(text="same"))
+    await started.wait()
+    second = asyncio.create_task(function.entrypoint(text="same"))
+    await asyncio.sleep(0)
+    first.cancel()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    assert all(isinstance(result, asyncio.CancelledError) for result in results)
+    assert stopped.is_set()
+    assert not state.in_flight
+    assert not state.results

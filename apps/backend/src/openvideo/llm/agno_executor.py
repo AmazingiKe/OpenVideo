@@ -79,6 +79,7 @@ class AgentToolExecutionState:
     call_count: int = 0
     limit_reached: bool = False
     results: dict[str, str] = field(default_factory=dict)
+    in_flight: dict[str, asyncio.Task[str]] = field(default_factory=dict)
 
 
 class AgentToolProvider(Protocol):
@@ -448,19 +449,31 @@ class AgnoAgentExecutor:
                 cached_result = tool_state.results.get(signature)
                 if cached_result is not None:
                     return cached_result
-                result = await registry.execute(
-                    AgentToolCall(
-                        call_id=f"tool-{uuid7().hex}",
-                        name=_tool_name,
-                        arguments=arguments,
-                    ),
-                    definition.allowed_tools,
-                    timeout_seconds,
-                )
-                serialized_result = json.dumps(result, ensure_ascii=False)
-                if result.get("ok") is not False:
-                    tool_state.results[signature] = serialized_result
-                return serialized_result
+
+                async def invoke() -> str:
+                    result = await registry.execute(
+                        AgentToolCall(
+                            call_id=f"tool-{uuid7().hex}",
+                            name=_tool_name,
+                            arguments=arguments,
+                        ),
+                        definition.allowed_tools,
+                        timeout_seconds,
+                    )
+                    serialized_result = json.dumps(result, ensure_ascii=False)
+                    if result.get("ok") is not False:
+                        tool_state.results[signature] = serialized_result
+                    return serialized_result
+
+                task = tool_state.in_flight.get(signature)
+                if task is None:
+                    task = asyncio.create_task(invoke())
+                    tool_state.in_flight[signature] = task
+                try:
+                    return await task
+                finally:
+                    if tool_state.in_flight.get(signature) is task:
+                        tool_state.in_flight.pop(signature)
 
             functions.append(
                 Function(
