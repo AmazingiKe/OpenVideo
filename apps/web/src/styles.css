@@ -40,6 +40,13 @@
   --sidebar-accent-foreground: var(--accent-foreground);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
+  --topbar-background-start: #282828;
+  --topbar-background-middle: #171717;
+  --topbar-background-end: #131313;
+  --topbar-height: 48px;
+  --topbar-brand-font-size: 20px;
+  --topbar-brand-line-height: 24px;
+  --topbar-brand-font-weight: 600;
 
   /* 状态色从唯一的炭灰主题派生，所有页面与浮层共享相同的视觉层级。 */
   --surface-subtle: color-mix(in oklch, var(--muted) 20%, transparent);
@@ -313,6 +320,22 @@
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
     scrollbar-width: thin;
   }
+.app_topbar {
+  min-height: var(--topbar-height);
+  background: linear-gradient(
+    to bottom,
+    var(--topbar-background-start),
+    var(--topbar-background-middle) 50%,
+    var(--topbar-background-end) 80%
+  );
+}
+
+.app_topbar_brand {
+  font-size: var(--topbar-brand-font-size);
+  line-height: var(--topbar-brand-line-height);
+  font-weight: var(--topbar-brand-font-weight);
+}
+
 
   *::-webkit-scrollbar {
     width: 10px;

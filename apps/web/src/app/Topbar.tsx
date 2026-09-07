@@ -48,8 +48,8 @@ export function Topbar() {
   }, []);
 
   return (
-    <header className="grid min-h-14 grid-cols-[1fr_auto] items-center gap-x-3 border-b bg-surface-translucent px-3 py-2 backdrop-blur-sm md:grid-cols-[minmax(10rem,1fr)_auto_minmax(10rem,1fr)] md:px-5">
-      <strong className="min-w-0 truncate text-sm font-semibold tracking-tight">
+    <header className="app_topbar grid grid-cols-[1fr_auto] items-center gap-x-3 border-b px-3 py-2 md:grid-cols-[minmax(10rem,1fr)_auto_minmax(10rem,1fr)] md:px-5">
+      <strong className="app_topbar_brand min-w-0 truncate tracking-tight">
         Open Video
       </strong>
       <nav
