@@ -1090,15 +1090,13 @@ def test_service_approval_uses_single_claim_before_side_effect(
         )
         service.library.save_agent_artifact(artifact)
         monkeypatch.setattr(
-            service.registry,
-            "require",
-            lambda _agent_id: SimpleNamespace(
-                approver=lambda claimed: calls.append(claimed.artifact_id)
-            ),
+            service.artifacts,
+            "_approve_marker_artifact",
+            lambda claimed: calls.append(claimed.artifact_id),
         )
 
-        approved = service.approve(artifact.artifact_id)
-        repeated = service.approve(artifact.artifact_id)
+        approved = service.artifacts.approve(artifact.artifact_id)
+        repeated = service.artifacts.approve(artifact.artifact_id)
 
     assert approved.status == AgentArtifactStatus.APPROVED
     assert repeated.status == AgentArtifactStatus.APPROVED
@@ -1156,17 +1154,17 @@ def test_first_summary_agent_approval_starts_one_illustration_job(
             return SimpleNamespace(job_id="summary-illustration-job-test")
 
         monkeypatch.setattr(
-            service.summary_illustrations,
+            service.artifacts.summary_illustrations,
             "create",
             create_illustration_job,
         )
         monkeypatch.setattr(
-            service.summary_illustrations,
+            service.artifacts.summary_illustrations,
             "start",
             started_jobs.append,
         )
 
-        approved = service.approve(artifact.artifact_id)
+        approved = service.artifacts.approve(artifact.artifact_id)
         documents = service.summary_documents.documents(ASSET_ID)
         root_document = next(
             document for document in documents if document.parent_document_id is None
@@ -1196,7 +1194,7 @@ def test_first_summary_agent_approval_starts_one_illustration_job(
             },
         )
         service.library.save_agent_artifact(later_artifact)
-        service.approve(later_artifact.artifact_id)
+        service.artifacts.approve(later_artifact.artifact_id)
 
     assert approved.status == AgentArtifactStatus.APPROVED
     assert created_jobs == [(ASSET_ID, 2, MODEL_ID)]
@@ -1254,7 +1252,7 @@ def test_marker_approval_rebases_safe_changes_and_skips_conflicts(tmp_path: Path
             changes={"start_seconds": 1.5},
         )
 
-        approved = service.approve(artifact.artifact_id)
+        approved = service.artifacts.approve(artifact.artifact_id)
         markers = {
             marker.marker_id: marker
             for marker in service.library.load_markers(ASSET_ID)
@@ -1347,7 +1345,7 @@ def test_approval_rolls_back_business_change_when_version_record_fails(
         )
 
         with pytest.raises(OSError, match="版本记录失败"):
-            service.approve(artifact.artifact_id)
+            service.artifacts.approve(artifact.artifact_id)
 
         restored = service.library.load_markers(ASSET_ID)
         failed = service.library.load_agent_artifact(artifact.artifact_id)
@@ -1368,11 +1366,9 @@ def test_approval_scope_controls_future_operations(tmp_path: Path, monkeypatch):
             AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
         )
         monkeypatch.setattr(
-            service.registry,
-            "require",
-            lambda _agent_id: SimpleNamespace(
-                approver=lambda artifact: applied.append(artifact.artifact_id)
-            ),
+            service.artifacts,
+            "_approve_marker_artifact",
+            lambda artifact: applied.append(artifact.artifact_id),
         )
         _, first_artifact = create_permission_artifact(service, session)
 
@@ -1397,7 +1393,7 @@ def test_approval_scope_controls_future_operations(tmp_path: Path, monkeypatch):
             model=service.settings.ai_model(MODEL_ID),
             task_input={},
         )
-        service._process_run_artifacts(context, [second_artifact])
+        service.artifacts.process_run_artifacts(context, [second_artifact])
 
         other_run, other_artifact = create_permission_artifact(
             service,
@@ -1410,7 +1406,7 @@ def test_approval_scope_controls_future_operations(tmp_path: Path, monkeypatch):
             model=service.settings.ai_model(MODEL_ID),
             task_input={},
         )
-        service._process_run_artifacts(other_context, [other_artifact])
+        service.artifacts.process_run_artifacts(other_context, [other_artifact])
 
         second_status = service.library.load_agent_artifact(
             second_artifact.artifact_id
@@ -1431,9 +1427,7 @@ def test_once_approval_only_applies_current_artifact(tmp_path: Path, monkeypatch
             AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
         )
         monkeypatch.setattr(
-            service.registry,
-            "require",
-            lambda _agent_id: SimpleNamespace(approver=lambda _artifact: None),
+            service.artifacts, "_approve_marker_artifact", lambda _artifact: None
         )
         _, first_artifact = create_permission_artifact(service, session)
 
@@ -1455,7 +1449,7 @@ def test_once_approval_only_applies_current_artifact(tmp_path: Path, monkeypatch
             model=service.settings.ai_model(MODEL_ID),
             task_input={},
         )
-        service._process_run_artifacts(context, [second_artifact])
+        service.artifacts.process_run_artifacts(context, [second_artifact])
         second_status = service.library.load_agent_artifact(
             second_artifact.artifact_id
         ).status
@@ -1476,9 +1470,7 @@ def test_always_grant_is_scoped_and_persisted_in_user_preferences(
         )
         _, artifact = create_permission_artifact(service, session)
         monkeypatch.setattr(
-            service.registry,
-            "require",
-            lambda _agent_id: SimpleNamespace(approver=lambda _artifact: None),
+            service.artifacts, "_approve_marker_artifact", lambda _artifact: None
         )
 
         response = client.post(
@@ -1541,9 +1533,7 @@ def test_full_access_permission_auto_applies_completed_artifact(
         )
         service.library.save_agent_artifact(artifact)
         monkeypatch.setattr(
-            service.registry,
-            "require",
-            lambda _agent_id: SimpleNamespace(approver=lambda _claimed: None),
+            service.artifacts, "_approve_marker_artifact", lambda _claimed: None
         )
         service.settings.agent = service.settings.agent.model_copy(
             update={"permission_mode": AgentPermissionMode.FULL_ACCESS}
@@ -1556,7 +1546,7 @@ def test_full_access_permission_auto_applies_completed_artifact(
             task_input={},
         )
 
-        service._process_run_artifacts(context, [artifact])
+        service.artifacts.process_run_artifacts(context, [artifact])
 
         assert (
             service.library.load_agent_artifact(artifact.artifact_id).status
@@ -1601,14 +1591,14 @@ def test_low_confidence_artifact_cannot_apply_even_with_full_access(tmp_path: Pa
             task_input={},
         )
 
-        service._process_run_artifacts(context, [artifact])
+        service.artifacts.process_run_artifacts(context, [artifact])
 
         assert (
             service.library.load_agent_artifact(artifact.artifact_id).status
             == AgentArtifactStatus.PENDING
         )
         with pytest.raises(AgentConflictError, match="测试证据决策"):
-            service.approve(artifact.artifact_id)
+            service.artifacts.approve(artifact.artifact_id)
 
 
 def test_low_confidence_marker_proposal_does_not_create_artifact(tmp_path: Path):
@@ -1845,7 +1835,7 @@ def test_full_access_auto_applies_video_agent_transcript_artifact(tmp_path: Path
             task_input={},
         )
 
-        service._process_run_artifacts(context, [artifact])
+        service.artifacts.process_run_artifacts(context, [artifact])
 
         applied = service.library.load_agent_artifact(artifact.artifact_id)
         updated_transcript = service.library.load_transcript(ASSET_ID)
@@ -2114,7 +2104,7 @@ def test_summary_media_proposal_uses_an_inspected_candidate_before_approval(
             lambda request: requests.append(request),
         )
 
-        service._approve_summary_artifact(created_artifact)
+        service.artifacts._approve_summary_artifact(created_artifact)
 
         assert len(requests) == 1
         assert requests[0].start_seconds == 12.5

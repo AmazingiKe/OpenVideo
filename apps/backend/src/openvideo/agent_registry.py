@@ -14,6 +14,10 @@ from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.llm.model_profile import CapabilityName, ModelProfile, Support
 
 
+MARKER_AGENT_ID = "marker"
+SUMMARY_AGENT_ID = "summary"
+
+
 class AgentServiceError(RuntimeError):
     """统一公开接口无法满足请求时返回稳定业务错误。"""
 
@@ -36,7 +40,6 @@ class AgentConflictError(AgentServiceError):
 class RegisteredAgent:
     definition: AgentDefinition
     tool_builder: Any
-    approver: Any
     session_validator: Any | None
     run_definition: Any | None
 

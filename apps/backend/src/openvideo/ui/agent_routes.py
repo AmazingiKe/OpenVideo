@@ -166,7 +166,7 @@ def register_agent_routes(
         request: AgentArtifactApprovalRequest,
     ) -> AgentArtifact:
         try:
-            artifact = agent_service().approve_with_grant(
+            artifact = agent_service().artifacts.approve_with_grant(
                 artifact_id,
                 request.grant_scope,
             )
@@ -202,7 +202,7 @@ def register_agent_routes(
     )
     def undo_agent_artifact(artifact_id: str) -> AgentArtifact:
         try:
-            return agent_service().undo(artifact_id)
+            return agent_service().artifacts.undo(artifact_id)
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 
@@ -222,7 +222,7 @@ def register_agent_routes(
     )
     def reject_agent_artifact(artifact_id: str) -> AgentArtifact:
         try:
-            return agent_service().reject(artifact_id)
+            return agent_service().artifacts.reject(artifact_id)
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 
