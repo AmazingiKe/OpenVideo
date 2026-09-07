@@ -1,6 +1,4 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ColorScheme } from "@/color_scheme";
-import { use_color_scheme } from "@/use_color_scheme";
 import { format_time } from "@/shared/format";
 import type {
   TimelineAggregate,
@@ -15,7 +13,6 @@ type TimelineAggregatePaintStyle = {
   selection_width: number;
   label_padding: number;
   block_colors: Record<MediaTimelineAction["data"]["kind"], string>;
-  color_scheme: ColorScheme;
   selection_color: string;
   label_color: string;
   font: string;
@@ -42,7 +39,6 @@ export const MediaTimelineAggregateCanvas = memo(
   }: MediaTimelineAggregateCanvasProps) {
     const canvas_ref = useRef<HTMLCanvasElement>(null);
     const paint_style_ref = useRef<TimelineAggregatePaintStyle | null>(null);
-    const color_scheme = use_color_scheme();
     const [canvas_height, set_canvas_height] = useState(0);
     const [block_inset, set_block_inset] = useState(0);
     useLayoutEffect(() => {
@@ -97,10 +93,9 @@ export const MediaTimelineAggregateCanvas = memo(
         Math.round(canvas_height * device_pixel_ratio),
       );
       let paint_style = paint_style_ref.current;
-      if (!paint_style || paint_style.color_scheme !== color_scheme) {
+      if (!paint_style) {
         const computed_style = getComputedStyle(canvas);
         paint_style = {
-          color_scheme,
           radius: parseFloat(
             computed_style.getPropertyValue("--timeline-block-radius"),
           ),
@@ -225,7 +220,7 @@ export const MediaTimelineAggregateCanvas = memo(
           );
         }
       }
-    }, [blocks, canvas_width, canvas_height, color_scheme]);
+    }, [blocks, canvas_width, canvas_height]);
 
     return (
       <div className="media_timeline_aggregate_layer">

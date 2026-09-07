@@ -38,15 +38,3 @@ export const MultipleIssues: Story = {
     ],
   },
 };
-
-export const Dark: Story = {
-  ...MultipleIssues,
-  parameters: { layout: "fullscreen" },
-  decorators: [
-    (Story) => (
-      <div className="dark min-h-screen bg-background p-4 text-foreground">
-        <Story />
-      </div>
-    ),
-  ],
-};

@@ -243,10 +243,3 @@ export const RetrievalPermissions: Story = {
     ).toHaveAttribute("aria-pressed", "true");
   },
 };
-
-export const Dark: Story = {
-  beforeEach: () => {
-    document.documentElement.classList.add("dark");
-    return () => document.documentElement.classList.remove("dark");
-  },
-};

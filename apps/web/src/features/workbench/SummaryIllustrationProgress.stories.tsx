@@ -118,10 +118,10 @@ export const Complete: Story = {
   },
 };
 
-export const NarrowDark: Story = {
+export const Narrow: Story = {
   decorators: [
     (StoryComponent) => (
-      <div className="dark min-h-96 w-80 bg-background text-foreground">
+      <div className="min-h-96 w-80 bg-background text-foreground">
         <StoryComponent />
       </div>
     ),

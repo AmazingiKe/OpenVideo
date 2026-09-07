@@ -1,7 +1,6 @@
-import { act, render } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { apply_user_color_scheme } from "@/color_scheme";
 import {
   create_visible_timeline_ruler_ticks,
   format_timeline_ruler_time,
@@ -19,8 +18,6 @@ describe("TimelineRulerCanvas", () => {
       configurable: true,
       value: DEFAULT_DEVICE_PIXEL_RATIO,
     });
-    document.documentElement.classList.remove("dark");
-    document.documentElement.removeAttribute("data-color-scheme-source");
     vi.restoreAllMocks();
   });
 
@@ -176,11 +173,5 @@ describe("TimelineRulerCanvas", () => {
       expect(x - half_width).toBeGreaterThanOrEqual(previous_right + 8);
       previous_right = x + half_width;
     }
-
-    const draw_count = context.clearRect.mock.calls.length;
-    act(() => {
-      apply_user_color_scheme(document, "dark");
-    });
-    expect(context.clearRect.mock.calls.length).toBeGreaterThan(draw_count);
   });
 });

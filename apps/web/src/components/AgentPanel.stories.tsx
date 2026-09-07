@@ -99,15 +99,6 @@ export const SummaryMediaApproval: Story = {
   },
 };
 
-export const SummaryMediaApprovalDark: Story = {
-  ...SummaryMediaApproval,
-  render: (args) => (
-    <div className="dark bg-background p-4 text-foreground">
-      <AgentArtifactCard {...args} />
-    </div>
-  ),
-};
-
 export const TranscriptApproval: Story = {
   args: {
     artifact: {
@@ -263,14 +254,6 @@ export const ToolActivityNarrow: Story = {
   ),
 };
 
-export const ToolActivityDark: Story = {
-  render: () => (
-    <div className="dark bg-background p-4 text-foreground">
-      <AgentToolActivity events={[FAILED_TOOL_EVENT]} />
-    </div>
-  ),
-};
-
 export const DisconnectedRecovery: Story = {
   render: () => (
     <Alert>
@@ -383,18 +366,5 @@ export const ProgressiveIndexing: Story = {
         updated_at: "2026-08-29T10:00:00Z",
       }}
     />
-  ),
-};
-
-export const EvidenceDark: Story = {
-  render: () => (
-    <div className="dark bg-background p-4 text-foreground">
-      <AgentAnswerEvidence
-        confidence="low"
-        answer_status="provisional"
-        evidence_bundle={EVIDENCE_BUNDLE}
-        on_seek={fn()}
-      />
-    </div>
   ),
 };

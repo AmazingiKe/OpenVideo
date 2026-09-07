@@ -34,10 +34,10 @@ export const Processing: Story = {
   },
 };
 
-export const SendingDark: Story = {
+export const Sending: Story = {
   args: { label: "正在发送请求" },
   render: (args) => (
-    <div className="dark bg-background p-4 text-foreground">
+    <div className="bg-background p-4 text-foreground">
       <AgentLoadingStatus {...args} />
     </div>
   ),

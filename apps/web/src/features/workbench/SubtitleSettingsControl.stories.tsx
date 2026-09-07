@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { type ReactNode, useEffect } from "react";
 
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_settings";
 import { SubtitleSettingsControl } from "./SubtitleSettingsControl";
@@ -38,28 +37,3 @@ export const Exporting: Story = {
 export const WithoutTranscript: Story = {
   args: { has_subtitles: false },
 };
-
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <DarkStorySurface>
-        <div className="flex min-h-80 justify-end bg-background p-8 text-foreground">
-          <StoryComponent />
-        </div>
-      </DarkStorySurface>
-    ),
-  ],
-};
-
-function DarkStorySurface({ children }: { children: ReactNode }) {
-  useEffect(() => {
-    const root = document.documentElement;
-    const dark_was_enabled = root.classList.contains("dark");
-    root.classList.add("dark");
-    return () => {
-      if (!dark_was_enabled) root.classList.remove("dark");
-    };
-  }, []);
-
-  return children;
-}

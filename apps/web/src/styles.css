@@ -6,34 +6,34 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   font-synthesis: none;
-  --background: oklch(0.985 0.004 255);
-  --foreground: oklch(0.18 0.012 255);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.012 255);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.012 255);
-  --primary: oklch(0.55 0.18 255);
-  --primary-foreground: oklch(0.985 0.004 255);
-  --secondary: oklch(0.955 0.008 255);
-  --secondary-foreground: oklch(0.24 0.014 255);
-  --muted: oklch(0.955 0.008 255);
-  --muted-foreground: oklch(0.52 0.018 255);
-  --accent: oklch(0.94 0.018 250);
-  --accent-foreground: oklch(0.24 0.014 255);
-  --destructive: oklch(0.49 0.2 27);
-  --border: oklch(0.9 0.01 255);
-  --input: oklch(0.9 0.01 255);
-  --ring: oklch(0.55 0.18 255);
-  --chart-1: oklch(0.55 0.18 255);
-  --chart-2: oklch(0.68 0.14 185);
-  --chart-3: oklch(0.7 0.15 75);
-  --chart-4: oklch(0.62 0.18 310);
-  --chart-5: oklch(0.65 0.18 25);
+  --background: #1f1f1f;
+  --foreground: #eeeeee;
+  --card: #2b2b2b;
+  --card-foreground: #eeeeee;
+  --popover: #333333;
+  --popover-foreground: #eeeeee;
+  --primary: #79b5f7;
+  --primary-foreground: #171717;
+  --secondary: #3a3a3a;
+  --secondary-foreground: #eeeeee;
+  --muted: #292929;
+  --muted-foreground: #b5b5b5;
+  --accent: #285b92;
+  --accent-foreground: #ffffff;
+  --destructive: #ff9999;
+  --border: #3d3d3d;
+  --input: #505050;
+  --ring: #79b5f7;
+  --chart-1: #618bb5;
+  --chart-2: #4a99a8;
+  --chart-3: #e4ad46;
+  --chart-4: #947abd;
+  --chart-5: #f08080;
   --radius: 0.625rem;
-  --sidebar: oklch(0.97 0.006 255);
-  --sidebar-foreground: oklch(0.18 0.012 255);
+  --sidebar: #292929;
+  --sidebar-foreground: #eeeeee;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: var(--accent);
@@ -41,7 +41,7 @@
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
 
-  /* 应用语义状态从基础色派生，使明暗主题共享相同的组件职责。 */
+  /* 状态色从唯一的炭灰主题派生，所有页面与浮层共享相同的视觉层级。 */
   --surface-subtle: color-mix(in oklch, var(--muted) 20%, transparent);
   --surface-muted: color-mix(in oklch, var(--muted) 30%, transparent);
   --surface-hover: color-mix(in oklch, var(--muted) 50%, transparent);
@@ -94,14 +94,14 @@
     var(--destructive) 90%,
     transparent
   );
-  --control-background: transparent;
-  --control-background-hover: var(--muted);
+  --control-background: #333333;
+  --control-background-hover: #454545;
   --control-background-disabled: color-mix(
     in oklch,
     var(--input) 50%,
     transparent
   );
-  --control-border: var(--border);
+  --control-border: #505050;
   --scrollbar-track: transparent;
   --scrollbar-thumb: color-mix(
     in oklch,
@@ -113,16 +113,12 @@
     var(--muted-foreground) 56%,
     transparent
   );
-  --tab-foreground-muted: color-mix(
-    in oklch,
-    var(--foreground) 60%,
-    transparent
-  );
-  --tab-active-background: var(--background);
-  --tab-active-border: transparent;
-  --tab-line-active-border: transparent;
-  --overlay: oklch(0 0 0 / 10%);
-  --slider-thumb: oklch(1 0 0);
+  --tab-foreground-muted: var(--muted-foreground);
+  --tab-active-background: #454545;
+  --tab-active-border: #505050;
+  --tab-line-active-border: var(--primary);
+  --overlay: #0000008c;
+  --slider-thumb: #eeeeee;
   --editor-shadow-small: 0 1px 2px
     color-mix(in srgb, var(--foreground) 10%, transparent);
   --editor-shadow-large: 0 8px 24px
@@ -134,30 +130,30 @@
 
   /* 媒体工作区常驻深色，避免切换应用主题时干扰画面判断。 */
   --player-canvas-background: #000000;
-  --player-accent: #3b82f6;
-  --player-menu-background: #1d1d1f;
-  --player-menu-foreground: #f5f5f7;
+  --player-accent: var(--primary);
+  --player-menu-background: var(--popover);
+  --player-menu-foreground: #eeeeee;
   --player-subtitle-foreground: #ffffff;
   --player-subtitle-background: #000000bb;
   --player-subtitle-shadow: #000000;
-  --player-evidence-border: #60a5fa;
-  --player-evidence-ring: #60a5fa52;
+  --player-evidence-border: #ffda38;
+  --player-evidence-ring: #ffda3852;
   --player-preview-layer: 2;
   --player-subtitle-layer: 3;
   --player-controls-layer: 4;
 
-  --timeline-color-panel: #303030;
-  --timeline-color-panel-muted: #242424;
+  --timeline-color-panel: #333333;
+  --timeline-color-panel-muted: #1f1f1f;
   --timeline-color-panel-control: #292929;
   --timeline-color-panel-control-hover: #414141;
-  --timeline-color-border: #454545;
-  --timeline-color-border-subtle: #383838;
-  --timeline-color-canvas-background: #242424;
-  --timeline-color-ruler-background: #292929;
+  --timeline-color-border: #3d3d3d;
+  --timeline-color-border-subtle: #303030;
+  --timeline-color-canvas-background: #1f1f1f;
+  --timeline-color-ruler-background: #262626;
   --timeline-color-ruler-tick: #929292;
   --timeline-color-ruler-text: #c2c2c2;
-  --timeline-color-track-divider: #333333;
-  --timeline-color-track-header-background: #303030;
+  --timeline-color-track-divider: #2b2b2b;
+  --timeline-color-track-header-background: #2b2b2b;
   --timeline-color-track-header-foreground: #eeeeee;
   --timeline-color-track-header-muted-foreground: #aaaaaa;
   --timeline-color-track-header-border: #404040;
@@ -168,16 +164,16 @@
   --timeline-color-clip-border: #ffffff1f;
   --timeline-color-clip-text: #ffffff;
   --timeline-color-clip-focus-ring: #ffffff;
-  --timeline-color-handle-background: #171b24d6;
-  --timeline-color-scrollbar-thumb: #64748b;
-  --timeline-color-input-background: #11151d;
-  --timeline-color-input-foreground: #f1f5f9;
-  --timeline-color-control-foreground: #94a3b8;
-  --timeline-color-control-hover-border: #60a5fa;
-  --timeline-color-control-hover-foreground: #f8fafc;
-  --timeline-color-control-active-background: #60a5fa;
-  --timeline-color-control-active-foreground: #0f172a;
-  --timeline-color-control-slider-thumb: #f8fafc;
+  --timeline-color-handle-background: #292929d6;
+  --timeline-color-scrollbar-thumb: #747474;
+  --timeline-color-input-background: #292929;
+  --timeline-color-input-foreground: #eeeeee;
+  --timeline-color-control-foreground: #b5b5b5;
+  --timeline-color-control-hover-border: #929292;
+  --timeline-color-control-hover-foreground: #ffffff;
+  --timeline-color-control-active-background: var(--primary);
+  --timeline-color-control-active-foreground: var(--primary-foreground);
+  --timeline-color-control-slider-thumb: #eeeeee;
   --timeline-color-marker-point-selected: #493a13;
   --timeline-color-marker-border: #b68d48;
   --timeline-color-marker-background: #624b24;
@@ -188,10 +184,10 @@
   --timeline-color-event-analysis-background: #205763;
   --timeline-color-event-analysis-border: #4a99a8;
   --timeline-color-candidate-background: #624b24;
-  --timeline-color-focus-background: #1e3a5f;
+  --timeline-color-focus-background: #494323;
   --timeline-color-selection-border: #ffda38;
-  --timeline-color-evidence-border: #60a5fa;
-  --timeline-color-evidence-background: #3b82f633;
+  --timeline-color-evidence-border: #ffda38;
+  --timeline-color-evidence-background: #ffda3826;
   --timeline-color-marquee-border: var(--timeline-color-selection-border);
   --timeline-color-marquee-background: color-mix(
     in srgb,
@@ -228,9 +224,9 @@
   --timeline-playhead-handle-width: 8px;
   --timeline-playhead-handle-height: 12px;
 
-  --browser-theme-color: #f7faff;
-  --browser-icon-background: #2563eb;
-  --browser-icon-foreground: #ffffff;
+  --browser-theme-color: var(--background);
+  --browser-icon-background: var(--secondary);
+  --browser-icon-foreground: var(--foreground);
 }
 
 @theme inline {
@@ -309,118 +305,6 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
-}
-
-.dark {
-  color-scheme: dark;
-  --background: oklch(0.145 0.012 255);
-  --foreground: oklch(0.96 0.006 255);
-  --card: oklch(0.19 0.014 255);
-  --card-foreground: oklch(0.96 0.006 255);
-  --popover: oklch(0.205 0.014 255);
-  --popover-foreground: oklch(0.96 0.006 255);
-  --primary: oklch(0.7 0.15 250);
-  --primary-foreground: oklch(0.14 0.018 255);
-  --secondary: oklch(0.255 0.016 255);
-  --secondary-foreground: oklch(0.94 0.008 255);
-  --muted: oklch(0.24 0.014 255);
-  --muted-foreground: oklch(0.7 0.018 255);
-  --accent: oklch(0.275 0.026 250);
-  --accent-foreground: oklch(0.96 0.006 255);
-  --destructive: oklch(0.7 0.19 24);
-  --border: oklch(1 0 0 / 11%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.7 0.15 250);
-  --chart-1: oklch(0.7 0.15 250);
-  --chart-2: oklch(0.74 0.12 185);
-  --chart-3: oklch(0.78 0.13 78);
-  --chart-4: oklch(0.72 0.15 310);
-  --chart-5: oklch(0.72 0.16 25);
-  --sidebar: oklch(0.175 0.014 255);
-  --sidebar-foreground: oklch(0.96 0.006 255);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
-  --surface-subtle: color-mix(in oklch, var(--muted) 20%, transparent);
-  --surface-muted: color-mix(in oklch, var(--muted) 30%, transparent);
-  --surface-hover: color-mix(in oklch, var(--muted) 50%, transparent);
-  --surface-hover-strong: color-mix(in oklch, var(--muted) 60%, transparent);
-  --surface-translucent: color-mix(
-    in oklch,
-    var(--background) 95%,
-    transparent
-  );
-  --surface-background-soft: color-mix(
-    in oklch,
-    var(--background) 40%,
-    transparent
-  );
-  --border-subtle: color-mix(in oklch, var(--border) 60%, transparent);
-  --outline-subtle: color-mix(in oklch, var(--foreground) 10%, transparent);
-  --focus: var(--ring);
-  --focus-subtle: color-mix(in oklch, var(--ring) 40%, transparent);
-  --focus-ring: color-mix(in oklch, var(--ring) 50%, transparent);
-  --focus-strong: color-mix(in oklch, var(--ring) 60%, transparent);
-  --primary-subtle: color-mix(in oklch, var(--primary) 5%, transparent);
-  --primary-muted: color-mix(in oklch, var(--primary) 10%, transparent);
-  --primary-selected: color-mix(in oklch, var(--primary) 40%, transparent);
-  --primary-hover: color-mix(in oklch, var(--primary) 80%, transparent);
-  --secondary-hover: color-mix(
-    in oklch,
-    var(--secondary),
-    var(--foreground) 5%
-  );
-  --secondary-interactive: color-mix(
-    in oklch,
-    var(--secondary) 80%,
-    transparent
-  );
-  --error-surface: color-mix(in oklch, var(--destructive) 10%, transparent);
-  --error-surface-hover: color-mix(
-    in oklch,
-    var(--destructive) 20%,
-    transparent
-  );
-  --error-ring: color-mix(in oklch, var(--destructive) 40%, transparent);
-  --error-border: color-mix(in oklch, var(--destructive) 50%, transparent);
-  --error-border-focus: color-mix(
-    in oklch,
-    var(--destructive) 40%,
-    transparent
-  );
-  --error-foreground-muted: color-mix(
-    in oklch,
-    var(--destructive) 90%,
-    transparent
-  );
-  --control-background: color-mix(in oklch, var(--input) 30%, transparent);
-  --control-background-hover: color-mix(
-    in oklch,
-    var(--input) 50%,
-    transparent
-  );
-  --control-background-disabled: color-mix(
-    in oklch,
-    var(--input) 80%,
-    transparent
-  );
-  --control-border: var(--input);
-  --tab-foreground-muted: var(--muted-foreground);
-  --tab-active-background: color-mix(in oklch, var(--input) 30%, transparent);
-  --tab-active-border: var(--input);
-  --overlay: oklch(0 0 0 / 55%);
-  --slider-thumb: oklch(0.96 0.006 255);
-
-  --browser-theme-color: #111827;
-  --browser-icon-background: #60a5fa;
-  --browser-icon-foreground: #0f172a;
-  --editor-shadow-small: 0 1px 2px
-    color-mix(in srgb, var(--foreground) 10%, transparent);
-  --editor-shadow-large: 0 8px 24px
-    color-mix(in srgb, var(--foreground) 14%, transparent);
 }
 
 @layer base {

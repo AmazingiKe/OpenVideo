@@ -197,16 +197,6 @@ type Story = StoryObj<typeof meta>;
 
 export const Desktop: Story = {};
 
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};
-
 export const Narrow: Story = {
   decorators: [
     (StoryComponent) => (

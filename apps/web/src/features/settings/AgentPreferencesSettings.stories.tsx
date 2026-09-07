@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 
@@ -66,14 +66,6 @@ function InteractiveAgentPreferencesSettings(
   );
 }
 
-function WithDarkMode({ children }: { children: React.ReactNode }) {
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-    return () => document.documentElement.classList.remove("dark");
-  }, []);
-  return children;
-}
-
 export const Default: Story = {};
 
 export const FullAccessWarning: Story = {
@@ -119,14 +111,4 @@ export const WithPersistentGrant: Story = {
 
 export const Mobile: Story = {
   parameters: { viewport: { defaultViewport: "mobile1" } },
-};
-
-export const Dark: Story = {
-  decorators: [
-    (Story) => (
-      <WithDarkMode>
-        <Story />
-      </WithDarkMode>
-    ),
-  ],
 };

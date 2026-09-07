@@ -1,5 +1,5 @@
-import { type ComponentProps, useEffect } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, waitFor, within } from "storybook/test";
 
 import type { MediaAsset, TranscriptionModelDescriptor } from "@/shared/types";
 import { TranscriptionDialog } from "./TranscriptionDialog";
@@ -56,19 +56,14 @@ function agent_fetch(input: RequestInfo | URL): Promise<Response> {
   return Promise.resolve(Response.json({}));
 }
 
-function DarkTranscriptionDialog(
-  props: ComponentProps<typeof TranscriptionDialog>,
-) {
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-    return () => document.documentElement.classList.remove("dark");
-  }, []);
-  return <TranscriptionDialog {...props} />;
-}
-
 const meta = {
   title: "Workbench/TranscriptionDialog",
   component: TranscriptionDialog,
+  play: async () => {
+    const dialog = await within(document.body).findByRole("dialog");
+    // 入场动画降低整个浮层的不透明度，等它结束后再检查实际主题对比度。
+    await waitFor(() => expect(getComputedStyle(dialog).opacity).toBe("1"));
+  },
   args: {
     open: true,
     on_open_change: () => undefined,
@@ -109,8 +104,4 @@ export const Default: Story = {};
 
 export const Transcribing: Story = {
   args: { is_transcribing: true },
-};
-
-export const Dark: Story = {
-  render: (args) => <DarkTranscriptionDialog {...args} />,
 };

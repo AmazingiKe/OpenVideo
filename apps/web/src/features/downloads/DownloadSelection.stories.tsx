@@ -84,13 +84,3 @@ export const Narrow: Story = {
     viewport: { value: "mobile1", isRotated: false },
   },
 };
-
-export const Dark: Story = {
-  decorators: [
-    (Story) => (
-      <div className="dark min-h-screen bg-background p-4 text-foreground">
-        <Story />
-      </div>
-    ),
-  ],
-};

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, within } from "storybook/test";
 
 import { Topbar } from "@/app/Topbar";
 
@@ -9,12 +9,8 @@ const meta = {
   parameters: { layout: "fullscreen" },
   beforeEach() {
     window.localStorage.clear();
-    document.documentElement.classList.remove("dark");
-    document.documentElement.removeAttribute("data-color-scheme-source");
     return () => {
       window.localStorage.clear();
-      document.documentElement.classList.remove("dark");
-      document.documentElement.removeAttribute("data-color-scheme-source");
     };
   },
 } satisfies Meta<typeof Topbar>;
@@ -30,14 +26,14 @@ export const SettingsActive: Story = {
   parameters: { route: "/settings" },
 };
 
-export const ThemeToggle: Story = {
+export const SingleTheme: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "切换到深色模式" }),
+    expect(canvas.queryByRole("button", { name: /切换到.*模式/ })).toBeNull();
+    const theme = getComputedStyle(document.documentElement);
+    expect(theme.colorScheme).toBe("dark");
+    expect(theme.getPropertyValue("--background").trim()).toBe(
+      theme.getPropertyValue("--timeline-color-canvas-background").trim(),
     );
-    await expect(
-      canvas.getByRole("button", { name: "切换到浅色模式" }),
-    ).toHaveAttribute("aria-pressed", "true");
   },
 };

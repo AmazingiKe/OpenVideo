@@ -116,13 +116,3 @@ export const UnavailableDefault: Story = {
     },
   },
 };
-
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark bg-background p-8 text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};

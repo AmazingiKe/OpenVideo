@@ -63,7 +63,7 @@ export const ReadyUnloaded: Story = {
   },
 };
 
-export const ReadyLoadedDark: Story = {
+export const ReadyLoaded: Story = {
   args: {
     status: {
       ...meta.args.status,
@@ -77,7 +77,7 @@ export const ReadyLoadedDark: Story = {
   },
   decorators: [
     (StoryComponent) => (
-      <div className="dark max-w-3xl bg-background p-8 text-foreground">
+      <div className="max-w-3xl bg-background p-8 text-foreground">
         <StoryComponent />
       </div>
     ),

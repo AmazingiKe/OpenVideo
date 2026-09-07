@@ -107,16 +107,6 @@ export const Narrow: Story = {
   ],
 };
 
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark h-[720px] overflow-hidden bg-background p-4 text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};
-
 export const LargeLibrary: Story = {
   beforeEach() {
     const original_fetch = window.fetch;

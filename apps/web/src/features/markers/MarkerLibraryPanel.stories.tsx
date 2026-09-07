@@ -58,16 +58,6 @@ export const CompactCollapsed: Story = {
   ],
 };
 
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark h-[720px] w-80 overflow-hidden border bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};
-
 function library_fetch(input: RequestInfo | URL): Promise<Response> {
   const url = new URL(String(input), window.location.origin);
   if (url.pathname === "/api/library/folders") {

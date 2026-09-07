@@ -52,14 +52,3 @@ export const Retrying: Story = {
     ),
   },
 };
-
-export const Dark: Story = {
-  ...LoadError,
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark min-h-screen bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};

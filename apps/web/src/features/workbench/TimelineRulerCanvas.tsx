@@ -4,8 +4,6 @@ import {
   format_timeline_time,
   TIMELINE_SECONDS_PER_HOUR,
 } from "./timeline_time";
-import type { ColorScheme } from "@/color_scheme";
-import { use_color_scheme } from "@/use_color_scheme";
 
 const RULER_MAJOR_MINIMUM_WIDTH_PIXELS = 60;
 const RULER_MAJOR_MAXIMUM_WIDTH_PIXELS = 180;
@@ -29,7 +27,6 @@ type TimelineRulerPaintStyle = {
   major_tick_height: number;
   minor_tick_height: number;
   label_top: number;
-  color_scheme: ColorScheme;
   ruler_font: string;
   text_color: string;
   tick_color: string;
@@ -56,7 +53,6 @@ export function TimelineRulerCanvas({
 }: TimelineRulerCanvasProps) {
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const paint_style_ref = useRef<TimelineRulerPaintStyle | null>(null);
-  const color_scheme = use_color_scheme();
 
   useLayoutEffect(() => {
     const canvas = canvas_ref.current;
@@ -65,10 +61,9 @@ export function TimelineRulerCanvas({
     if (!context) return;
 
     let paint_style = paint_style_ref.current;
-    if (!paint_style || paint_style.color_scheme !== color_scheme) {
+    if (!paint_style) {
       const computed_style = getComputedStyle(canvas);
       paint_style = {
-        color_scheme,
         height: parseFloat(
           computed_style.getPropertyValue("--timeline-ruler-height"),
         ),
@@ -161,7 +156,6 @@ export function TimelineRulerCanvas({
     }
   }, [
     canvas_width,
-    color_scheme,
     duration_seconds,
     major_interval_seconds,
     scroll_left,

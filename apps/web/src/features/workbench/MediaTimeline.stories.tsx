@@ -1,4 +1,4 @@
-import type { Decorator, Meta, StoryObj } from "@storybook/react-vite";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
@@ -16,11 +16,6 @@ import { DEFAULT_ZOOM_PIXELS_PER_SECOND } from "./media_timeline_calculations";
 
 const ASSET_ID = "019d3f8a-2b1c-7000-8000-000000000001";
 const ZOOM_OUT_TO_MINIMUM_WHEEL_DELTA = 100_000;
-const DARK_TIMELINE_DECORATOR: Decorator = (StoryComponent) => (
-  <div className="dark bg-background text-foreground">
-    <StoryComponent />
-  </div>
-);
 const POINT_MARKER: MediaMarker = {
   marker_id: "marker-019d3f8a2b1c70008000000000000001",
   asset_id: ASSET_ID,
@@ -385,11 +380,6 @@ export const TemporaryRangeSelection: Story = {
   },
 };
 
-export const TemporaryRangeSelectionDark: Story = {
-  decorators: [DARK_TIMELINE_DECORATOR],
-  play: TemporaryRangeSelection.play,
-};
-
 export const ZoomBelowDefault: Story = {
   play: async ({ canvasElement }) => {
     const story = within(canvasElement);
@@ -464,14 +454,6 @@ export const AdjacentChaptersOverview: Story = {
   },
 };
 
-export const AdjacentChaptersOverviewDark: Story = {
-  args: {
-    analysis_segments: ADJACENT_ANALYSIS_SEGMENTS,
-  },
-  decorators: [DARK_TIMELINE_DECORATOR],
-  play: AdjacentChaptersOverview.play,
-};
-
 export const LongVideoOverview: Story = {
   args: {
     duration_seconds: 7_200,
@@ -492,10 +474,6 @@ export const LongVideoOverview: Story = {
       canvasElement.querySelectorAll(".timeline_grid_line").length,
     ).toBeLessThan(16);
   },
-};
-
-export const Dark: Story = {
-  decorators: [DARK_TIMELINE_DECORATOR],
 };
 
 export const SelectedPointMarker: Story = {
@@ -642,11 +620,6 @@ export const MixedDensity: Story = {
   },
 };
 
-export const MixedDensityDark: Story = {
-  ...MixedDensity,
-  decorators: [DARK_TIMELINE_DECORATOR],
-};
-
 export const MixedDensityNarrow: Story = {
   args: MixedDensity.args,
   decorators: Narrow.decorators,
@@ -673,11 +646,6 @@ export const RulerHover: Story = {
     expect(canvasElement.querySelector(".media_timeline")).toHaveClass("dark");
     expect(story.getByLabelText("总时长")).toHaveTextContent("00:01:30");
   },
-};
-
-export const RulerHoverDark: Story = {
-  ...RulerHover,
-  decorators: [DARK_TIMELINE_DECORATOR],
 };
 
 export const MergingDisabled: Story = {

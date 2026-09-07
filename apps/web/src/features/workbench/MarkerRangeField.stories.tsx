@@ -35,14 +35,3 @@ export const Overridden: Story = {
 export const Disabled: Story = {
   args: { value: null, disabled: true },
 };
-
-export const Dark: Story = {
-  args: { value: 25 },
-  decorators: [
-    (Story) => (
-      <div className="dark rounded-xl bg-background p-8 text-foreground">
-        <Story />
-      </div>
-    ),
-  ],
-};

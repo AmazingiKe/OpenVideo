@@ -71,13 +71,3 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Documents: Story = {};
-
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark h-[640px] w-80 bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};

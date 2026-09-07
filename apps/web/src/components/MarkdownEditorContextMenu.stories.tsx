@@ -80,20 +80,3 @@ export const Default: Story = {
     await verify_context_menu(canvasElement);
   },
 };
-
-export const Dark: Story = {
-  beforeEach() {
-    document.documentElement.classList.add("dark");
-    return () => document.documentElement.classList.remove("dark");
-  },
-  decorators: [
-    (StoryComponent) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-  play: async ({ canvasElement }) => {
-    await verify_context_menu(canvasElement);
-  },
-};

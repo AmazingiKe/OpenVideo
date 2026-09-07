@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 
@@ -76,15 +76,6 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
-
-function WithDarkMode({ children }: { children: React.ReactNode }) {
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-    return () => document.documentElement.classList.remove("dark");
-  }, []);
-
-  return children;
-}
 
 function InteractiveAiModelConfigurationList(
   props: ComponentProps<typeof AiModelConfigurationList>,
@@ -176,17 +167,4 @@ export const AddDialog: Story = {
     await expect(canvas.getByText("gpt-5")).toBeInTheDocument();
     await expect(canvas.getByText("图片")).toBeInTheDocument();
   },
-};
-
-export const DarkAddDialog: Story = {
-  args: { models: [] },
-  render: AddDialog.render,
-  decorators: [
-    (StoryComponent) => (
-      <WithDarkMode>
-        <StoryComponent />
-      </WithDarkMode>
-    ),
-  ],
-  play: AddDialog.play,
 };

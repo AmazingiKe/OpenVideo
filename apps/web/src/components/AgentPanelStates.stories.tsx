@@ -213,7 +213,7 @@ export const Failure: Story = {
 };
 
 export const LowConfidence: Story = {
-  beforeEach: () => install_dark_agent_story("low-confidence"),
+  beforeEach: () => install_agent_fetch("low-confidence"),
   play: async ({ canvas }) => {
     await expect(await canvas.findByText("暂定结论")).toBeVisible();
     await expect(canvas.getByText("发现 1 组证据冲突")).toBeVisible();
@@ -222,7 +222,7 @@ export const LowConfidence: Story = {
 
 export const CompactHeaderControls: Story = {
   args: { index_status: INDEX_STATUS },
-  beforeEach: () => install_dark_agent_story("low-confidence"),
+  beforeEach: () => install_agent_fetch("low-confidence"),
   play: async ({ canvas, canvasElement, userEvent }) => {
     await expect(await canvas.findByText("暂定结论")).toBeVisible();
     await expect(
@@ -252,7 +252,7 @@ export const CompactHeaderControls: Story = {
 };
 
 export const NewConversation: Story = {
-  beforeEach: () => install_dark_agent_story("low-confidence"),
+  beforeEach: () => install_agent_fetch("low-confidence"),
   play: async ({ canvas, userEvent }) => {
     await expect(await canvas.findByText("暂定结论")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "新建对话" }));
@@ -292,15 +292,6 @@ function install_agent_fetch(state: AgentStoryState) {
   window.fetch = (input, init) => agent_fetch(state, input, init);
   return () => {
     window.fetch = original_fetch;
-  };
-}
-
-function install_dark_agent_story(state: AgentStoryState) {
-  const restore_fetch = install_agent_fetch(state);
-  document.documentElement.classList.add("dark");
-  return () => {
-    restore_fetch();
-    document.documentElement.classList.remove("dark");
   };
 }
 

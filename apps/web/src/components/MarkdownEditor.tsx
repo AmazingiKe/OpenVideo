@@ -646,9 +646,7 @@ function render_code_preview(
         securityLevel: "strict",
         startOnLoad: false,
         suppressErrorRendering: true,
-        theme: document.documentElement.classList.contains("dark")
-          ? "dark"
-          : "default",
+        theme: "dark",
       });
       const { svg } = await mermaid.render(render_id, content);
       const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");

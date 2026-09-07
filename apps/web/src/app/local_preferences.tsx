@@ -4,12 +4,10 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useState,
 } from "react";
 
-import { apply_user_color_scheme, type ColorScheme } from "@/color_scheme";
 import type { SummaryPlayerGeometry, SummaryPlayerState } from "@/shared/types";
 
 export const LOCAL_PREFERENCES_STORAGE_KEY = "openvideo.local-preferences";
@@ -18,7 +16,6 @@ const LOCAL_PREFERENCES_VERSION = 1;
 
 export type LocalPreferences = {
   assistant_open: boolean | null;
-  color_scheme: ColorScheme | null;
   summary_player_states: Record<string, SummaryPlayerState>;
   video_library_open: boolean | null;
 };
@@ -26,7 +23,6 @@ export type LocalPreferences = {
 type LocalPreferencesContextValue = {
   preferences: LocalPreferences;
   set_assistant_open: (open: boolean) => void;
-  set_color_scheme: (color_scheme: ColorScheme) => void;
   set_summary_player_geometry: (
     asset_id: string,
     geometry: SummaryPlayerGeometry,
@@ -38,14 +34,12 @@ type LocalPreferencesContextValue = {
 type StoredLocalPreferences = {
   version: typeof LOCAL_PREFERENCES_VERSION;
   assistant_open?: boolean;
-  color_scheme?: ColorScheme;
   summary_player_states?: Record<string, SummaryPlayerState>;
   video_library_open?: boolean;
 };
 
 const EMPTY_LOCAL_PREFERENCES: LocalPreferences = {
   assistant_open: null,
-  color_scheme: null,
   summary_player_states: {},
   video_library_open: null,
 };
@@ -60,19 +54,10 @@ export function LocalPreferencesProvider({
 }) {
   const [preferences, set_preferences] = useState(read_local_preferences);
 
-  useLayoutEffect(() => {
-    if (preferences.color_scheme) {
-      apply_user_color_scheme(document, preferences.color_scheme);
-    }
-  }, [preferences.color_scheme]);
-
   useEffect(() => persist_local_preferences(preferences), [preferences]);
 
   const set_assistant_open = useCallback((assistant_open: boolean) => {
     set_preferences((current) => ({ ...current, assistant_open }));
-  }, []);
-  const set_color_scheme = useCallback((color_scheme: ColorScheme) => {
-    set_preferences((current) => ({ ...current, color_scheme }));
   }, []);
   const set_summary_player_geometry = useCallback(
     (asset_id: string, geometry: SummaryPlayerGeometry) => {
@@ -117,7 +102,6 @@ export function LocalPreferencesProvider({
     () => ({
       preferences,
       set_assistant_open,
-      set_color_scheme,
       set_summary_player_geometry,
       set_summary_player_open,
       set_video_library_open,
@@ -125,7 +109,6 @@ export function LocalPreferencesProvider({
     [
       preferences,
       set_assistant_open,
-      set_color_scheme,
       set_summary_player_geometry,
       set_summary_player_open,
       set_video_library_open,
@@ -167,10 +150,6 @@ export function read_local_preferences(
         typeof stored.assistant_open === "boolean"
           ? stored.assistant_open
           : null,
-      color_scheme:
-        stored.color_scheme === "light" || stored.color_scheme === "dark"
-          ? stored.color_scheme
-          : null,
       summary_player_states: parse_summary_player_states(
         stored.summary_player_states,
       ),
@@ -194,9 +173,6 @@ function persist_local_preferences(
   };
   if (preferences.assistant_open !== null) {
     stored.assistant_open = preferences.assistant_open;
-  }
-  if (preferences.color_scheme !== null) {
-    stored.color_scheme = preferences.color_scheme;
   }
   if (Object.keys(preferences.summary_player_states).length > 0) {
     stored.summary_player_states = preferences.summary_player_states;

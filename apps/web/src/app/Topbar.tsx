@@ -1,24 +1,13 @@
-import {
-  Clapperboard,
-  Bot,
-  FileText,
-  Flag,
-  Library,
-  Moon,
-  Settings,
-  Sun,
-} from "lucide-react";
+import { Bot, FileText, Flag, Library, Settings } from "lucide-react";
 import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 
 import { SETTINGS_ROUTE, WORKSPACE_ROUTES } from "@/app/workspace_routes";
 import { TaskCenter } from "@/app/TaskCenter";
 import { use_global_assistant_controls } from "@/app/global_assistant";
-import { use_local_preferences } from "@/app/local_preferences";
 import { use_optional_task_manager } from "@/app/task_manager";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { use_color_scheme } from "@/use_color_scheme";
 
 const IDLE_PRELOAD_TIMEOUT_MS = 2_000;
 
@@ -35,14 +24,8 @@ const WORKSPACE_ICONS = {
 
 export function Topbar() {
   const task_manager = use_optional_task_manager();
-  const color_scheme = use_color_scheme();
-  const { set_color_scheme } = use_local_preferences();
   const { assistant_open, set_assistant_open } =
     use_global_assistant_controls();
-  const dark_mode_is_active = color_scheme === "dark";
-  const color_scheme_action_label = dark_mode_is_active
-    ? "切换到浅色模式"
-    : "切换到深色模式";
 
   useEffect(() => {
     const preload_routes = () => {
@@ -66,14 +49,9 @@ export function Topbar() {
 
   return (
     <header className="grid min-h-14 grid-cols-[1fr_auto] items-center gap-x-3 border-b bg-surface-translucent px-3 py-2 backdrop-blur-sm md:grid-cols-[minmax(10rem,1fr)_auto_minmax(10rem,1fr)] md:px-5">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <Clapperboard className="size-4" aria-hidden="true" />
-        </span>
-        <strong className="truncate text-sm font-semibold tracking-tight">
-          OpenVideo
-        </strong>
-      </div>
+      <strong className="min-w-0 truncate text-sm font-semibold tracking-tight">
+        Open Video
+      </strong>
       <nav
         className="col-span-2 row-start-2 flex min-w-0 items-center gap-1 overflow-x-auto pt-2 md:col-span-1 md:col-start-2 md:row-start-1 md:justify-center md:pt-0"
         aria-label="工作区导航"
@@ -100,23 +78,6 @@ export function Topbar() {
         })}
       </nav>
       <div className="col-start-2 row-start-1 flex min-w-0 items-center gap-2 justify-self-end md:col-start-3">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={color_scheme_action_label}
-          title={color_scheme_action_label}
-          aria-pressed={dark_mode_is_active}
-          onClick={() =>
-            set_color_scheme(dark_mode_is_active ? "light" : "dark")
-          }
-        >
-          {dark_mode_is_active ? (
-            <Sun aria-hidden="true" />
-          ) : (
-            <Moon aria-hidden="true" />
-          )}
-        </Button>
         <Button
           type="button"
           variant="ghost"

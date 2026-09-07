@@ -64,14 +64,3 @@ export const LoginWaiting: Story = {
     );
   },
 };
-
-export const Dark: Story = {
-  args: { accounts },
-  decorators: [
-    (Story) => (
-      <div className="dark min-h-screen bg-background p-4 text-foreground">
-        <Story />
-      </div>
-    ),
-  ],
-};

@@ -7,6 +7,8 @@ import { LocalPreferencesProvider } from "../src/app/local_preferences";
 import { ApplicationQueryProvider } from "../src/app/query_cache";
 import "../src/styles.css";
 
+document.documentElement.classList.add("dark");
+
 const with_design_surface: Decorator = (Story, context) => (
   <MotionConfig reducedMotion="user">
     <LocalPreferencesProvider>

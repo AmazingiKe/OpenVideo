@@ -97,16 +97,6 @@ export const DeferredSeekRefresh: Story = {
   },
 };
 
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark h-full bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};
-
 export const Narrow: Story = {
   globals: {
     viewport: { value: "mobile1", isRotated: false },

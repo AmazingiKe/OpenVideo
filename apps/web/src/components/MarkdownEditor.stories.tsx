@@ -80,13 +80,3 @@ export const Default: Story = {};
 export const Formatting: Story = {
   render: () => <MarkdownFormattingFixture />,
 };
-
-export const Dark: Story = {
-  decorators: [
-    (StoryComponent) => (
-      <div className="dark bg-background text-foreground">
-        <StoryComponent />
-      </div>
-    ),
-  ],
-};
