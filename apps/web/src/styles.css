@@ -319,12 +319,6 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@layer base {
-  * {
-    @apply border-border outline-focus-ring;
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-    scrollbar-width: thin;
-  }
 .app_topbar {
   min-height: var(--topbar-height);
   background: linear-gradient(
@@ -341,6 +335,12 @@
   font-weight: var(--topbar-brand-font-weight);
 }
 
+@layer base {
+  * {
+    @apply border-border outline-focus-ring;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    scrollbar-width: thin;
+  }
 
   *::-webkit-scrollbar {
     width: 10px;
