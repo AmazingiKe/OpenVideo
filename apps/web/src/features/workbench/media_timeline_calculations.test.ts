@@ -151,7 +151,7 @@ describe("media timeline calculations", () => {
     expect(extended.end_seconds).toBeGreaterThanOrEqual(created.end_seconds);
   });
 
-  it("keeps marker actions mounted while virtualizing read-only tracks", () => {
+  it("clips markers and read-only tracks to the buffered window", () => {
     const rows: TimelineRow[] = [
       {
         id: TIMELINE_TRACK_IDS.marker,
@@ -170,7 +170,7 @@ describe("media timeline calculations", () => {
       start_seconds: 8,
       end_seconds: 14,
     });
-    expect(filtered[0]?.actions).toHaveLength(1);
+    expect(filtered[0]?.actions).toHaveLength(0);
     expect(filtered[1]?.actions.map((action) => action.id)).toEqual(["inside"]);
   });
 

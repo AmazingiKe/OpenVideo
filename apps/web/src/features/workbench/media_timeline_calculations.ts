@@ -553,7 +553,6 @@ export function filter_timeline_rows_for_window(
   render_window: TimelineRenderWindow,
 ): TimelineRow[] {
   return rows.map((row) => {
-    if (row.id === TIMELINE_TRACK_IDS.marker) return row;
     return {
       ...row,
       actions: row.actions.filter(
@@ -566,26 +565,26 @@ export function filter_timeline_rows_for_window(
 }
 
 export function build_timeline_rows({
-  transcript_segments,
-  segments,
-  markers,
-  candidate_markers,
+  transcript_segments = [],
+  segments = [],
+  markers = [],
+  candidate_markers = [],
   analysis_strategy,
   duration,
-  selected_marker_id,
+  selected_marker_id = null,
   selected_marker_ids,
   selected_transcript_indices,
   selected_read_only_action_ids,
   event_analyses = [],
   row_heights = {},
 }: {
-  transcript_segments: Transcript["segments"];
-  segments: MediaSegment[];
-  markers: MediaMarker[];
-  candidate_markers: MediaMarker[];
+  transcript_segments?: Transcript["segments"];
+  segments?: MediaSegment[];
+  markers?: MediaMarker[];
+  candidate_markers?: MediaMarker[];
   analysis_strategy: AnalysisStrategy;
   duration: number;
-  selected_marker_id: string | null;
+  selected_marker_id?: string | null;
   selected_marker_ids?: Set<string>;
   selected_transcript_indices?: ReadonlySet<number>;
   selected_read_only_action_ids?: ReadonlySet<string>;
@@ -886,4 +885,266 @@ export function timeline_content_duration(
 
 export function normalize_marker_time(seconds: number): number {
   return Math.round(seconds * MEDIA_TIME_PRECISION) / MEDIA_TIME_PRECISION;
+}
+
+export const DEFAULT_TIMELINE_MERGE_THRESHOLD = 8;
+export const MAXIMUM_TIMELINE_MERGE_THRESHOLD = 32;
+const TIMELINE_MERGE_GAP_PIXELS = 4;
+const TIMELINE_MINIMUM_BLOCK_WIDTH = 2;
+const TIMELINE_RANGE_ZOOM_PADDING = 0.1;
+
+export type TimelineAggregate = TimelineSelectionRange & {
+  row_id: string;
+  kind: MediaTimelineAction["data"]["kind"];
+  members: MediaTimelineAction[];
+  count: number;
+  selected: boolean;
+  left: number;
+  right: number;
+  top: number;
+  height: number;
+};
+
+/** 按源数据排序，缩放和滚动复用顺序，避免在绘制期间重复排序。 */
+export function sort_timeline_rows(rows: TimelineRow[]): TimelineRow[] {
+  return rows.map((row) => ({
+    ...row,
+    actions: [...row.actions].sort(
+      (first, second) => first.start - second.start,
+    ),
+  }));
+}
+
+/** 完整条宽决定分组，之后才裁剪，保证视口边缘不会改变成员关系。 */
+export function aggregate_timeline_rows(
+  rows: TimelineRow[],
+  zoom: number,
+  threshold: number,
+) {
+  const aggregates: TimelineAggregate[] = [];
+  let source_count = 0;
+  let source_area = 0;
+  let row_top = 0;
+  const independent_rows = rows.map((row) => {
+    const height = row.rowHeight ?? TIMELINE_ROW_HEIGHT;
+    const actions: MediaTimelineAction[] = [];
+    const pending = new Map<
+      MediaTimelineAction["data"]["kind"],
+      TimelineAggregate
+    >();
+    function flush(kind: MediaTimelineAction["data"]["kind"]) {
+      const group = pending.get(kind);
+      if (!group) return;
+      if (group.count > 1) aggregates.push(group);
+      else actions.push(...group.members);
+      pending.delete(kind);
+    }
+    for (const action of row.actions as MediaTimelineAction[]) {
+      const kind = action.data.kind;
+      const left = TIMELINE_START_LEFT + action.start * zoom;
+      const width = Math.max(
+        TIMELINE_MINIMUM_BLOCK_WIDTH,
+        (action.end - action.start) * zoom,
+      );
+      const right = left + width;
+      source_count += 1;
+      source_area += width * height;
+      if (threshold === 0 || width >= threshold || kind === "event") {
+        flush(kind);
+        actions.push(action);
+        continue;
+      }
+      const previous = pending.get(kind);
+      if (previous && left <= previous.right + TIMELINE_MERGE_GAP_PIXELS) {
+        previous.members.push(action);
+        previous.count += 1;
+        previous.right = Math.max(previous.right, right);
+        previous.end_seconds = Math.max(previous.end_seconds, action.end);
+        previous.selected ||= Boolean(action.selected);
+      } else {
+        flush(kind);
+        pending.set(kind, {
+          row_id: row.id,
+          kind,
+          members: [action],
+          count: 1,
+          selected: Boolean(action.selected),
+          left,
+          right,
+          top: row_top,
+          height,
+          start_seconds: action.start,
+          end_seconds: action.end,
+        });
+      }
+    }
+    for (const kind of pending.keys()) flush(kind);
+    row_top += height;
+    return { ...row, actions };
+  });
+  const independent_count = independent_rows.reduce(
+    (count, row) => count + row.actions.length,
+    0,
+  );
+  return {
+    independent_rows,
+    aggregates,
+    statistics: {
+      source_count,
+      source_area,
+      independent_count,
+      aggregate_count: aggregates.length,
+      rendered_count: independent_count + aggregates.length,
+    },
+  };
+}
+
+export function calculate_timeline_range_viewport(
+  range: TimelineSelectionRange,
+  viewport_width: number,
+  duration: number,
+): TimelineZoomViewport {
+  const range_duration = Math.max(
+    MINIMUM_ACTION_DURATION_SECONDS,
+    range.end_seconds - range.start_seconds,
+  );
+  const available_width = Math.max(1, viewport_width - TIMELINE_START_LEFT * 2);
+  const requested_zoom =
+    available_width / (range_duration * (1 + TIMELINE_RANGE_ZOOM_PADDING * 2));
+  const zoom_pixels_per_second = Math.min(
+    MAXIMUM_ZOOM_PIXELS_PER_SECOND,
+    Math.max(
+      calculate_minimum_timeline_zoom(viewport_width, duration),
+      requested_zoom,
+    ),
+  );
+  const center = (range.start_seconds + range.end_seconds) / 2;
+  const maximum_scroll = Math.max(
+    0,
+    duration * zoom_pixels_per_second + TIMELINE_START_LEFT - viewport_width,
+  );
+  return {
+    zoom_pixels_per_second,
+    scroll_left: Math.min(
+      maximum_scroll,
+      Math.max(
+        0,
+        center * zoom_pixels_per_second +
+          TIMELINE_START_LEFT -
+          viewport_width / 2,
+      ),
+    ),
+  };
+}
+
+/** 每个轨道只保留最近一次计算，编辑标记不必重新扫描转写或章节。 */
+export function create_timeline_aggregator() {
+  type AggregationResult = ReturnType<typeof aggregate_timeline_rows>;
+  const cache = new WeakMap<
+    TimelineRow,
+    {
+      zoom: number;
+      threshold: number;
+      height: number;
+      result: AggregationResult;
+    }
+  >();
+  return (
+    rows: TimelineRow[],
+    zoom: number,
+    threshold: number,
+    row_heights: Readonly<Record<string, number>>,
+  ): AggregationResult => {
+    const independent_rows: AggregationResult["independent_rows"] = [];
+    const aggregates: TimelineAggregate[] = [];
+    const statistics = {
+      source_count: 0,
+      source_area: 0,
+      independent_count: 0,
+      aggregate_count: 0,
+      rendered_count: 0,
+    };
+    let top = 0;
+    for (const row of rows) {
+      const height =
+        row_heights[row.id] ?? row.rowHeight ?? TIMELINE_ROW_HEIGHT;
+      let entry = cache.get(row);
+      if (
+        !entry ||
+        entry.zoom !== zoom ||
+        entry.threshold !== threshold ||
+        entry.height !== height
+      ) {
+        entry = {
+          zoom,
+          threshold,
+          height,
+          result: aggregate_timeline_rows(
+            [{ ...row, rowHeight: height }],
+            zoom,
+            threshold,
+          ),
+        };
+        cache.set(row, entry);
+      }
+      independent_rows.push(...entry.result.independent_rows);
+      for (const group of entry.result.aggregates)
+        aggregates.push({ ...group, top });
+      const row_statistics = entry.result.statistics;
+      statistics.source_count += row_statistics.source_count;
+      statistics.source_area += row_statistics.source_area;
+      statistics.independent_count += row_statistics.independent_count;
+      statistics.aggregate_count += row_statistics.aggregate_count;
+      statistics.rendered_count += row_statistics.rendered_count;
+      top += height;
+    }
+    return { independent_rows, aggregates, statistics };
+  };
+}
+
+/** 选择样式与源几何分离，点标记的编辑手柄不会改变聚合成员。 */
+export function select_timeline_rows({
+  rows,
+  selected_marker_ids,
+  selected_transcript_indices,
+  selected_read_only_action_ids,
+  analysis_strategy,
+  duration,
+  row_heights,
+}: {
+  rows: TimelineRow[];
+  selected_marker_ids: ReadonlySet<string>;
+  selected_transcript_indices: ReadonlySet<number>;
+  selected_read_only_action_ids: ReadonlySet<string>;
+  analysis_strategy: AnalysisStrategy;
+  duration: number;
+  row_heights: Readonly<Record<string, number>>;
+}): TimelineRow[] {
+  return rows.map((row) => ({
+    ...row,
+    rowHeight: row_heights[row.id] ?? row.rowHeight,
+    actions: (row.actions as MediaTimelineAction[]).map((action) => {
+      const data = { ...action.data };
+      const selected =
+        data.kind === "marker"
+          ? selected_marker_ids.has(action.id)
+          : data.kind === "transcript"
+            ? selected_transcript_indices.has(data.source_index!)
+            : selected_read_only_action_ids.has(action.id);
+      const result = { ...action, data, selected };
+      if (data.kind === "marker") result.flexible = selected;
+      if (selected && data.marker_shape === MARKER_SHAPE_VALUES.point) {
+        const anchor = data.marker_anchor_seconds!;
+        const range = bounded_action_range(
+          anchor - analysis_strategy.marker_range_before_seconds,
+          anchor + analysis_strategy.marker_range_after_seconds,
+          duration,
+        );
+        result.start = range.start;
+        result.end = range.end;
+        data.rendered_start_seconds = range.start;
+      }
+      return result;
+    }),
+  }));
 }
