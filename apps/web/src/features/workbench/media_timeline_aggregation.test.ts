@@ -96,13 +96,8 @@ describe("adaptive timeline aggregation", () => {
       })[0].actions,
     ).toHaveLength(2);
   });
-  it("isolates tracks and types and preserves chapter boundaries", () => {
-    const source = rows([
-      action("m", 0, 1, "marker"),
-      action("t", 1, 2),
-      action("e1", 2, 3, "event"),
-      action("e2", 3, 4, "event"),
-    ]);
+  it("isolates tracks and action types", () => {
+    const source = rows([action("m", 0, 1, "marker"), action("t", 1, 2)]);
     source.push({ id: "second", actions: [action("t2", 2, 3)] });
     expect(aggregate_timeline_rows(source, 1, 8).aggregates).toHaveLength(0);
   });

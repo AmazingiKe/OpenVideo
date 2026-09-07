@@ -126,10 +126,6 @@ export const MediaTimelineAggregateCanvas = memo(
               computed_style,
               "--timeline-color-transcript-border",
             ),
-            event: timeline_color(
-              computed_style,
-              "--timeline-color-event-border",
-            ),
             event_analysis: timeline_color(
               computed_style,
               "--timeline-color-event-analysis-border",
@@ -155,10 +151,6 @@ export const MediaTimelineAggregateCanvas = memo(
             transcript: timeline_color(
               computed_style,
               "--timeline-color-transcript-background",
-            ),
-            event: timeline_color(
-              computed_style,
-              "--timeline-color-event-background",
             ),
             event_analysis: timeline_color(
               computed_style,

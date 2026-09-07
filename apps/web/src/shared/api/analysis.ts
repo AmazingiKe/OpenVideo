@@ -6,6 +6,16 @@ import type {
 } from "../types";
 import { request_json } from "./client";
 
+export function generate_chapters(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<AnalysisJob> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/chapters`,
+    { method: "POST", signal },
+  );
+}
+
 export function transcribe_asset(
   asset_id: string,
   options: TranscriptionOptions,

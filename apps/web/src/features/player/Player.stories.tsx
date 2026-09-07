@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { type ComponentProps, useRef, useState } from "react";
-import { expect, fireEvent, within } from "storybook/test";
+import { expect, fireEvent, waitFor, within } from "storybook/test";
 
 import { Player, type PlayerHandle } from "./Player";
 import type { ScrubPreviewMetrics } from "./use_scrub_frame_preview";
@@ -101,6 +101,105 @@ export const Narrow: Story = {
   globals: {
     viewport: { value: "mobile1", isRotated: false },
   },
+};
+
+export const Chapters: Story = {
+  args: {
+    chapters: [
+      {
+        segment_id: "segment-0198d12345677890abcdef1234567891",
+        asset_id: "asset-0198d12345677890abcdef1234567890",
+        start_seconds: 0,
+        end_seconds: 180,
+        title: "故事背景",
+        detailed_summary: "介绍人物与场景，交代故事发生的背景。",
+        transcript_text: "故事从这里开始。",
+        speaker_name: null,
+        key_frame_paths: [],
+        visual_description: null,
+        ocr_text: null,
+        formula_latex: [],
+        marker_ids: [],
+        tags: [],
+      },
+      {
+        segment_id: "segment-0198d12345677890abcdef1234567892",
+        asset_id: "asset-0198d12345677890abcdef1234567890",
+        start_seconds: 180,
+        end_seconds: 420,
+        title: "冲突与行动",
+        detailed_summary: "人物之间发生冲突，并采取行动应对。",
+        transcript_text: "接下来发生了冲突。",
+        speaker_name: null,
+        key_frame_paths: [],
+        visual_description: null,
+        ocr_text: null,
+        formula_latex: [],
+        marker_ids: [],
+        tags: [],
+      },
+      {
+        segment_id: "segment-0198d12345677890abcdef1234567893",
+        asset_id: "asset-0198d12345677890abcdef1234567890",
+        start_seconds: 420,
+        end_seconds: 630,
+        title: "故事结局",
+        detailed_summary: "冲突得到解决，故事进入结尾。",
+        transcript_text: "故事结束。",
+        speaker_name: null,
+        key_frame_paths: [],
+        visual_description: null,
+        ocr_text: null,
+        formula_latex: [],
+        marker_ids: [],
+        tags: [],
+      },
+    ],
+  },
+  play: async ({ canvasElement, userEvent: user_event }) => {
+    const canvas = within(canvasElement);
+    const slider = await canvas.findByRole("slider", { name: "播放进度" });
+    await user_event.hover(slider);
+    await waitFor(
+      () =>
+        expect(
+          canvasElement.querySelectorAll(".openvideo_progress_chapter"),
+        ).toHaveLength(3),
+      { timeout: 10_000 },
+    );
+    const chapters = canvasElement.querySelectorAll<HTMLElement>(
+      ".openvideo_progress_chapter",
+    );
+    const video = canvasElement.querySelector("video");
+    await waitFor(() => {
+      const widths = [...chapters].map(
+        (chapter) => chapter.getBoundingClientRect().width,
+      );
+      const total_width = widths.reduce((sum, width) => sum + width, 0);
+      expect(widths[0] / total_width).toBeCloseTo(180 / video!.duration, 2);
+    });
+    await user_event.hover(chapters[1]);
+    const bounds = chapters[1].getBoundingClientRect();
+    await user_event.pointer({
+      target: chapters[1],
+      coords: {
+        clientX: bounds.left + bounds.width / 2,
+        clientY: bounds.top + bounds.height / 2,
+      },
+    });
+    await waitFor(() => expect(canvas.getByText("冲突与行动")).toBeVisible());
+    expect(
+      canvas.getByText("人物之间发生冲突，并采取行动应对。"),
+    ).toBeVisible();
+    slider.focus();
+    await user_event.keyboard("{PageDown}");
+    await waitFor(() => expect(video?.currentTime).toBeCloseTo(180, 0));
+  },
+};
+
+export const NarrowChapters: Story = {
+  args: Chapters.args,
+  globals: { viewport: { value: "mobile1", isRotated: false } },
 };
 
 export const SubtitleOffset: Story = {

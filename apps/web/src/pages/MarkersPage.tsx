@@ -92,6 +92,9 @@ export function MarkersPage() {
     analysis_error,
     reload_analysis,
     save_transcript_segment,
+    regenerate_chapters,
+    chapter_generation_message,
+    chapter_generation_error,
   } = use_asset_analysis(selected_asset_id);
   const { settings, settings_error, is_ready, update_settings } =
     use_markers_page_settings();
@@ -496,6 +499,9 @@ export function MarkersPage() {
     <VideoWorkspace
       asset={selected_asset}
       markers={markers}
+      chapters={segments}
+      on_generate_chapters={() => void regenerate_chapters()}
+      chapter_generation_message={chapter_generation_message}
       transcript={transcript}
       evidence_range={evidence_range}
       player_ref={player_ref}
@@ -506,6 +512,7 @@ export function MarkersPage() {
   );
   const error =
     page_error ??
+    chapter_generation_error ??
     transcription_resources_error ??
     settings_error ??
     analysis_error;

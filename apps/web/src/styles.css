@@ -143,6 +143,14 @@
   /* 媒体工作区常驻深色，避免切换应用主题时干扰画面判断。 */
   --player-canvas-background: #000000;
   --player-accent: var(--primary);
+  --player-progress-track: #ffffff33;
+  --player-progress-buffer: #ffffff66;
+  --player-progress-preview-background: #292929;
+  --player-progress-preview-foreground: #eeeeee;
+  --player-progress-preview-muted: #b3b3b3;
+  --player-progress-track-height: 4px;
+  --player-progress-track-hover-height: 8px;
+  --player-progress-chapter-gap: 2px;
   --player-menu-background: var(--popover);
   --player-menu-foreground: #eeeeee;
   --player-subtitle-foreground: #ffffff;
@@ -191,8 +199,6 @@
   --timeline-color-marker-background: #624b24;
   --timeline-color-transcript-background: #51406f;
   --timeline-color-transcript-border: #947abd;
-  --timeline-color-event-background: #284f76;
-  --timeline-color-event-border: #618bb5;
   --timeline-color-event-analysis-background: #205763;
   --timeline-color-event-analysis-border: #4a99a8;
   --timeline-color-candidate-background: #624b24;
@@ -1105,7 +1111,7 @@
   border-radius: var(--timeline-block-radius);
   padding: 0 var(--timeline-block-label-padding);
   color: var(--timeline-color-clip-text);
-  background: var(--timeline-color-event-background);
+  background: var(--timeline-color-transcript-background);
   font: inherit;
   text-align: left;
   outline: none;
@@ -1128,11 +1134,6 @@
 .media_timeline .timeline_action_transcript {
   border-color: var(--timeline-color-transcript-border);
   background: var(--timeline-color-transcript-background);
-}
-
-.media_timeline .timeline_action_event {
-  border-color: var(--timeline-color-event-border);
-  background: var(--timeline-color-event-background);
 }
 
 .media_timeline .timeline_action_event_analysis {

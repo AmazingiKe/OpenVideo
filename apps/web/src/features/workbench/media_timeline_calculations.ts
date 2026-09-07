@@ -33,7 +33,6 @@ const RENDER_WINDOW_MOVEMENT_THRESHOLD_VIEWPORTS = 0.25;
 export const TIMELINE_TRACK_IDS = {
   marker: "timeline-marker-track",
   transcript: "timeline-transcript-track",
-  event: "timeline-event-track",
   event_analysis_prefix: "timeline-event-analysis-track",
 } as const;
 
@@ -45,7 +44,7 @@ export const MARKER_SHAPE_VALUES = {
 export type TimelineRow = TimelineEditor["editorData"][number];
 export type TimelineAction = TimelineRow["actions"][number];
 type TimelineActionKind =
-  "marker" | "candidate" | "transcript" | "event" | "event_analysis";
+  "marker" | "candidate" | "transcript" | "event_analysis";
 type MarkerShape =
   (typeof MARKER_SHAPE_VALUES)[keyof typeof MARKER_SHAPE_VALUES];
 
@@ -540,7 +539,6 @@ export function filter_timeline_rows_for_window(
 
 export function build_timeline_rows({
   transcript_segments = [],
-  segments = [],
   markers = [],
   candidate_markers = [],
   analysis_strategy,
@@ -553,7 +551,6 @@ export function build_timeline_rows({
   row_heights = {},
 }: {
   transcript_segments?: Transcript["segments"];
-  segments?: MediaSegment[];
   markers?: MediaMarker[];
   candidate_markers?: MediaMarker[];
   analysis_strategy: AnalysisStrategy;
@@ -623,29 +620,6 @@ export function build_timeline_rows({
             kind: "transcript",
             source_index: index,
             label: segment.text,
-          },
-        }),
-      ),
-    },
-    {
-      id: TIMELINE_TRACK_IDS.event,
-      rowHeight: default_timeline_row_height(TIMELINE_TRACK_IDS.event),
-      classNames: ["timeline_row_events"],
-      actions: segments.map((segment) =>
-        create_timeline_action({
-          id: `event-${segment.segment_id}`,
-          start: segment.start_seconds,
-          end: segment.end_seconds,
-          duration,
-          selected: selected_read_only_action_ids?.has(
-            `event-${segment.segment_id}`,
-          ),
-          movable: false,
-          flexible: false,
-          data: {
-            kind: "event",
-            source_id: segment.segment_id,
-            label: segment.title,
           },
         }),
       ),
@@ -922,7 +896,7 @@ export function aggregate_timeline_rows(
       const right = left + width;
       source_count += 1;
       source_area += width * height;
-      if (threshold === 0 || width >= threshold || kind === "event") {
+      if (threshold === 0 || width >= threshold) {
         flush(kind);
         actions.push(action);
         continue;

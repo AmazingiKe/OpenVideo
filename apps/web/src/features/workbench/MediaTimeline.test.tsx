@@ -813,7 +813,7 @@ describe("MediaTimeline", () => {
     ).toBeInTheDocument();
   });
 
-  it("maps four action kinds without exposing mutable business objects", () => {
+  it("shows editable markers and transcripts without a chapter track", () => {
     measure_wide_timeline();
     const source_markers = [POINT_MARKER, RANGE_MARKER, CANDIDATE_MARKER].map(
       (marker) => ({ ...marker }),
@@ -821,30 +821,27 @@ describe("MediaTimeline", () => {
     const source_snapshot = structuredClone(source_markers);
     render_timeline({ candidate_markers: [source_markers[2]] });
 
-    expect(timeline_props().editorData).toHaveLength(3);
+    expect(timeline_props().editorData).toHaveLength(2);
     expect(timeline_props().editorData.map((row) => row.id)).toEqual([
       "timeline-marker-track",
       "timeline-transcript-track",
-      "timeline-event-track",
     ]);
     const marker_action = action_by_kind("marker");
     const candidate_action = action_by_kind("candidate");
     const transcript_action = action_by_kind("transcript");
-    const event_action = action_by_kind("event");
     expect(marker_action).toMatchObject({ movable: true, flexible: false });
     expect(candidate_action).toMatchObject({ movable: false, flexible: false });
     expect(transcript_action).toMatchObject({
       movable: false,
       flexible: false,
     });
-    expect(event_action).toMatchObject({ movable: false, flexible: false });
 
     marker_action.start = 99;
     candidate_action.end = 100;
     expect(source_markers).toEqual(source_snapshot);
     expect(screen.getByLabelText("标记，可编辑")).toBeInTheDocument();
     expect(screen.getByLabelText("转写，只读")).toBeInTheDocument();
-    expect(screen.getByLabelText("全片分析，只读")).toBeInTheDocument();
+    expect(screen.queryByLabelText("章节，只读")).not.toBeInTheDocument();
   });
 
   it("normalizes accessibility semantics only for newly added subtrees", async () => {
@@ -874,7 +871,7 @@ describe("MediaTimeline", () => {
     expect(host_query).not.toHaveBeenCalled();
   });
 
-  it("marquee-selects all five visible clip kinds without opening read-only details", () => {
+  it("marquee-selects all visible clip kinds without opening read-only details", () => {
     const { change_selected_marker_ids, change_selected_transcript_indices } =
       render_timeline({
         candidate_markers: [
@@ -908,7 +905,6 @@ describe("MediaTimeline", () => {
       /点标记/,
       /待审批/,
       /转写：原始转写/,
-      /全片分析：矩阵推导/,
       /事件分析：关键步骤/,
     ]) {
       expect(screen.getByRole("button", { name })).toHaveAttribute(
@@ -919,7 +915,7 @@ describe("MediaTimeline", () => {
     expect(
       screen.queryByRole("dialog", { name: "事件分析结果" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("已框选 5 个片段")).toBeInTheDocument();
+    expect(screen.getByText("已框选 4 个片段")).toBeInTheDocument();
   });
 
   it("replaces selection with a normal marquee and toggles hits with Ctrl", () => {
@@ -1772,7 +1768,7 @@ describe("MediaTimeline", () => {
       expect_stable_geometry();
     }
     expect(timeline_props().scaleWidth).toBe(320);
-    expect(timeline_props().editorData).toHaveLength(3);
+    expect(timeline_props().editorData).toHaveLength(2);
     expect(
       result.container.querySelector(".media_timeline_aggregate_hit"),
     ).not.toBeInTheDocument();

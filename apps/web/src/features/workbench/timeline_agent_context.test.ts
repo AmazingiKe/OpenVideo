@@ -53,7 +53,10 @@ describe("timeline agent context", () => {
       playhead_seconds: 12,
       segments: [
         media_segment("segment-1", 0, 10, "开场"),
-        media_segment("segment-2", 10, 20, "核心概念"),
+        {
+          ...media_segment("segment-2", 10, 20, "核心概念"),
+          marker_ids: ["marker-1"],
+        },
       ],
       selected_marker_ids: ["marker-1"],
       selected_transcript_indices: [],

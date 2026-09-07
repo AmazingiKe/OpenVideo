@@ -245,6 +245,7 @@ function TimelineStory({
       {with_player ? (
         <div className="h-96">
           <Player
+            chapters={analysis_segments}
             ref={player_ref}
             src="https://files.vidstack.io/sprite-fight/720p.mp4"
             on_time_change={set_current_time}
@@ -380,7 +381,7 @@ export const Empty: Story = {
   },
 };
 
-export const FullThreeTracks: Story = {
+export const MarkerAndTranscriptTracks: Story = {
   parameters: {
     docs: {
       description: {
@@ -651,11 +652,11 @@ export const DynamicAnalysisTracks: Story = {
     expect(track_labels).not.toBeNull();
 
     const resize_handle = story.getByRole("separator", {
-      name: "调整全片分析轨道高度",
+      name: "调整转写轨道高度",
     });
     await userEvent.keyboard("{Escape}");
     resize_handle.focus();
-    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
+    await userEvent.keyboard("{ArrowDown>16/}");
     editor_grid.scrollTop = 48;
     await new Promise(requestAnimationFrame);
     expect(editor_grid.scrollTop).toBeGreaterThan(0);

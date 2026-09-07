@@ -12,7 +12,8 @@ export function SummaryPage() {
   const { selected_asset, selected_asset_id } = use_asset_catalog();
   const { preferences, set_summary_player_geometry, set_summary_player_open } =
     use_local_preferences();
-  const { transcript, analysis_error } = use_asset_analysis(selected_asset_id);
+  const { transcript, segments, analysis_error } =
+    use_asset_analysis(selected_asset_id);
   const [page_error, set_page_error] = useState<string | null>(null);
   const media_available = Boolean(selected_asset?.playback_url);
   const player_state = selected_asset_id
@@ -47,6 +48,7 @@ export function SummaryPage() {
           open={player_open}
           on_geometry_change={change_player_geometry}
           on_open_change={change_player_open}
+          chapters={segments}
           transcript={transcript}
         />
       </div>

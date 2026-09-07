@@ -325,12 +325,6 @@ const TIMELINE_TRACK_PRESENTATIONS: TimelineTrackPresentation[] = [
     name: "转写",
     state: "只读",
   },
-  {
-    id: TIMELINE_TRACK_IDS.event,
-    icon: ScanSearch,
-    name: "全片分析",
-    state: "只读",
-  },
 ];
 
 type MediaTimelineProps = {
@@ -580,17 +574,6 @@ export function MediaTimeline({
       ).find((row) => row.id === TIMELINE_TRACK_IDS.transcript)!,
     [transcript_segments, analysis_strategy, content_duration],
   );
-  const event_source_row = useMemo(
-    () =>
-      sort_timeline_rows(
-        build_timeline_rows({
-          segments,
-          analysis_strategy,
-          duration: content_duration,
-        }),
-      ).find((row) => row.id === TIMELINE_TRACK_IDS.event)!,
-    [segments, analysis_strategy, content_duration],
-  );
   const analysis_source_rows = useMemo(
     () =>
       sort_timeline_rows(
@@ -605,18 +588,8 @@ export function MediaTimeline({
     [event_analyses, analysis_strategy, content_duration],
   );
   const source_editor_data = useMemo(
-    () => [
-      marker_source_row,
-      transcript_source_row,
-      event_source_row,
-      ...analysis_source_rows,
-    ],
-    [
-      marker_source_row,
-      transcript_source_row,
-      event_source_row,
-      analysis_source_rows,
-    ],
+    () => [marker_source_row, transcript_source_row, ...analysis_source_rows],
+    [marker_source_row, transcript_source_row, analysis_source_rows],
   );
   const full_editor_data = useMemo(
     () =>
@@ -1089,7 +1062,7 @@ export function MediaTimeline({
       on_seek(media_action.start);
       return;
     }
-    if (data.kind === "candidate" || data.kind === "event") {
+    if (data.kind === "candidate") {
       const next_selection = toggle_selection
         ? toggle_set_members(
             selected_read_only_action_ids,

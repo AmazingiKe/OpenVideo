@@ -293,7 +293,7 @@ export type AnalysisStrategy = {
   marker_range_before_seconds: number;
   marker_range_after_seconds: number;
 };
-type AnalysisOperation = "transcription" | "analysis" | "initialization";
+type AnalysisOperation = "transcription" | "analysis" | "initialization" | "chapters";
 export type TranscriptionEngine = "faster-whisper" | "qwen3-asr" | "sensevoice";
 export type TranscriptionDevice = "auto" | "cpu" | "cuda";
 export type TranscriptionComputeType = "auto" | "int8" | "float16";

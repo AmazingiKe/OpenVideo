@@ -1,5 +1,7 @@
 import { memo, type RefObject, useEffect, useRef, useState } from "react";
-import { Play } from "lucide-react";
+import { ListVideo, Play } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
@@ -24,6 +26,7 @@ import { format_marker_label } from "@/shared/marker_labels";
 import type {
   AgentEvidenceRange,
   MediaAsset,
+  MediaSegment,
   MediaMarker,
   SubtitleDisplaySettings,
   Transcript,
@@ -34,6 +37,9 @@ type VideoWorkspaceProps = {
   asset: MediaAsset | null;
   markers: MediaMarker[];
   transcript: Transcript | null;
+  chapters?: MediaSegment[];
+  on_generate_chapters?: () => void;
+  chapter_generation_message?: string | null;
   evidence_range?: AgentEvidenceRange | null;
   player_ref: RefObject<PlayerHandle | null>;
   on_time_change: (seconds: number) => void;
@@ -45,6 +51,9 @@ export const VideoWorkspace = memo(function VideoWorkspace({
   asset,
   markers,
   transcript,
+  chapters = [],
+  on_generate_chapters,
+  chapter_generation_message = null,
   evidence_range = null,
   player_ref,
   on_time_change,
@@ -158,6 +167,29 @@ export const VideoWorkspace = memo(function VideoWorkspace({
           {asset.title}
         </h1>
         <div className="flex shrink-0 items-center gap-2">
+          {on_generate_chapters ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={on_generate_chapters}
+              disabled={
+                Boolean(chapter_generation_message) ||
+                !transcript?.segments.length
+              }
+              title={chapter_generation_message ?? undefined}
+            >
+              {chapter_generation_message ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <ListVideo data-icon="inline-start" />
+              )}
+              {chapter_generation_message
+                ? "生成中…"
+                : chapters.length
+                  ? "重新生成章节"
+                  : "生成章节"}
+            </Button>
+          ) : null}
           <SubtitleSettingsControl
             settings={subtitle_settings}
             has_subtitles={Boolean(
@@ -183,6 +215,7 @@ export const VideoWorkspace = memo(function VideoWorkspace({
               ref={player_ref}
               src={media_url(asset.playback_url)!}
               subtitles={transcript?.segments ?? []}
+              chapters={chapters}
               subtitle_display={subtitle_settings}
               evidence_range={evidence_range}
               markers={markers.map((marker) => ({

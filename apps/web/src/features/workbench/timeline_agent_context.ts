@@ -21,9 +21,9 @@ export function timeline_agent_focus({
   selected_transcript_indices,
   focus_selection,
 }: TimelineAgentFocusOptions): AgentFocusContext {
-  const chapters = segments
-    .filter((segment) => segment.marker_ids.length === 0)
-    .sort((left, right) => left.start_seconds - right.start_seconds);
+  const chapters = [...segments].sort(
+    (left, right) => left.start_seconds - right.start_seconds,
+  );
   const chapter_index = chapters.findIndex(
     (segment, index) =>
       segment.start_seconds <= playhead_seconds &&

@@ -4,13 +4,11 @@ import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type {
   EventAnalysis,
   MediaMarker,
-  MediaSegment,
   TranscriptSegment,
 } from "@/shared/types";
 import {
   MAXIMUM_ZOOM_PIXELS_PER_SECOND,
   TIMELINE_COMPACT_ROW_HEIGHT,
-  TIMELINE_ROW_HEIGHT,
   TIMELINE_TRACK_IDS,
   build_timeline_rows,
   calculate_minimum_timeline_zoom,
@@ -256,7 +254,7 @@ describe("media timeline calculations", () => {
         actions: [{ id: "marker", start: 0, end: 1, effectId: "marker" }],
       },
       {
-        id: TIMELINE_TRACK_IDS.event,
+        id: TIMELINE_TRACK_IDS.transcript,
         actions: [
           { id: "outside", start: 0, end: 1, effectId: "event" },
           { id: "inside", start: 10, end: 12, effectId: "event" },
@@ -377,24 +375,6 @@ describe("media timeline calculations", () => {
         audio_events: [],
       },
     ];
-    const segments: MediaSegment[] = [
-      {
-        segment_id: "segment-01890f4c7a2b7cc298c4dc0c0c07398f",
-        asset_id: "asset-01890f4c7a2b7cc298c4dc0c0c07398f",
-        start_seconds: 3,
-        end_seconds: 4,
-        title: "event",
-        detailed_summary: null,
-        transcript_text: null,
-        speaker_name: null,
-        key_frame_paths: [],
-        visual_description: null,
-        ocr_text: null,
-        formula_latex: [],
-        marker_ids: [],
-        tags: [],
-      },
-    ];
     const markers: MediaMarker[] = [
       {
         marker_id: "marker-01890f4c7a2b7cc298c4dc0c0c07398f",
@@ -407,17 +387,15 @@ describe("media timeline calculations", () => {
 
     const rows = build_timeline_rows({
       transcript_segments,
-      segments,
       markers,
       candidate_markers: [],
       analysis_strategy: DEFAULT_ANALYSIS_STRATEGY,
       duration: 10,
       selected_marker_id: markers[0]?.marker_id ?? null,
     });
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(2);
     expect(rows[0]?.actions[0]?.end).toBeLessThanOrEqual(10);
     expect(rows[1]?.actions).toHaveLength(1);
-    expect(rows[2]?.actions).toHaveLength(1);
   });
 
   it("groups identical event targets and assigns overlapping targets to stable lanes", () => {
@@ -490,7 +468,6 @@ describe("media timeline calculations", () => {
 
     const rows = build_timeline_rows({
       transcript_segments: [],
-      segments: [],
       markers: [],
       candidate_markers: [],
       analysis_strategy: DEFAULT_ANALYSIS_STRATEGY,
@@ -551,7 +528,6 @@ describe("media timeline calculations", () => {
           audio_events: [],
         },
       ],
-      segments: [],
       markers: [],
       candidate_markers: [],
       analysis_strategy: DEFAULT_ANALYSIS_STRATEGY,
@@ -562,7 +538,6 @@ describe("media timeline calculations", () => {
 
     expect(rows[0]?.rowHeight).toBe(TIMELINE_COMPACT_ROW_HEIGHT);
     expect(rows[1]?.rowHeight).toBe(TIMELINE_COMPACT_ROW_HEIGHT);
-    expect(rows[2]?.rowHeight).toBe(TIMELINE_ROW_HEIGHT);
     expect(selected_timeline_range(rows)).toEqual({
       start_seconds: 5,
       end_seconds: 8,

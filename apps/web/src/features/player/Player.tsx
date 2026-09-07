@@ -1,14 +1,8 @@
-import {
-  MediaPlayer,
-  MediaProvider,
-  TimeSlider,
-  useMediaState,
-} from "@vidstack/react";
+import { MediaPlayer, MediaProvider } from "@vidstack/react";
 import "@vidstack/react/player/styles/base.css";
 import {
   PlyrLayout,
   plyrLayoutIcons,
-  usePlyrLayoutContext,
   type PlyrControl,
   type PlyrLayoutTranslations,
 } from "@vidstack/react/player/layouts/plyr";
@@ -26,6 +20,7 @@ import {
 
 import type {
   AgentEvidenceRange,
+  MediaSegment,
   SubtitleDisplaySettings,
   TranscriptSegment,
 } from "@/shared/types";
@@ -35,6 +30,7 @@ import {
   type PlayerController,
 } from "./player_state_bridge";
 import "./player.css";
+import { PlayerProgress } from "./PlayerProgress";
 import {
   active_subtitle_segment,
   subtitle_is_evidence,
@@ -46,8 +42,6 @@ import type { ScrubPreviewMetrics } from "./use_scrub_frame_preview";
 import type { ScrubPreviewStoryboard } from "./scrub_preview_protocol";
 
 const SEEK_CONFIRMATION_TIMEOUT_MILLISECONDS = 1_500;
-// 预览解码已有任务合并，进度反馈不再额外等待播放器默认的节流窗口。
-const PROGRESS_SEEK_THROTTLE_MILLISECONDS = 0;
 const MEDIA_TIME_SLIDER_SELECTOR = "[data-media-time-slider]";
 const PLAYER_CONTROLS: PlyrControl[] = [
   "play",
@@ -99,6 +93,7 @@ type TimelineMarker = {
 type PlayerProps = {
   src: string;
   markers?: TimelineMarker[];
+  chapters?: MediaSegment[];
   subtitles?: TranscriptSegment[];
   subtitle_display?: SubtitleDisplaySettings;
   evidence_range?: AgentEvidenceRange | null;
@@ -119,6 +114,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   {
     src,
     markers = [],
+    chapters = [],
     subtitles = [],
     subtitle_display = DEFAULT_SUBTITLE_DISPLAY_SETTINGS,
     evidence_range = null,
@@ -526,7 +522,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
           markers={plyr_markers}
           controls={PLAYER_CONTROLS}
           invertTime={false}
-          slots={{ timeSlider: <PlayerProgress /> }}
+          slots={{ timeSlider: <PlayerProgress chapters={chapters} /> }}
         />
         <PlayerStateBridge
           on_player_ready={on_player_ready}
@@ -539,47 +535,6 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     </div>
   );
 });
-
-function PlayerProgress() {
-  const {
-    markers,
-    seekTime: seek_time,
-    previewTime: preview_time,
-  } = usePlyrLayoutContext();
-  const duration = useMediaState("duration");
-  return (
-    <div className="plyr__controls__item plyr__progress__container">
-      <div className="plyr__progress">
-        <TimeSlider.Root
-          className="plyr__slider"
-          keyStep={seek_time}
-          seekingRequestThrottle={PROGRESS_SEEK_THROTTLE_MILLISECONDS}
-          pauseWhileDragging={false}
-          aria-label={PLAYER_TRANSLATIONS.Seek}
-          data-plyr="seek"
-          onMediaSeekingRequest={(time) => preview_time.set(time)}
-        >
-          <div className="plyr__slider__track" />
-          <div className="plyr__slider__thumb" />
-          <div className="plyr__slider__buffer" />
-          <span className="plyr__tooltip">
-            <TimeSlider.Value />
-          </span>
-          {Number.isFinite(duration) && duration > 0
-            ? markers?.map((marker) => (
-                <span
-                  key={`${marker.time}:${marker.label}`}
-                  className="plyr__progress__marker"
-                  title={marker.label}
-                  style={{ left: `${(marker.time / duration) * 100}%` }}
-                />
-              ))
-            : null}
-        </TimeSlider.Root>
-      </div>
-    </div>
-  );
-}
 
 function event_targets_media_time_slider(
   event: ReactPointerEvent<HTMLDivElement>,

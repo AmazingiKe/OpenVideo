@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { media_url } from "@/shared/api";
 import type {
   MediaAsset,
+  MediaSegment,
   SummaryPlayerGeometry,
   Transcript,
 } from "@/shared/types";
@@ -50,6 +51,7 @@ type FloatingSummaryPlayerProps = {
   on_geometry_change: (geometry: SummaryPlayerGeometry) => void;
   on_open_change: (open: boolean) => void;
   transcript: Transcript | null;
+  chapters?: MediaSegment[];
 };
 
 type ContainerSize = {
@@ -122,6 +124,7 @@ export function FloatingSummaryPlayer({
   on_geometry_change,
   on_open_change,
   transcript,
+  chapters = [],
 }: FloatingSummaryPlayerProps) {
   const reduce_motion = useReducedMotion();
   const player_ref = useRef<PlayerHandle>(null);
@@ -356,6 +359,7 @@ export function FloatingSummaryPlayer({
             ref={player_ref}
             src={media_url(asset.playback_url)!}
             subtitles={transcript?.segments ?? []}
+            chapters={chapters}
             subtitle_display={
               asset.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS
             }
