@@ -85,16 +85,14 @@ import {
 import { EventAnalysisCard } from "./EventAnalysisCard";
 import { MediaTimelineMarkerEditor } from "./MediaTimelineMarkerEditor";
 import { MediaTimelineActionContent } from "./MediaTimelineActionContent";
-import {
-  MediaTimelineLodCanvas,
-  TIMELINE_LOD_VALUES,
-  select_timeline_lod,
-  timeline_lod_label,
-  type TimelineLod,
-} from "./MediaTimelineLodCanvas";
+import { MediaTimelineAggregateCanvas } from "./MediaTimelineAggregateCanvas";
 import { MediaTimelineToolbar } from "./MediaTimelineToolbar";
 import { MediaTimelineTranscriptEditor } from "./MediaTimelineTranscriptEditor";
 import {
+  DEFAULT_TIMELINE_MERGE_THRESHOLD,
+  create_timeline_aggregator,
+  sort_timeline_rows,
+  select_timeline_rows,
   MARKER_SHAPE_VALUES,
   MINIMUM_ACTION_DURATION_SECONDS,
   TIMELINE_MAXIMUM_ROW_HEIGHT,
@@ -205,6 +203,7 @@ function TimelineTrackResizeHandle({
 }
 
 type MediaTimelineEditorHandlers = {
+  start_action_interaction: () => void;
   add_marker: (row_id: string, time: number) => void;
   handle_scroll: (position: { scrollLeft: number; scrollTop: number }) => void;
   open_action_editor: (
@@ -229,7 +228,6 @@ type MediaTimelineEditorHandlers = {
 type MediaTimelineEditorCanvasProps = {
   editor_data: TimelineEditor["editorData"];
   handlers_ref: RefObject<MediaTimelineEditorHandlers>;
-  lod: TimelineLod;
   scale_count: number;
   timeline_ref: RefObject<TimelineState | null>;
   zoom_pixels_per_second: number;
@@ -239,7 +237,6 @@ type MediaTimelineEditorCanvasProps = {
 const MediaTimelineEditorCanvas = memo(function MediaTimelineEditorCanvas({
   editor_data,
   handlers_ref,
-  lod,
   scale_count,
   timeline_ref,
   zoom_pixels_per_second,
@@ -269,6 +266,10 @@ const MediaTimelineEditorCanvas = memo(function MediaTimelineEditorCanvas({
       )}
       onScroll={(position) => handlers_ref.current.handle_scroll(position)}
       onChange={() => false}
+      onActionMoveStart={() => handlers_ref.current.start_action_interaction()}
+      onActionResizeStart={() =>
+        handlers_ref.current.start_action_interaction()
+      }
       onClickTimeArea={(time) => {
         handlers_ref.current.seek(time);
         return true;
@@ -294,7 +295,6 @@ const MediaTimelineEditorCanvas = memo(function MediaTimelineEditorCanvas({
         handlers_ref.current.prepare_row_context_menu(row.id, time)
       }
       onDoubleClickRow={(event, { row, time }) => {
-        if (lod !== TIMELINE_LOD_VALUES.detail) return;
         event.preventDefault();
         handlers_ref.current.add_marker(row.id, time);
       }}
@@ -530,12 +530,12 @@ export function MediaTimeline({
     handle_timeline_scroll,
     minimum_zoom_pixels_per_second,
     playhead_ref,
-    reset_editor_render_window,
     set_playhead_time,
     timeline_host_ref,
     timeline_ref,
     viewport,
     zoom_to,
+    zoom_to_range,
   } = use_media_timeline_viewport({
     asset_id,
     bounded_time,
@@ -544,9 +544,13 @@ export function MediaTimeline({
     playback_rate,
     read_playback_time,
   });
-  const [timeline_lod, set_timeline_lod] = useState<TimelineLod>(() =>
-    select_timeline_lod(viewport.zoom_pixels_per_second, null),
+  const [merge_threshold, set_merge_threshold] = useState(
+    DEFAULT_TIMELINE_MERGE_THRESHOLD,
   );
+  const [interaction_aggregation, set_interaction_aggregation] = useState<{
+    zoom: number;
+    threshold: number;
+  } | null>(null);
   const [ruler_major_interval_seconds, set_ruler_major_interval_seconds] =
     useState(() =>
       select_timeline_ruler_interval(viewport.zoom_pixels_per_second, null),
@@ -556,76 +560,169 @@ export function MediaTimeline({
       select_timeline_ruler_interval(viewport.zoom_pixels_per_second, current),
     );
   }, [viewport.zoom_pixels_per_second]);
-  useLayoutEffect(() => {
-    const next_lod = select_timeline_lod(
-      viewport.zoom_pixels_per_second,
-      timeline_lod,
-    );
-    if (next_lod === timeline_lod) return;
-    if (next_lod === TIMELINE_LOD_VALUES.detail) {
-      reset_editor_render_window();
-    }
-    set_timeline_lod(next_lod);
-  }, [
-    reset_editor_render_window,
-    timeline_lod,
-    viewport.zoom_pixels_per_second,
-  ]);
+  const marker_source_row = useMemo(
+    () =>
+      sort_timeline_rows(
+        build_timeline_rows({
+          markers,
+          candidate_markers,
+          analysis_strategy,
+          duration: content_duration,
+        }),
+      ).find((row) => row.id === TIMELINE_TRACK_IDS.marker)!,
+    [markers, candidate_markers, analysis_strategy, content_duration],
+  );
+  const transcript_source_row = useMemo(
+    () =>
+      sort_timeline_rows(
+        build_timeline_rows({
+          transcript_segments,
+          analysis_strategy,
+          duration: content_duration,
+        }),
+      ).find((row) => row.id === TIMELINE_TRACK_IDS.transcript)!,
+    [transcript_segments, analysis_strategy, content_duration],
+  );
+  const event_source_row = useMemo(
+    () =>
+      sort_timeline_rows(
+        build_timeline_rows({
+          segments,
+          analysis_strategy,
+          duration: content_duration,
+        }),
+      ).find((row) => row.id === TIMELINE_TRACK_IDS.event)!,
+    [segments, analysis_strategy, content_duration],
+  );
+  const analysis_source_rows = useMemo(
+    () =>
+      sort_timeline_rows(
+        build_timeline_rows({
+          event_analyses,
+          analysis_strategy,
+          duration: content_duration,
+        }),
+      ).filter((row) =>
+        row.id.startsWith(TIMELINE_TRACK_IDS.event_analysis_prefix),
+      ),
+    [event_analyses, analysis_strategy, content_duration],
+  );
+  const source_editor_data = useMemo(
+    () => [
+      marker_source_row,
+      transcript_source_row,
+      event_source_row,
+      ...analysis_source_rows,
+    ],
+    [
+      marker_source_row,
+      transcript_source_row,
+      event_source_row,
+      analysis_source_rows,
+    ],
+  );
   const full_editor_data = useMemo(
     () =>
-      build_timeline_rows({
-        transcript_segments,
-        segments,
-        markers,
-        candidate_markers,
-        analysis_strategy,
-        duration,
-        selected_marker_id,
+      select_timeline_rows({
+        rows: source_editor_data,
         selected_marker_ids: effective_selected_marker_ids,
         selected_transcript_indices: selected_transcript_index_set,
         selected_read_only_action_ids,
-        event_analyses,
+        analysis_strategy,
+        duration: content_duration,
         row_heights,
       }),
-    // 第三方编辑器会修改 action；保存失败时必须用新对象覆盖其本地变更。
+    // 第三方编辑器会修改 action；保存失败时重新生成选择与编辑对象。
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
-      analysis_strategy,
-      candidate_markers,
-      duration,
-      event_analyses,
-      interaction_revision,
-      markers,
-      segments,
-      selected_marker_id,
+      source_editor_data,
       effective_selected_marker_ids,
-      selected_read_only_action_ids,
       selected_transcript_index_set,
-      transcript_segments,
+      selected_read_only_action_ids,
+      analysis_strategy,
+      content_duration,
       row_heights,
+      interaction_revision,
     ],
   );
   const selected_action_range = useMemo(
     () => selected_timeline_range(full_editor_data),
     [full_editor_data],
   );
-  const detailed_editor_data = useMemo(
+  const aggregate_rows = useMemo(() => create_timeline_aggregator(), []);
+  const aggregation_zoom =
+    interaction_aggregation?.zoom ?? viewport.zoom_pixels_per_second;
+  const aggregation_threshold =
+    interaction_aggregation?.threshold ?? merge_threshold;
+  const aggregation = useMemo(
     () =>
-      filter_timeline_rows_for_window(full_editor_data, editor_render_window),
-    [editor_render_window, full_editor_data],
+      aggregate_rows(
+        source_editor_data,
+        aggregation_zoom,
+        aggregation_threshold,
+        row_heights,
+      ),
+    [
+      aggregate_rows,
+      source_editor_data,
+      aggregation_zoom,
+      aggregation_threshold,
+      row_heights,
+    ],
   );
-  const lod_editor_data = useMemo(
+  const selected_actions_by_id = useMemo(
     () =>
-      full_editor_data.map((row) => ({
-        ...row,
-        actions: [],
-      })),
+      new Map(
+        full_editor_data.flatMap((row) =>
+          row.actions.map(
+            (action) => [action.id, action as MediaTimelineAction] as const,
+          ),
+        ),
+      ),
     [full_editor_data],
   );
-  const editor_data =
-    timeline_lod === TIMELINE_LOD_VALUES.detail
-      ? detailed_editor_data
-      : lod_editor_data;
+  const selected_aggregates = useMemo(
+    () =>
+      aggregation.aggregates.map((group) => ({
+        ...group,
+        left:
+          TIMELINE_START_LEFT +
+          ((group.left - TIMELINE_START_LEFT) *
+            viewport.zoom_pixels_per_second) /
+            aggregation_zoom,
+        right:
+          TIMELINE_START_LEFT +
+          ((group.right - TIMELINE_START_LEFT) *
+            viewport.zoom_pixels_per_second) /
+            aggregation_zoom,
+        selected: group.members.some(
+          (member) => selected_actions_by_id.get(member.id)?.selected,
+        ),
+      })),
+    [
+      aggregation.aggregates,
+      selected_actions_by_id,
+      aggregation_zoom,
+      viewport.zoom_pixels_per_second,
+    ],
+  );
+  const editor_data = useMemo(
+    () =>
+      filter_timeline_rows_for_window(
+        aggregation.independent_rows.map((row) => ({
+          ...row,
+          actions: row.actions.map((action) =>
+            selected_actions_by_id.get(action.id)!,
+          ),
+        })),
+        editor_render_window,
+      ),
+    [
+      aggregation.independent_rows,
+      selected_actions_by_id,
+      editor_render_window,
+    ],
+  );
   const evidence_start_seconds = Math.min(
     Math.max(evidence_range?.start_seconds ?? 0, 0),
     duration,
@@ -729,6 +826,7 @@ export function MediaTimeline({
     set_selected_read_only_action_ids(new Set());
     set_selected_event_analysis_ids([]);
     set_row_heights({});
+    set_interaction_aggregation(null);
     on_selected_marker_ids_change?.(new Set());
     on_selected_transcript_indices_change([]);
   }, [
@@ -902,9 +1000,16 @@ export function MediaTimeline({
   ): number {
     const actions = hit_test_timeline_marquee({
       rectangle,
-      rows: editor_data,
+      rows: full_editor_data,
       viewport,
     });
+    return select_members(actions, toggle_selection);
+  }
+
+  function select_members(
+    actions: MediaTimelineAction[],
+    toggle_selection: boolean,
+  ): number {
     const hit_marker_ids = new Set<string>();
     const hit_transcript_indices = new Set<number>();
     const hit_read_only_action_ids = new Set<string>();
@@ -1133,6 +1238,7 @@ export function MediaTimeline({
     end_seconds: number,
     interaction: "move" | "resize",
   ) {
+    set_interaction_aggregation(null);
     const data = (action as MediaTimelineAction).data;
     if (data.kind !== "marker" || !data.source_id) return;
     const marker = markers.find((item) => item.marker_id === data.source_id);
@@ -1196,6 +1302,7 @@ export function MediaTimeline({
   }
 
   const editor_handlers_ref = useRef<MediaTimelineEditorHandlers>({
+    start_action_interaction: () => undefined,
     add_marker: () => undefined,
     handle_scroll: () => undefined,
     open_action_editor: () => undefined,
@@ -1207,6 +1314,11 @@ export function MediaTimeline({
   });
   useLayoutEffect(() => {
     editor_handlers_ref.current = {
+      start_action_interaction: () =>
+        set_interaction_aggregation({
+          zoom: viewport.zoom_pixels_per_second,
+          threshold: merge_threshold,
+        }),
       add_marker: (row_id, time) => {
         if (row_id !== TIMELINE_TRACK_IDS.marker) return;
         void add_marker_and_select(Math.min(Math.max(time, 0), duration));
@@ -1232,6 +1344,8 @@ export function MediaTimeline({
         minimum_zoom_pixels_per_second={minimum_zoom_pixels_per_second}
         zoom_pixels_per_second={viewport.zoom_pixels_per_second}
         on_zoom_change={zoom_to}
+        merge_threshold={merge_threshold}
+        on_merge_threshold_change={set_merge_threshold}
         context_sources={
           on_add_agent_context ? (
             <>
@@ -1293,10 +1407,7 @@ export function MediaTimeline({
                 const row_height =
                   row_height_by_id.get(track.id) ??
                   default_timeline_row_height(track.id);
-                const track_state =
-                  timeline_lod === TIMELINE_LOD_VALUES.detail
-                    ? track.state
-                    : timeline_lod_label(timeline_lod);
+                const track_state = track.state;
                 return (
                   <div
                     key={track.id}
@@ -1307,8 +1418,7 @@ export function MediaTimeline({
                     <TrackIcon aria-hidden="true" />
                     <span>{track.name}</span>
                     <small>{track_state}</small>
-                    {track.state === "只读" &&
-                    timeline_lod === TIMELINE_LOD_VALUES.detail ? (
+                    {track.state === "只读" ? (
                       <LockKeyhole aria-hidden="true" />
                     ) : null}
                     <TimelineTrackResizeHandle
@@ -1332,17 +1442,10 @@ export function MediaTimeline({
             <div
               ref={timeline_host_ref}
               className="media_timeline_canvas"
-              data-lod={timeline_lod}
-              onPointerDownCapture={
-                timeline_lod === TIMELINE_LOD_VALUES.detail
-                  ? start_marquee
-                  : undefined
-              }
+              onPointerDownCapture={start_marquee}
               onContextMenu={prepare_timeline_context_menu}
               aria-label="时间线画布；Ctrl+M 添加标记，方括号设置范围，右键转写轨道可转录，Shift+F10 打开菜单"
-              aria-description={timeline_lod_accessible_description(
-                timeline_lod,
-              )}
+              aria-description="独立片段可编辑；聚合块单击选择，双击放大，空格选择，Enter 放大"
             >
               <TimelineRulerCanvas
                 canvas_width={canvas_width}
@@ -1386,7 +1489,6 @@ export function MediaTimeline({
               <MediaTimelineEditorCanvas
                 editor_data={editor_data}
                 handlers_ref={editor_handlers_ref}
-                lod={timeline_lod}
                 scale_count={scale_count}
                 timeline_ref={timeline_ref}
                 zoom_pixels_per_second={viewport.zoom_pixels_per_second}
@@ -1414,17 +1516,14 @@ export function MediaTimeline({
                   aria-hidden="true"
                 />
               ) : null}
-              {timeline_lod !== TIMELINE_LOD_VALUES.detail ? (
-                <MediaTimelineLodCanvas
-                  canvas_width={canvas_width}
-                  lod={timeline_lod}
-                  rows={full_editor_data}
-                  scroll_left={viewport.scroll_left}
-                  scroll_top={viewport.scroll_top}
-                  start_left={TIMELINE_START_LEFT}
-                  zoom_pixels_per_second={viewport.zoom_pixels_per_second}
-                />
-              ) : null}
+              <MediaTimelineAggregateCanvas
+                aggregates={selected_aggregates}
+                canvas_width={canvas_width}
+                scroll_left={viewport.scroll_left}
+                scroll_top={viewport.scroll_top}
+                on_select={select_members}
+                on_zoom={zoom_to_range}
+              />
               {evidence_range_style && evidence_range ? (
                 <div
                   className="media_timeline_evidence_range"
@@ -1433,8 +1532,7 @@ export function MediaTimeline({
                   aria-hidden="true"
                 />
               ) : null}
-              {marquee_rectangle &&
-              timeline_lod === TIMELINE_LOD_VALUES.detail ? (
+              {marquee_rectangle ? (
                 <div
                   className="media_timeline_marquee"
                   style={{
@@ -1774,16 +1872,6 @@ export function MediaTimeline({
 
 function format_ruler_accessible_time(seconds: number): string {
   return `${normalize_marker_time(seconds).toFixed(3)} 秒`;
-}
-
-function timeline_lod_accessible_description(lod: TimelineLod): string {
-  if (lod === TIMELINE_LOD_VALUES.overview) {
-    return "当前为概览层级，片段已聚合为区块；放大时间线后可选择和编辑单个片段";
-  }
-  if (lod === TIMELINE_LOD_VALUES.compact) {
-    return "当前为简化层级，仅显示无文字片段；继续放大后可选择和编辑单个片段";
-  }
-  return "当前为详细层级，可选择、移动和编辑时间线片段";
 }
 
 function is_text_editing_target(target: EventTarget | null): boolean {

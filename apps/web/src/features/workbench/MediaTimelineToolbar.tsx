@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { format_time } from "@/shared/format";
 import {
+  DEFAULT_TIMELINE_MERGE_THRESHOLD,
+  MAXIMUM_TIMELINE_MERGE_THRESHOLD,
   DEFAULT_ZOOM_PIXELS_PER_SECOND,
   MAXIMUM_ZOOM_PIXELS_PER_SECOND,
 } from "./media_timeline_calculations";
@@ -25,6 +27,8 @@ type MediaTimelineToolbarProps = {
   minimum_zoom_pixels_per_second: number;
   zoom_pixels_per_second: number;
   on_zoom_change: (zoom_pixels_per_second: number) => void;
+  merge_threshold: number;
+  on_merge_threshold_change: (threshold: number) => void;
   context_sources?: ReactNode;
 };
 
@@ -36,24 +40,41 @@ export function MediaTimelineToolbar({
   zoom_pixels_per_second,
   on_zoom_change,
   context_sources,
+  merge_threshold,
+  on_merge_threshold_change,
 }: MediaTimelineToolbarProps) {
   const bounded_time = current_time;
+  const threshold_frame_ref = useRef<number | null>(null);
+  const pending_threshold_ref = useRef(merge_threshold);
+  const threshold_callback_ref = useRef(on_merge_threshold_change);
   const scheduled_zoom_ref = useRef<number | null>(null);
   const zoom_frame_ref = useRef<number | null>(null);
   const on_zoom_change_ref = useRef(on_zoom_change);
 
   useLayoutEffect(() => {
     on_zoom_change_ref.current = on_zoom_change;
+    threshold_callback_ref.current = on_merge_threshold_change;
   });
 
   useEffect(
     () => () => {
+      if (threshold_frame_ref.current !== null)
+        window.cancelAnimationFrame(threshold_frame_ref.current);
       if (zoom_frame_ref.current !== null) {
         window.cancelAnimationFrame(zoom_frame_ref.current);
       }
     },
     [],
   );
+
+  function schedule_threshold(threshold: number) {
+    pending_threshold_ref.current = threshold;
+    if (threshold_frame_ref.current !== null) return;
+    threshold_frame_ref.current = window.requestAnimationFrame(() => {
+      threshold_frame_ref.current = null;
+      threshold_callback_ref.current(pending_threshold_ref.current);
+    });
+  }
 
   function apply_scheduled_zoom() {
     zoom_frame_ref.current = null;
@@ -84,6 +105,25 @@ export function MediaTimelineToolbar({
           {format_time(bounded_time)} / {format_time(duration)}
         </output>
         {context_sources}
+      </div>
+      <div className="media_timeline_merge_threshold">
+        <span>合并阈值</span>
+        <Slider
+          value={[merge_threshold]}
+          min={0}
+          max={MAXIMUM_TIMELINE_MERGE_THRESHOLD}
+          step={1}
+          onValueChange={([threshold = DEFAULT_TIMELINE_MERGE_THRESHOLD]) =>
+            schedule_threshold(threshold)
+          }
+          aria-label="合并阈值"
+          aria-valuetext={
+            merge_threshold === 0 ? "关闭" : `${merge_threshold} px`
+          }
+        />
+        <output aria-label="当前合并阈值" aria-live="polite">
+          {merge_threshold === 0 ? "关闭" : `${merge_threshold} px`}
+        </output>
       </div>
       <div className="media_timeline_zoom" aria-label="时间线缩放">
         <Button

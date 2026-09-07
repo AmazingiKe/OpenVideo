@@ -366,7 +366,11 @@ export const DynamicAnalysisTracks: Story = {
 export const TemporaryRangeSelection: Story = {
   play: async ({ canvasElement }) => {
     const story = within(canvasElement);
-    await userEvent.click(story.getByRole("button", { name: /范围标记/ }));
+    story.getByRole("slider", { name: "时间线缩放比例" }).focus();
+    await userEvent.keyboard("{Home}");
+    await userEvent.click(
+      await story.findByRole("button", { name: /范围标记/ }),
+    );
     await userEvent.keyboard("[BracketLeft][BracketRight]");
 
     await waitFor(() => {
@@ -587,9 +591,69 @@ export const TwoThousandActions: Story = {
     await userEvent.keyboard("{Home}");
     await waitFor(() =>
       expect(
-        canvasElement.querySelector(".media_timeline_lod_canvas"),
-      ).toHaveAttribute("data-lod", "overview"),
+        canvasElement.querySelector(".media_timeline_aggregate_hit"),
+      ).toBeInTheDocument(),
     );
     expect(story.queryAllByRole("button", { name: /^转写：/ })).toHaveLength(0);
+  },
+};
+
+export const MixedDensity: Story = {
+  args: {
+    initial_time: 0,
+    transcript_segments: [
+      ...Array.from({ length: 32 }, (_, index) => ({
+        start_seconds: 1 + index * 0.05,
+        end_seconds: 1.04 + index * 0.05,
+        text: `密集片段 ${index + 1}`,
+        emotion: null,
+        audio_events: [],
+      })),
+      {
+        start_seconds: 4,
+        end_seconds: 9,
+        text: "宽片段继续支持编辑",
+        emotion: null,
+        audio_events: [],
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    const group = await story.findByRole("button", { name: /^聚合 32/ });
+    const zoom = story.getByLabelText("当前时间线缩放").textContent;
+    await userEvent.click(group);
+    expect(group).toHaveAttribute("aria-pressed", "true");
+    expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(zoom!);
+    expect(
+      story.getByRole("button", { name: /转写：宽片段继续支持编辑/ }),
+    ).toBeVisible();
+    await userEvent.dblClick(group);
+    await waitFor(() =>
+      expect(story.getByLabelText("当前时间线缩放").textContent).not.toBe(zoom),
+    );
+  },
+};
+
+export const MixedDensityDark: Story = {
+  ...MixedDensity,
+  decorators: [DARK_TIMELINE_DECORATOR],
+};
+
+export const MixedDensityNarrow: Story = {
+  args: MixedDensity.args,
+  globals: { viewport: { value: "mobile1", isRotated: false } },
+};
+
+export const MergingDisabled: Story = {
+  args: MixedDensity.args,
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    story.getByRole("slider", { name: "合并阈值" }).focus();
+    await userEvent.keyboard("{Home}");
+    await waitFor(() =>
+      expect(story.getByLabelText("当前合并阈值")).toHaveTextContent("关闭"),
+    );
+    expect(story.queryByRole("button", { name: /^聚合/ })).toBeNull();
   },
 };

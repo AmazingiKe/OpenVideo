@@ -17,6 +17,8 @@ import {
   calculate_minimum_timeline_zoom,
   calculate_playhead_follow_scroll_left,
   calculate_zoom_viewport,
+  calculate_timeline_range_viewport,
+  type TimelineSelectionRange,
   consume_timeline_wheel_zoom_frame,
   create_timeline_render_window,
   extend_timeline_render_window,
@@ -170,19 +172,6 @@ export function use_media_timeline_viewport({
     },
     [],
   );
-
-  const reset_editor_render_window = useCallback(() => {
-    const next_render_window = create_timeline_render_window({
-      viewport: viewport_ref.current,
-      canvas_width: render_metrics_ref.current.canvas_width,
-      duration: render_metrics_ref.current.duration,
-    });
-    set_render_window((current) =>
-      timeline_render_windows_equal(current, next_render_window)
-        ? current
-        : next_render_window,
-    );
-  }, []);
 
   const set_playhead_time = useCallback(
     (time: number, options: PlayheadPositionOptions = {}) => {
@@ -421,9 +410,19 @@ export function use_media_timeline_viewport({
     }
 
     measure_canvas_width();
-    const resize_observer = new ResizeObserver(measure_canvas_width);
+    let resize_frame: number | null = null;
+    const resize_observer = new ResizeObserver(() => {
+      if (resize_frame !== null) return;
+      resize_frame = window.requestAnimationFrame(() => {
+        resize_frame = null;
+        measure_canvas_width();
+      });
+    });
     resize_observer.observe(timeline_element);
-    return () => resize_observer.disconnect();
+    return () => {
+      resize_observer.disconnect();
+      if (resize_frame !== null) window.cancelAnimationFrame(resize_frame);
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -487,6 +486,28 @@ export function use_media_timeline_viewport({
     scale_count,
   ]);
 
+  const zoom_to_range = useCallback(
+    (range: TimelineSelectionRange) => {
+      commit_pending_scroll();
+      cancel_pending_wheel_zoom();
+      const metrics = render_metrics_ref.current;
+      const next_viewport = calculate_timeline_range_viewport(
+        range,
+        metrics.canvas_width,
+        metrics.duration,
+      );
+      commit_zoom_viewport(next_viewport);
+      set_render_window(
+        create_timeline_render_window({
+          viewport: next_viewport,
+          canvas_width: metrics.canvas_width,
+          duration: metrics.duration,
+        }),
+      );
+    },
+    [commit_pending_scroll, cancel_pending_wheel_zoom, commit_zoom_viewport],
+  );
+
   const zoom_to = useCallback(
     (requested_zoom: number, anchor_x?: number) => {
       commit_pending_scroll();
@@ -503,6 +524,13 @@ export function use_media_timeline_viewport({
         scale_count,
       });
       commit_zoom_viewport(next_viewport);
+      set_render_window(
+        create_timeline_render_window({
+          viewport: next_viewport,
+          canvas_width: viewport_width,
+          duration: render_metrics_ref.current.duration,
+        }),
+      );
     },
     [
       cancel_pending_wheel_zoom,
@@ -627,11 +655,11 @@ export function use_media_timeline_viewport({
     handle_timeline_scroll,
     minimum_zoom_pixels_per_second,
     playhead_ref,
-    reset_editor_render_window,
     set_playhead_time,
     timeline_host_ref,
     timeline_ref,
     viewport,
     zoom_to,
+    zoom_to_range,
   };
 }

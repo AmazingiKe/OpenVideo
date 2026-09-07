@@ -23,6 +23,7 @@ import type {
   TranscriptSegment,
 } from "@/shared/types";
 import { MediaTimeline } from "./MediaTimeline";
+import * as timeline_calculations from "./media_timeline_calculations";
 
 type MockTimelineAction =
   TimelineEditor["editorData"][number]["actions"][number] & {
@@ -398,6 +399,17 @@ function timeline_event_analysis(start_seconds = 8): EventAnalysis {
   };
 }
 
+function measure_wide_timeline() {
+  const original = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      if (this.classList.contains("media_timeline_canvas"))
+        return new DOMRect(0, 0, 6000, 320);
+      return original.call(this);
+    },
+  );
+}
+
 function install_timeline_bounds(width = 2_000, height = 320) {
   const timeline_canvas = screen.getByLabelText(/时间线画布/);
   vi.spyOn(timeline_canvas, "getBoundingClientRect").mockReturnValue({
@@ -461,6 +473,192 @@ describe("MediaTimeline", () => {
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 
+  it("selects aggregate members on click and Space, and zooms only on double click or Enter", () => {
+    const { seek_to, change_selected_transcript_indices } = render_timeline({
+      transcript_segments: [
+        {
+          start_seconds: 1,
+          end_seconds: 1.04,
+          text: "短一",
+          emotion: null,
+          audio_events: [],
+        },
+        {
+          start_seconds: 1.05,
+          end_seconds: 1.09,
+          text: "短二",
+          emotion: null,
+          audio_events: [],
+        },
+        {
+          start_seconds: 3,
+          end_seconds: 8,
+          text: "保留编辑",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
+    });
+    const block = screen.getByRole("button", { name: /^聚合 2/ });
+    const original_zoom = timeline_props().scaleWidth;
+    fireEvent.click(block);
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([0, 1]);
+    expect(timeline_props().scaleWidth).toBe(original_zoom);
+    expect(seek_to).not.toHaveBeenCalled();
+    expect(block).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(block, { ctrlKey: true });
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([]);
+    fireEvent.keyDown(block, { key: " " });
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([0, 1]);
+    expect(timeline_props().scaleWidth).toBe(original_zoom);
+    expect(
+      screen.getByRole("button", { name: /转写：保留编辑/ }),
+    ).toBeInTheDocument();
+    fireEvent.doubleClick(block);
+    expect(timeline_props().scaleWidth).toBe(320);
+    expect(seek_to).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: /^聚合 2/ }), {
+      key: "Enter",
+    });
+    expect(timeline_props().scaleWidth).toBe(320);
+    expect(seek_to).not.toHaveBeenCalled();
+  });
+
+  it("coalesces threshold input per frame, disables merging, and retains threshold across assets", () => {
+    const frames = install_animation_frame_mock();
+    const { replace_asset_id } = render_timeline({
+      transcript_segments: [
+        {
+          start_seconds: 1,
+          end_seconds: 1.04,
+          text: "短一",
+          emotion: null,
+          audio_events: [],
+        },
+        {
+          start_seconds: 1.05,
+          end_seconds: 1.09,
+          text: "短二",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
+    });
+    const slider = screen.getByRole("slider", { name: "合并阈值" });
+    expect(slider).toHaveAttribute("aria-valuenow", "8");
+    fireEvent.keyDown(slider, { key: "End" });
+    fireEvent.keyDown(slider, { key: "Home" });
+    expect(screen.getByRole("button", { name: /^聚合 2/ })).toBeInTheDocument();
+    frames.run_next_frame();
+    expect(slider).toHaveAttribute("aria-valuenow", "0");
+    expect(screen.getByLabelText("当前合并阈值")).toHaveTextContent("关闭");
+    expect(screen.queryByRole("button", { name: /^聚合/ })).toBeNull();
+    expect(transcript_actions()).toHaveLength(2);
+    act(() => replace_asset_id("asset-0198d12345677890abcdef1234567899"));
+    expect(slider).toHaveAttribute("aria-valuenow", "0");
+  });
+
+  it("marquee-selects original member ranges inside an aggregate", () => {
+    const { change_selected_transcript_indices } = render_timeline({
+      transcript_segments: [
+        {
+          start_seconds: 1,
+          end_seconds: 1.04,
+          text: "短一",
+          emotion: null,
+          audio_events: [],
+        },
+        {
+          start_seconds: 1.05,
+          end_seconds: 1.09,
+          text: "短二",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
+    });
+    drag_timeline_marquee({ from: { x: 95, y: 66 }, to: { x: 99, y: 90 } });
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([0]);
+  });
+
+  it("does not recalculate aggregation for playback or selection updates", () => {
+    const scan = vi.fn(timeline_calculations.create_timeline_aggregator());
+    vi.spyOn(
+      timeline_calculations,
+      "create_timeline_aggregator",
+    ).mockReturnValue(scan);
+    const { change_current_time } = render_timeline();
+    const initial_calls = scan.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: /转写：原始转写/ }));
+    expect(scan).toHaveBeenCalledTimes(initial_calls);
+    act(() => change_current_time(30.2));
+    expect(scan).toHaveBeenCalledTimes(initial_calls);
+  });
+
+  it("keeps grouping fixed until an action interaction finishes", async () => {
+    const frames = install_animation_frame_mock();
+    const { replace_markers } = render_timeline({
+      transcript_segments: [
+        {
+          start_seconds: 1,
+          end_seconds: 1.04,
+          text: "短一",
+          emotion: null,
+          audio_events: [],
+        },
+        {
+          start_seconds: 1.05,
+          end_seconds: 1.09,
+          text: "短二",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
+    });
+    act(() =>
+      replace_markers([{ ...RANGE_MARKER, start_seconds: 5, end_seconds: 8 }]),
+    );
+    const action = action_by_kind("marker");
+    const row = timeline_props().editorData[0];
+    act(() => timeline_props().onActionMoveStart?.({ action, row }));
+    fireEvent.keyDown(screen.getByRole("slider", { name: "合并阈值" }), {
+      key: "Home",
+    });
+    frames.run_next_frame();
+    expect(screen.getByRole("button", { name: /^聚合 2/ })).toBeInTheDocument();
+    await act(async () =>
+      timeline_props().onActionMoveEnd?.({ action, row, start: 6, end: 9 }),
+    );
+    expect(screen.queryByRole("button", { name: /^聚合/ })).toBeNull();
+  });
+
+  it("retains point-marker groups after selection and recomputes after source deletion", () => {
+    const frames = install_animation_frame_mock();
+    const { replace_markers } = render_timeline();
+    act(() =>
+      replace_markers([
+        { ...POINT_MARKER, start_seconds: 1 },
+        {
+          ...POINT_MARKER,
+          marker_id: RANGE_MARKER.marker_id,
+          start_seconds: 1.1,
+        },
+      ]),
+    );
+    fireEvent.keyDown(screen.getByRole("slider", { name: "时间线缩放比例" }), {
+      key: "Home",
+    });
+    frames.run_next_frame();
+    const group = screen.getByRole("button", { name: /^聚合 2/ });
+    fireEvent.click(group);
+    expect(screen.getByRole("button", { name: /^聚合 2/ })).toBe(group);
+    expect(group).toHaveAttribute("aria-pressed", "true");
+    act(() => replace_markers([{ ...POINT_MARKER, start_seconds: 1 }]));
+    expect(screen.queryByRole("button", { name: /^聚合/ })).toBeNull();
+    expect(action_by_kind("marker").id).toBe(POINT_MARKER.marker_id);
+  });
+
   it("adds selected subtitles or a focus range to the visible AI context", () => {
     const { add_agent_context } = render_timeline({
       focus_selection: {
@@ -522,6 +720,7 @@ describe("MediaTimeline", () => {
   });
 
   it("maps four action kinds without exposing mutable business objects", () => {
+    measure_wide_timeline();
     const source_markers = [POINT_MARKER, RANGE_MARKER, CANDIDATE_MARKER].map(
       (marker) => ({ ...marker }),
     );
@@ -630,6 +829,7 @@ describe("MediaTimeline", () => {
   });
 
   it("replaces selection with a normal marquee and toggles hits with Ctrl", () => {
+    measure_wide_timeline();
     render_timeline({
       candidate_markers: [
         { ...CANDIDATE_MARKER, start_seconds: 10, end_seconds: 11 },
@@ -675,6 +875,7 @@ describe("MediaTimeline", () => {
   });
 
   it("clears selection on a blank click and cancels an active marquee with Escape", () => {
+    measure_wide_timeline();
     const { change_selected_marker_ids, change_selected_transcript_indices } =
       render_timeline();
     drag_timeline_marquee({
@@ -835,7 +1036,7 @@ describe("MediaTimeline", () => {
         scrollWidth: 9600,
       });
     });
-    expect(timeline_props().editorData).toBe(initial_editor_data);
+    expect(timeline_props().editorData).toEqual(initial_editor_data);
 
     fireEvent.click(screen.getByRole("button", { name: /转写：原始转写/ }));
     const selected_editor_data = timeline_props().editorData;
@@ -1132,6 +1333,7 @@ describe("MediaTimeline", () => {
   });
 
   it("sets temporary range endpoints from the context menu and shortcuts", async () => {
+    measure_wide_timeline();
     const { set_focus_in, set_focus_out, clear_focus } = render_timeline({
       focus_selection: {
         selection_id: "focus-selection-0198d12345677890abcdef1234567890",
@@ -1302,6 +1504,7 @@ describe("MediaTimeline", () => {
   });
 
   it("opens marker editing with Enter and preserves rating and deletion", async () => {
+    measure_wide_timeline();
     const { update_marker, delete_marker } = render_timeline();
     const marker_button = screen.getAllByRole("button", {
       name: /点标记/,
@@ -1346,6 +1549,7 @@ describe("MediaTimeline", () => {
   });
 
   it("persists move and resize only at interaction end with media precision", async () => {
+    measure_wide_timeline();
     const { update_marker } = render_timeline();
     fireEvent.click(screen.getAllByRole("button", { name: /点标记/ })[0]);
     const point_action = action_by_kind("marker");
@@ -1398,6 +1602,7 @@ describe("MediaTimeline", () => {
   });
 
   it("rolls back a failed drag while keeping the editor and viewport", async () => {
+    measure_wide_timeline();
     const update_marker = vi.fn().mockRejectedValue(new Error("保存失败"));
     const { result } = render_timeline({ update_marker });
     const editor_instance = screen.getByTestId("timeline-editor-instance");
@@ -1453,15 +1658,10 @@ describe("MediaTimeline", () => {
       expect_stable_geometry();
     }
     expect(timeline_props().scaleWidth).toBeLessThan(27.43);
-    expect(
-      timeline_props().editorData.every((row) => row.actions.length === 0),
-    ).toBe(true);
-    expect(
-      result.container.querySelector(".media_timeline_lod_canvas"),
-    ).toHaveAttribute("data-lod", "compact");
+    expect(transcript_actions().length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/时间线画布/)).toHaveAttribute(
       "aria-description",
-      expect.stringContaining("简化层级"),
+      expect.stringContaining("双击放大"),
     );
 
     const zoom_in = screen.getByRole("button", { name: "放大时间线" });
@@ -1470,9 +1670,9 @@ describe("MediaTimeline", () => {
       expect_stable_geometry();
     }
     expect(timeline_props().scaleWidth).toBe(320);
-    expect(transcript_actions().length).toBeGreaterThan(0);
+    expect(timeline_props().editorData).toHaveLength(3);
     expect(
-      result.container.querySelector(".media_timeline_lod_canvas"),
+      result.container.querySelector(".media_timeline_aggregate_hit"),
     ).not.toBeInTheDocument();
   });
 
@@ -1496,7 +1696,7 @@ describe("MediaTimeline", () => {
     ).toBeLessThan(16);
   });
 
-  it("uses aggregated blocks instead of action DOM at overview zoom", () => {
+  it("uses aggregated blocks only when individual widths are below threshold", () => {
     const segments: TranscriptSegment[] = Array.from(
       { length: 2_000 },
       (_, index) => ({
@@ -1514,15 +1714,13 @@ describe("MediaTimeline", () => {
     });
     const zoom_out = screen.getByRole("button", { name: "缩小时间线" });
 
-    for (let index = 0; index < 9; index += 1) fireEvent.click(zoom_out);
+    for (let index = 0; index < 12; index += 1) fireEvent.click(zoom_out);
 
     expect(timeline_props().scaleWidth).toBeLessThanOrEqual(12);
+    expect(transcript_actions().length === 0).toBe(true);
     expect(
-      timeline_props().editorData.every((row) => row.actions.length === 0),
-    ).toBe(true);
-    expect(
-      result.container.querySelector(".media_timeline_lod_canvas"),
-    ).toHaveAttribute("data-lod", "overview");
+      result.container.querySelector(".media_timeline_aggregate_hit"),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^转写：/ })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
@@ -1762,7 +1960,7 @@ describe("MediaTimeline", () => {
     });
     animation_frames.run_next_frame();
 
-    expect(timeline_props().editorData).toBe(initial_editor_data);
+    expect(timeline_props().editorData).toEqual(initial_editor_data);
     expect(screen.getByTestId("timeline-editor-instance")).toBe(
       editor_instance,
     );
