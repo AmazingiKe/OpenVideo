@@ -28,7 +28,9 @@ def create_client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(Settings(library_path=tmp_path)))
 
 
-def test_marker_lifecycle_defaults_importance_and_accepts_partial_updates(tmp_path: Path):
+def test_marker_lifecycle_defaults_importance_and_accepts_partial_updates(
+    tmp_path: Path,
+):
     with create_client(tmp_path) as client:
         created_response = client.post(
             f"/api/media/assets/{ASSET_ID}/markers",
@@ -67,6 +69,7 @@ def test_marker_lifecycle_defaults_importance_and_accepts_partial_updates(tmp_pa
                 "start_seconds": 10,
                 "end_seconds": 18,
                 "importance": 5,
+                "content": "",
             }
         ]
         assert (
@@ -75,6 +78,32 @@ def test_marker_lifecycle_defaults_importance_and_accepts_partial_updates(tmp_pa
             ).status_code
             == 204
         )
+
+
+def test_marker_content_is_trimmed_persisted_and_can_be_cleared(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        created = client.post(
+            f"/api/media/assets/{ASSET_ID}/markers",
+            json={"start_seconds": 10, "end_seconds": 18, "content": "  推导过程\n "},
+        )
+        assert created.status_code == 201
+        marker = created.json()
+        assert marker["content"] == "推导过程"
+        assert marker["importance"] == 0
+        marker_url = f"/api/media/assets/{ASSET_ID}/markers/{marker['marker_id']}"
+        updated = client.patch(
+            marker_url, json={"content": "  对比结果  ", "importance": 4}
+        )
+        assert updated.json()["content"] == "对比结果"
+        assert updated.json()["start_seconds"] == 10
+        assert client.patch(marker_url, json={"content": None}).status_code == 422
+    with TestClient(create_app(Settings(library_path=tmp_path))) as client:
+        restored = client.get(f"/api/media/assets/{ASSET_ID}/markers").json()[0]
+        assert restored["content"] == "对比结果"
+        assert restored["importance"] == 4
+        cleared = client.patch(marker_url, json={"content": " \n ", "importance": 0})
+        assert cleared.json()["content"] == ""
+        assert cleared.json()["importance"] == 0
 
 
 def test_markers_reject_missing_assets_invalid_ranges_and_importance(tmp_path: Path):

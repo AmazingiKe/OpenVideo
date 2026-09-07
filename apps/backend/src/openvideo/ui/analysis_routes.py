@@ -18,7 +18,12 @@ from openvideo.core.analysis_models import (
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MarkerImportance, MediaMarker, MediaSegment
+from openvideo.core.media_models import (
+    MarkerContent,
+    MarkerImportance,
+    MediaMarker,
+    MediaSegment,
+)
 from openvideo.core.transcription_models import (
     Transcript,
     TranscriptionComputeType,
@@ -36,6 +41,7 @@ class MarkerCreateRequest(BaseModel):
     start_seconds: float = Field(ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
     importance: MarkerImportance = 0
+    content: MarkerContent = ""
 
 
 class MarkerUpdateRequest(BaseModel):
@@ -44,6 +50,7 @@ class MarkerUpdateRequest(BaseModel):
     start_seconds: float | None = Field(default=None, ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
     importance: MarkerImportance | None = None
+    content: MarkerContent | None = None
 
     @model_validator(mode="after")
     def validate_partial_update(self) -> "MarkerUpdateRequest":
@@ -53,6 +60,8 @@ class MarkerUpdateRequest(BaseModel):
             raise ValueError("开始时间不能为 null")
         if "importance" in self.model_fields_set and self.importance is None:
             raise ValueError("重要程度不能为 null")
+        if "content" in self.model_fields_set and self.content is None:
+            raise ValueError("标记内容不能为 null，请使用空字符串清空")
         return self
 
 
@@ -260,6 +269,7 @@ def register_analysis_routes(
             start_seconds=request.start_seconds,
             end_seconds=request.end_seconds,
             importance=request.importance,
+            content=request.content,
         )
         return library().create_marker(marker)
 
@@ -286,9 +296,7 @@ def register_analysis_routes(
         end_seconds = changes.get("end_seconds", current.end_seconds)
         assert isinstance(start_seconds, int | float)
         assert end_seconds is None or isinstance(end_seconds, int | float)
-        validate_marker_bounds(
-            start_seconds, end_seconds, asset.duration_seconds
-        )
+        validate_marker_bounds(start_seconds, end_seconds, asset.duration_seconds)
         try:
             marker = library().update_marker(
                 asset_id,

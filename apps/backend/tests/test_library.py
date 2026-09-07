@@ -211,6 +211,7 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
         start_seconds=2,
         end_seconds=4,
         importance=4,
+        content="推导过程",
     )
     library.create_marker(marker)
     library.save_transcript(
@@ -250,6 +251,7 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
     ]
     assert rebuilt.load_markers(ASSET_ID)[0].end_seconds == 4
     assert rebuilt.load_markers(ASSET_ID)[0].importance == 4
+    assert rebuilt.load_markers(ASSET_ID)[0].content == "推导过程"
     assert rebuilt.load_summary_document(DOCUMENT_ID).markdown == "# 用户总结\n"
     assert rebuilt.load_agent_sessions() == []
     assert rebuilt.load_summary_media(ASSET_ID)[0].media_id == MEDIA_ID
@@ -278,6 +280,7 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
         "start_seconds",
         "end_seconds",
         "importance",
+        "content",
     }
     assert "marker_tags" not in tables
     markers_file = json.loads(
@@ -290,8 +293,44 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
         "start_seconds",
         "end_seconds",
         "importance",
+        "content",
     }
     rebuilt.close()
+
+
+def test_marker_content_column_migrates_without_rebuilding_database(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+    library.create_marker(
+        MediaMarker(
+            marker_id=MARKER_ID,
+            asset_id=ASSET_ID,
+            start_seconds=2,
+            importance=3,
+        )
+    )
+    marker_path = library.asset_directory(ASSET_ID) / "markers.json"
+    marker_file = json.loads(marker_path.read_text(encoding="utf-8"))
+    del marker_file["markers"][0]["content"]
+    atomic_write_text(marker_path, json.dumps(marker_file))
+    with library._db():
+        library._db().execute("ALTER TABLE markers DROP COLUMN content")
+        library._db().execute(
+            "ALTER TABLE event_analyses DROP COLUMN marker_annotation"
+        )
+        library._db().execute("CREATE TABLE migration_sentinel (value TEXT)")
+        library._db().execute("INSERT INTO migration_sentinel VALUES ('preserved')")
+    library.close()
+    restored = MediaLibrary.open(tmp_path)
+    assert restored.load_markers(ASSET_ID)[0].content == ""
+    assert restored.load_markers(ASSET_ID)[0].importance == 3
+    assert (
+        restored._db().execute("SELECT value FROM migration_sentinel").fetchone()[0]
+        == "preserved"
+    )
+    restored.update_marker(ASSET_ID, MARKER_ID, changes={"content": "新增注释"})
+    assert restored.load_markers(ASSET_ID)[0].content == "新增注释"
+    restored.close()
 
 
 def test_old_marker_file_is_rejected_without_migration(tmp_path: Path):

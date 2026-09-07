@@ -35,6 +35,8 @@ def request(
 def test_agent_create_update_and_merge_preserve_user_importance():
     low = marker("marker-0123456789abcdef0123456789abcdef", 2)
     high = marker("marker-1123456789abcdef0123456789abcdef", 5)
+    low.content = "推导过程"
+    high.content = "结果对比"
 
     created = build_proposed_marker(
         ASSET_ID, request(MarkerChangeOperation.CREATE, []), []
@@ -53,6 +55,9 @@ def test_agent_create_update_and_merge_preserve_user_importance():
     assert created is not None and created.importance == 0
     assert updated is not None and updated.importance == 2
     assert merged is not None and merged.importance == 5
+    assert created.content == ""
+    assert updated.content == "推导过程"
+    assert merged.content == "推导过程\n\n结果对比"
 
 
 def test_agent_cannot_submit_importance():

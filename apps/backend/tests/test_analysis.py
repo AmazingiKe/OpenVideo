@@ -145,7 +145,7 @@ def test_strategy_ranges_validate_five_second_steps(value: int):
 
 @pytest.mark.parametrize(
     ("importance", "expected_weight"),
-    [(0, 0), (1, 0.2), (3, 0.6), (5, 1)],
+    [(0, 0.2), (1, 0.2), (3, 0.6), (5, 1)],
 )
 def test_marker_importance_scales_weight(
     importance: int,

@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openvideo.core.analysis_models import AnalysisDepth
-from openvideo.core.media_models import MediaSegment
+from openvideo.core.media_models import MarkerContent, MarkerImportance, MediaSegment
 from openvideo.core.transcription_models import TranscriptSegment
 
 
@@ -56,6 +56,8 @@ class MarkerEventAnalysisTarget(BaseModel):
     marker_id: str
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
+    content: MarkerContent = ""
+    importance: MarkerImportance = 0
 
     @model_validator(mode="after")
     def validate_range(self) -> "MarkerEventAnalysisTarget":

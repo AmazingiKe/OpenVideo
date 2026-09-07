@@ -9,7 +9,12 @@ from openvideo.core.analysis_models import (
     AnalysisDepth,
     AnalysisStrategy,
 )
-from openvideo.core.media_models import MediaMarker
+from openvideo.core.media_models import (
+    MAXIMUM_MARKER_IMPORTANCE,
+    MarkerImportance,
+    MediaMarker,
+    effective_marker_importance,
+)
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 
 
@@ -43,8 +48,9 @@ class MarkerInfluence:
     focus_end_seconds: float
     range_before_seconds: float
     range_after_seconds: float
-    importance: int
+    importance: MarkerImportance
     event_weight: float
+    content: str = ""
 
 
 @dataclass(frozen=True)
@@ -353,7 +359,8 @@ def _marker_influence_for_moment(
             moment.start_seconds - focus_end,
             after_seconds,
         )
-    event_weight = distance_weight * marker.importance / 5
+    importance = effective_marker_importance(marker.content, marker.importance)
+    event_weight = distance_weight * importance / MAXIMUM_MARKER_IMPORTANCE
     return MarkerInfluence(
         marker_id=marker.marker_id,
         anchor_seconds=anchor_seconds,
@@ -361,8 +368,9 @@ def _marker_influence_for_moment(
         focus_end_seconds=focus_end,
         range_before_seconds=before_seconds,
         range_after_seconds=after_seconds,
-        importance=marker.importance,
+        importance=importance,
         event_weight=event_weight,
+        content=marker.content,
     )
 
 

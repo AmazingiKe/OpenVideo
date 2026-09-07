@@ -190,6 +190,36 @@ def test_definitions_and_sessions_use_only_unified_routes(tmp_path: Path):
         assert client.get("/api/agent-jobs/obsolete").status_code == 404
 
 
+def test_marker_tool_reads_latest_content_without_persisting_fallback(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(session.session_id, f"request-{uuid7().hex}", MODEL_ID)
+        context = AgentRunContext(
+            service=service,
+            session=session,
+            run=run,
+            model=service.settings.ai_model(MODEL_ID),
+            task_input={},
+        )
+        marker = service.library.create_marker(
+            MediaMarker(
+                marker_id=f"marker-{uuid7().hex}", asset_id=ASSET_ID, start_seconds=10,
+            )
+        )
+        assert service._read_markers(context)["markers"][0]["importance"] == 1
+        assert service.library.load_markers(ASSET_ID)[0].importance == 0
+        service.library.update_marker(
+            ASSET_ID, marker.marker_id, changes={"content": "用户的新注释"}
+        )
+        payload = service._read_markers(context)["markers"][0]
+        assert payload["content"] == "用户的新注释"
+        assert "importance" not in payload
+        assert context.evidence.markers_read
+
+
 def test_manual_context_compression_records_only_status_event(
     tmp_path: Path,
     monkeypatch,
@@ -1764,6 +1794,7 @@ def test_marker_run_mode_separates_questions_from_change_proposals(tmp_path: Pat
         )
 
         assert question_definition.allowed_tools == (
+            "read_markers",
             "search_evidence",
             "inspect_frames",
         )
@@ -1880,6 +1911,7 @@ def test_summary_media_mode_requires_inspected_visual_toolchain(tmp_path: Path):
         )
 
         assert definition.allowed_tools == (
+            "read_markers",
             "search_evidence",
             "inspect_frames",
             "list_summary_documents",

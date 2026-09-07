@@ -167,7 +167,7 @@ class LibraryAnalysisStorageMixin:
         rows = (
             self._db()
             .execute(
-                "SELECT marker_id, asset_id, start_seconds, end_seconds, importance "
+                "SELECT marker_id, asset_id, start_seconds, end_seconds, importance, content "
                 "FROM markers "
                 "WHERE asset_id = ? ORDER BY start_seconds",
                 (asset_id,),
@@ -338,6 +338,7 @@ class LibraryAnalysisStorageMixin:
                 "selection_id": selection_id,
                 "start_seconds": start_seconds,
                 "end_seconds": end_seconds,
+                **json.loads(values.pop("marker_annotation")),
             }
             values["target"] = {
                 key: value for key, value in values["target"].items() if value is not None

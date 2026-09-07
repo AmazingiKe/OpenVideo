@@ -57,6 +57,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     _ensure_visual_index_schema(connection)
     _ensure_agent_permission_grant_schema(connection)
     _ensure_download_quality_schema(connection)
+    _ensure_marker_annotation_schema(connection)
     _migrate_transcript_agent_sessions(connection)
     synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
@@ -194,14 +195,15 @@ def replace_asset_projection(
     connection.execute("DELETE FROM markers WHERE asset_id = ?", (asset.asset_id,))
     for marker in bundle.markers:
         connection.execute(
-            "INSERT INTO markers(marker_id, asset_id, start_seconds, end_seconds, importance) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO markers(marker_id, asset_id, start_seconds, end_seconds, importance, content) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 marker.marker_id,
                 marker.asset_id,
                 marker.start_seconds,
                 marker.end_seconds,
                 marker.importance,
+                marker.content,
             ),
         )
     for position, segment in enumerate(bundle.segments):
@@ -272,6 +274,11 @@ def replace_asset_projection(
             end_seconds=target.end_seconds,
             key_points=json.dumps(analysis.key_points, ensure_ascii=False),
             source_summary=analysis.source_summary.model_dump_json(),
+            marker_annotation=(
+                target.model_dump_json(include={"content", "importance"})
+                if target.source == "marker"
+                else "{}"
+            ),
         )
         _insert_model(connection, "event_analyses", values)
         connection.executemany(
@@ -431,6 +438,26 @@ def open_index_connection(database_path: Path) -> sqlite3.Connection:
     connection.execute("PRAGMA busy_timeout = 5000")
     connection.execute("PRAGMA synchronous = NORMAL")
     return connection
+
+
+def _ensure_marker_annotation_schema(connection: sqlite3.Connection) -> None:
+    """为旧查询投影补充注释列，保留会话等不可由素材重建的数据。"""
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(markers)")}
+    if "content" not in columns:
+        with connection:
+            connection.execute(
+                "ALTER TABLE markers ADD COLUMN content TEXT NOT NULL DEFAULT ''"
+            )
+            connection.execute("DELETE FROM index_states")
+    analysis_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(event_analyses)")
+    }
+    if "marker_annotation" not in analysis_columns:
+        with connection:
+            connection.execute(
+                "ALTER TABLE event_analyses ADD COLUMN marker_annotation TEXT NOT NULL DEFAULT '{}'"
+            )
+            connection.execute("DELETE FROM index_states")
 
 
 def _migrate_transcript_agent_sessions(connection: sqlite3.Connection) -> None:
@@ -628,7 +655,8 @@ CREATE TABLE timeline_segments (
 CREATE TABLE markers (
     marker_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     start_seconds REAL NOT NULL, end_seconds REAL,
-    importance INTEGER NOT NULL CHECK(importance BETWEEN 0 AND 5)
+    importance INTEGER NOT NULL CHECK(importance BETWEEN 0 AND 5),
+    content TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE focus_selections (
     selection_id TEXT PRIMARY KEY,
@@ -644,6 +672,7 @@ CREATE TABLE event_analyses (
     title TEXT NOT NULL, conclusion TEXT NOT NULL, key_points TEXT NOT NULL,
     preset_id TEXT NOT NULL, preset_version INTEGER NOT NULL, depth TEXT NOT NULL,
     user_input TEXT, ai_model_id TEXT NOT NULL, source_summary TEXT NOT NULL,
+    marker_annotation TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE event_analysis_evidence (

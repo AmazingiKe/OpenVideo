@@ -2,14 +2,45 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    StringConstraints,
+    model_validator,
+)
 
 from openvideo.core.transcription_models import TranscriptionStatus
 
 
 MarkerImportance = Literal[0, 1, 2, 3, 4, 5]
+MarkerContent = Annotated[str, StringConstraints(strip_whitespace=True)]
+MINIMUM_MARKER_IMPORTANCE: MarkerImportance = 1
+MAXIMUM_MARKER_IMPORTANCE = 5
+
+
+def effective_marker_importance(
+    content: str, importance: MarkerImportance
+) -> MarkerImportance:
+    """只有完全空白的标记才按最低星级兜底，文字注释不隐式附加评分。"""
+    return importance or (0 if content.strip() else MINIMUM_MARKER_IMPORTANCE)
+
+
+def marker_annotation_context(
+    content: str, importance: MarkerImportance
+) -> dict[str, str | int]:
+    """把用户注释与有效评分组合成上下文，省略未填写的项。"""
+    annotation: dict[str, str | int] = {}
+    normalized_content = content.strip()
+    if normalized_content:
+        annotation["content"] = normalized_content
+    effective_importance = effective_marker_importance(content, importance)
+    if effective_importance:
+        annotation["importance"] = effective_importance
+    return annotation
 
 
 class SourcePlatform(StrEnum):
@@ -210,7 +241,7 @@ class MediaSegment(BaseModel):
 
 
 class MediaMarker(BaseModel):
-    """标记只表达时间边界与用户重要程度，避免混入分析策略配置。"""
+    """时间位置承载用户注释与可选评分，供编辑和视频理解共享。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -218,7 +249,18 @@ class MediaMarker(BaseModel):
     asset_id: str
     start_seconds: float = Field(ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
+    content: MarkerContent = ""
     importance: MarkerImportance = 0
+
+    def context_payload(self) -> dict[str, str | float | int | None]:
+        """上下文采用有效评分，持久化仍保留用户未评分的原始状态。"""
+        return {
+            "marker_id": self.marker_id,
+            "asset_id": self.asset_id,
+            "start_seconds": self.start_seconds,
+            "end_seconds": self.end_seconds,
+            **marker_annotation_context(self.content, self.importance),
+        }
 
     @model_validator(mode="after")
     def validate_range(self) -> "MediaMarker":

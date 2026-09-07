@@ -80,11 +80,7 @@ def test_focus_selection_persists_endpoints_and_clears_conflict(tmp_path: Path):
             json={"in_seconds": 25},
         )
         authoritative_path = (
-            tmp_path
-            / "assets"
-            / ASSET_ID
-            / "artifacts"
-            / "focus-selection.json"
+            tmp_path / "assets" / ASSET_ID / "artifacts" / "focus-selection.json"
         )
         assert authoritative_path.is_file()
         restored = client.get(f"/api/media/assets/{ASSET_ID}/focus-selection")
@@ -120,7 +116,12 @@ def test_marker_and_focus_jobs_append_structured_results_and_become_stale(
     with create_client(tmp_path) as client:
         marker = client.post(
             f"/api/media/assets/{ASSET_ID}/markers",
-            json={"start_seconds": 10, "end_seconds": 20, "importance": 5},
+            json={
+                "start_seconds": 10,
+                "end_seconds": 20,
+                "importance": 5,
+                "content": "推导过程",
+            },
         ).json()
         second_marker = client.post(
             f"/api/media/assets/{ASSET_ID}/markers",
@@ -136,41 +137,36 @@ def test_marker_and_focus_jobs_append_structured_results_and_become_stale(
             },
         )
         job = wait_for_job(client, created.json()["job_id"])
-        analyses = client.get(
-            f"/api/media/assets/{ASSET_ID}/event-analyses"
-        ).json()
+        analyses = client.get(f"/api/media/assets/{ASSET_ID}/event-analyses").json()
+        marker_analysis = next(
+            item
+            for item in analyses
+            if item["target"]["marker_id"] == marker["marker_id"]
+        )
+        assert marker_analysis["target"]["content"] == "推导过程"
+        assert marker_analysis["target"]["importance"] == 5
         client.patch(
             f"/api/media/assets/{ASSET_ID}/markers/{marker['marker_id']}",
-            json={"end_seconds": 22},
+            json={"content": "新的关注内容"},
         )
-        target_stale = client.get(
-            f"/api/media/assets/{ASSET_ID}/event-analyses"
-        ).json()
+        target_stale = client.get(f"/api/media/assets/{ASSET_ID}/event-analyses").json()
         client.patch(
             f"/api/media/assets/{ASSET_ID}/transcript/segments/1",
             json={"text": "第二段证据已修订"},
         )
-        stale = client.get(
-            f"/api/media/assets/{ASSET_ID}/event-analyses"
-        ).json()
+        stale = client.get(f"/api/media/assets/{ASSET_ID}/event-analyses").json()
         deleted_analysis_id = next(
             item["event_analysis_id"]
             for item in stale
             if item["target"]["marker_id"] == marker["marker_id"]
         )
-        deleted = client.delete(
-            f"/api/event-analyses/{deleted_analysis_id}"
-        )
-        remaining = client.get(
-            f"/api/media/assets/{ASSET_ID}/event-analyses"
-        ).json()
+        deleted = client.delete(f"/api/event-analyses/{deleted_analysis_id}")
+        remaining = client.get(f"/api/media/assets/{ASSET_ID}/event-analyses").json()
 
     assert created.status_code == 202
     assert job["stage"] == "complete"
     assert len(analyses) == 2
-    assert set(job["result_ids"]) == {
-        item["event_analysis_id"] for item in analyses
-    }
+    assert set(job["result_ids"]) == {item["event_analysis_id"] for item in analyses}
     assert all(item["target"]["source"] == "marker" for item in analyses)
     assert "markdown" not in json.dumps(analyses)
     target_statuses = {
@@ -178,9 +174,7 @@ def test_marker_and_focus_jobs_append_structured_results_and_become_stale(
     }
     assert target_statuses[marker["marker_id"]] == "stale"
     assert target_statuses[second_marker["marker_id"]] == "valid"
-    statuses = {
-        item["target"]["marker_id"]: item["status"] for item in stale
-    }
+    statuses = {item["target"]["marker_id"]: item["status"] for item in stale}
     assert statuses[marker["marker_id"]] == "stale"
     assert statuses[second_marker["marker_id"]] == "stale"
     assert deleted.status_code == 204
@@ -251,9 +245,10 @@ def test_focus_and_event_results_rebuild_from_authoritative_files(
     (tmp_path / "openvideo.sqlite3").unlink()
     rebuilt = MediaLibrary.open(tmp_path)
     try:
-        assert rebuilt.load_focus_selection(ASSET_ID).selection_id == selection[
-            "selection_id"
-        ]
+        assert (
+            rebuilt.load_focus_selection(ASSET_ID).selection_id
+            == selection["selection_id"]
+        )
         analyses = rebuilt.load_event_analyses(ASSET_ID)
         assert [analysis.event_analysis_id for analysis in analyses] == completed[
             "result_ids"

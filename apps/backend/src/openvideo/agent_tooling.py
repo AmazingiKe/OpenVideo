@@ -373,16 +373,24 @@ def build_proposed_marker(
     )
     if requested.operation == MarkerChangeOperation.UPDATE:
         importance = before[0].importance
+        content = before[0].content
     elif requested.operation == MarkerChangeOperation.MERGE:
         importance = max(marker.importance for marker in before)
+        ordered_markers = sorted(before, key=lambda marker: marker.start_seconds)
+        contents = dict.fromkeys(
+            marker.content for marker in ordered_markers if marker.content
+        )
+        content = "\n\n".join(contents)
     else:
         importance = 0
+        content = ""
     return MediaMarker(
         marker_id=marker_id,
         asset_id=asset_id,
         start_seconds=requested.start_seconds,
         end_seconds=requested.end_seconds,
         importance=importance,
+        content=content,
     )
 
 
