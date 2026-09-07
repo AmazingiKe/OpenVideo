@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, waitFor, within } from "storybook/test";
 
 import {
   AlertDialog,
@@ -42,6 +43,18 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const DialogWindow: Story = {
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const trigger = canvas.getByRole("button", { name: "打开弹窗" });
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await userEvent.click(trigger);
+      const dialog = await page.findByRole("dialog");
+      await waitFor(() => expect(dialog).toBeVisible());
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(page.queryByRole("dialog")).toBeNull());
+      await expect(trigger).toHaveFocus();
+    }
+  },
   render: () => (
     <Dialog>
       <DialogTrigger asChild>
@@ -60,6 +73,16 @@ export const DialogWindow: Story = {
 };
 
 export const ConfirmationWindow: Story = {
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(canvas.getByRole("button", { name: "删除片段" }));
+    await waitFor(() => expect(page.getByRole("alertdialog")).toBeVisible());
+    await userEvent.click(page.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(page.queryByRole("alertdialog")).toBeNull());
+    await expect(
+      canvas.getByRole("button", { name: "删除片段" }),
+    ).toHaveFocus();
+  },
   render: () => (
     <AlertDialog>
       <AlertDialogTrigger asChild>
@@ -82,6 +105,16 @@ export const ConfirmationWindow: Story = {
 };
 
 export const SideWindow: Story = {
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(canvas.getByRole("button", { name: "打开侧栏" }));
+    await waitFor(() => expect(page.getByRole("dialog")).toBeVisible());
+    await userEvent.click(page.getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(page.queryByRole("dialog")).toBeNull());
+    await expect(
+      canvas.getByRole("button", { name: "打开侧栏" }),
+    ).toHaveFocus();
+  },
   render: () => (
     <Sheet>
       <SheetTrigger asChild>

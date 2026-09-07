@@ -43,10 +43,6 @@ function SheetTrigger(
   return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />;
 }
 
-function SheetClose(props: React.ComponentProps<typeof SheetPrimitive.Close>) {
-  return <SheetPrimitive.Close data-slot="sheet-close" {...props} />;
-}
-
 function SheetPortal(
   props: React.ComponentProps<typeof SheetPrimitive.Portal>,
 ) {
@@ -89,9 +85,13 @@ function SheetContent({
       <AnimatePresence>
         {open ? <SheetOverlay key="sheet-overlay" /> : null}
         {open ? (
-          <SheetPrimitive.Content forceMount asChild {...props}>
+          <SheetPrimitive.Content
+            key="sheet-content"
+            forceMount
+            asChild
+            {...props}
+          >
             <MotionSheetSurface
-              key="sheet-content"
               side={side}
               data-slot="sheet-content"
               data-side={side}
@@ -131,16 +131,6 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="sheet-footer"
-      className={cn("mt-auto flex flex-col gap-2 p-4", className)}
-      {...props}
-    />
-  );
-}
-
 function SheetTitle({
   className,
   ...props
@@ -172,10 +162,8 @@ function SheetDescription({
 
 export {
   Sheet,
-  SheetClose,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
   SheetTrigger,

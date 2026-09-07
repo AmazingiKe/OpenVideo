@@ -1,10 +1,10 @@
 import type { Transition } from "motion/react";
 
-export const MOTION_EASE_ENTER = [0.22, 1, 0.36, 1] as const;
-export const MOTION_EASE_EXIT = [0.4, 0, 1, 1] as const;
+const MOTION_EASE_ENTER = [0.22, 1, 0.36, 1] as const;
+const MOTION_EASE_EXIT = [0.4, 0, 1, 1] as const;
 
 export const OVERLAY_ENTER_TRANSITION: Transition = {
-  duration: 0.2,
+  duration: 0.24,
   ease: MOTION_EASE_ENTER,
 };
 export const OVERLAY_EXIT_TRANSITION: Transition = {
@@ -12,8 +12,9 @@ export const OVERLAY_EXIT_TRANSITION: Transition = {
   ease: MOTION_EASE_EXIT,
 };
 export const SHEET_ENTER_TRANSITION: Transition = {
+  type: "spring",
   duration: 0.3,
-  ease: MOTION_EASE_ENTER,
+  bounce: 0.08,
 };
 export const SHEET_EXIT_TRANSITION: Transition = {
   duration: 0.2,
@@ -28,6 +29,7 @@ export const ASSISTANT_CONTENT_TRANSITION: Transition = {
   ease: MOTION_EASE_ENTER,
 };
 
+export const DIALOG_ENTER_SCALE = 0.98;
 export const DIALOG_ENTER_OFFSET_PX = 8;
-export const SHEET_ENTER_OFFSET_PX = 40;
+export const SHEET_ENTER_OFFSET_PX = 32;
 export const ASSISTANT_ENTER_OFFSET_PX = 32;

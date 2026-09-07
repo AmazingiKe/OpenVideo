@@ -3,6 +3,7 @@ import { motion, type Variants } from "motion/react";
 
 import {
   DIALOG_ENTER_OFFSET_PX,
+  DIALOG_ENTER_SCALE,
   OVERLAY_ENTER_TRANSITION,
   OVERLAY_EXIT_TRANSITION,
   SHEET_ENTER_OFFSET_PX,
@@ -30,11 +31,13 @@ const OVERLAY_VARIANTS: Variants = {
 
 const DIALOG_VARIANTS: Variants = {
   closed: {
-    scale: 0.96,
+    opacity: 0,
+    scale: DIALOG_ENTER_SCALE,
     y: DIALOG_ENTER_OFFSET_PX,
     transition: OVERLAY_EXIT_TRANSITION,
   },
   open: {
+    opacity: 1,
     scale: 1,
     y: 0,
     transition: OVERLAY_ENTER_TRANSITION,
@@ -43,6 +46,7 @@ const DIALOG_VARIANTS: Variants = {
 
 const SHEET_VARIANTS: Variants = {
   closed: (side: SheetSide) => ({
+    opacity: 0,
     x:
       side === "left"
         ? -SHEET_ENTER_OFFSET_PX
@@ -58,6 +62,7 @@ const SHEET_VARIANTS: Variants = {
     transition: SHEET_EXIT_TRANSITION,
   }),
   open: {
+    opacity: 1,
     x: 0,
     y: 0,
     transition: SHEET_ENTER_TRANSITION,

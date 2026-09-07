@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, waitFor, within } from "storybook/test";
 
 import { Button } from "./button";
 import { Field, FieldGroup, FieldLabel } from "./field";
@@ -18,6 +19,16 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const EditSegment: Story = {
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const trigger = canvas.getByRole("button", { name: "编辑片段" });
+    await userEvent.click(trigger);
+    await waitFor(() => expect(page.getByRole("dialog")).toBeVisible());
+    await expect(page.getByRole("textbox")).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(page.queryByRole("dialog")).toBeNull());
+    await expect(trigger).toHaveFocus();
+  },
   render: () => (
     <Popover>
       <PopoverTrigger asChild>

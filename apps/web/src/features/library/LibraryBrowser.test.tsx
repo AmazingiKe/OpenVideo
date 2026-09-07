@@ -274,9 +274,9 @@ describe("LibraryBrowser", () => {
     ).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "移动" }));
-    expect(
-      await screen.findByRole("dialog", { name: "移动视频" }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: "移动视频" })).toBeVisible(),
+    );
   });
 
   it("creates and renames folders from the shared management UI", async () => {

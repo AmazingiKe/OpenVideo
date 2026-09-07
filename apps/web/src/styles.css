@@ -134,6 +134,11 @@
   --motion-loader-text-blink-duration: 2s;
   --motion-loader-typing-delay: 160ms;
   --motion-assistant-handle-duration: 160ms;
+  --motion-floating-enter-duration: 160ms;
+  --motion-floating-exit-duration: 120ms;
+  --motion-floating-enter-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-floating-exit-ease: cubic-bezier(0.4, 0, 1, 1);
+  --motion-floating-enter-scale: 0.98;
 
   /* 媒体工作区常驻深色，避免切换应用主题时干扰画面判断。 */
   --player-canvas-background: #000000;
@@ -1439,6 +1444,49 @@
 @media (prefers-reduced-motion: reduce) {
   .global_assistant_handle {
     transition: none;
+  }
+}
+
+/* Radix retains closed surfaces until the exit keyframe finishes. */
+.floating_surface_motion[data-state="open"] {
+  animation: floating_surface_enter var(--motion-floating-enter-duration)
+    var(--motion-floating-enter-ease) both;
+}
+
+.floating_surface_motion[data-state="closed"] {
+  pointer-events: none;
+  animation: floating_surface_exit var(--motion-floating-exit-duration)
+    var(--motion-floating-exit-ease) both;
+}
+
+@keyframes floating_surface_enter {
+  from {
+    opacity: 0;
+    scale: var(--motion-floating-enter-scale);
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@keyframes floating_surface_exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Item-aligned selects must keep the selected row anchored to the trigger. */
+.floating_surface_motion[data-align-trigger="true"] {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating_surface_motion {
+    --motion-floating-enter-scale: 1;
   }
 }
 

@@ -85,9 +85,13 @@ function AlertDialogContent({
       <AnimatePresence>
         {open ? <AlertDialogOverlay key="alert-dialog-overlay" /> : null}
         {open ? (
-          <AlertDialogPrimitive.Content forceMount asChild {...props}>
+          <AlertDialogPrimitive.Content
+            key="alert-dialog-content"
+            forceMount
+            asChild
+            {...props}
+          >
             <MotionDialogSurface
-              key="alert-dialog-content"
               data-slot="alert-dialog-content"
               data-size={size}
               className={cn(
@@ -229,8 +233,6 @@ export {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogMedia,
-  AlertDialogOverlay,
-  AlertDialogPortal,
   AlertDialogTitle,
   AlertDialogTrigger,
 };
