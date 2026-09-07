@@ -9,7 +9,6 @@ from time import monotonic
 from typing import Any, Protocol, cast
 
 from agno.agent import Agent
-from agno.exceptions import StopAgentRun
 from agno.models.message import Message
 from agno.run.agent import (
     ModelRequestStartedEvent,
@@ -69,14 +68,18 @@ REQUIRED_TOOL_RECOVERY_INSTRUCTION = (
     "上一步没有完成 Agent 声明的必需工具。不要继续解释过程，也不要普通回答。"
     "先调用尚未完成的前置工具，然后调用必需工具并提交结构化参数。"
 )
+HISTORY_RECALL_INSTRUCTION = (
+    "回忆用户此前说过的具体信息时，先调用 get_chat_history 读取原始聊天记录。"
+    "询问最初或早期内容时使用 num_chats=null 获取完整历史；不要凭摘要猜测口令、数字或用户要求。"
+    "只引用用户确实说过的内容，未找到就说明未找到。"
+)
 
 
 @dataclass
 class AgentToolExecutionState:
-    """由程序限制工具执行，避免供应商忽略停止提示后继续循环。"""
+    """共享工具去重结果，并记录模型请求是否触及终止边界。"""
 
     max_tool_calls: int
-    call_count: int = 0
     limit_reached: bool = False
     results: dict[str, str] = field(default_factory=dict)
     in_flight: dict[str, asyncio.Task[str]] = field(default_factory=dict)
@@ -338,14 +341,20 @@ class AgnoAgentExecutor:
             reasoning_enabled=False,
             forced_tool_name=forced_tool_name,
         )
+        read_chat_history = (
+            self.session_context is not None
+            and session_id is not None
+            and profile.capabilities.tools == Support.YES
+        )
+        instructions = [definition.prompt]
+        if agno_tools or read_chat_history:
+            instructions.append(TOOL_SEQUENCE_INSTRUCTION)
+        if read_chat_history:
+            instructions.append(HISTORY_RECALL_INSTRUCTION)
         agent = Agent(
             id=definition.agent_id,
             model=agno_model,
-            instructions=(
-                f"{definition.prompt}\n\n{TOOL_SEQUENCE_INSTRUCTION}"
-                if agno_tools
-                else definition.prompt
-            ),
+            instructions="\n\n".join(instructions),
             additional_input=(
                 [
                     Message(
@@ -364,11 +373,12 @@ class AgnoAgentExecutor:
                     reasoning_enabled=False,
                     forced_tool_name=forced_tool_name,
                 )
-                if agno_tools
+                if agno_tools or read_chat_history
                 else None
             ),
-            # SDK 超限后仅跳过工具，仍可能继续请求模型；由工具入口显式终止循环。
-            tool_call_limit=None,
+            # SDK 统一限制业务和内置工具；模型请求边界另行阻止供应商继续空转。
+            tool_call_limit=max_tool_calls,
+            read_chat_history=read_chat_history,
             db=(
                 self.session_context.database
                 if self.session_context is not None and session_id is not None
@@ -406,7 +416,7 @@ class AgnoAgentExecutor:
                     on_event,
                     required_tools=definition.required_tools,
                     tool_state=tool_state,
-                    has_tools=bool(definition.tools),
+                    has_tools=bool(definition.tools) or read_chat_history,
                 )
         except asyncio.CancelledError:
             raise
@@ -431,10 +441,6 @@ class AgnoAgentExecutor:
                 _tool_name: str = name,
                 **arguments: Any,
             ) -> str:
-                if tool_state.call_count >= tool_state.max_tool_calls:
-                    tool_state.limit_reached = True
-                    raise StopAgentRun("已达到本轮工具调用上限，停止继续检索")
-                tool_state.call_count += 1
                 signature = json.dumps(
                     {"name": _tool_name, "arguments": arguments},
                     ensure_ascii=False,

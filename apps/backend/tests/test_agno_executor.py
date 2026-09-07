@@ -32,7 +32,10 @@ class EchoInput(BaseModel):
 
 
 @pytest.mark.asyncio
-async def test_real_session_keeps_completed_history_across_runs(monkeypatch, tmp_path):
+@pytest.mark.parametrize("reopen", [False, True])
+async def test_real_session_keeps_completed_history_across_runs(
+    monkeypatch, tmp_path, reopen
+):
     import asyncio
     from agno.models.openai import OpenAIChat
     from agno.models.response import ModelResponse
@@ -57,10 +60,15 @@ async def test_real_session_keeps_completed_history_across_runs(monkeypatch, tmp
     )
     context = AgnoSessionContext(tmp_path / "context.sqlite3")
     try:
-        for content in (
-            "Remember blue whale forty two",
-            "What did I ask you to remember?",
+        for index, content in enumerate(
+            (
+                "Remember blue whale forty two",
+                "What did I ask you to remember?",
+            )
         ):
+            if index and reopen:
+                await context.database.close()
+                context = AgnoSessionContext(tmp_path / "context.sqlite3")
             result = await AgnoAgentExecutor(context).run(
                 online_model(),
                 text_profile(),
@@ -86,6 +94,69 @@ async def test_real_session_keeps_completed_history_across_runs(monkeypatch, tmp
         await context.database.close()
 
 
+@pytest.mark.asyncio
+async def test_real_session_can_continue_after_cancelled_provider_stream(
+    monkeypatch, tmp_path
+):
+    import asyncio
+    from agno.models.openai import OpenAIChat
+    from agno.models.response import ModelResponse
+    from agno.run.base import RunStatus
+
+    started = asyncio.Event()
+    calls = 0
+
+    async def invoke_stream(self, *_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            await asyncio.Event().wait()
+        yield ModelResponse(content="Completed after cancellation")
+
+    async def invoke(self, *_args, **_kwargs):
+        return ModelResponse(content='{"summary":"Recovered","topics":[]}')
+
+    monkeypatch.setattr(OpenAIChat, "ainvoke_stream", invoke_stream)
+    monkeypatch.setattr(OpenAIChat, "ainvoke", invoke)
+    monkeypatch.setattr(
+        "openvideo.llm.agno_executor.create_agent_model",
+        lambda *_args, **_kwargs: OpenAIChat(id="test", api_key="test"),
+    )
+    context = AgnoSessionContext(tmp_path / "context.sqlite3")
+    executor = AgnoAgentExecutor(context)
+    arguments = (
+        online_model(),
+        text_profile(),
+        chat_definition(),
+        [{"role": "user", "content": "Answer"}],
+        AgentToolRegistry(),
+        lambda _event: None,
+    )
+    options = dict(
+        max_tool_calls=4, tool_timeout_seconds=1, session_id="session-cancel"
+    )
+    try:
+        task = asyncio.create_task(executor.run(*arguments, **options))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.1)
+        result = await executor.run(*arguments, **options)
+        assert result.content == "Completed after cancellation"
+        session = await context.database.get_session("session-cancel")
+        assert [run.status for run in session.runs] == [
+            RunStatus.cancelled,
+            RunStatus.completed,
+        ]
+        assert any(
+            message.content == result.content for message in session.get_messages()
+        )
+    finally:
+        await context.database.close()
+
+
 def chat_definition() -> AgentDefinition:
     return AgentDefinition(
         agent_id="test",
@@ -94,6 +165,90 @@ def chat_definition() -> AgentDefinition:
         mode=AgentMode.CHAT,
         prompt="回答测试请求",
     )
+
+
+@pytest.mark.asyncio
+async def test_native_history_tool_reads_earlier_than_the_context_window(
+    monkeypatch, tmp_path
+):
+    from agno.models.openai import OpenAIChat
+    from agno.models.response import ModelResponse
+    from openai.types.chat.chat_completion_chunk import (
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
+    )
+
+    context = AgnoSessionContext(tmp_path / "context.sqlite3")
+    history = [
+        {"role": "user", "content": "Remember blue whale forty two"},
+        {"role": "assistant", "content": "Remembered"},
+    ]
+    for index in range(4):
+        history.extend(
+            [
+                {"role": "user", "content": f"Other topic {index}"},
+                {"role": "assistant", "content": "Other answer"},
+            ]
+        )
+    await context.ensure_session("session-native-history", "test", lambda: history)
+    requests = 0
+
+    async def invoke_stream(self, messages, **_kwargs):
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            assert not any(
+                message.content == history[0]["content"] for message in messages
+            )
+            yield ModelResponse(
+                tool_calls=[
+                    ChoiceDeltaToolCall(
+                        index=0,
+                        id="history-call",
+                        type="function",
+                        function=ChoiceDeltaToolCallFunction(
+                            name="get_chat_history", arguments='{"num_chats":null}'
+                        ),
+                    )
+                ]
+            )
+        else:
+            assert any(
+                message.role == "tool" and history[0]["content"] in message.content
+                for message in messages
+            )
+            yield ModelResponse(content="blue whale forty two")
+
+    async def invoke(self, *_args, **_kwargs):
+        return ModelResponse(content='{"summary":"Remembered","topics":[]}')
+
+    monkeypatch.setattr(OpenAIChat, "ainvoke_stream", invoke_stream)
+    monkeypatch.setattr(OpenAIChat, "ainvoke", invoke)
+    monkeypatch.setattr(
+        "openvideo.llm.agno_executor.create_agent_model",
+        lambda *_args, **_kwargs: OpenAIChat(id="test", api_key="test"),
+    )
+    try:
+        profile = text_profile().model_copy(
+            update={"capabilities": ModelCapabilities(tools=Support.YES)}
+        )
+        result = await AgnoAgentExecutor(context).run(
+            online_model(),
+            profile,
+            chat_definition(),
+            [{"role": "user", "content": "Recall the first instruction"}],
+            AgentToolRegistry(),
+            lambda _event: None,
+            max_tool_calls=2,
+            tool_timeout_seconds=1,
+            session_id="session-native-history",
+        )
+        assert result.content == "blue whale forty two"
+        assert result.successful_tools == {"get_chat_history"}
+        assert result.tool_call_count == 1
+        assert requests == 2
+    finally:
+        await context.database.close()
 
 
 def online_model() -> AiModelConfiguration:
@@ -449,7 +604,7 @@ async def test_missing_required_tool_gets_one_forced_recovery(monkeypatch):
         "auto",
         {"type": "function", "function": {"name": "echo"}},
     ]
-    assert tool_limits == [None, None]
+    assert tool_limits == [4, 4]
 
     assert [
         event.content
