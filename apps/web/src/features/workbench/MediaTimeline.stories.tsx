@@ -306,6 +306,31 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+async function zoom_timeline_overview(canvas_element: HTMLElement) {
+  const host = within(canvas_element).getByLabelText(/时间线画布/);
+  host.dispatchEvent(
+    new WheelEvent("wheel", {
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+      clientX: host.getBoundingClientRect().left + TIMELINE_START_LEFT,
+      deltaY: ZOOM_OUT_TO_MINIMUM_WHEEL_DELTA,
+    }),
+  );
+  await new Promise(requestAnimationFrame);
+  const grid = host.querySelector<HTMLElement>(
+    ".timeline-editor-edit-area .ReactVirtualized__Grid",
+  )!;
+  expect(grid.scrollWidth).toBeLessThanOrEqual(grid.clientWidth + 1);
+}
+
+function timeline_story_zoom(canvas_element: HTMLElement) {
+  const row = canvas_element.querySelector<HTMLElement>(
+    ".timeline-editor-edit-row",
+  )!;
+  return parseFloat(row.style.backgroundSize.split(",")[1]!);
+}
+
 export const Empty: Story = {
   args: {
     initial_time: 0,
@@ -319,7 +344,8 @@ export const FullThreeTracks: Story = {
   parameters: {
     docs: {
       description: {
-        story: "当前播放时间固定在标尺左侧，合并阈值和缩放工具栏位于轨道底部。",
+        story:
+          "当前播放时间固定在标尺左侧，Alt＋滚轮缩放，默认按 32px 合并短片段。",
       },
     },
   },
@@ -420,6 +446,12 @@ export const DynamicAnalysisTracks: Story = {
     expect(editor_grid).not.toBeNull();
     expect(track_labels).not.toBeNull();
 
+    const resize_handle = story.getByRole("separator", {
+      name: "调整全片分析轨道高度",
+    });
+    await userEvent.keyboard("{Escape}");
+    resize_handle.focus();
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
     editor_grid.scrollTop = 48;
     await new Promise(requestAnimationFrame);
     expect(editor_grid.scrollTop).toBeGreaterThan(0);
@@ -432,8 +464,7 @@ export const DynamicAnalysisTracks: Story = {
 export const TemporaryRangeSelection: Story = {
   play: async ({ canvasElement }) => {
     const story = within(canvasElement);
-    story.getByRole("slider", { name: "时间线缩放比例" }).focus();
-    await userEvent.keyboard("{Home}");
+    await zoom_timeline_overview(canvasElement);
     await userEvent.click(
       await story.findByRole("button", { name: /范围标记/ }),
     );
@@ -480,30 +511,11 @@ export const ZoomBelowDefault: Story = {
       });
       editor_grid.dispatchEvent(wheel_event);
 
-      await waitFor(() => {
-        expect(
-          story.getByRole("button", { name: "缩小时间线" }),
-        ).toBeDisabled();
-      });
+      await new Promise(requestAnimationFrame);
       expect(wheel_event.defaultPrevented).toBe(true);
-
-      await userEvent.click(
-        story.getByRole("button", { name: "重置时间线缩放" }),
+      expect(editor_grid.scrollWidth).toBeLessThanOrEqual(
+        editor_grid.clientWidth + 1,
       );
-      await waitFor(() => {
-        expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
-          `${DEFAULT_ZOOM_PIXELS_PER_SECOND} px/s`,
-        );
-      });
-      editor_grid.scrollLeft = editor_grid.scrollWidth;
-      editor_grid.dispatchEvent(new Event("scroll", { bubbles: true }));
-      story.getByRole("slider", { name: "时间线缩放比例" }).focus();
-      await userEvent.keyboard("{Home}");
-      await waitFor(() => {
-        expect(
-          story.getByRole("button", { name: "缩小时间线" }),
-        ).toBeDisabled();
-      });
       expect(runtime_errors).toEqual([]);
     } finally {
       window.removeEventListener("error", record_runtime_error);
@@ -589,12 +601,7 @@ export const AdjacentChaptersOverview: Story = {
     analysis_segments: ADJACENT_ANALYSIS_SEGMENTS,
   },
   play: async ({ canvasElement }) => {
-    const story = within(canvasElement);
-    story.getByRole("slider", { name: "时间线缩放比例" }).focus();
-    await userEvent.keyboard("{Home}");
-    await waitFor(() => {
-      expect(story.getByRole("button", { name: "缩小时间线" })).toBeDisabled();
-    });
+    await zoom_timeline_overview(canvasElement);
   },
 };
 
@@ -604,15 +611,11 @@ export const LongVideoOverview: Story = {
     initial_time: 3_600,
   },
   play: async ({ canvasElement }) => {
-    const story = within(canvasElement);
-    story.getByRole("slider", { name: "时间线缩放比例" }).focus();
-    await userEvent.keyboard("{Home}");
+    await zoom_timeline_overview(canvasElement);
 
     await waitFor(() => {
-      expect(story.getByRole("button", { name: "缩小时间线" })).toBeDisabled();
-      expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(
-        /0\.\d{2} px\/s/,
-      );
+      expect(timeline_story_zoom(canvasElement)).toBeGreaterThan(0);
+      expect(timeline_story_zoom(canvasElement)).toBeLessThan(1);
     });
     expect(
       canvasElement.querySelectorAll(".timeline_grid_line").length,
@@ -716,8 +719,7 @@ export const TwoThousandActions: Story = {
     });
     expect(transcript_actions.length).toBeLessThanOrEqual(100);
 
-    story.getByRole("slider", { name: "时间线缩放比例" }).focus();
-    await userEvent.keyboard("{Home}");
+    await zoom_timeline_overview(canvasElement);
     await waitFor(() =>
       expect(
         canvasElement.querySelector(".media_timeline_aggregate_hit"),
@@ -750,16 +752,16 @@ export const MixedDensity: Story = {
   play: async ({ canvasElement }) => {
     const story = within(canvasElement);
     const group = await story.findByRole("button", { name: /^聚合 32/ });
-    const zoom = story.getByLabelText("当前时间线缩放").textContent;
+    const zoom = timeline_story_zoom(canvasElement);
     await userEvent.click(group);
     expect(group).toHaveAttribute("aria-pressed", "true");
-    expect(story.getByLabelText("当前时间线缩放")).toHaveTextContent(zoom!);
+    expect(timeline_story_zoom(canvasElement)).toBe(zoom);
     expect(
       story.getByRole("button", { name: /转写：宽片段继续支持编辑/ }),
     ).toBeVisible();
     await userEvent.dblClick(group);
     await waitFor(() =>
-      expect(story.getByLabelText("当前时间线缩放").textContent).not.toBe(zoom),
+      expect(timeline_story_zoom(canvasElement)).not.toBe(zoom),
     );
   },
 };
@@ -788,18 +790,5 @@ export const RulerHover: Story = {
     await userEvent.unhover(ruler);
     expect(hover).not.toBeVisible();
     expect(canvasElement.querySelector(".media_timeline")).toHaveClass("dark");
-  },
-};
-
-export const MergingDisabled: Story = {
-  args: MixedDensity.args,
-  play: async ({ canvasElement }) => {
-    const story = within(canvasElement);
-    story.getByRole("slider", { name: "合并阈值" }).focus();
-    await userEvent.keyboard("{Home}");
-    await waitFor(() =>
-      expect(story.getByLabelText("当前合并阈值")).toHaveTextContent("关闭"),
-    );
-    expect(story.queryByRole("button", { name: /^聚合/ })).toBeNull();
   },
 };

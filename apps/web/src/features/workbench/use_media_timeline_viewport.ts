@@ -462,25 +462,6 @@ export function use_media_timeline_viewport({
     [cancel_pending_wheel_zoom, commit_zoom_viewport],
   );
 
-  const zoom_to = useCallback(
-    (requested_zoom: number, anchor_x?: number) => {
-      cancel_pending_wheel_zoom();
-      const measured_width =
-        timeline_host_ref.current?.getBoundingClientRect().width ?? 0;
-      const viewport_width = measured_width > 0 ? measured_width : canvas_width;
-      const scale_count = Math.ceil(render_metrics_ref.current.duration);
-      const next_viewport = calculate_zoom_viewport({
-        viewport: viewport_ref.current,
-        requested_zoom,
-        anchor_x: anchor_x ?? viewport_width / 2,
-        viewport_width,
-        scale_count,
-      });
-      commit_zoom_viewport(next_viewport);
-    },
-    [cancel_pending_wheel_zoom, canvas_width, commit_zoom_viewport],
-  );
-
   useEffect(() => {
     const timeline_host = timeline_host_ref.current;
     if (!timeline_host || !is_workspace_active) return;
@@ -578,13 +559,11 @@ export function use_media_timeline_viewport({
     editor_render_window,
     handle_timeline_scroll,
     handle_timeline_scroll_capture,
-    minimum_zoom_pixels_per_second,
     playhead_ref,
     set_playhead_time,
     timeline_host_ref,
     timeline_ref,
     viewport,
-    zoom_to,
     zoom_to_range,
   };
 }

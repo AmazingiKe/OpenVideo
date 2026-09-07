@@ -86,7 +86,6 @@ import { EventAnalysisCard } from "./EventAnalysisCard";
 import { MediaTimelineMarkerEditor } from "./MediaTimelineMarkerEditor";
 import { MediaTimelineActionContent } from "./MediaTimelineActionContent";
 import { MediaTimelineAggregateCanvas } from "./MediaTimelineAggregateCanvas";
-import { MediaTimelineToolbar } from "./MediaTimelineToolbar";
 import { MediaTimelineTranscriptEditor } from "./MediaTimelineTranscriptEditor";
 import {
   DEFAULT_TIMELINE_MERGE_THRESHOLD,
@@ -530,13 +529,11 @@ export function MediaTimeline({
     editor_render_window,
     handle_timeline_scroll,
     handle_timeline_scroll_capture,
-    minimum_zoom_pixels_per_second,
     playhead_ref,
     set_playhead_time,
     timeline_host_ref,
     timeline_ref,
     viewport,
-    zoom_to,
     zoom_to_range,
   } = use_media_timeline_viewport({
     asset_id,
@@ -546,13 +543,9 @@ export function MediaTimeline({
     playback_rate,
     read_playback_time,
   });
-  const [merge_threshold, set_merge_threshold] = useState(
-    DEFAULT_TIMELINE_MERGE_THRESHOLD,
+  const [interaction_zoom, set_interaction_zoom] = useState<number | null>(
+    null,
   );
-  const [interaction_aggregation, set_interaction_aggregation] = useState<{
-    zoom: number;
-    threshold: number;
-  } | null>(null);
   const [previous_ruler_interval, set_previous_ruler_interval] = useState<
     number | null
   >(null);
@@ -653,25 +646,16 @@ export function MediaTimeline({
     [full_editor_data],
   );
   const aggregate_rows = useMemo(() => create_timeline_aggregator(), []);
-  const aggregation_zoom =
-    interaction_aggregation?.zoom ?? viewport.zoom_pixels_per_second;
-  const aggregation_threshold =
-    interaction_aggregation?.threshold ?? merge_threshold;
+  const aggregation_zoom = interaction_zoom ?? viewport.zoom_pixels_per_second;
   const aggregation = useMemo(
     () =>
       aggregate_rows(
         source_editor_data,
         aggregation_zoom,
-        aggregation_threshold,
+        DEFAULT_TIMELINE_MERGE_THRESHOLD,
         row_heights,
       ),
-    [
-      aggregate_rows,
-      source_editor_data,
-      aggregation_zoom,
-      aggregation_threshold,
-      row_heights,
-    ],
+    [aggregate_rows, source_editor_data, aggregation_zoom, row_heights],
   );
   const selected_actions_by_id = useMemo(
     () =>
@@ -830,7 +814,7 @@ export function MediaTimeline({
     set_selected_read_only_action_ids(new Set());
     set_selected_event_analysis_ids([]);
     set_row_heights({});
-    set_interaction_aggregation(null);
+    set_interaction_zoom(null);
     on_selected_marker_ids_change?.(new Set());
     on_selected_transcript_indices_change([]);
   }, [
@@ -1242,7 +1226,7 @@ export function MediaTimeline({
     end_seconds: number,
     interaction: "move" | "resize",
   ) {
-    set_interaction_aggregation(null);
+    set_interaction_zoom(null);
     const data = (action as MediaTimelineAction).data;
     if (data.kind !== "marker" || !data.source_id) return;
     const marker = markers.find((item) => item.marker_id === data.source_id);
@@ -1319,10 +1303,7 @@ export function MediaTimeline({
   useLayoutEffect(() => {
     editor_handlers_ref.current = {
       start_action_interaction: () =>
-        set_interaction_aggregation({
-          zoom: viewport.zoom_pixels_per_second,
-          threshold: merge_threshold,
-        }),
+        set_interaction_zoom(viewport.zoom_pixels_per_second),
       add_marker: (row_id, time) => {
         if (row_id !== TIMELINE_TRACK_IDS.marker) return;
         void add_marker_and_select(Math.min(Math.max(time, 0), duration));
@@ -1675,14 +1656,6 @@ export function MediaTimeline({
           <AlertDescription>{timeline_error}</AlertDescription>
         </Alert>
       ) : null}
-      <MediaTimelineToolbar
-        minimum_zoom_pixels_per_second={minimum_zoom_pixels_per_second}
-        zoom_pixels_per_second={viewport.zoom_pixels_per_second}
-        on_zoom_change={zoom_to}
-        merge_threshold={merge_threshold}
-        on_merge_threshold_change={set_merge_threshold}
-      />
-
       {evidence_range ? (
         <output className="sr_only" aria-live="polite">
           已高亮答案证据 {format_time(evidence_range.start_seconds)} 至

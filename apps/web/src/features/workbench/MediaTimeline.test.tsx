@@ -457,6 +457,20 @@ function drag_timeline_marquee({
   });
 }
 
+function zoom_timeline_with_wheel(
+  frames: ReturnType<typeof install_animation_frame_mock>,
+  requested_zoom: number,
+) {
+  const wheel_delta_scale = 1_000;
+  const current_zoom = timeline_props().scaleWidth!;
+  fireEvent.wheel(screen.getByLabelText(/时间线画布/), {
+    altKey: true,
+    clientX: 16,
+    deltaY: -Math.log(requested_zoom / current_zoom) * wheel_delta_scale,
+  });
+  frames.run_next_frame();
+}
+
 describe("MediaTimeline", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -474,6 +488,7 @@ describe("MediaTimeline", () => {
   });
 
   it("selects aggregate members on click and Space, and zooms only on double click or Enter", () => {
+    const frames = install_animation_frame_mock();
     const { seek_to, change_selected_transcript_indices } = render_timeline({
       transcript_segments: [
         {
@@ -517,7 +532,7 @@ describe("MediaTimeline", () => {
     fireEvent.doubleClick(block);
     expect(timeline_props().scaleWidth).toBe(320);
     expect(seek_to).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
+    zoom_timeline_with_wheel(frames, 80);
     fireEvent.keyDown(screen.getByRole("button", { name: /^聚合 2/ }), {
       key: "Enter",
     });
@@ -525,38 +540,33 @@ describe("MediaTimeline", () => {
     expect(seek_to).not.toHaveBeenCalled();
   });
 
-  it("coalesces threshold input per frame, disables merging, and retains threshold across assets", () => {
-    const frames = install_animation_frame_mock();
-    const { replace_asset_id } = render_timeline({
+  it("merges clips below the default 32px threshold without a toolbar", () => {
+    render_timeline({
       transcript_segments: [
         {
           start_seconds: 1,
-          end_seconds: 1.04,
+          end_seconds: 1.2,
           text: "短一",
           emotion: null,
           audio_events: [],
         },
         {
-          start_seconds: 1.05,
-          end_seconds: 1.09,
+          start_seconds: 1.25,
+          end_seconds: 1.45,
           text: "短二",
           emotion: null,
           audio_events: [],
         },
       ],
     });
-    const slider = screen.getByRole("slider", { name: "合并阈值" });
-    expect(slider).toHaveAttribute("aria-valuenow", "8");
-    fireEvent.keyDown(slider, { key: "End" });
-    fireEvent.keyDown(slider, { key: "Home" });
     expect(screen.getByRole("button", { name: /^聚合 2/ })).toBeInTheDocument();
-    frames.run_next_frame();
-    expect(slider).toHaveAttribute("aria-valuenow", "0");
-    expect(screen.getByLabelText("当前合并阈值")).toHaveTextContent("关闭");
-    expect(screen.queryByRole("button", { name: /^聚合/ })).toBeNull();
-    expect(transcript_actions()).toHaveLength(2);
-    act(() => replace_asset_id("asset-0198d12345677890abcdef1234567899"));
-    expect(slider).toHaveAttribute("aria-valuenow", "0");
+    expect(screen.queryByLabelText("时间线工具栏")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("slider", { name: "合并阈值" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("slider", { name: "时间线缩放比例" }),
+    ).not.toBeInTheDocument();
   });
 
   it("marquee-selects original member ranges inside an aggregate", () => {
@@ -602,14 +612,14 @@ describe("MediaTimeline", () => {
       transcript_segments: [
         {
           start_seconds: 1,
-          end_seconds: 1.04,
+          end_seconds: 1.2,
           text: "短一",
           emotion: null,
           audio_events: [],
         },
         {
-          start_seconds: 1.05,
-          end_seconds: 1.09,
+          start_seconds: 1.25,
+          end_seconds: 1.45,
           text: "短二",
           emotion: null,
           audio_events: [],
@@ -622,10 +632,7 @@ describe("MediaTimeline", () => {
     const action = action_by_kind("marker");
     const row = timeline_props().editorData[0];
     act(() => timeline_props().onActionMoveStart?.({ action, row }));
-    fireEvent.keyDown(screen.getByRole("slider", { name: "合并阈值" }), {
-      key: "Home",
-    });
-    frames.run_next_frame();
+    zoom_timeline_with_wheel(frames, 320);
     expect(screen.getByRole("button", { name: /^聚合 2/ })).toBeInTheDocument();
     await act(async () =>
       timeline_props().onActionMoveEnd?.({ action, row, start: 6, end: 9 }),
@@ -646,10 +653,7 @@ describe("MediaTimeline", () => {
         },
       ]),
     );
-    fireEvent.keyDown(screen.getByRole("slider", { name: "时间线缩放比例" }), {
-      key: "Home",
-    });
-    frames.run_next_frame();
+    zoom_timeline_with_wheel(frames, 0.01);
     const group = screen.getByRole("button", { name: /^聚合 2/ });
     fireEvent.click(group);
     expect(screen.getByRole("button", { name: /^聚合 2/ })).toBe(group);
@@ -1663,9 +1667,9 @@ describe("MediaTimeline", () => {
     }
 
     expect_stable_geometry();
-    const zoom_out = screen.getByRole("button", { name: "缩小时间线" });
+    const frames = install_animation_frame_mock();
     for (let index = 0; index < 5; index += 1) {
-      fireEvent.click(zoom_out);
+      zoom_timeline_with_wheel(frames, timeline_props().scaleWidth! / 1.25);
       expect_stable_geometry();
     }
     expect(timeline_props().scaleWidth).toBeLessThan(27.43);
@@ -1675,9 +1679,8 @@ describe("MediaTimeline", () => {
       expect.stringContaining("双击放大"),
     );
 
-    const zoom_in = screen.getByRole("button", { name: "放大时间线" });
     for (let index = 0; index < 12; index += 1) {
-      fireEvent.click(zoom_in);
+      zoom_timeline_with_wheel(frames, timeline_props().scaleWidth! * 1.25);
       expect_stable_geometry();
     }
     expect(timeline_props().scaleWidth).toBe(320);
@@ -1687,21 +1690,11 @@ describe("MediaTimeline", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("fits a long video at the slider minimum without reporting zero zoom", () => {
-    const animation_frames = install_animation_frame_mock();
+  it("fits a long video with Alt wheel zoom without exceeding the visible grid", () => {
+    const frames = install_animation_frame_mock();
     const { result } = render_timeline({ duration_seconds: 7_200 });
-    const slider = screen.getByRole("slider", {
-      name: "时间线缩放比例",
-    });
-
-    fireEvent.keyDown(slider, { key: "Home" });
-    animation_frames.run_next_frame();
-
+    zoom_timeline_with_wheel(frames, 0.01);
     expect(timeline_props().scaleWidth).toBeCloseTo(992 / 7_200);
-    expect(screen.getByLabelText("当前时间线缩放")).toHaveTextContent(
-      "0.14 px/s",
-    );
-    expect(screen.getByRole("button", { name: "缩小时间线" })).toBeDisabled();
     expect(
       result.container.querySelectorAll(".timeline_grid_line").length,
     ).toBeLessThan(16);
@@ -1723,9 +1716,9 @@ describe("MediaTimeline", () => {
       transcript_segments: segments,
       analysis_segments: [],
     });
-    const zoom_out = screen.getByRole("button", { name: "缩小时间线" });
+    const frames = install_animation_frame_mock();
 
-    for (let index = 0; index < 12; index += 1) fireEvent.click(zoom_out);
+    zoom_timeline_with_wheel(frames, 8);
 
     expect(timeline_props().scaleWidth).toBeLessThanOrEqual(12);
     expect(transcript_actions().length === 0).toBe(true);
@@ -1734,7 +1727,7 @@ describe("MediaTimeline", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^转写：/ })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
+    zoom_timeline_with_wheel(frames, 80);
 
     expect(transcript_actions().length).toBeLessThanOrEqual(100);
   });
@@ -1778,46 +1771,6 @@ describe("MediaTimeline", () => {
     animation_frames.run_next_frame();
     expect(timeline_props().scaleWidth).toBeCloseTo(80 * Math.exp(0.048));
     expect(timeline_mock.set_scroll_left).toHaveBeenCalledOnce();
-  });
-
-  it("batches slider zoom input into one animation frame", () => {
-    const animation_frames = install_animation_frame_mock();
-    render_timeline();
-    const slider = screen.getByRole("slider", { name: "时间线缩放比例" });
-
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-
-    expect(animation_frames.frames.size).toBe(1);
-    expect(timeline_props().scaleWidth).toBe(80);
-
-    animation_frames.run_next_frame();
-    expect(timeline_props().scaleWidth).toBeGreaterThan(80);
-
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    expect(animation_frames.frames.size).toBe(1);
-    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
-    expect(animation_frames.frames.size).toBe(0);
-    expect(timeline_props().scaleWidth).toBe(80);
-  });
-
-  it("keeps slider keyboard steps proportional and reaches the exact upper limit", () => {
-    const animation_frames = install_animation_frame_mock();
-    render_timeline();
-    const slider = screen.getByRole("slider", { name: "时间线缩放比例" });
-    fireEvent.keyDown(slider, { key: "Home" });
-    animation_frames.run_next_frame();
-    const minimum_zoom = timeline_props().scaleWidth!;
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    animation_frames.run_next_frame();
-    expect(timeline_props().scaleWidth).toBeCloseTo(
-      minimum_zoom * Math.exp((2 * Math.log(320 / minimum_zoom)) / 1_000),
-    );
-    fireEvent.keyDown(slider, { key: "End" });
-    animation_frames.run_next_frame();
-    expect(timeline_props().scaleWidth).toBe(320);
-    expect(screen.getByRole("button", { name: "放大时间线" })).toBeDisabled();
   });
 
   it("keeps playback and Alt wheel zoom independent in one display frame", () => {
@@ -2084,7 +2037,7 @@ describe("MediaTimeline", () => {
     expect(timeline_mock.set_scroll_left).toHaveBeenLastCalledWith(0);
   });
 
-  it("cancels pending wheel tasks for tools, asset switches, and unmount", () => {
+  it("cancels pending wheel tasks for asset switches and unmount", () => {
     const animation_frames = install_animation_frame_mock();
     const { replace_asset_id, result } = render_timeline();
     const host = screen.getByLabelText(/时间线画布/);
@@ -2105,21 +2058,6 @@ describe("MediaTimeline", () => {
       clientX: 400,
       deltaY: -100,
     });
-    const tool_cancelled_frame = [...animation_frames.frames.keys()][0];
-    fireEvent.click(screen.getByRole("button", { name: "放大时间线" }));
-    expect(animation_frames.cancel_frame).toHaveBeenCalledWith(
-      tool_cancelled_frame,
-    );
-    expect(animation_frames.frames.size).toBe(0);
-    expect(
-      (timeline_props().scaleWidth ?? 0) / (timeline_props().scale ?? 1),
-    ).toBe(100);
-
-    fireEvent.wheel(host, {
-      altKey: true,
-      clientX: 400,
-      deltaY: -100,
-    });
     const asset_cancelled_frame = [...animation_frames.frames.keys()][0];
     act(() => replace_asset_id("asset-new"));
     expect(animation_frames.cancel_frame).toHaveBeenCalledWith(
@@ -2133,7 +2071,7 @@ describe("MediaTimeline", () => {
       deltaY: -100,
     });
     animation_frames.run_next_frame();
-    fireEvent.click(screen.getByRole("button", { name: "重置时间线缩放" }));
+    zoom_timeline_with_wheel(animation_frames, 80);
     expect(animation_frames.frames.size).toBe(0);
 
     fireEvent.wheel(host, {

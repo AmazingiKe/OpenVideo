@@ -823,8 +823,7 @@ export function normalize_marker_time(seconds: number): number {
   return Math.round(seconds * MEDIA_TIME_PRECISION) / MEDIA_TIME_PRECISION;
 }
 
-export const DEFAULT_TIMELINE_MERGE_THRESHOLD = 8;
-export const MAXIMUM_TIMELINE_MERGE_THRESHOLD = 32;
+export const DEFAULT_TIMELINE_MERGE_THRESHOLD = 32;
 const TIMELINE_MERGE_GAP_PIXELS = 4;
 const TIMELINE_MINIMUM_BLOCK_WIDTH = 2;
 const TIMELINE_RANGE_ZOOM_PADDING = 0.1;

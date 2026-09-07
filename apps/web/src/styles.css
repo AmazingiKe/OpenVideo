@@ -219,7 +219,6 @@
     var(--timeline-font-family);
   --timeline-ruler-font: 500 var(--timeline-font-size-label)
     var(--timeline-font-family);
-  --timeline-toolbar-height: 48px;
   --timeline-ruler-height: 32px;
   --timeline-track-header-width: 144px;
   --timeline-ruler-major-tick-height: 8px;
@@ -668,93 +667,6 @@
   background: var(--timeline-color-panel-muted);
 }
 
-.media_timeline_toolbar {
-  display: flex;
-  min-width: 0;
-  min-height: var(--timeline-toolbar-height);
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 0 8px;
-  border-top: 1px solid var(--timeline-color-border-subtle);
-  background: var(--timeline-color-panel);
-}
-
-.media_timeline_context_sources,
-.media_timeline_zoom {
-  display: flex;
-  min-width: 0;
-  height: 32px;
-  align-items: center;
-  gap: 4px;
-}
-
-.media_timeline_context_sources {
-  margin-right: auto;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.media_timeline_context_sources::-webkit-scrollbar {
-  display: none;
-}
-
-.media_timeline_context_sources > * {
-  flex: 0 0 auto;
-}
-
-.media_timeline_toolbar
-  :is([data-slot="button"], [data-slot="popover-trigger"]) {
-  color: var(--timeline-color-control-foreground);
-  background: transparent;
-}
-
-.media_timeline_toolbar
-  :is([data-slot="button"], [data-slot="popover-trigger"]):hover,
-.media_timeline_toolbar
-  :is([data-slot="button"], [data-slot="popover-trigger"]):focus-visible {
-  border-color: var(--timeline-color-control-hover-border);
-  color: var(--timeline-color-control-hover-foreground);
-  background: var(--timeline-color-panel-control-hover);
-}
-
-.media_timeline_toolbar [data-slot="button"][data-variant="secondary"] {
-  color: var(--timeline-color-control-active-foreground);
-  background: var(--timeline-color-control-active-background);
-}
-
-.media_timeline_toolbar output {
-  display: inline-flex;
-  min-width: max-content;
-  align-items: center;
-  color: var(--timeline-color-muted-foreground);
-  font:
-    500 10px/1 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  font-variant-numeric: tabular-nums;
-}
-
-.media_timeline_zoom [data-slot="slider"] {
-  width: 112px;
-}
-
-.media_timeline_toolbar [data-slot="slider-track"] {
-  background: var(--timeline-color-border);
-}
-
-.media_timeline_toolbar [data-slot="slider-range"] {
-  background: var(--timeline-color-accent);
-}
-
-.media_timeline_toolbar [data-slot="slider-thumb"] {
-  border-color: var(--timeline-color-accent);
-  background: var(--timeline-color-control-slider-thumb);
-}
-
 .media_timeline_editor {
   display: flex;
   min-height: 48px;
@@ -1049,26 +961,6 @@
 .media_timeline_aggregate_hit:focus-visible {
   outline: 2px solid var(--timeline-color-selection-border);
   outline-offset: -2px;
-}
-
-.media_timeline_toolbar {
-  flex-wrap: wrap;
-}
-
-.media_timeline_merge_threshold {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--timeline-color-foreground);
-  font: var(--timeline-ruler-font);
-}
-
-.media_timeline_merge_threshold [data-slot="slider"] {
-  width: 96px;
-}
-
-.media_timeline_merge_threshold output {
-  min-width: 4ch;
 }
 
 .media_timeline .timeline-editor {
@@ -1373,28 +1265,6 @@
 }
 
 @media (max-width: 600px) {
-  .media_timeline_toolbar {
-    min-height: 64px;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0;
-    padding-inline: 4px;
-  }
-
-  .media_timeline_context_sources {
-    justify-content: flex-start;
-    overflow-x: auto;
-  }
-
-  .media_timeline_zoom [data-slot="slider"] {
-    min-width: 80px;
-    flex: 1;
-  }
-
-  .media_timeline_tool_label {
-    display: none;
-  }
-
   .media_timeline_track_label {
     grid-template-columns: 14px minmax(0, 1fr) 12px;
     padding-inline: 6px;
@@ -1495,13 +1365,11 @@
   color: var(--timeline-color-foreground);
   min-width: 0;
 }
-.media_timeline_toolbar output,
 .media_timeline_track_label > small {
   font-size: var(--timeline-font-size-secondary);
 }
 .media_timeline_track_label,
-.media_timeline .timeline_action_label,
-.media_timeline_merge_threshold {
+.media_timeline .timeline_action_label {
   font-size: var(--timeline-font-size-label);
 }
 .media_timeline_aggregate_hit {
