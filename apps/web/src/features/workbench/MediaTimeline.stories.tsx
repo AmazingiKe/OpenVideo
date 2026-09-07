@@ -313,6 +313,13 @@ export const Empty: Story = {
 };
 
 export const FullThreeTracks: Story = {
+  parameters: {
+    docs: {
+      description: {
+        story: "当前播放时间固定在标尺左侧，合并阈值和缩放工具栏位于轨道底部。",
+      },
+    },
+  },
   play: async ({ canvasElement }) => {
     const story_frame = within(canvasElement).getByTestId(
       "timeline-story-frame",
@@ -705,7 +712,6 @@ export const RulerHover: Story = {
     await userEvent.unhover(ruler);
     expect(hover).not.toBeVisible();
     expect(canvasElement.querySelector(".media_timeline")).toHaveClass("dark");
-    expect(story.getByLabelText("总时长")).toHaveTextContent("00:01:30");
   },
 };
 

@@ -1,7 +1,6 @@
 import { Minus, Plus, RotateCcw } from "lucide-react";
 import {
   type ReactNode,
-  type RefObject,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -11,7 +10,6 @@ import { flushSync } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { format_timeline_time } from "./timeline_time";
 import {
   DEFAULT_TIMELINE_MERGE_THRESHOLD,
   MAXIMUM_TIMELINE_MERGE_THRESHOLD,
@@ -23,9 +21,6 @@ const ZOOM_BUTTON_FACTOR = 1.25;
 const ZOOM_SLIDER_STEPS = 1_000;
 
 type MediaTimelineToolbarProps = {
-  current_time: number;
-  current_time_output_ref: RefObject<HTMLOutputElement | null>;
-  duration: number;
   minimum_zoom_pixels_per_second: number;
   zoom_pixels_per_second: number;
   on_zoom_change: (zoom_pixels_per_second: number) => void;
@@ -35,9 +30,6 @@ type MediaTimelineToolbarProps = {
 };
 
 export function MediaTimelineToolbar({
-  current_time,
-  current_time_output_ref,
-  duration,
   minimum_zoom_pixels_per_second,
   zoom_pixels_per_second,
   on_zoom_change,
@@ -116,20 +108,9 @@ export function MediaTimelineToolbar({
 
   return (
     <div className="media_timeline_toolbar" aria-label="时间线工具栏">
-      <div className="media_timeline_transport">
-        <output
-          ref={current_time_output_ref}
-          className="media_timeline_current_time"
-          aria-label="当前播放时间"
-        >
-          {format_timeline_time(current_time)}
-        </output>
-        <span aria-hidden="true">/</span>
-        <output aria-label="总时长">
-          {format_timeline_time(duration, { milliseconds: false })}
-        </output>
-        {context_sources}
-      </div>
+      {context_sources ? (
+        <div className="media_timeline_context_sources">{context_sources}</div>
+      ) : null}
       <div className="media_timeline_merge_threshold">
         <span>合并阈值</span>
         <Slider

@@ -1129,7 +1129,6 @@ describe("MediaTimeline", () => {
     expect(screen.getByLabelText("当前播放时间")).toHaveTextContent(
       "00:00:30.087",
     );
-    expect(screen.getByLabelText("总时长")).toHaveTextContent("00:02:00");
     const pending_frame = [...animation_frames.frames.keys()][0];
 
     result.unmount();

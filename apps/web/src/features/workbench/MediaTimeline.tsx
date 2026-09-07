@@ -1341,37 +1341,6 @@ export function MediaTimeline({
 
   return (
     <section className="media_timeline dark" aria-label="剪辑时间轴">
-      <MediaTimelineToolbar
-        current_time={bounded_time}
-        current_time_output_ref={current_time_output_ref}
-        duration={duration}
-        minimum_zoom_pixels_per_second={minimum_zoom_pixels_per_second}
-        zoom_pixels_per_second={viewport.zoom_pixels_per_second}
-        on_zoom_change={zoom_to}
-        merge_threshold={merge_threshold}
-        on_merge_threshold_change={set_merge_threshold}
-        context_sources={
-          on_add_agent_context ? (
-            <>
-              {transcript_attachment ? (
-                <AgentContextSource
-                  attachment={transcript_attachment}
-                  on_add={on_add_agent_context}
-                  compact
-                />
-              ) : null}
-              {focus_attachment ? (
-                <AgentContextSource
-                  attachment={focus_attachment}
-                  on_add={on_add_agent_context}
-                  compact
-                />
-              ) : null}
-            </>
-          ) : null
-        }
-      />
-
       <MediaTimelineTranscriptEditor
         editing_transcript_index={editing_transcript_index}
         transcript_draft={transcript_draft}
@@ -1398,7 +1367,15 @@ export function MediaTimeline({
 
       <div className="media_timeline_editor_shell">
         <aside className="media_timeline_track_labels" aria-label="时间线轨道">
-          <div className="media_timeline_track_labels_header">轨道</div>
+          <div className="media_timeline_track_labels_header">
+            <output
+              ref={current_time_output_ref}
+              className="media_timeline_current_time"
+              aria-label="当前播放时间"
+            >
+              {format_timeline_time(bounded_time)}
+            </output>
+          </div>
           <div className="media_timeline_track_labels_viewport">
             <div
               className="media_timeline_track_labels_body"
@@ -1690,6 +1667,34 @@ export function MediaTimeline({
           <AlertDescription>{timeline_error}</AlertDescription>
         </Alert>
       ) : null}
+      <MediaTimelineToolbar
+        minimum_zoom_pixels_per_second={minimum_zoom_pixels_per_second}
+        zoom_pixels_per_second={viewport.zoom_pixels_per_second}
+        on_zoom_change={zoom_to}
+        merge_threshold={merge_threshold}
+        on_merge_threshold_change={set_merge_threshold}
+        context_sources={
+          on_add_agent_context ? (
+            <>
+              {transcript_attachment ? (
+                <AgentContextSource
+                  attachment={transcript_attachment}
+                  on_add={on_add_agent_context}
+                  compact
+                />
+              ) : null}
+              {focus_attachment ? (
+                <AgentContextSource
+                  attachment={focus_attachment}
+                  on_add={on_add_agent_context}
+                  compact
+                />
+              ) : null}
+            </>
+          ) : null
+        }
+      />
+
       {evidence_range ? (
         <output className="sr_only" aria-live="polite">
           已高亮答案证据 {format_time(evidence_range.start_seconds)} 至
