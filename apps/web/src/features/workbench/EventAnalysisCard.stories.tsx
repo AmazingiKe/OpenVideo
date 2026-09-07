@@ -13,6 +13,8 @@ const meta = {
       asset_id: "asset-0198f000000070008000000000000001",
       target: {
         source: "marker",
+        content: "概念边界与反例",
+        importance: 3,
         marker_id: "marker-0198f000000070008000000000000001",
         start_seconds: 42,
         end_seconds: 75,

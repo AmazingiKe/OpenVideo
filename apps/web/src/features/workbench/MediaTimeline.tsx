@@ -65,7 +65,10 @@ import {
 } from "@/components/ui/sheet";
 import { format_timeline_time } from "./timeline_time";
 import { format_time } from "@/shared/format";
-import { format_marker_importance } from "@/shared/marker_labels";
+import {
+  format_marker_importance,
+  MARKER_IMPORTANCE_VALUES,
+} from "@/shared/marker_labels";
 import type {
   AnalysisStrategy,
   AgentEvidenceRange,
@@ -127,7 +130,6 @@ const TIMELINE_SCALE_SPLIT_COUNT = 1;
 const EMPTY_MARKERS: MediaMarker[] = [];
 const EMPTY_EVENT_ANALYSES: EventAnalysis[] = [];
 const EMPTY_TIMELINE_EFFECTS: TimelineEditor["effects"] = {};
-const MARKER_IMPORTANCE_VALUES: MarkerImportance[] = [0, 1, 2, 3, 4, 5];
 
 type TimelineTrackPresentation = {
   id: string;
@@ -478,12 +480,16 @@ export function MediaTimeline({
     is_saving_marker,
     is_saving_transcript,
     marker_editor_position,
+    marker_content_draft,
+    marker_importance_draft,
     marker_end_draft,
     marker_save_error,
     marker_start_draft,
     save_marker,
     save_transcript,
     set_marker_end_draft,
+    set_marker_content_draft,
+    set_marker_importance_draft,
     set_marker_start_draft,
     set_transcript_draft,
     transcript_draft,
@@ -1314,6 +1320,10 @@ export function MediaTimeline({
         duration={duration}
         marker_start_draft={marker_start_draft}
         marker_end_draft={marker_end_draft}
+        marker_content_draft={marker_content_draft}
+        marker_importance_draft={marker_importance_draft}
+        set_marker_content_draft={set_marker_content_draft}
+        set_marker_importance_draft={set_marker_importance_draft}
         marker_save_error={marker_save_error}
         is_saving_marker={is_saving_marker}
         set_marker_start_draft={set_marker_start_draft}
@@ -1499,6 +1509,20 @@ export function MediaTimeline({
           <ContextMenuContent className="dark min-w-48">
             {context_marker ? (
               <ContextMenuGroup>
+                <ContextMenuItem
+                  onSelect={(event) => {
+                    const target = event.target as HTMLElement;
+                    const bounds = target.getBoundingClientRect();
+                    edit_marker(context_marker.marker_id, {
+                      x: bounds.left,
+                      y: bounds.top,
+                    });
+                  }}
+                >
+                  <Pencil aria-hidden="true" />
+                  编辑标记
+                  <ContextMenuShortcut>Enter</ContextMenuShortcut>
+                </ContextMenuItem>
                 <ContextMenuLabel>标记重要程度</ContextMenuLabel>
                 <ContextMenuRadioGroup
                   value={String(context_marker.importance)}

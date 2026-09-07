@@ -132,6 +132,7 @@ const POINT_MARKER: MediaMarker = {
   start_seconds: 20,
   end_seconds: null,
   importance: 3,
+  content: "",
 };
 const RANGE_MARKER: MediaMarker = {
   marker_id: "marker-0198d12345677890abcdef1234567891",
@@ -139,6 +140,7 @@ const RANGE_MARKER: MediaMarker = {
   start_seconds: 32,
   end_seconds: 36,
   importance: 5,
+  content: "",
 };
 const CANDIDATE_MARKER: MediaMarker = {
   marker_id: "marker-0198d12345677890abcdef1234567892",
@@ -146,6 +148,7 @@ const CANDIDATE_MARKER: MediaMarker = {
   start_seconds: 70,
   end_seconds: 75,
   importance: 2,
+  content: "",
 };
 
 function timeline_props(): TimelineEditor {
@@ -376,6 +379,8 @@ function timeline_event_analysis(start_seconds = 8): EventAnalysis {
     target: {
       source: "marker",
       marker_id: POINT_MARKER.marker_id,
+      content: POINT_MARKER.content,
+      importance: POINT_MARKER.importance,
       start_seconds,
       end_seconds: start_seconds + 3,
     },
@@ -1602,6 +1607,54 @@ describe("MediaTimeline", () => {
     expect(request_transcript_correction).toHaveBeenCalledWith([0, 1]);
   });
 
+  it("edits marker content and clears importance from the context menu", async () => {
+    measure_wide_timeline();
+    const { update_marker, replace_markers } = render_timeline();
+    const marker_button = screen.getAllByRole("button", { name: /点标记/ })[0];
+    fireEvent.keyDown(marker_button, { key: "F10", shiftKey: true });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /编辑标记/ }));
+    const content_input = await screen.findByLabelText("标记内容");
+    fireEvent.change(content_input, { target: { value: "  推导过程  " } });
+    fireEvent.click(screen.getByRole("radio", { name: "未评分" }));
+    fireEvent.submit(content_input.closest("form")!);
+    await waitFor(() =>
+      expect(update_marker).toHaveBeenCalledWith(POINT_MARKER.marker_id, {
+        start_seconds: POINT_MARKER.start_seconds,
+        end_seconds: null,
+        content: "推导过程",
+        importance: 0,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByLabelText("标记内容")).not.toBeInTheDocument(),
+    );
+    act(() =>
+      replace_markers([
+        { ...POINT_MARKER, content: "推导过程", importance: 0 },
+        RANGE_MARKER,
+      ]),
+    );
+    expect(
+      screen.getByRole("button", { name: /推导过程 ·/ }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: /推导过程 ·/ }), {
+      key: "Enter",
+    });
+    expect(screen.getByLabelText("标记内容")).toHaveValue("推导过程");
+    fireEvent.change(screen.getByLabelText("标记内容"), {
+      target: { value: " \n " },
+    });
+    fireEvent.submit(screen.getByLabelText("标记内容").closest("form")!);
+    await waitFor(() =>
+      expect(update_marker).toHaveBeenLastCalledWith(POINT_MARKER.marker_id, {
+        start_seconds: POINT_MARKER.start_seconds,
+        end_seconds: null,
+        content: "",
+        importance: 0,
+      }),
+    );
+  });
+
   it("opens marker editing with Enter and preserves rating and deletion", async () => {
     measure_wide_timeline();
     const { update_marker, delete_marker } = render_timeline();
@@ -1618,6 +1671,8 @@ describe("MediaTimeline", () => {
       expect(update_marker).toHaveBeenCalledWith(POINT_MARKER.marker_id, {
         start_seconds: 21.13,
         end_seconds: null,
+        content: "",
+        importance: POINT_MARKER.importance,
       }),
     );
     await waitFor(() =>

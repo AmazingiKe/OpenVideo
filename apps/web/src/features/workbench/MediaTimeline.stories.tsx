@@ -27,6 +27,7 @@ const POINT_MARKER: MediaMarker = {
   start_seconds: 12,
   end_seconds: null,
   importance: 2,
+  content: "",
 };
 const RANGE_MARKER: MediaMarker = {
   marker_id: "marker-019d3f8a2b1c70008000000000000002",
@@ -34,6 +35,7 @@ const RANGE_MARKER: MediaMarker = {
   start_seconds: 24,
   end_seconds: 31,
   importance: 5,
+  content: "",
 };
 const CANDIDATE_MARKER: MediaMarker = {
   marker_id: "marker-019d3f8a2b1c70008000000000000003",
@@ -41,6 +43,7 @@ const CANDIDATE_MARKER: MediaMarker = {
   start_seconds: 38,
   end_seconds: 43,
   importance: 3,
+  content: "",
 };
 const TRANSCRIPT_SEGMENTS: TranscriptSegment[] = [
   {
@@ -156,6 +159,8 @@ const EVENT_ANALYSES: EventAnalysis[] = [
     target: {
       source: "marker",
       marker_id: POINT_MARKER.marker_id,
+      content: POINT_MARKER.content,
+      importance: POINT_MARKER.importance,
       start_seconds: 10,
       end_seconds: 30,
     },

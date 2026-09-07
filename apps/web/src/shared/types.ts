@@ -443,6 +443,7 @@ export type MediaMarker = {
   start_seconds: number;
   end_seconds: number | null;
   importance: MarkerImportance;
+  content: string;
 };
 
 export type MarkerImportance = 0 | 1 | 2 | 3 | 4 | 5;
@@ -460,6 +461,8 @@ type EventAnalysisTarget =
   | {
       source: "marker";
       marker_id: string;
+      content: string;
+      importance: MarkerImportance;
       start_seconds: number;
       end_seconds: number;
     }
@@ -503,10 +506,10 @@ export type EventAnalysis = {
 export type MediaMarkerCreate = Pick<
   MediaMarker,
   "start_seconds" | "end_seconds"
-> & { importance?: MarkerImportance };
+> & { importance?: MarkerImportance; content?: string };
 
 export type MediaMarkerUpdate = Partial<
-  Pick<MediaMarker, "start_seconds" | "end_seconds" | "importance">
+  Pick<MediaMarker, "start_seconds" | "end_seconds" | "importance" | "content">
 >;
 
 export type ThumbnailStoryboard = {

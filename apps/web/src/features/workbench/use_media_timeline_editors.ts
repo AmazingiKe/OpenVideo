@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 
 import type {
+  MarkerImportance,
   MediaMarker,
   MediaMarkerUpdate,
   Transcript,
@@ -46,6 +47,9 @@ export function use_media_timeline_editors({
     null,
   );
   const [marker_start_draft, set_marker_start_draft] = useState(0);
+  const [marker_content_draft, set_marker_content_draft] = useState("");
+  const [marker_importance_draft, set_marker_importance_draft] =
+    useState<MarkerImportance>(0);
   const [marker_end_draft, set_marker_end_draft] = useState<number | null>(
     null,
   );
@@ -92,6 +96,8 @@ export function use_media_timeline_editors({
     on_select_marker(marker.marker_id);
     set_editing_marker_id(marker.marker_id);
     set_marker_start_draft(marker.start_seconds);
+    set_marker_content_draft(marker.content);
+    set_marker_importance_draft(marker.importance);
     set_marker_end_draft(marker.end_seconds);
     set_marker_save_error(null);
     set_marker_editor_position(pointer_position);
@@ -130,6 +136,8 @@ export function use_media_timeline_editors({
     set_is_saving_marker(true);
     set_marker_save_error(null);
     void on_update_marker(editing_marker_id, {
+      content: marker_content_draft.trim(),
+      importance: marker_importance_draft,
       start_seconds: normalize_marker_time(marker_start_draft),
       end_seconds:
         marker_end_draft === null
@@ -165,12 +173,16 @@ export function use_media_timeline_editors({
     is_saving_marker,
     is_saving_transcript,
     marker_editor_position,
+    marker_content_draft,
+    marker_importance_draft,
     marker_end_draft,
     marker_save_error,
     marker_start_draft,
     save_marker,
     save_transcript,
     set_marker_end_draft,
+    set_marker_content_draft,
+    set_marker_importance_draft,
     set_marker_start_draft,
     set_transcript_draft,
     transcript_draft,

@@ -36,6 +36,7 @@ function MediaTimelineActionContentComponent({
       data-shape={media_action.data.marker_shape}
       data-selected={media_action.selected || undefined}
       aria-label={timeline_action_aria_label(media_action)}
+      title={timeline_action_aria_label(media_action)}
       aria-pressed={Boolean(media_action.selected)}
       onKeyDown={(event) => {
         if (event.key === "Enter") {

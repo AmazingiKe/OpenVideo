@@ -18,6 +18,7 @@ const EXISTING_MARKER = {
   start_seconds: 8,
   end_seconds: null,
   importance: 0 as const,
+  content: "",
 };
 
 vi.mock("@/shared/api", () => ({
@@ -41,6 +42,7 @@ describe("use_asset_markers", () => {
       start_seconds: 12.93,
       end_seconds: null,
       importance: 0,
+      content: "",
     });
     const { result } = renderHook(() => use_asset_markers(ASSET_ID), {
       wrapper: ApplicationQueryProvider,
