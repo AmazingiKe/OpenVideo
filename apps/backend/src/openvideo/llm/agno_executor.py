@@ -11,6 +11,7 @@ from agno.agent import Agent
 from agno.exceptions import StopAgentRun
 from agno.models.message import Message
 from agno.run.agent import (
+    ModelRequestStartedEvent,
     ReasoningStepEvent,
     RunCancelledEvent,
     RunCompletedEvent,
@@ -75,7 +76,6 @@ class AgentToolExecutionState:
 
     max_tool_calls: int
     call_count: int = 0
-    answer_started: bool = False
     limit_reached: bool = False
     results: dict[str, str] = field(default_factory=dict)
 
@@ -408,6 +408,7 @@ class AgnoAgentExecutor:
                 on_event,
                 required_tools=definition.required_tools,
                 tool_state=tool_state,
+                has_tools=bool(definition.tools),
             )
         except asyncio.CancelledError:
             raise
@@ -432,8 +433,6 @@ class AgnoAgentExecutor:
                 _tool_name: str = name,
                 **arguments: Any,
             ) -> str:
-                if tool_state.answer_started:
-                    raise StopAgentRun("正文已开始输出，停止后续工具调用")
                 if tool_state.call_count >= tool_state.max_tool_calls:
                     tool_state.limit_reached = True
                     raise StopAgentRun("已达到本轮工具调用上限，停止继续检索")
@@ -479,8 +478,11 @@ class AgnoAgentExecutor:
         *,
         required_tools: set[str],
         tool_state: AgentToolExecutionState,
+        has_tools: bool,
     ) -> AgentExecutionResult:
         content_parts: list[str] = []
+        response_text: list[str] = []
+        received_text = False
         reasoning_parts: list[str] = []
         successful_tools: set[str] = set()
         seen_tool_calls: set[str] = set()
@@ -520,13 +522,17 @@ class AgnoAgentExecutor:
             flush_deltas()
 
         async for event in stream:
-            if isinstance(event, RunContentEvent):
+            if isinstance(event, ModelRequestStartedEvent):
+                response_text.clear()
+            elif isinstance(event, RunContentEvent):
                 if isinstance(event.content, str) and event.content:
+                    received_text = True
                     if publish_text:
-                        if event.content.strip():
-                            tool_state.answer_started = True
-                        content_parts.append(event.content)
-                        queue_delta(LlmAgentEventType.TEXT_DELTA, event.content)
+                        if has_tools:
+                            response_text.append(event.content)
+                        else:
+                            content_parts.append(event.content)
+                            queue_delta(LlmAgentEventType.TEXT_DELTA, event.content)
                 if event.reasoning_content:
                     reasoning_parts.append(event.reasoning_content)
                     queue_delta(
@@ -541,6 +547,7 @@ class AgnoAgentExecutor:
                         event.reasoning_content,
                     )
             elif isinstance(event, ToolCallStartedEvent) and event.tool is not None:
+                response_text.clear()
                 flush_deltas(force=True)
                 call_id = event.tool.tool_call_id
                 if call_id is None or call_id not in seen_tool_calls:
@@ -581,8 +588,15 @@ class AgnoAgentExecutor:
                 flush_deltas(force=True)
                 raise asyncio.CancelledError
             elif isinstance(event, RunCompletedEvent):
+                # 带工具的消息正文可能只是操作前言，等完整运行结束后才发布最终消息。
+                if has_tools and publish_text and not tool_state.limit_reached:
+                    for content in response_text:
+                        content_parts.append(content)
+                        queue_delta(LlmAgentEventType.TEXT_DELTA, content)
                 if (
                     not content_parts
+                    and not received_text
+                    and not tool_state.limit_reached
                     and required_tools <= successful_tools
                     and isinstance(event.content, str)
                     and event.content
@@ -599,9 +613,10 @@ class AgnoAgentExecutor:
                 on_event(
                     LlmAgentEvent(
                         event_type=LlmAgentEventType.RESPONSE_COMPLETED,
-                        content="" if event.content is None else str(event.content),
+                        content="".join(content_parts),
                     )
                 )
+                break
         return AgentExecutionResult(
             content="".join(content_parts),
             reasoning_content="".join(reasoning_parts),

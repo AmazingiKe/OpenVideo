@@ -686,7 +686,10 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
         request_count += 1
         assert request_count <= 4, "Model requests must stop within the tool budget"
         if answer_after_search and request_count == 2:
+            yield ModelResponse(content="Checking another source first")
+        if answer_after_search and request_count == 3:
             yield ModelResponse(content="Final answer")
+            return
         yield ModelResponse(
             tool_calls=[
                 ChoiceDeltaToolCall(
@@ -694,7 +697,14 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
                     id=f"call-{request_count}",
                     type="function",
                     function=ChoiceDeltaToolCallFunction(
-                        name="echo", arguments='{"text":"same"}'
+                        name="echo",
+                        arguments=json.dumps(
+                            {
+                                "text": "other"
+                                if answer_after_search and request_count == 2
+                                else "same"
+                            }
+                        ),
                     ),
                 )
             ]
@@ -732,8 +742,13 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
         ),
         timeout=5,
     )
-    assert execution_count == 1
-    assert request_count == (2 if answer_after_search else 4)
+    assert execution_count == (2 if answer_after_search else 1)
+    assert request_count == (3 if answer_after_search else 4)
     assert result.tool_limit_reached is not answer_after_search
     if answer_after_search:
         assert result.content == "Final answer"
+        assert [
+            event.content
+            for event in events
+            if event.event_type == LlmAgentEventType.TEXT_DELTA
+        ] == ["Final answer"]
