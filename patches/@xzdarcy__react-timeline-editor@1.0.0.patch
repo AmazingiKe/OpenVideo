@@ -1,0 +1,125 @@
+diff --git a/dist/index.es.js b/dist/index.es.js
+index b48875e9ab04f3ec66c0224a92759d125b2be978..ea1772ccd986d107f5f1b2c5199ff50a5bfb9c4e 100644
+--- a/dist/index.es.js
++++ b/dist/index.es.js
+@@ -8365,9 +8365,9 @@ function tc() {
+ var nc = /* @__PURE__ */ tc();
+ const rc = /* @__PURE__ */ no(nc), ic = ({ children: s, interactRef: i, draggable: r, resizable: e, draggableOptions: a, resizableOptions: c }) => {
+   const u = Ae(null), h = Ae(), v = Ae(), m = Ae();
+-  Qe(() => {
++  lr(() => {
+     v.current = { ...a }, m.current = { ...c };
+-  }, [a, c]), Qe(() => {
++  }, [a, c]), lr(() => {
+     h.current && h.current.unset(), h.current = rc(u.current), i.current = h.current, S();
+   }, [r, e]);
+   const S = () => {
+@@ -8420,10 +8420,10 @@ const rc = /* @__PURE__ */ no(nc), ic = ({ children: s, interactRef: i, draggabl
+       updateWidth: (U) => ce(U, !1),
+       getLeft: de,
+       getWidth: he
+-    })), Qe(() => {
++    })), lr(() => {
+       const U = W.current?.target;
+       ce(typeof e > "u" ? U.offsetWidth : e, !1);
+-    }, [e]), Qe(() => {
++    }, [e]), lr(() => {
+       Q(r || 0, !1);
+     }, [r]);
+     const Q = (U, X = !0) => {
+@@ -9199,7 +9199,7 @@ const uc = (s, i) => s.reduce((r, e) => r + (e?.rowHeight || i), 0), dc = (s, i)
+   };
+   return lr(() => {
+     Se.current?.scrollToPosition({ scrollTop: v, scrollLeft: h }), Fe.current = { scrollTop: v, scrollLeft: h };
+-  }, [v, h]), Qe(() => {
++  }, [v, h]), lr(() => {
+     Se.current?.recomputeGridSize();
+   }, [r]), /* @__PURE__ */ Et("div", { ref: pe, className: je("edit-area"), children: [
+     /* @__PURE__ */ Ee(cr, { children: ({ width: J, height: re }) => {
+@@ -9214,6 +9214,7 @@ const uc = (s, i) => s.reduce((r, e) => r + (e?.rowHeight || i), 0), dc = (s, i)
+           {
+             columnCount: 1,
+             rowCount: me.length,
++            isScrolling: false,
+             ref: Se,
+             cellRenderer: H,
+             columnWidth: Math.max(c * a + u, J),
+diff --git a/src/components/edit_area/edit_area.tsx b/src/components/edit_area/edit_area.tsx
+index 2fa31b548f7b248adc95b9148ecb1c0b69731635..4cfdee573c1f6b2b4db1faf980844004b9755d6d 100644
+--- a/src/components/edit_area/edit_area.tsx
++++ b/src/components/edit_area/edit_area.tsx
+@@ -1 +1 @@
+-import React, { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useCallback } from 'react';
++import React, { useImperativeHandle, useLayoutEffect, useRef, useState, useCallback } from 'react';
+@@ -513,7 +513,7 @@ export const EditArea = React.forwardRef<EditAreaState, EditAreaProps>((props, r
+     scrollToPositionRef.current = { scrollTop, scrollLeft };
+   }, [scrollTop, scrollLeft]);
+ 
+-  useEffect(() => {
++  useLayoutEffect(() => {
+     gridRef.current?.recomputeGridSize();
+   }, [editorData]);
+ 
+@@ -540,6 +540,8 @@ export const EditArea = React.forwardRef<EditAreaState, EditAreaProps>((props, r
+           return (
+             <>
+               <Grid
++                // 时间线行随视口裁剪和缩放变化，滚动缓存会延迟内容与命中区域更新。
++                isScrolling={false}
+                 columnCount={1}
+                 rowCount={heights.length}
+                 ref={gridRef}
+diff --git a/src/components/row_rnd/interactable.tsx b/src/components/row_rnd/interactable.tsx
+index da14a770fdeea3b928fb066a9d48bfb3553ad712..bbe14cabd20ea47ccbf7ac57c85638bc64639984 100644
+--- a/src/components/row_rnd/interactable.tsx
++++ b/src/components/row_rnd/interactable.tsx
+@@ -2,7 +2,7 @@ import { DraggableOptions } from '@interactjs/actions/drag/plugin';
+ import { ResizableOptions } from '@interactjs/actions/resize/plugin';
+ import { DragEvent, Interactable } from '@interactjs/types';
+ import interact from 'interactjs';
+-import { cloneElement, FC, ReactElement, useEffect, useRef } from 'react';
++import { cloneElement, FC, ReactElement, useLayoutEffect, useRef } from 'react';
+ 
+ interface InteractCompProps {
+   children: ReactElement;
+@@ -19,12 +19,12 @@ export const InteractComp: FC<InteractCompProps> = ({ children, interactRef, dra
+   const draggableOptionsRef = useRef<DraggableOptions>();
+   const resizableOptionsRef = useRef<ResizableOptions>();
+ 
+-  useEffect(() => {
++  useLayoutEffect(() => {
+     draggableOptionsRef.current = { ...draggableOptions };
+     resizableOptionsRef.current = { ...resizableOptions };
+   }, [draggableOptions, resizableOptions]);
+ 
+-  useEffect(() => {
++  useLayoutEffect(() => {
+     interactable.current && interactable.current.unset();
+     interactable.current = interact(nodeRef.current as HTMLElement);
+     interactRef.current = interactable.current;
+diff --git a/src/components/row_rnd/row_rnd.tsx b/src/components/row_rnd/row_rnd.tsx
+index 21bb61017a0155438f594574ba2aa7daf80c1ea5..b8d4f751fbea5f40fa29baab321cf1b7128a2507 100644
+--- a/src/components/row_rnd/row_rnd.tsx
++++ b/src/components/row_rnd/row_rnd.tsx
+@@ -1,6 +1,6 @@
+ import { Interactable } from '@interactjs/core/Interactable';
+ import { DragEvent, ResizeEvent } from '@interactjs/types/index';
+-import React, { ReactElement, useEffect, useImperativeHandle, useRef } from 'react';
++import React, { ReactElement, useEffect, useLayoutEffect, useImperativeHandle, useRef } from 'react';
+ import { DEFAULT_ADSORPTION_DISTANCE, DEFAULT_MOVE_GRID, DEFAULT_START_LEFT } from '../../interface/const';
+ import { useAutoScroll } from './hooks/useAutoScroll';
+ import { InteractComp } from './interactable';
+@@ -53,11 +53,11 @@ export const RowDnd = React.forwardRef<RowRndApi, RowRndProps>(
+       getLeft: handleGetLeft,
+       getWidth: handleGetWidth,
+     }));
+-    useEffect(() => {
++    useLayoutEffect(() => {
+       const target = interactable.current?.target as HTMLElement;
+       handleUpdateWidth(typeof width === 'undefined' ? target.offsetWidth : width, false);
+     }, [width]);
+-    useEffect(() => {
++    useLayoutEffect(() => {
+       handleUpdateLeft(left || 0, false);
+     }, [left]);
+ 

@@ -1088,6 +1088,26 @@
   background: var(--timeline-color-canvas-background);
 }
 
+/* 视口几何逐帧同步；全局 reduced motion 时长也不应为位置和尺寸创建过渡。 */
+.media_timeline :is(
+  .timeline-editor,
+  .timeline-editor-edit-area,
+  .ReactVirtualized__Grid,
+  .ReactVirtualized__Grid__innerScrollContainer,
+  .timeline-editor-edit-row,
+  .timeline-editor-action,
+  .timeline_grid_line,
+  .media_timeline_playhead,
+  .media_timeline_track_labels_body,
+  .media_timeline_aggregate_hit,
+  .media_timeline_range_selection,
+  .media_timeline_range_endpoint,
+  .media_timeline_evidence_range,
+  .media_timeline_marquee
+) {
+  transition-property: none;
+}
+
 .media_timeline .timeline-editor-action {
   z-index: 3;
   box-sizing: border-box;
