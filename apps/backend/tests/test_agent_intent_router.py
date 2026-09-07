@@ -57,9 +57,7 @@ def test_router_validates_structured_fast_model_decision(monkeypatch):
 @pytest.mark.parametrize("repaired", [True, False])
 def test_router_repairs_format_once_without_relaxing_validation(monkeypatch, repaired):
     calls = []
-    invalid = (
-        '{"intent":"edit","model_role":"complex","reason":"提案","confidence":0.9}'
-    )
+    invalid = '{"intent":"edit","model_role":"vision","reason":"提案"}'
     valid = '{"intent":"edit","model_role":"complex","reason":"生成待审批提案"}'
 
     def complete_route(_model, messages, *_args, **_kwargs):
@@ -80,9 +78,31 @@ def test_router_repairs_format_once_without_relaxing_validation(monkeypatch, rep
             route_agent_intent(model_configuration(), **arguments)
     assert len(calls) == 2
     assert "待审批建议也属于 edit" in calls[0][0]["content"]
-    schema = calls[0][0]["content"]
-    assert '"additionalProperties": false' in schema
     assert calls[1][-2]["content"] == invalid
+
+
+def test_router_ignores_extra_metadata_but_keeps_only_validated_fields(monkeypatch):
+    responses = iter(
+        [
+            '{"intent":"edit","model_role":"complex","reason":"生成提案","confidence":0.9,"maxLength":160}'
+        ]
+    )
+    monkeypatch.setattr(
+        "openvideo.agent_intent_router.complete_text",
+        lambda *_args, **_kwargs: next(responses),
+    )
+    route = route_agent_intent(
+        model_configuration(),
+        agent_id="marker",
+        content="生成两个标记建议",
+        retrieval_scope=AgentRetrievalScope.CURRENT_ASSET,
+        requested_intent=None,
+    )
+    assert route.model_dump() == {
+        "intent": "edit",
+        "model_role": "complex",
+        "reason": "生成提案",
+    }
 
 
 @pytest.mark.parametrize(

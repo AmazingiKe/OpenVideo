@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from openvideo.core.agent_governance_models import (
     AgentModelRole,
@@ -36,8 +36,6 @@ class AgentIntent(StrEnum):
 
 class AgentIntentRoute(BaseModel):
     """只保留执行工作流需要的决策，不保存或暴露模型思维链。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     intent: AgentIntent
     model_role: AgentModelRole
@@ -94,8 +92,7 @@ def route_agent_intent(
                 "model_role 只能是 fast 或 complex。跨视频、全片综合、冲突判断、多步修改和"
                 "复杂推理选择 complex，短问答、定位和提取选择 fast。请求含糊时选择 chat，"
                 "让主助手继续澄清。reason 只写不超过 160 字的决策摘要，不复述用户正文。"
-                "输出必须严格符合以下 JSON Schema，不允许增加字段："
-                + json.dumps(AgentIntentRoute.model_json_schema(), ensure_ascii=False)
+                '输出格式：{"intent":"chat","model_role":"fast","reason":"简短理由"}。'
             ),
         },
         {
@@ -132,7 +129,7 @@ def route_agent_intent(
                     {"role": "assistant", "content": raw_route},
                     {
                         "role": "user",
-                        "content": "上次输出不符合格式。请重新判断原始请求，只返回符合系统 JSON Schema 的对象。",
+                        "content": "上次输出不符合格式。请重新判断原始请求，只返回 intent、model_role、reason，取值遵守系统规则。",
                     },
                 ]
             )
