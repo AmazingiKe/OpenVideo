@@ -9,7 +9,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { format_time } from "@/shared/format";
+import { format_timeline_time } from "./timeline_time";
 import {
   DEFAULT_TIMELINE_MERGE_THRESHOLD,
   MAXIMUM_TIMELINE_MERGE_THRESHOLD,
@@ -43,7 +43,6 @@ export function MediaTimelineToolbar({
   merge_threshold,
   on_merge_threshold_change,
 }: MediaTimelineToolbarProps) {
-  const bounded_time = current_time;
   const threshold_frame_ref = useRef<number | null>(null);
   const pending_threshold_ref = useRef(merge_threshold);
   const threshold_callback_ref = useRef(on_merge_threshold_change);
@@ -101,8 +100,16 @@ export function MediaTimelineToolbar({
   return (
     <div className="media_timeline_toolbar" aria-label="时间线工具栏">
       <div className="media_timeline_transport">
-        <output ref={current_time_output_ref} aria-label="当前播放时间和总时长">
-          {format_time(bounded_time)} / {format_time(duration)}
+        <output
+          ref={current_time_output_ref}
+          className="media_timeline_current_time"
+          aria-label="当前播放时间"
+        >
+          {format_timeline_time(current_time)}
+        </output>
+        <span aria-hidden="true">/</span>
+        <output aria-label="总时长">
+          {format_timeline_time(duration, { milliseconds: false })}
         </output>
         {context_sources}
       </div>

@@ -1,13 +1,12 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 
-import { format_time } from "@/shared/format";
+import {
+  format_timeline_time,
+  TIMELINE_SECONDS_PER_HOUR,
+} from "./timeline_time";
 import type { ColorScheme } from "@/color_scheme";
 import { use_color_scheme } from "@/use_color_scheme";
 
-const RULER_HEIGHT_PIXELS = 32;
-const RULER_MAJOR_TICK_HEIGHT_PIXELS = 8;
-const RULER_MINOR_TICK_HEIGHT_PIXELS = 4;
-const RULER_LABEL_TOP_PIXELS = 6;
 const RULER_MAJOR_MINIMUM_WIDTH_PIXELS = 60;
 const RULER_MAJOR_MAXIMUM_WIDTH_PIXELS = 180;
 const RULER_MAJOR_TARGET_WIDTH_PIXELS = 96;
@@ -26,10 +25,16 @@ export type TimelineRulerTick = {
 };
 
 type TimelineRulerPaintStyle = {
+  height: number;
+  major_tick_height: number;
+  minor_tick_height: number;
+  label_top: number;
   color_scheme: ColorScheme;
   ruler_font: string;
   text_color: string;
   tick_color: string;
+  minor_tick_color: string;
+  label_gap: number;
 };
 
 type TimelineRulerCanvasProps = {
@@ -59,10 +64,46 @@ export function TimelineRulerCanvas({
     const context = canvas.getContext("2d");
     if (!context) return;
 
+    let paint_style = paint_style_ref.current;
+    if (!paint_style || paint_style.color_scheme !== color_scheme) {
+      const computed_style = getComputedStyle(canvas);
+      paint_style = {
+        color_scheme,
+        height: parseFloat(
+          computed_style.getPropertyValue("--timeline-ruler-height"),
+        ),
+        major_tick_height: parseFloat(
+          computed_style.getPropertyValue("--timeline-ruler-major-tick-height"),
+        ),
+        minor_tick_height: parseFloat(
+          computed_style.getPropertyValue("--timeline-ruler-minor-tick-height"),
+        ),
+        label_top: parseFloat(
+          computed_style.getPropertyValue("--timeline-ruler-label-top"),
+        ),
+        minor_tick_color: computed_style
+          .getPropertyValue("--timeline-color-ruler-minor-tick")
+          .trim(),
+        label_gap: parseFloat(
+          computed_style.getPropertyValue("--timeline-label-gap"),
+        ),
+        tick_color: computed_style
+          .getPropertyValue("--timeline-color-ruler-tick")
+          .trim(),
+        text_color: computed_style
+          .getPropertyValue("--timeline-color-ruler-text")
+          .trim(),
+        ruler_font: computed_style
+          .getPropertyValue("--timeline-ruler-font")
+          .trim(),
+      };
+      paint_style_ref.current = paint_style;
+    }
+
     const device_pixel_ratio = Math.max(window.devicePixelRatio || 1, 1);
     const bitmap_size = timeline_ruler_bitmap_size(
       canvas_width,
-      RULER_HEIGHT_PIXELS,
+      paint_style.height,
       device_pixel_ratio,
     );
     if (canvas.width !== bitmap_size.width) canvas.width = bitmap_size.width;
@@ -77,26 +118,9 @@ export function TimelineRulerCanvas({
       start_left,
       zoom_pixels_per_second,
     });
-    let paint_style = paint_style_ref.current;
-    if (!paint_style || paint_style.color_scheme !== color_scheme) {
-      const computed_style = getComputedStyle(canvas);
-      paint_style = {
-        color_scheme,
-        tick_color: computed_style
-          .getPropertyValue("--timeline-color-ruler-tick")
-          .trim(),
-        text_color: computed_style
-          .getPropertyValue("--timeline-color-ruler-text")
-          .trim(),
-        ruler_font: computed_style
-          .getPropertyValue("--timeline-ruler-font")
-          .trim(),
-      };
-      paint_style_ref.current = paint_style;
-    }
 
     context.setTransform(device_pixel_ratio, 0, 0, device_pixel_ratio, 0, 0);
-    context.clearRect(0, 0, canvas_width, RULER_HEIGHT_PIXELS);
+    context.clearRect(0, 0, canvas_width, paint_style.height);
     context.lineWidth = 1;
     context.strokeStyle = paint_style.tick_color;
     context.fillStyle = paint_style.text_color;
@@ -104,19 +128,35 @@ export function TimelineRulerCanvas({
     context.textAlign = "center";
     context.textBaseline = "top";
 
+    let label_right = -Infinity;
     for (const tick of ticks) {
       const aligned_x =
         Math.round(tick.x * device_pixel_ratio) / device_pixel_ratio +
         0.5 / device_pixel_ratio;
       const tick_height = tick.is_major
-        ? RULER_MAJOR_TICK_HEIGHT_PIXELS
-        : RULER_MINOR_TICK_HEIGHT_PIXELS;
+        ? paint_style.major_tick_height
+        : paint_style.minor_tick_height;
+      context.strokeStyle = tick.is_major
+        ? paint_style.tick_color
+        : paint_style.minor_tick_color;
       context.beginPath();
-      context.moveTo(aligned_x, RULER_HEIGHT_PIXELS - tick_height);
-      context.lineTo(aligned_x, RULER_HEIGHT_PIXELS);
+      context.moveTo(aligned_x, paint_style.height - tick_height);
+      context.lineTo(aligned_x, paint_style.height);
       context.stroke();
       if (tick.label !== null) {
-        context.fillText(tick.label, tick.x, RULER_LABEL_TOP_PIXELS);
+        const width = context.measureText(tick.label).width;
+        const label_x = Math.max(
+          width / 2,
+          Math.min(tick.x, canvas_width - width / 2),
+        );
+        const left = label_x - width / 2;
+        if (
+          width <= canvas_width &&
+          left >= label_right + paint_style.label_gap
+        ) {
+          context.fillText(tick.label, label_x, paint_style.label_top);
+          label_right = label_x + width / 2;
+        }
       }
     }
   }, [
@@ -271,15 +311,27 @@ export function create_visible_timeline_ruler_ticks({
       seconds,
       x,
       is_major,
-      label: is_major ? format_timeline_ruler_time(seconds) : null,
+      label: is_major
+        ? format_timeline_ruler_time(
+            seconds,
+            major_interval_seconds,
+            duration_seconds,
+          )
+        : null,
     });
   }
   return ticks;
 }
 
-export function format_timeline_ruler_time(seconds: number): string {
-  if (seconds < 1) return `${seconds.toFixed(2)}s`;
-  return format_time(seconds);
+export function format_timeline_ruler_time(
+  seconds: number,
+  interval_seconds: number,
+  duration_seconds: number,
+): string {
+  return format_timeline_time(seconds, {
+    milliseconds: interval_seconds < 1,
+    hours: duration_seconds >= TIMELINE_SECONDS_PER_HOUR,
+  });
 }
 
 export function timeline_ruler_bitmap_size(

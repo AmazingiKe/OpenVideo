@@ -555,6 +555,13 @@ export const SaveError: Story = {
 };
 
 export const Narrow: Story = {
+  decorators: [
+    (StoryComponent) => (
+      <div style={{ width: 375 }}>
+        <StoryComponent />
+      </div>
+    ),
+  ],
   globals: {
     viewport: { value: "mobile1", isRotated: false },
   },
@@ -642,7 +649,35 @@ export const MixedDensityDark: Story = {
 
 export const MixedDensityNarrow: Story = {
   args: MixedDensity.args,
+  decorators: Narrow.decorators,
   globals: { viewport: { value: "mobile1", isRotated: false } },
+};
+
+export const RulerHover: Story = {
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    const ruler = story.getByRole("slider", { name: "时间线播放头" });
+    const current = story.getByLabelText("当前播放时间");
+    const before = current.textContent;
+    const bounds = ruler.getBoundingClientRect();
+    await userEvent.pointer({
+      target: ruler,
+      coords: { clientX: bounds.left + 100, clientY: bounds.top + 12 },
+    });
+    const hover = story.getByLabelText("标尺悬停时间");
+    expect(hover).toBeVisible();
+    expect(hover).toHaveTextContent(/\d{2}:\d{2}:\d{2}\.\d{3}/);
+    expect(current.textContent).toBe(before);
+    await userEvent.unhover(ruler);
+    expect(hover).not.toBeVisible();
+    expect(canvasElement.querySelector(".media_timeline")).toHaveClass("dark");
+    expect(story.getByLabelText("总时长")).toHaveTextContent("00:01:30");
+  },
+};
+
+export const RulerHoverDark: Story = {
+  ...RulerHover,
+  decorators: [DARK_TIMELINE_DECORATOR],
 };
 
 export const MergingDisabled: Story = {

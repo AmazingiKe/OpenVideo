@@ -81,14 +81,35 @@ describe("TimelineRulerCanvas", () => {
   });
 
   it("formats subsecond, second, and hour boundaries", () => {
-    expect(format_timeline_ruler_time(0)).toBe("0.00s");
-    expect(format_timeline_ruler_time(0.999)).toBe("1.00s");
-    expect(format_timeline_ruler_time(1)).toBe("00:01");
-    expect(format_timeline_ruler_time(3_600)).toBe("01:00:00");
+    expect(format_timeline_ruler_time(0, 0.5, 60)).toBe("00:00.000");
+    expect(format_timeline_ruler_time(0.999, 0.5, 60)).toBe("00:00.999");
+    expect(format_timeline_ruler_time(1, 1, 60)).toBe("00:01");
+    expect(format_timeline_ruler_time(3_600, 1, 7_200)).toBe("01:00:00");
+  });
+
+  it("keeps fractional labels unique across seconds and uses hours throughout long media", () => {
+    const ticks = create_visible_timeline_ruler_ticks({
+      canvas_width: 800,
+      duration_seconds: 7_200,
+      major_interval_seconds: 0.5,
+      scroll_left: 0,
+      start_left: 16,
+      zoom_pixels_per_second: 180,
+    });
+    const labels = ticks
+      .filter((tick) => tick.is_major)
+      .map((tick) => tick.label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.slice(0, 3)).toEqual([
+      "00:00:00.000",
+      "00:00:00.500",
+      "00:00:01.000",
+    ]);
   });
 
   it("sizes and draws the bitmap at the current device pixel ratio", () => {
     const context = {
+      measureText: vi.fn((label: string) => ({ width: label.length * 7 })),
       beginPath: vi.fn(),
       clearRect: vi.fn(),
       fillText: vi.fn(),
@@ -111,6 +132,13 @@ describe("TimelineRulerCanvas", () => {
         if (property_name === "--timeline-color-ruler-tick") return "tick";
         if (property_name === "--timeline-color-ruler-text") return "text";
         if (property_name === "--timeline-ruler-font") return "10px monospace";
+        if (property_name === "--timeline-ruler-height") return "32px";
+        if (property_name === "--timeline-ruler-major-tick-height")
+          return "8px";
+        if (property_name === "--timeline-ruler-minor-tick-height")
+          return "4px";
+        if (property_name === "--timeline-ruler-label-top") return "6px";
+        if (property_name === "--timeline-label-gap") return "8px";
         return "";
       },
     } as CSSStyleDeclaration);
@@ -140,6 +168,14 @@ describe("TimelineRulerCanvas", () => {
     expect(context.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
     expect(context.clearRect).toHaveBeenCalledWith(0, 0, 123.5, 32);
     expect(context.fillText).toHaveBeenCalled();
+    let previous_right = -Infinity;
+    for (const [label, x] of context.fillText.mock.calls) {
+      const half_width = (label.length * 7) / 2;
+      expect(x - half_width).toBeGreaterThanOrEqual(0);
+      expect(x + half_width).toBeLessThanOrEqual(123.5);
+      expect(x - half_width).toBeGreaterThanOrEqual(previous_right + 8);
+      previous_right = x + half_width;
+    }
 
     const draw_count = context.clearRect.mock.calls.length;
     act(() => {

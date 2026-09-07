@@ -64,6 +64,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { format_timeline_time } from "./timeline_time";
 import { format_time } from "@/shared/format";
 import { format_marker_importance } from "@/shared/marker_labels";
 import type {
@@ -445,11 +446,11 @@ export function MediaTimeline({
     null,
   );
   const [row_heights, set_row_heights] = useState<Record<string, number>>({});
+  const ruler_hover_ref = useRef<HTMLOutputElement>(null);
   const ruler_pointer_id_ref = useRef<number | null>(null);
   const ruler_bounds_ref = useRef<{ left: number } | null>(null);
   const ruler_scrub_time_ref = useRef(0);
   const timeline_context_menu_prepared_ref = useRef(false);
-  const current_time_output_ref = useRef<HTMLOutputElement>(null);
   const previous_asset_id_ref = useRef(asset_id);
   const transcript_segments = useMemo(
     () => transcript?.segments ?? [],
@@ -525,6 +526,7 @@ export function MediaTimeline({
   const bounded_time = Math.min(Math.max(current_time, 0), duration);
   const scale_count = Math.max(1, Math.ceil(duration));
   const {
+    current_time_output_ref,
     canvas_width,
     editor_render_window,
     handle_timeline_scroll,
@@ -1336,7 +1338,7 @@ export function MediaTimeline({
   });
 
   return (
-    <section className="media_timeline" aria-label="剪辑时间轴">
+    <section className="media_timeline dark" aria-label="剪辑时间轴">
       <MediaTimelineToolbar
         current_time={bounded_time}
         current_time_output_ref={current_time_output_ref}
@@ -1477,8 +1479,15 @@ export function MediaTimeline({
                 onPointerDown={start_ruler_scrub}
                 onPointerMove={continue_ruler_scrub}
                 onPointerUp={finish_ruler_scrub}
+                onPointerLeave={hide_ruler_hover}
                 onPointerCancel={cancel_ruler_scrub}
                 onLostPointerCapture={cancel_ruler_scrub}
+              />
+              <output
+                ref={ruler_hover_ref}
+                className="timeline_ruler_hover"
+                hidden
+                aria-label="标尺悬停时间"
               />
               <div
                 ref={playhead_ref}
@@ -1549,7 +1558,7 @@ export function MediaTimeline({
               </output>
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="min-w-48">
+          <ContextMenuContent className="dark min-w-48">
             {context_marker ? (
               <ContextMenuGroup>
                 <ContextMenuLabel>标记重要程度</ContextMenuLabel>
@@ -1702,7 +1711,7 @@ export function MediaTimeline({
           if (!open) set_selected_event_analysis_ids([]);
         }}
       >
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent className="dark w-full overflow-y-auto sm:max-w-lg">
           <SheetHeader>
             <SheetTitle>事件分析结果</SheetTitle>
             <SheetDescription>
@@ -1727,7 +1736,7 @@ export function MediaTimeline({
           if (!open) set_delete_analysis(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="dark">
           <AlertDialogHeader>
             <AlertDialogTitle>删除事件分析？</AlertDialogTitle>
             <AlertDialogDescription>
@@ -1796,13 +1805,18 @@ export function MediaTimeline({
     ruler.setAttribute("aria-valuetext", format_ruler_accessible_time(time));
     const output = current_time_output_ref.current;
     if (output) {
-      output.textContent = `${format_time(time)} / ${format_time(duration)}`;
+      output.textContent = format_timeline_time(time);
     }
+  }
+
+  function hide_ruler_hover() {
+    if (ruler_hover_ref.current) ruler_hover_ref.current.hidden = true;
   }
 
   function start_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || ruler_pointer_id_ref.current !== null) return;
     event.preventDefault();
+    hide_ruler_hover();
     ruler_pointer_id_ref.current = event.pointerId;
     const bounds = event.currentTarget.getBoundingClientRect();
     ruler_bounds_ref.current = { left: bounds.left };
@@ -1815,6 +1829,25 @@ export function MediaTimeline({
   }
 
   function continue_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
+    if (ruler_pointer_id_ref.current === null) {
+      const hover = ruler_hover_ref.current;
+      if (!hover || event.buttons !== 0) return;
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const x = event.clientX - bounds.left;
+      const time = Math.min(
+        duration,
+        Math.max(
+          0,
+          (viewport.scroll_left + x - TIMELINE_START_LEFT) /
+            viewport.zoom_pixels_per_second,
+        ),
+      );
+      hover.textContent = format_timeline_time(time);
+      hover.hidden = false;
+      const width = hover.getBoundingClientRect().width;
+      hover.style.left = `${Math.max(0, Math.min(x - width / 2, bounds.width - width))}px`;
+      return;
+    }
     if (ruler_pointer_id_ref.current !== event.pointerId) return;
     const time = ruler_time_from_pointer(event.clientX);
     ruler_scrub_time_ref.current = time;

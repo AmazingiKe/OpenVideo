@@ -85,7 +85,7 @@ export function MediaTimelineMarkerEditor({
         </PopoverAnchor>
       ) : null}
       <PopoverContent
-        className="max-h-[var(--radix-popover-content-available-height)] w-[min(30rem,calc(100vw-1rem))] overflow-y-auto p-4"
+        className="dark max-h-[var(--radix-popover-content-available-height)] w-[min(30rem,calc(100vw-1rem))] overflow-y-auto p-4"
         side="bottom"
         align="start"
         sideOffset={MARKER_EDITOR_OFFSET}
@@ -190,7 +190,7 @@ export function MediaTimelineMarkerEditor({
                   删除
                 </Button>
               </AlertDialogTrigger>
-              <AlertDialogContent size="sm">
+              <AlertDialogContent className="dark" size="sm">
                 <AlertDialogHeader>
                   <AlertDialogTitle>删除这个标记？</AlertDialogTitle>
                   <AlertDialogDescription>

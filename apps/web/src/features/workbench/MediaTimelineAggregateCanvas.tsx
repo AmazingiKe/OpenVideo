@@ -8,16 +8,18 @@ import type {
   TimelineSelectionRange,
 } from "./media_timeline_calculations";
 
-const BLOCK_VERTICAL_INSET = 8;
-const SELECTED_BLOCK_LINE_WIDTH = 2;
-const BLOCK_LABEL_PADDING = 8;
-
 type TimelineAggregatePaintStyle = {
+  border_colors: Record<MediaTimelineAction["data"]["kind"], string>;
+  radius: number;
+  border: number;
+  selection_width: number;
+  label_padding: number;
   block_colors: Record<MediaTimelineAction["data"]["kind"], string>;
   color_scheme: ColorScheme;
   selection_color: string;
   label_color: string;
   font: string;
+  count_font: string;
 };
 
 type MediaTimelineAggregateCanvasProps = {
@@ -42,9 +44,15 @@ export const MediaTimelineAggregateCanvas = memo(
     const paint_style_ref = useRef<TimelineAggregatePaintStyle | null>(null);
     const color_scheme = use_color_scheme();
     const [canvas_height, set_canvas_height] = useState(0);
+    const [block_inset, set_block_inset] = useState(0);
     useLayoutEffect(() => {
       const canvas = canvas_ref.current;
       if (!canvas) return;
+      set_block_inset(
+        parseFloat(
+          getComputedStyle(canvas).getPropertyValue("--timeline-block-inset"),
+        ),
+      );
       const measure = () =>
         set_canvas_height(canvas.getBoundingClientRect().height);
       measure();
@@ -57,8 +65,8 @@ export const MediaTimelineAggregateCanvas = memo(
         aggregates.flatMap((group) => {
           const left = Math.max(0, group.left - scroll_left);
           const right = Math.min(canvas_width, group.right - scroll_left);
-          const top = group.top + BLOCK_VERTICAL_INSET - scroll_top;
-          const height = Math.max(1, group.height - BLOCK_VERTICAL_INSET * 2);
+          const top = group.top + block_inset - scroll_top;
+          const height = Math.max(1, group.height - block_inset * 2);
           if (
             right <= left ||
             top + height < 0 ||
@@ -67,7 +75,14 @@ export const MediaTimelineAggregateCanvas = memo(
             return [];
           return [{ group, left, width: right - left, top, height }];
         }),
-      [aggregates, canvas_width, canvas_height, scroll_left, scroll_top],
+      [
+        aggregates,
+        canvas_width,
+        canvas_height,
+        scroll_left,
+        scroll_top,
+        block_inset,
+      ],
     );
 
     useLayoutEffect(() => {
@@ -86,16 +101,26 @@ export const MediaTimelineAggregateCanvas = memo(
         const computed_style = getComputedStyle(canvas);
         paint_style = {
           color_scheme,
-          font: computed_style.font,
-          label_color: timeline_color(
-            computed_style,
-            "--timeline-color-aggregate-label",
+          radius: parseFloat(
+            computed_style.getPropertyValue("--timeline-block-radius"),
           ),
-          block_colors: {
-            marker: timeline_color(computed_style, "--timeline-color-marker"),
-            candidate: timeline_color(
+          border: parseFloat(
+            computed_style.getPropertyValue("--timeline-block-border"),
+          ),
+          selection_width: parseFloat(
+            computed_style.getPropertyValue("--timeline-block-selection-width"),
+          ),
+          label_padding: parseFloat(
+            computed_style.getPropertyValue("--timeline-block-label-padding"),
+          ),
+          border_colors: {
+            marker: timeline_color(
               computed_style,
               "--timeline-color-marker-border",
+            ),
+            candidate: timeline_color(
+              computed_style,
+              "--timeline-color-marker",
             ),
             transcript: timeline_color(
               computed_style,
@@ -108,6 +133,36 @@ export const MediaTimelineAggregateCanvas = memo(
             event_analysis: timeline_color(
               computed_style,
               "--timeline-color-event-analysis-border",
+            ),
+          },
+          font: computed_style.font,
+          count_font: computed_style
+            .getPropertyValue("--timeline-count-font")
+            .trim(),
+          label_color: timeline_color(
+            computed_style,
+            "--timeline-color-aggregate-label",
+          ),
+          block_colors: {
+            marker: timeline_color(
+              computed_style,
+              "--timeline-color-marker-background",
+            ),
+            candidate: timeline_color(
+              computed_style,
+              "--timeline-color-candidate-background",
+            ),
+            transcript: timeline_color(
+              computed_style,
+              "--timeline-color-transcript-background",
+            ),
+            event: timeline_color(
+              computed_style,
+              "--timeline-color-event-background",
+            ),
+            event_analysis: timeline_color(
+              computed_style,
+              "--timeline-color-event-analysis-background",
             ),
           },
           selection_color: timeline_color(
@@ -125,11 +180,41 @@ export const MediaTimelineAggregateCanvas = memo(
       context.textAlign = "center";
       context.textBaseline = "middle";
       for (const block of blocks) {
+        context.font = paint_style.font;
         context.fillStyle = paint_style.block_colors[block.group.kind];
-        context.fillRect(block.left, block.top, block.width, block.height);
-        const label = String(block.group.count);
+        const line_width = block.group.selected
+          ? paint_style.selection_width
+          : paint_style.border;
+        const inset = line_width / 2;
+        context.beginPath();
+        context.roundRect(
+          block.left + inset,
+          block.top + inset,
+          Math.max(0, block.width - line_width),
+          Math.max(0, block.height - line_width),
+          paint_style.radius,
+        );
+        context.fill();
+        context.lineWidth = line_width;
+        context.strokeStyle = block.group.selected
+          ? paint_style.selection_color
+          : paint_style.border_colors[block.group.kind];
+        context.setLineDash(
+          block.group.kind === "candidate"
+            ? [paint_style.radius, paint_style.radius]
+            : [],
+        );
+        context.stroke();
+        const full_label = `${block.group.count} 个片段`;
+        const label =
+          context.measureText(full_label).width +
+            paint_style.label_padding * 2 <=
+          block.width
+            ? full_label
+            : String(block.group.count);
+        if (label !== full_label) context.font = paint_style.count_font;
         if (
-          context.measureText(label).width + BLOCK_LABEL_PADDING * 2 <=
+          context.measureText(label).width + paint_style.label_padding * 2 <=
           block.width
         ) {
           context.fillStyle = paint_style.label_color;
@@ -138,11 +223,6 @@ export const MediaTimelineAggregateCanvas = memo(
             block.left + block.width / 2,
             block.top + block.height / 2,
           );
-        }
-        if (block.group.selected) {
-          context.lineWidth = SELECTED_BLOCK_LINE_WIDTH;
-          context.strokeStyle = paint_style.selection_color;
-          context.strokeRect(block.left, block.top, block.width, block.height);
         }
       }
     }, [blocks, canvas_width, canvas_height, color_scheme]);

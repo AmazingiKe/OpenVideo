@@ -1055,10 +1055,10 @@ describe("MediaTimeline", () => {
   });
 
   it("shows timecode without duplicating player controls", () => {
-    render_timeline();
+    render_timeline({ is_paused: true });
 
-    expect(screen.getByLabelText("当前播放时间和总时长")).toHaveTextContent(
-      "00:30 / 02:00",
+    expect(screen.getByLabelText("当前播放时间")).toHaveTextContent(
+      "00:00:30.023",
     );
     expect(
       screen.queryByRole("button", { name: "播放" }),
@@ -1084,7 +1084,10 @@ describe("MediaTimeline", () => {
   });
 
   it("keeps the editor render boundary stable for visible playback updates", () => {
-    const { change_current_time } = render_timeline({ current_time: 5 });
+    const { change_current_time } = render_timeline({
+      current_time: 5,
+      is_paused: true,
+    });
     const render_count = timeline_mock.viewport_events.filter(
       (event) => event.type === "render",
     ).length;
@@ -1094,8 +1097,8 @@ describe("MediaTimeline", () => {
     expect(
       timeline_mock.viewport_events.filter((event) => event.type === "render"),
     ).toHaveLength(render_count);
-    expect(screen.getByLabelText("当前播放时间和总时长")).toHaveTextContent(
-      "00:05 / 02:00",
+    expect(screen.getByLabelText("当前播放时间")).toHaveTextContent(
+      "00:00:05.100",
     );
   });
 
@@ -1123,6 +1126,10 @@ describe("MediaTimeline", () => {
     playback_time = 30.087;
     animation_frames.run_next_frame(148);
     expect(transformed_playhead_x(playhead)).toBeCloseTo(19.76);
+    expect(screen.getByLabelText("当前播放时间")).toHaveTextContent(
+      "00:00:30.087",
+    );
+    expect(screen.getByLabelText("总时长")).toHaveTextContent("00:02:00");
     const pending_frame = [...animation_frames.frames.keys()][0];
 
     result.unmount();
@@ -1231,8 +1238,8 @@ describe("MediaTimeline", () => {
     expect(playhead.style.transform).toBe("translate3d(560px, 0, 0)");
     expect(get_ruler_bounds).toHaveBeenCalledOnce();
     expect(ruler).toHaveAttribute("aria-valuenow", "6.8");
-    expect(screen.getByLabelText("当前播放时间和总时长")).toHaveTextContent(
-      "00:06 / 02:00",
+    expect(screen.getByLabelText("当前播放时间")).toHaveTextContent(
+      "00:00:06.800",
     );
   });
 

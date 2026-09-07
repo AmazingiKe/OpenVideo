@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 
+import { format_timeline_time } from "./timeline_time";
 import { WorkspaceActiveContext } from "@/app/workspace_activity";
 
 import {
@@ -85,6 +86,7 @@ export function use_media_timeline_viewport({
   read_playback_time,
 }: MediaTimelineViewportOptions) {
   const is_workspace_active = useContext(WorkspaceActiveContext);
+  const current_time_output_ref = useRef<HTMLOutputElement>(null);
   const timeline_ref = useRef<TimelineState>(null);
   const timeline_host_ref = useRef<HTMLDivElement>(null);
   const playhead_ref = useRef<HTMLDivElement>(null);
@@ -143,6 +145,8 @@ export function use_media_timeline_viewport({
 
   const position_playhead = useCallback(
     (time: number, keep_visible = false) => {
+      const output = current_time_output_ref.current;
+      if (output) output.textContent = format_timeline_time(time);
       const playhead = playhead_ref.current;
       if (!playhead) return;
       const current_viewport = viewport_ref.current;
@@ -170,7 +174,7 @@ export function use_media_timeline_viewport({
         playhead.dataset.visible = visibility;
       }
     },
-    [],
+    [current_time_output_ref],
   );
 
   const set_playhead_time = useCallback(
@@ -650,6 +654,7 @@ export function use_media_timeline_viewport({
   }
 
   return {
+    current_time_output_ref,
     canvas_width,
     editor_render_window,
     handle_timeline_scroll,
