@@ -628,6 +628,89 @@ async def test_missing_required_tool_gets_one_forced_recovery(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("hits_request_limit", [False, True])
+async def test_proposal_keeps_one_submission_within_total_budget(
+    monkeypatch, hits_request_limit
+):
+    from agno.run.agent import ModelRequestStartedEvent
+
+    limits = []
+
+    def arun(self, input, **_options):
+        limits.append(self.tool_call_limit)
+
+        async def events():
+            if len(limits) == 1:
+                assert self.tool_call_limit == 3
+                for index in range(3):
+                    tool = ToolExecution(
+                        tool_call_id=f"search-{index}",
+                        tool_name="echo",
+                        result='{"ok":true,"text":"saved evidence"}',
+                    )
+                    yield ModelRequestStartedEvent()
+                    yield ToolCallStartedEvent(tool=tool)
+                    yield ToolCallCompletedEvent(tool=tool)
+                if hits_request_limit:
+                    yield ModelRequestStartedEvent()
+                    yield ModelRequestStartedEvent()
+                yield RunCompletedEvent(content="")
+                return
+            assert self.tool_choice == {
+                "type": "function",
+                "function": {"name": "submit"},
+            }
+            assert "saved evidence" in str(input)
+            tool = ToolExecution(
+                tool_call_id="submission", tool_name="submit", result='{"ok":true}'
+            )
+            yield ToolCallStartedEvent(tool=tool)
+            yield ToolCallCompletedEvent(tool=tool)
+            yield RunCompletedEvent(content="Proposal ready")
+
+        return events()
+
+    monkeypatch.setattr(Agent, "arun", arun)
+    registry = AgentToolRegistry()
+    for name in ("echo", "submit"):
+        registry.register(AgentTool(name, name, EchoInput, lambda _: {"ok": True}))
+    definition = chat_definition().model_copy(
+        update={
+            "tools": [
+                AgentToolDescriptor(name="echo", description="Search"),
+                AgentToolDescriptor(
+                    name="submit", description="Propose", prerequisites={"echo"}
+                ),
+            ],
+            "required_tools": {"submit"},
+            "requires_approval": True,
+        }
+    )
+    profile = text_profile().model_copy(
+        update={
+            "capabilities": ModelCapabilities(
+                tools=Support.YES, tool_choice_named=Support.YES
+            )
+        }
+    )
+    result = await AgnoAgentExecutor().run(
+        online_model(),
+        profile,
+        definition,
+        [{"role": "user", "content": "Propose"}],
+        registry,
+        lambda _: None,
+        max_tool_calls=4,
+        tool_timeout_seconds=1,
+    )
+    assert limits == [3, 1]
+    assert result.tool_call_count == 4
+    assert result.successful_tools == {"echo", "submit"}
+    assert not result.tool_limit_reached
+    assert result.content == "Proposal ready"
+
+
+@pytest.mark.asyncio
 async def test_stream_deltas_are_coalesced_before_persistence(monkeypatch):
     def arun(self, input, **_options):
         async def events():
@@ -985,7 +1068,7 @@ async def test_real_agno_loop_stops_repeated_searches(
     )
     assert execution_count == (2 if answer_after_search else 1)
     if requires_approval:
-        assert request_count == 5
+        assert request_count == 4
         assert result.tool_limit_reached is True
         assert not result.content
         return

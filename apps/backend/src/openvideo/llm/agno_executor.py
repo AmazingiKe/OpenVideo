@@ -62,6 +62,7 @@ STREAM_DELTA_CHARACTER_LIMIT = 256
 STREAM_DELTA_INTERVAL_SECONDS = 0.2
 TOOL_SEQUENCE_INSTRUCTION = (
     "成功的工具调用无需用相同参数重复执行；失败后可在修正原因后重试。所有工具调用结束后再输出最终正文，"
+    "已有资料足够回答或生成提案时立即进入下一步，不要仅换措辞重复检索同一事实。"
     "一旦开始输出最终正文就不得继续调用工具。"
 )
 REQUIRED_TOOL_RECOVERY_INSTRUCTION = (
@@ -145,6 +146,12 @@ class AgnoAgentExecutor:
                 definition.agent_id,
                 historical_messages_loader,
             )
+        # 写入任务为必需提交保留机会，恢复阶段也计入同一个总预算。
+        reserved_calls = (
+            min(len(definition.required_tools), max_tool_calls - 1)
+            if definition.requires_approval and max_tool_calls > 1
+            else 0
+        )
         first_result = await self._run_once(
             model,
             profile,
@@ -152,7 +159,7 @@ class AgnoAgentExecutor:
             messages,
             registry,
             on_event,
-            max_tool_calls=max_tool_calls,
+            max_tool_calls=max_tool_calls - reserved_calls,
             tool_timeout_seconds=tool_timeout_seconds,
             run_context=run_context,
             session_id=session_id,
@@ -160,12 +167,32 @@ class AgnoAgentExecutor:
         missing_tools = definition.required_tools - first_result.successful_tools
         remaining_tool_calls = max_tool_calls - first_result.tool_call_count
         recovery_messages: list[dict[str, Any]] = []
-        if first_result.tool_limit_reached:
-            if (
-                missing_tools
-                or definition.requires_approval
-                or not first_result.tool_results
+        if missing_tools:
+            if remaining_tool_calls <= 0 or (
+                first_result.tool_limit_reached and not reserved_calls
             ):
+                return first_result
+            recovery_definition, forced_tool_name = self._recovery_definition(
+                definition,
+                missing_tools,
+                first_result.successful_tools,
+                profile,
+            )
+            if (
+                session_id is None
+                or self.session_context is None
+                or first_result.tool_limit_reached
+            ):
+                recovery_messages = [*messages]
+                if first_result.content:
+                    recovery_messages.append(
+                        {"role": "assistant", "content": first_result.content}
+                    )
+            recovery_messages.append(
+                {"role": "user", "content": REQUIRED_TOOL_RECOVERY_INSTRUCTION}
+            )
+        elif first_result.tool_limit_reached:
+            if definition.requires_approval or not first_result.tool_results:
                 return first_result
             recovery_definition = definition.model_copy(
                 update={
@@ -177,6 +204,13 @@ class AgnoAgentExecutor:
             forced_tool_name = None
             remaining_tool_calls = 0
             recovery_messages = [*messages]
+        else:
+            return first_result
+        if first_result.tool_results and (
+            first_result.tool_limit_reached
+            or session_id is None
+            or self.session_context is None
+        ):
             recovery_messages.append(
                 {
                     "role": "user",
@@ -189,24 +223,6 @@ class AgnoAgentExecutor:
                         ensure_ascii=False,
                     ),
                 }
-            )
-        else:
-            if not missing_tools or remaining_tool_calls <= 0:
-                return first_result
-            recovery_definition, forced_tool_name = self._recovery_definition(
-                definition,
-                missing_tools,
-                first_result.successful_tools,
-                profile,
-            )
-            if session_id is None or self.session_context is None:
-                recovery_messages = [*messages]
-                if first_result.content:
-                    recovery_messages.append(
-                        {"role": "assistant", "content": first_result.content}
-                    )
-            recovery_messages.append(
-                {"role": "user", "content": REQUIRED_TOOL_RECOVERY_INSTRUCTION}
             )
         recovery_result = await self._run_once(
             model,
