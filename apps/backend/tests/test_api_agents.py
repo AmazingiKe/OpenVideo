@@ -847,7 +847,10 @@ def test_time_range_attachment_derives_source_digest(tmp_path: Path):
     assert len(resolved.context_attachments[0].content_digest) == 64
 
 
-def test_evidence_citations_stay_unique_across_searches_and_invalid_keys_downgrade():
+@pytest.mark.parametrize("citations", ["[E1] [E2]", "[E1/E2]", "[E1, E2]", "[E1、E2]"])
+def test_evidence_citations_stay_unique_across_searches_and_invalid_keys_downgrade(
+    citations,
+):
     session = AgentSession(
         session_id=f"session-{uuid7().hex}",
         agent_id="marker",
@@ -901,10 +904,10 @@ def test_evidence_citations_stay_unique_across_searches_and_invalid_keys_downgra
         for item in search.evidence_bundle.items
     ]
     assert citation_keys == ["E1", "E2"]
-    valid = context.completion_payload("光照与反射分别有证据 [E1] [E2]")
+    valid = context.completion_payload(f"光照与反射分别有证据 {citations}")
     assert valid["citation_validation"]["valid"] is True
     assert len(valid["evidence_bundle"]["items"]) == 2
-    invalid = context.completion_payload("引用了不存在的证据 [E99]")
+    invalid = context.completion_payload("引用了不存在的证据 [E1/E99]")
     assert invalid["confidence"] == "low"
     assert invalid["answer_status"] == "provisional"
     assert invalid["citation_validation"]["invalid_citations"] == ["E99"]

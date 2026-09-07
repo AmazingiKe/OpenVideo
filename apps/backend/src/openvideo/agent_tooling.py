@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 
 
 ARTIFACT_EVIDENCE_GATE_KEY = "evidence_gate"
+CITATION_GROUP_PATTERN = re.compile(r"\[([A-Z]\d+(?:\s*[/,，、;；]\s*[A-Z]\d+)*)\]")
+CITATION_KEY_PATTERN = re.compile(r"[A-Z]\d+")
 
 
 class MarkerChangeOperation(StrEnum):
@@ -258,7 +260,11 @@ class AgentRunContext:
             for item in search.evidence_bundle.items
         ]
         citation_keys = {item.citation_key for item in items}
-        cited_keys = set(re.findall(r"\[([A-Z]\d+)\]", content))
+        cited_keys = {
+            key
+            for group in CITATION_GROUP_PATTERN.findall(content)
+            for key in CITATION_KEY_PATTERN.findall(group)
+        }
         invalid_citations = sorted(cited_keys - citation_keys)
         cited_searches = [
             search
