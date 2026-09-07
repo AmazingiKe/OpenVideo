@@ -5,8 +5,10 @@ import {
   GlobalAssistantRegistration,
   use_global_assistant_controls,
 } from "@/app/global_assistant";
-import { AgentContextSource } from "@/components/AgentContextSource";
-import type { AgentContextAttachmentDraft } from "@/components/agent_context";
+import {
+  renew_context_attachment_draft,
+  type AgentContextAttachmentDraft,
+} from "@/components/agent_context";
 import type { MarkdownSelection } from "@/components/MarkdownEditor";
 import { Button } from "@/components/ui/button";
 import {
@@ -157,6 +159,7 @@ export function SummaryEditorLayout({
         selection,
       },
       context_attachments: agent_context_attachments,
+      context_sources: selection_attachment ? [selection_attachment] : [],
       placeholder: "询问视频内容，或直接描述希望怎样修改总结…",
       panel_size_percent: 30,
       on_artifact_change,
@@ -168,17 +171,10 @@ export function SummaryEditorLayout({
       selected_asset_id,
       selected_document,
       selection,
+      selection_attachment,
     ],
   );
   const { open_assistant } = use_global_assistant_controls();
-  const context_action = selection_attachment ? (
-    <AgentContextSource
-      attachment={selection_attachment}
-      on_add={(attachment) =>
-        set_agent_context_attachments((current) => [...current, attachment])
-      }
-    />
-  ) : null;
   const document_navigation = (
     <SummaryDocumentNavigation
       documents={documents}
@@ -232,7 +228,17 @@ export function SummaryEditorLayout({
       on_selection_change={set_selection}
       on_retry={on_retry}
       compact_actions={compact_actions}
-      context_action={context_action}
+      on_add_context={
+        selection_attachment
+          ? () => {
+              set_agent_context_attachments((current) => [
+                ...current,
+                renew_context_attachment_draft(selection_attachment),
+              ]);
+              open_assistant();
+            }
+          : undefined
+      }
       export_pending={export_pending}
       export_relative_path={export_relative_path}
       on_export={on_export}

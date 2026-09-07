@@ -68,7 +68,7 @@ export function DocumentEditor({
   on_selection_change,
   on_retry,
   compact_actions,
-  context_action,
+  on_add_context,
   export_pending,
   export_relative_path,
   on_export,
@@ -87,7 +87,7 @@ export function DocumentEditor({
   on_selection_change: (selection: MarkdownSelection | null) => void;
   on_retry: () => void;
   compact_actions: ReactNode;
-  context_action?: ReactNode;
+  on_add_context?: () => void;
   export_pending: boolean;
   export_relative_path: string | null;
   on_export: () => void;
@@ -111,7 +111,6 @@ export function DocumentEditor({
           className="min-w-40 flex-1 border-transparent bg-transparent font-medium shadow-none focus-visible:border-input"
         />
         <SaveState status={save_status} on_retry={on_retry} />
-        {context_action}
         <TabsList aria-label="编辑模式">
           <TabsTrigger value="visual" aria-label="预览模式" title="预览模式">
             <Eye />
@@ -165,6 +164,7 @@ export function DocumentEditor({
               markdown={markdown}
               on_change={on_markdown_change}
               on_selection_change={on_selection_change}
+              on_add_context={on_add_context}
               target_heading_id={target_heading_id}
               on_active_heading_change={on_active_heading_change}
               on_target_heading_reached={on_target_heading_reached}
@@ -187,6 +187,7 @@ export function DocumentEditor({
             markdown={markdown}
             on_change={on_markdown_change}
             on_selection_change={on_selection_change}
+            on_add_context={on_add_context}
           />
         </Suspense>
       </TabsContent>

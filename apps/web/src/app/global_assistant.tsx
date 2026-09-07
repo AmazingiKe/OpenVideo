@@ -67,6 +67,7 @@ export type GlobalAssistantBinding = {
   invocation_request?: AgentInvocationRequest | null;
   task_input?: Record<string, unknown>;
   context_attachments?: AgentContextAttachmentDraft[];
+  context_sources?: AgentContextAttachmentDraft[];
   placeholder?: string;
   panel_size_percent?: number;
   on_panel_size_percent_change?: (size_percent: number) => void;
@@ -270,6 +271,7 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
       invocation_request={binding.invocation_request}
       task_input={binding.task_input}
       context_attachments={binding.context_attachments}
+      context_sources={binding.context_sources}
       default_thinking_mode={agent_preferences?.default_thinking_mode}
       thinking_modes_enabled
       library_scope_enabled

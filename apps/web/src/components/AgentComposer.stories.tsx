@@ -4,6 +4,12 @@ import { expect, fn, waitFor, within } from "storybook/test";
 
 import { unknown_model_profile, type AiModelSummary } from "@/shared/types";
 import { AgentComposer } from "./AgentComposer";
+import {
+  renew_context_attachment_draft,
+  type AgentContextAttachmentDraft,
+} from "./agent_context";
+import { MarkdownEditor, type MarkdownSelection } from "./MarkdownEditor";
+import { MarkdownSourceEditor } from "./MarkdownSourceEditor";
 
 const MODEL_ID = "model-019c012345677abc8123456789abcdef";
 const SECONDARY_MODEL_ID = "model-019c012345677abc8123456789abcdee";
@@ -60,6 +66,7 @@ const meta = {
     on_permission_mode_change: fn(),
     attachments: [],
     on_remove_attachment: fn(),
+    on_add_attachment: fn(),
     placeholder: "随心输入",
   },
   decorators: [
@@ -117,6 +124,157 @@ export const WithContext: Story = {
       },
     ],
   },
+};
+
+export const AddSelectedContext: Story = {
+  render: function SelectedContextComposer(args) {
+    const [attachments, set_attachments] = useState(args.attachments);
+    return (
+      <AgentComposer
+        {...args}
+        attachments={attachments}
+        on_add_attachment={(attachment) =>
+          set_attachments((current) => [...current, attachment])
+        }
+        on_remove_attachment={(draft_id) =>
+          set_attachments((current) =>
+            current.filter((item) => item.draft_id !== draft_id),
+          )
+        }
+      />
+    );
+  },
+  args: {
+    context_sources: [
+      {
+        draft_id: "transcript-selection-preview",
+        kind: "transcript_selection",
+        asset_id: "asset-019c012345677abc8123456789abcdef",
+        label: "字幕选区（2 条）",
+        snapshot_text: "介绍数据结构。继续说明顺序存储。",
+        start_seconds: 12,
+        end_seconds: 20,
+      },
+    ],
+  },
+  play: async ({ canvasElement, userEvent }) => {
+    const story = within(canvasElement.ownerDocument.body);
+    await userEvent.click(story.getByRole("button", { name: "添加上下文" }));
+    await userEvent.click(
+      story.getByRole("button", { name: "添加字幕选区（2 条）上下文" }),
+    );
+    expect(
+      story.getByRole("button", { name: "移除字幕选区（2 条）" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        story.queryByRole("button", { name: "添加字幕选区（2 条）上下文" }),
+      ).toBeNull(),
+    );
+    await userEvent.click(
+      story.getByRole("button", { name: "移除字幕选区（2 条）" }),
+    );
+    await userEvent.click(story.getByRole("button", { name: "添加上下文" }));
+    await userEvent.click(
+      story.getByRole("button", { name: "添加字幕选区（2 条）上下文" }),
+    );
+    expect(
+      story.getByRole("button", { name: "移除字幕选区（2 条）" }),
+    ).toBeVisible();
+  },
+};
+
+export const SummarySelectionContext: Story = {
+  render: function SummaryContextComposer(args, context) {
+    const [selection, set_selection] = useState<MarkdownSelection | null>(null);
+    const [attachments, set_attachments] = useState<
+      AgentContextAttachmentDraft[]
+    >([]);
+    const source: AgentContextAttachmentDraft | null = selection?.text.trim()
+      ? {
+          draft_id: "summary-selection-preview",
+          asset_id: "asset-019c012345677abc8123456789abcdef",
+          kind: "summary_selection",
+          label: "总结文字选区",
+          snapshot_text: selection.text,
+          selection_start: selection.start,
+          selection_end: selection.end,
+        }
+      : null;
+    function add_context(attachment: AgentContextAttachmentDraft) {
+      args.on_add_attachment?.(attachment);
+      set_attachments((current) => [...current, attachment]);
+    }
+    const on_add_context = source
+      ? () => add_context(renew_context_attachment_draft(source))
+      : undefined;
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex h-48 overflow-hidden rounded-lg border">
+          {context.parameters.source_mode ? (
+            <MarkdownSourceEditor
+              markdown="数据结构决定数据的组织方式。"
+              on_change={() => undefined}
+              on_selection_change={set_selection}
+              on_add_context={on_add_context}
+            />
+          ) : (
+            <MarkdownEditor
+              document_key="summary-context-story"
+              markdown="数据结构决定数据的组织方式。"
+              on_change={() => undefined}
+              on_selection_change={set_selection}
+              on_add_context={on_add_context}
+            />
+          )}
+        </div>
+        <AgentComposer
+          {...args}
+          attachments={attachments}
+          context_sources={source ? [source] : []}
+          on_add_attachment={add_context}
+          on_remove_attachment={(draft_id) =>
+            set_attachments((current) =>
+              current.filter((item) => item.draft_id !== draft_id),
+            )
+          }
+        />
+      </div>
+    );
+  },
+  play: async ({ args, canvasElement, userEvent, parameters }) => {
+    const story = within(canvasElement.ownerDocument.body);
+    const editor = parameters.source_mode
+      ? canvasElement.querySelector<HTMLElement>(".cm-content")!
+      : await story.findByLabelText("Markdown 文档编辑器");
+    await userEvent.click(editor);
+    await userEvent.keyboard("{Control>}a{/Control}");
+    await userEvent.click(story.getByRole("button", { name: "添加上下文" }));
+    await userEvent.click(
+      story.getByRole("button", { name: "添加总结文字选区上下文" }),
+    );
+    expect(args.on_add_attachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshot_text: "数据结构决定数据的组织方式。",
+      }),
+    );
+    await userEvent.click(
+      story.getByRole("button", { name: "移除总结文字选区" }),
+    );
+    await userEvent.click(editor);
+    await userEvent.keyboard("{Control>}a{/Control}");
+    await userEvent.pointer({ target: editor, keys: "[MouseRight]" });
+    await userEvent.click(story.getByRole("menuitem", { name: "添加上下文" }));
+    expect(
+      await story.findByRole("button", { name: "移除总结文字选区" }),
+    ).toBeVisible();
+    expect(args.on_add_attachment).toHaveBeenCalledTimes(2);
+  },
+};
+
+export const SummarySourceSelectionContext: Story = {
+  ...SummarySelectionContext,
+  parameters: { source_mode: true },
 };
 
 export const Streaming: Story = {

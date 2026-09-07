@@ -67,6 +67,7 @@ function SummaryTestProviders({ children }: { children: ReactNode }) {
 
 const markdown_editor_state = vi.hoisted(() => ({
   failing_document_id: null as string | null,
+  add_context: undefined as (() => void) | undefined,
 }));
 
 vi.mock("@/components/MarkdownEditor", () => ({
@@ -75,10 +76,12 @@ vi.mock("@/components/MarkdownEditor", () => ({
     markdown,
     on_change,
     on_selection_change,
+    on_add_context,
   }: {
     document_key: string;
     markdown: string;
     on_change: (markdown: string) => void;
+    on_add_context?: () => void;
     on_selection_change: (
       selection: {
         start: number;
@@ -87,6 +90,7 @@ vi.mock("@/components/MarkdownEditor", () => ({
       } | null,
     ) => void;
   }) => {
+    markdown_editor_state.add_context = on_add_context;
     if (markdown_editor_state.failing_document_id === document_key) {
       throw new Error("编辑器初始化失败");
     }
@@ -449,10 +453,18 @@ describe("SummaryWorkspace", () => {
     fireEvent.select(source, {
       target: { selectionStart: 0, selectionEnd: 6 },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: /将课程总结选区添加给 AI/ }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "助手" }));
+    expect(global_assistant_state.binding).toMatchObject({
+      context_sources: [
+        expect.objectContaining({
+          kind: "summary_selection",
+          label: "课程总结选区",
+          snapshot_text: DOCUMENT.markdown.slice(0, 6),
+        }),
+      ],
+      context_attachments: [],
+    });
+    expect(screen.queryByRole("button", { name: /添加给 AI/ })).toBeNull();
+    act(() => markdown_editor_state.add_context?.());
 
     await waitFor(() =>
       expect(global_assistant_state.binding).toMatchObject({

@@ -672,11 +672,13 @@ describe("MediaTimeline", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /转写：原始转写/ }));
-    fireEvent.click(
-      screen.getByRole("button", { name: /将字幕选区（1 条）添加给 AI/ }),
+    fireEvent.contextMenu(
+      screen.getByRole("button", { name: /转写：原始转写/ }),
     );
+    fireEvent.click(screen.getByRole("menuitem", { name: "添加上下文" }));
+    fireEvent.contextMenu(screen.getByLabelText(/时间线画布/));
     fireEvent.click(
-      screen.getByRole("button", { name: /将时间线理解范围添加给 AI/ }),
+      screen.getByRole("menuitem", { name: "添加时间范围上下文" }),
     );
 
     expect(add_agent_context).toHaveBeenNthCalledWith(

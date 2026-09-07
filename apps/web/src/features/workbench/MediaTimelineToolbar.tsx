@@ -1,11 +1,5 @@
 import { Minus, Plus, RotateCcw } from "lucide-react";
-import {
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { Button } from "@/components/ui/button";
@@ -26,14 +20,12 @@ type MediaTimelineToolbarProps = {
   on_zoom_change: (zoom_pixels_per_second: number) => void;
   merge_threshold: number;
   on_merge_threshold_change: (threshold: number) => void;
-  context_sources?: ReactNode;
 };
 
 export function MediaTimelineToolbar({
   minimum_zoom_pixels_per_second,
   zoom_pixels_per_second,
   on_zoom_change,
-  context_sources,
   merge_threshold,
   on_merge_threshold_change,
 }: MediaTimelineToolbarProps) {
@@ -108,9 +100,6 @@ export function MediaTimelineToolbar({
 
   return (
     <div className="media_timeline_toolbar" aria-label="时间线工具栏">
-      {context_sources ? (
-        <div className="media_timeline_context_sources">{context_sources}</div>
-      ) : null}
       <div className="media_timeline_merge_threshold">
         <span>合并阈值</span>
         <Slider

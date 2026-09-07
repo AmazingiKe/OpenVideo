@@ -108,6 +108,7 @@ export type AgentPanelProps = {
   invocation_request?: AgentInvocationRequest | null;
   task_input?: Record<string, unknown>;
   context_attachments?: AgentContextAttachmentDraft[];
+  context_sources?: AgentContextAttachmentDraft[];
   default_thinking_mode?: AgentThinkingMode;
   thinking_modes_enabled?: boolean;
   library_scope_enabled?: boolean;
@@ -144,6 +145,7 @@ export function AgentPanel({
   invocation_request = null,
   task_input = {},
   context_attachments = [],
+  context_sources = [],
   default_thinking_mode = "auto",
   thinking_modes_enabled = false,
   library_scope_enabled = false,
@@ -225,19 +227,19 @@ export function AgentPanel({
   const [dismissed_attachment_ids, set_dismissed_attachment_ids] = useState(
     () => new Set<string>(),
   );
-  const [dropped_attachments, set_dropped_attachments] = useState<
+  const [local_attachments, set_local_attachments] = useState<
     AgentContextAttachmentDraft[]
   >([]);
   useEffect(() => {
     set_dismissed_attachment_ids(new Set());
-    set_dropped_attachments([]);
+    set_local_attachments([]);
   }, [scope_key]);
   const visible_attachments = useMemo(
     () =>
-      [...context_attachments, ...dropped_attachments].filter(
+      [...context_attachments, ...local_attachments].filter(
         (attachment) => !dismissed_attachment_ids.has(attachment.draft_id),
       ),
-    [context_attachments, dismissed_attachment_ids, dropped_attachments],
+    [context_attachments, dismissed_attachment_ids, local_attachments],
   );
 
   const panel_title = title ?? "助手";
@@ -273,7 +275,7 @@ export function AgentPanel({
       set_dismissed_attachment_ids(
         new Set(visible_attachments.map((attachment) => attachment.draft_id)),
       );
-      set_dropped_attachments([]);
+      set_local_attachments([]);
     }
     return submitted;
   }
@@ -373,7 +375,7 @@ export function AgentPanel({
               onClick={() => {
                 start_new_conversation();
                 set_dismissed_attachment_ids(new Set());
-                set_dropped_attachments([]);
+                set_local_attachments([]);
               }}
             >
               <MessageCirclePlus />
@@ -703,13 +705,16 @@ export function AgentPanel({
             permission_mode_saving={permission_mode_saving}
             permission_mode_error={permission_mode_error}
             attachments={visible_attachments}
+            context_sources={context_sources.filter(
+              (source) => source.asset_id === asset_id,
+            )}
             on_remove_attachment={(draft_id) =>
               set_dismissed_attachment_ids(
                 (current) => new Set([...current, draft_id]),
               )
             }
-            on_attachment_drop={(attachment) =>
-              set_dropped_attachments((current) => [
+            on_add_attachment={(attachment) =>
+              set_local_attachments((current) => [
                 ...current.filter(
                   (item) => item.draft_id !== attachment.draft_id,
                 ),

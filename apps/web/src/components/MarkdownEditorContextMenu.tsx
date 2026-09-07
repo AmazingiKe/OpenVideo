@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { AgentContextMenuItem } from "./AgentContextSource";
 import type { LucideIcon } from "lucide-react";
 import {
   BoldIcon,
@@ -74,6 +75,7 @@ type MarkdownEditorContextMenuProps = {
   on_block_style: (style: MarkdownBlockStyle) => void;
   on_inline_style: (style: MarkdownInlineStyle) => void;
   on_open_change: (open: boolean) => void;
+  on_add_context?: () => void;
 };
 
 type BlockStyleItem = {
@@ -157,13 +159,30 @@ export function MarkdownEditorContextMenu({
   on_block_style,
   on_inline_style,
   on_open_change,
+  on_add_context,
 }: MarkdownEditorContextMenuProps) {
+  const [context_action, set_context_action] = useState<(() => void) | null>(
+    null,
+  );
   return (
-    <ContextMenu onOpenChange={on_open_change}>
+    <ContextMenu
+      onOpenChange={(open) => {
+        if (open) set_context_action(() => on_add_context ?? null);
+        on_open_change(open);
+      }}
+    >
       <ContextMenuTrigger asChild disabled={!enabled}>
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent className="min-w-52" aria-label="文字格式">
+        {context_action ? (
+          <>
+            <ContextMenuGroup>
+              <AgentContextMenuItem on_add={context_action} />
+            </ContextMenuGroup>
+            <ContextMenuSeparator />
+          </>
+        ) : null}
         <ContextMenuGroup>
           <ContextMenuLabel>文字格式</ContextMenuLabel>
           {INLINE_STYLE_ITEMS.map((item) => {

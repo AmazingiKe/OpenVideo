@@ -20,22 +20,6 @@ export function renew_context_attachment_draft(
   };
 }
 
-export function write_context_attachment_drag_data(
-  data_transfer: DataTransfer,
-  attachment: AgentContextAttachmentDraft,
-) {
-  const renewed_attachment = renew_context_attachment_draft(attachment);
-  data_transfer.effectAllowed = "copy";
-  data_transfer.setData(
-    AGENT_CONTEXT_ATTACHMENT_MIME,
-    JSON.stringify(renewed_attachment),
-  );
-  data_transfer.setData(
-    "text/plain",
-    renewed_attachment.snapshot_text ?? renewed_attachment.label,
-  );
-}
-
 export function read_context_attachment_drag_data(
   data_transfer: DataTransfer,
 ): AgentContextAttachmentDraft | null {

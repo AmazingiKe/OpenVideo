@@ -24,6 +24,7 @@ import {
 } from "react";
 
 import { AgentContextAttachments } from "@/components/AgentContextAttachments";
+import { AgentContextSource } from "@/components/AgentContextSource";
 import { AiModelSelect } from "@/components/AiModelSelect";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -146,8 +147,9 @@ export function AgentComposer({
   permission_mode_saving = false,
   permission_mode_error = null,
   attachments,
+  context_sources = [],
   on_remove_attachment,
-  on_attachment_drop,
+  on_add_attachment,
 }: {
   value: string;
   commands?: readonly AgentCommand[];
@@ -175,8 +177,9 @@ export function AgentComposer({
   permission_mode_saving?: boolean;
   permission_mode_error?: string | null;
   attachments: AgentContextAttachmentDraft[];
+  context_sources?: AgentContextAttachmentDraft[];
   on_remove_attachment: (draft_id: string) => void;
-  on_attachment_drop?: (attachment: AgentContextAttachmentDraft) => void;
+  on_add_attachment?: (attachment: AgentContextAttachmentDraft) => void;
 }) {
   const busy = pending || submitting;
   const control_id = useId();
@@ -303,12 +306,12 @@ export function AgentComposer({
   }
 
   function drop_attachment(event: DragEvent<HTMLFormElement>) {
-    if (!on_attachment_drop) return;
+    if (!on_add_attachment) return;
     const attachment = read_context_attachment_drag_data(event.dataTransfer);
     set_context_drop_active(false);
     if (!attachment) return;
     event.preventDefault();
-    on_attachment_drop(attachment);
+    on_add_attachment(attachment);
   }
 
   return (
@@ -478,7 +481,9 @@ export function AgentComposer({
               </Field>
               <div className="flex min-w-0 items-center justify-between gap-2 px-1 pb-1">
                 <div className="flex min-w-0 items-center gap-1">
-                  <ContextAttachmentHelp
+                  <ContextAttachmentPicker
+                    context_sources={context_sources}
+                    on_add_attachment={on_add_attachment}
                     attachment_count={attachments.length}
                     open={open_control === "context"}
                     on_open_change={(open) =>
@@ -608,12 +613,16 @@ export function AgentComposer({
   );
 }
 
-function ContextAttachmentHelp({
+function ContextAttachmentPicker({
   attachment_count,
+  context_sources,
+  on_add_attachment,
   open,
   on_open_change,
 }: {
   attachment_count: number;
+  context_sources: AgentContextAttachmentDraft[];
+  on_add_attachment?: (attachment: AgentContextAttachmentDraft) => void;
 } & ComposerControlProps) {
   return (
     <Popover open={open} onOpenChange={on_open_change}>
@@ -638,9 +647,25 @@ function ContextAttachmentHelp({
         <PopoverHeader>
           <PopoverTitle>添加上下文</PopoverTitle>
           <PopoverDescription>
-            从时间线或文档工具栏拖入此输入框，作为本次消息可见的上下文。
+            {context_sources.length > 0
+              ? "选择要添加到本次消息的内容。"
+              : "先在时间线选择字幕或时间范围，或在总结中选中文字。"}
           </PopoverDescription>
         </PopoverHeader>
+        {on_add_attachment && context_sources.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            {context_sources.map((source) => (
+              <AgentContextSource
+                key={source.draft_id}
+                attachment={source}
+                on_add={(attachment) => {
+                  on_add_attachment(attachment);
+                  on_open_change(false);
+                }}
+              />
+            ))}
+          </div>
+        ) : null}
         {attachment_count > 0 ? (
           <p className="text-xs text-muted-foreground">
             已添加 {attachment_count} 项上下文

@@ -259,7 +259,7 @@ describe("AgentComposer", () => {
   });
 
   it("shows a copy target and accepts a dragged context attachment", () => {
-    const on_attachment_drop = vi.fn();
+    const on_add_attachment = vi.fn();
     render(
       <AgentComposer
         value="问题"
@@ -278,7 +278,7 @@ describe("AgentComposer", () => {
         on_scope_pinned_change={vi.fn()}
         attachments={[]}
         on_remove_attachment={vi.fn()}
-        on_attachment_drop={on_attachment_drop}
+        on_add_attachment={on_add_attachment}
       />,
     );
     const form = screen.getByRole("textbox").closest("form");
@@ -305,7 +305,7 @@ describe("AgentComposer", () => {
     );
     fireEvent.drop(form!, { dataTransfer: data_transfer });
 
-    expect(on_attachment_drop).toHaveBeenCalledWith(attachment);
+    expect(on_add_attachment).toHaveBeenCalledWith(attachment);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 

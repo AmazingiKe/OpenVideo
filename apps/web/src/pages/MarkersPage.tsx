@@ -21,7 +21,11 @@ import { use_asset_markers } from "@/features/markers/use_asset_markers";
 import { TranscriptionDialog } from "@/features/workbench/TranscriptionDialog";
 import { PANEL_RAIL_WIDTH_PX } from "@/features/workbench/CollapsiblePanelRail";
 import { VideoWorkspace } from "@/features/workbench/VideoWorkspace";
-import { timeline_agent_focus } from "@/features/workbench/timeline_agent_context";
+import {
+  focus_context_attachment,
+  timeline_agent_focus,
+  transcript_context_attachment,
+} from "@/features/workbench/timeline_agent_context";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -321,6 +325,14 @@ export function MarkersPage() {
       instruction_required: true,
     },
   ];
+  const context_sources = [
+    transcript_context_attachment(
+      selected_asset_id,
+      transcript,
+      selected_transcript_indices,
+    ),
+    focus_context_attachment(focus_selection),
+  ].filter((source) => source !== null);
   const assistant_binding = {
     agent_id: MARKER_AGENT_ID,
     asset_id: selected_asset_id,
@@ -332,6 +344,7 @@ export function MarkersPage() {
       : "尚未选择视频",
     task_input: {},
     context_attachments: agent_context_attachments,
+    context_sources,
     placeholder: "询问视频内容；输入 / 可修正选中字幕或处理全部字幕…",
     panel_size_percent: settings.agent_panel_size_percent,
     on_panel_size_percent_change: (agent_panel_size_percent: number) =>
@@ -543,9 +556,10 @@ export function MarkersPage() {
           set_range_endpoint("out_seconds", seconds)
         }
         on_clear_focus={clear_range}
-        on_add_agent_context={(attachment) =>
-          set_agent_context_attachments((current) => [...current, attachment])
-        }
+        on_add_agent_context={(attachment) => {
+          set_agent_context_attachments((current) => [...current, attachment]);
+          open_assistant();
+        }}
         on_delete_event_analysis={remove_event_analysis}
         on_add_marker={add_marker}
         on_update_marker={update_marker}
@@ -637,7 +651,8 @@ export function MarkersPage() {
                     id="markers-library-workspace"
                     orientation="horizontal"
                     onLayoutChanged={(layout, metadata) => {
-                      if (metadata.isUserInteraction) save_library_layout(layout);
+                      if (metadata.isUserInteraction)
+                        save_library_layout(layout);
                     }}
                   >
                     <ResizablePanel
@@ -673,10 +688,7 @@ export function MarkersPage() {
                   </ResizablePanelGroup>
                 )}
               </ResizablePanel>
-              <ResizableHandle
-                withHandle
-                aria-label="调整时间线高度"
-              />
+              <ResizableHandle withHandle aria-label="调整时间线高度" />
               <ResizablePanel
                 id="markers-timeline"
                 defaultSize={`${TIMELINE_PANEL_DEFAULT_HEIGHT_PX}px`}

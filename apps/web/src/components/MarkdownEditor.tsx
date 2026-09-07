@@ -68,6 +68,7 @@ type MarkdownEditorProps = {
   markdown: string;
   on_change: (markdown: string) => void;
   on_selection_change: (selection: MarkdownSelection | null) => void;
+  on_add_context?: () => void;
   on_active_heading_change?: (heading_id: string | null) => void;
   target_heading_id?: string | null;
   on_target_heading_reached?: () => void;
@@ -86,6 +87,7 @@ function MarkdownEditorInner({
   markdown,
   on_change,
   on_selection_change,
+  on_add_context,
   on_active_heading_change,
   on_target_heading_reached,
   target_heading_id,
@@ -318,6 +320,7 @@ function MarkdownEditorInner({
     <MarkdownEditorContextMenu
       enabled={!readonly && !loading && has_format_selection}
       formatting_state={formatting_state}
+      on_add_context={on_add_context}
       on_inline_style={apply_inline_style}
       on_block_style={apply_block_style}
       on_open_change={(open) => {
@@ -327,6 +330,8 @@ function MarkdownEditorInner({
       <div
         ref={root_ref}
         className="summary-milkdown min-h-0 flex-1 overflow-y-auto"
+        tabIndex={0}
+        aria-label="总结文档内容"
         aria-busy={loading}
       >
         <Milkdown />

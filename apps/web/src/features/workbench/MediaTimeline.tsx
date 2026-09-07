@@ -5,7 +5,6 @@ import {
 } from "@xzdarcy/react-timeline-editor";
 import "@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css";
 import {
-  Bot,
   Captions,
   Flag,
   LockKeyhole,
@@ -28,7 +27,7 @@ import {
   memo,
 } from "react";
 
-import { AgentContextSource } from "@/components/AgentContextSource";
+import { AgentContextMenuItem } from "@/components/AgentContextSource";
 import { WorkspaceActiveContext } from "@/app/workspace_activity";
 import {
   renew_context_attachment_draft,
@@ -1591,16 +1590,13 @@ export function MediaTimeline({
                 {context_transcript_indices.length > 0 &&
                 transcript_attachment &&
                 on_add_agent_context ? (
-                  <ContextMenuItem
-                    onSelect={() =>
+                  <AgentContextMenuItem
+                    on_add={() =>
                       on_add_agent_context(
                         renew_context_attachment_draft(transcript_attachment),
                       )
                     }
-                  >
-                    <Bot aria-hidden="true" />
-                    添加给 AI
-                  </ContextMenuItem>
+                  />
                 ) : null}
                 {context_transcript_indices.length === 1 ? (
                   <ContextMenuItem
@@ -1653,6 +1649,16 @@ export function MediaTimeline({
                 设置范围终点
                 <ContextMenuShortcut>]</ContextMenuShortcut>
               </ContextMenuItem>
+              {focus_attachment && on_add_agent_context ? (
+                <AgentContextMenuItem
+                  label="添加时间范围上下文"
+                  on_add={() =>
+                    on_add_agent_context(
+                      renew_context_attachment_draft(focus_attachment),
+                    )
+                  }
+                />
+              ) : null}
               <ContextMenuItem
                 disabled={focus_selection === null || !on_clear_focus}
                 onSelect={() => on_clear_focus?.()}
@@ -1675,26 +1681,6 @@ export function MediaTimeline({
         on_zoom_change={zoom_to}
         merge_threshold={merge_threshold}
         on_merge_threshold_change={set_merge_threshold}
-        context_sources={
-          on_add_agent_context ? (
-            <>
-              {transcript_attachment ? (
-                <AgentContextSource
-                  attachment={transcript_attachment}
-                  on_add={on_add_agent_context}
-                  compact
-                />
-              ) : null}
-              {focus_attachment ? (
-                <AgentContextSource
-                  attachment={focus_attachment}
-                  on_add={on_add_agent_context}
-                  compact
-                />
-              ) : null}
-            </>
-          ) : null
-        }
       />
 
       {evidence_range ? (
