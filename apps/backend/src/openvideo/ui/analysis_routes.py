@@ -12,6 +12,7 @@ from openvideo.core.analysis_models import (
     ANALYSIS_STRATEGY_PRESETS,
     AnalysisJob,
     AnalysisMode,
+    AnalysisStage,
     AnalysisStrategy,
     AnalysisStrategyPresetDescriptor,
 )
@@ -81,6 +82,22 @@ def register_analysis_routes(
     analysis_manager: Callable[[], AnalysisManager],
     settings: Settings,
 ) -> None:
+    @app.post(
+        "/api/media/assets/{asset_id}/chapters",
+        response_model=AnalysisJob,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def generate_chapters(asset_id: str) -> AnalysisJob:
+        try:
+            job = analysis_manager().create_chapters(asset_id)
+        except AnalysisPrerequisiteError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except AnalysisError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if job.stage == AnalysisStage.PENDING:
+            analysis_manager().start(job.job_id)
+        return job
+
     @app.post(
         "/api/media/assets/{asset_id}/analyze",
         response_model=AnalysisJob,

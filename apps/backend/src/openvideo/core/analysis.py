@@ -54,6 +54,7 @@ class TimelineMoment:
     start_seconds: float
     end_seconds: float
     transcript_text: str
+    title: str = ""
     marker_ids: tuple[str, ...] = ()
     content_type: str = "core_concepts"
     priority: float = 0
@@ -186,7 +187,14 @@ def _full_timeline_moments(
         scene_boundaries,
     )
     return [
-        _moment_from_segments(segments[chapter.start_index : chapter.end_index + 1])
+        TimelineMoment(
+            start_seconds=segments[chapter.start_index].start_seconds,
+            end_seconds=segments[chapter.end_index].end_seconds,
+            transcript_text=_merge_text(
+                segments[chapter.start_index : chapter.end_index + 1]
+            ),
+            title=chapter.title,
+        )
         for chapter in chapters
     ]
 
@@ -250,8 +258,9 @@ def merge_semantic_chapter_candidates(
         for chapter in candidates
         if 0 <= chapter.start_index <= chapter.end_index < segment_count
     ]
+    valid.sort(key=lambda item: (item.start_index, item.end_index))
     starts: list[tuple[int, str]] = [(0, valid[0].title if valid else "")]
-    for chapter in sorted(valid, key=lambda item: (item.start_index, item.end_index)):
+    for chapter in valid:
         if chapter.start_index == 0:
             continue
         if starts and chapter.start_index == starts[-1][0]:
@@ -389,14 +398,6 @@ def _resolved_marker_range(
         focus_end,
         focus_start - range_start,
         max(0.0, range_end - focus_end),
-    )
-
-
-def _moment_from_segments(segments: list[TranscriptSegment]) -> TimelineMoment:
-    return TimelineMoment(
-        start_seconds=segments[0].start_seconds,
-        end_seconds=segments[-1].end_seconds,
-        transcript_text=_merge_text(segments),
     )
 
 

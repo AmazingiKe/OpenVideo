@@ -45,6 +45,7 @@ class AnalysisMode(StrEnum):
 
 
 class AnalysisOperation(StrEnum):
+    CHAPTERS = "chapters"
     TRANSCRIPTION = "transcription"
     ANALYSIS = "analysis"
     INITIALIZATION = "initialization"

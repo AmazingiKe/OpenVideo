@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from itertools import pairwise
 from math import ceil, isfinite
 from pathlib import Path
@@ -21,7 +22,11 @@ from openvideo.core.transcription_models import Transcript
 from openvideo.settings import Settings
 from openvideo.tools.frames import FrameExtractionError, extract_frames
 from openvideo.tools.scenes import detect_scene_boundaries
-from openvideo.tools.chapters import build_global_semantic_chapters
+from openvideo.tools.chapters import (
+    ChapterVisualEvidence,
+    build_global_semantic_chapters,
+    summarize_chapter,
+)
 from openvideo.tools.vision import VisionDescriber, VisionDescriptionError
 
 
@@ -38,6 +43,9 @@ CONTEXT_FRAME_BUDGET_FRACTION = 1 / 3
 MAX_PROMPT_TRANSCRIPT_CHARACTERS = 6000
 TITLE_MAX_CHARACTERS = 32
 VISUAL_ONLY_CHAPTER_SECONDS = 120
+# 以语义候选引导稀疏取样，每个主题起点取一帧，限制视觉请求数量。
+MAX_CHAPTER_BOUNDARY_FRAMES = 24
+CHAPTER_VISUAL_EVIDENCE_CHARACTERS = 800
 AnalysisProgress = Callable[[AnalysisStage, float, str], None]
 OcrReader = Callable[[Sequence[Path]], str | None]
 FormulaReader = Callable[[Sequence[Path]], list[str]]
@@ -69,6 +77,27 @@ def build_segments(
         chapter_model,
         scene_boundaries=scene_boundaries,
     )
+    if chapter_model is not None and semantic_chapters and (describer or ocr_reader):
+        progress_callback(
+            AnalysisStage.READING_FRAME_TEXT, 72, "正在核对章节主题与关键画面"
+        )
+        visual_evidence = _chapter_boundary_evidence(
+            [
+                transcript.segments[chapter.start_index].start_seconds
+                for chapter in semantic_chapters
+            ],
+            media_path,
+            asset_directory,
+            settings,
+            describer,
+            ocr_reader,
+        )
+        if visual_evidence:
+            semantic_chapters = build_global_semantic_chapters(
+                transcript.segments,
+                chapter_model,
+                visual_evidence=visual_evidence,
+            )
     moments = (
         select_timeline_moments(
             transcript,
@@ -81,6 +110,19 @@ def build_segments(
         if transcript.segments
         else _visual_only_moments(duration_seconds)
     )
+    if chapter_model is not None and moments:
+        moments = [
+            replace(
+                moment,
+                start_seconds=0 if index == 0 else moment.start_seconds,
+                end_seconds=(
+                    moments[index + 1].start_seconds
+                    if index + 1 < len(moments)
+                    else duration_seconds or moment.end_seconds
+                ),
+            )
+            for index, moment in enumerate(moments)
+        ]
     segments: list[MediaSegment] = []
     progress_span = 20 / max(len(moments), 1)
     for index, moment in enumerate(moments):
@@ -112,9 +154,60 @@ def build_segments(
                     75 + progress_span * (index + 0.7),
                     f"正在分析第 {event_number}/{len(moments)} 个事件",
                 ),
+                chapter_model,
             )
         )
     return segments
+
+
+def _chapter_boundary_evidence(
+    time_points: list[float],
+    media_path: Path,
+    asset_directory: Path,
+    settings: Settings,
+    describer: VisionDescriber | None,
+    ocr_reader: OcrReader | None,
+) -> list[ChapterVisualEvidence]:
+    """借鉴 Chapter-Llama 的字幕引导取帧，视觉只为主题判断补充证据。"""
+    if len(time_points) > MAX_CHAPTER_BOUNDARY_FRAMES:
+        time_points = [
+            time_points[
+                round(
+                    index * (len(time_points) - 1) / (MAX_CHAPTER_BOUNDARY_FRAMES - 1)
+                )
+            ]
+            for index in range(MAX_CHAPTER_BOUNDARY_FRAMES)
+        ]
+    try:
+        frames = extract_frames(
+            media_path,
+            time_points,
+            asset_directory / FRAMES_DIRECTORY_NAME / f"chapters-{uuid7().hex}",
+            settings.ffmpeg_path,
+            settings.ffmpeg_bin_dir,
+        )
+    except FrameExtractionError:
+        return []
+    evidence = []
+    for seconds, frame in zip(time_points, frames):
+        observations = []
+        if ocr_reader:
+            text = ocr_reader([frame])
+            if text:
+                observations.append(f"OCR：{text[:CHAPTER_VISUAL_EVIDENCE_CHARACTERS]}")
+        if describer:
+            try:
+                observations.append(
+                    describer.describe(
+                        [frame],
+                        "用简洁中文描述当前画面明确展示的主题、标题和操作状态，不推断前后发生的内容。",
+                    )[:CHAPTER_VISUAL_EVIDENCE_CHARACTERS]
+                )
+            except VisionDescriptionError:
+                pass
+        if observations:
+            evidence.append(ChapterVisualEvidence(seconds, "\n".join(observations)))
+    return evidence
 
 
 def _build_segment(
@@ -130,6 +223,7 @@ def _build_segment(
     formula_reader: FormulaReader | None,
     on_reading_frame_text: Callable[[], None],
     on_describing_visuals: Callable[[], None],
+    chapter_model: AiModelConfiguration | None = None,
 ) -> MediaSegment:
     segment_id = f"segment-{uuid7().hex}"
     frames = (
@@ -153,13 +247,21 @@ def _build_segment(
         on_describing_visuals()
     visual_description = _describe_event(moment, frames, describer, strategy)
     transcript_text = moment.transcript_text or None
+    title = moment.title or _event_title(moment)
+    summary = (
+        summarize_chapter(
+            chapter_model, title, moment.transcript_text, ocr_text, visual_description
+        )
+        if chapter_model is not None
+        else visual_description
+    )
     return MediaSegment(
         segment_id=segment_id,
         asset_id=asset_id,
         start_seconds=moment.start_seconds,
         end_seconds=moment.end_seconds,
-        title=_event_title(moment),
-        detailed_summary=visual_description or transcript_text,
+        title=title,
+        detailed_summary=summary,
         transcript_text=transcript_text,
         key_frame_paths=[
             _relative_to_asset(asset_directory, frame) for frame in frames

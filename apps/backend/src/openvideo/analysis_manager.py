@@ -75,6 +75,15 @@ def _segment_digest(segments: list[MediaSegment]) -> str:
     ).hexdigest()
 
 
+def _chapter_source_digest(
+    segments: list[MediaSegment], transcript: Transcript | None
+) -> str:
+    """防止重建期间用户编辑字幕或旧章节，生成结束后覆盖较新的证据。"""
+    transcript_json = transcript.model_dump_json() if transcript else ""
+    payload = _segment_digest(segments) + transcript_json
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _needs_local_chapter_rebuild(
     transcript: Transcript,
     segments: list[MediaSegment],
@@ -215,6 +224,7 @@ class AnalysisManager:
             if active_job.operation == AnalysisOperation.TRANSCRIPTION:
                 return active_job
             operation_label = {
+                AnalysisOperation.CHAPTERS: "章节生成",
                 AnalysisOperation.ANALYSIS: "内容分析",
                 AnalysisOperation.INITIALIZATION: "后台初始化",
             }[active_job.operation]
@@ -321,6 +331,54 @@ class AnalysisManager:
                     options=self.settings.default_transcription,
                 )
             )
+        return job.model_copy(deep=True)
+
+    def create_chapters(self, asset_id: str) -> AnalysisJob:
+        """用户主动重建章节时复用现有字幕，并在整批结果有效后替换旧章节。"""
+        asset = self.library.get(asset_id)
+        if not asset or asset.status != MediaAssetStatus.READY:
+            raise AnalysisError("视频尚未就绪，无法生成章节")
+        transcript = self.library.load_transcript(asset_id)
+        if transcript is None or not transcript.segments:
+            raise AnalysisPrerequisiteError("请先完成视频转录，再生成语义章节")
+        active_job = self._active_job_for(asset_id)
+        if active_job:
+            if active_job.operation == AnalysisOperation.CHAPTERS:
+                return active_job
+            raise AnalysisPrerequisiteError("视频已有分析任务，请等待完成后再生成章节")
+        model_ids = [
+            self.settings.agent.complex_model_id,
+            self.settings.agent.fast_model_id,
+            self.settings.agent.vision_model_id,
+        ]
+        model = next(
+            (
+                candidate
+                for model_id in model_ids
+                if model_id
+                and (candidate := self.settings.ai_model(model_id)) is not None
+            ),
+            None,
+        )
+        if model is None:
+            model = next(iter(self.settings.online_ai_models), None)
+        if model is None:
+            raise AnalysisPrerequisiteError("请先在设置中配置 AI 模型，再生成章节")
+        job = AnalysisJob(
+            job_id=f"job-{uuid7().hex}",
+            asset_id=asset_id,
+            operation=AnalysisOperation.CHAPTERS,
+            ai_model_id=model.model_id,
+            strategy=AnalysisStrategy(depth=AnalysisDepth.DEEP),
+            message="等待生成章节",
+            proposal_base_digest=_chapter_source_digest(
+                self.library.load_segments(asset_id), transcript
+            ),
+        )
+        with self._lock:
+            self._jobs[job.job_id] = job
+            self._active_job_id_by_asset_id[asset_id] = job.job_id
+        self.library.save_analysis_job(job)
         return job.model_copy(deep=True)
 
     def initialize_asset(self, asset_id: str) -> AnalysisJob:
@@ -636,6 +694,27 @@ class AnalysisManager:
                     segment.visual_description for segment in proposed_segments
                 ):
                     self._add_capability(job_id, AnalysisCapability.VISUAL)
+                if job.operation == AnalysisOperation.CHAPTERS:
+                    with self.library._lock:
+                        if (
+                            _chapter_source_digest(
+                                self.library.load_segments(job.asset_id),
+                                self.library.load_transcript(job.asset_id),
+                            )
+                            != job.proposal_base_digest
+                        ):
+                            raise AnalysisError(
+                                "生成期间字幕或章节已被更新，请重新生成"
+                            )
+                        self.library.save_segments(job.asset_id, proposed_segments)
+                    self._on_evidence_ready()
+                    self._update_job(
+                        job_id,
+                        AnalysisStage.COMPLETE,
+                        100,
+                        f"已生成 {len(proposed_segments)} 个章节及摘要",
+                    )
+                    return
                 if job.operation == AnalysisOperation.INITIALIZATION:
                     self.library.save_segments(job.asset_id, proposed_segments)
                     self._on_evidence_ready()
@@ -711,6 +790,8 @@ class AnalysisManager:
         model = self.settings.ai_model(ai_model_id)
         if model is None:
             raise AnalysisPrerequisiteError("分析任务使用的 AI 模型已被删除")
+        if IMAGE_INPUT_MODALITY not in model.input_modalities:
+            return None
         return LiteLlmVision(model)
 
     def _prepare_transcriber(
@@ -867,6 +948,7 @@ class AnalysisManager:
             AnalysisOperation.TRANSCRIPTION: "转录失败",
             AnalysisOperation.ANALYSIS: "分析失败",
             AnalysisOperation.INITIALIZATION: "后台初始化失败",
+            AnalysisOperation.CHAPTERS: "章节生成失败",
         }[job.operation]
         self._update_job(
             job_id,
