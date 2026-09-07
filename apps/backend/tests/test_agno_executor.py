@@ -655,7 +655,7 @@ def test_unknown_named_tool_choice_uses_auto_for_required_tool_recovery():
     assert forced_tool_name is None
 
 
-def test_required_tool_chain_reserves_recovery_budget():
+def test_required_tool_chain_includes_prerequisites_for_recovery():
     definition = AgentDefinition(
         agent_id="test",
         title="测试",
@@ -739,7 +739,7 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
     async def invoke_stream(self, *_args, **_kwargs):
         nonlocal request_count
         request_count += 1
-        assert request_count <= 4, "Model requests must stop within the tool budget"
+        assert request_count <= 5, "Model requests must stop within the tool budget"
         if answer_after_search and request_count == 2:
             yield ModelResponse(content="Checking another source first")
         if answer_after_search and request_count == 3:
@@ -770,7 +770,11 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
         execution_count += 1
         return {"ok": True, "text": parameters.text}
 
+    async def invoke(self, *_args, **_kwargs):
+        return ModelResponse(content="Compressed test result")
+
     monkeypatch.setattr(OpenAIChat, "ainvoke_stream", invoke_stream)
+    monkeypatch.setattr(OpenAIChat, "ainvoke", invoke)
     monkeypatch.setattr(
         "openvideo.llm.agno_executor.create_agent_model",
         lambda *_args, **_kwargs: OpenAIChat(id="test", api_key="test"),
@@ -784,6 +788,7 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
         }
     )
     events = []
+    budget = 2 if answer_after_search else 4
     result = await asyncio.wait_for(
         AgnoAgentExecutor().run(
             online_model(),
@@ -792,13 +797,13 @@ async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_
             [{"role": "user", "content": "Search"}],
             registry,
             events.append,
-            max_tool_calls=4,
+            max_tool_calls=budget,
             tool_timeout_seconds=1,
         ),
         timeout=5,
     )
     assert execution_count == (2 if answer_after_search else 1)
-    assert request_count == (3 if answer_after_search else 4)
+    assert request_count == (3 if answer_after_search else 5)
     assert result.tool_limit_reached is not answer_after_search
     if answer_after_search:
         assert result.content == "Final answer"
@@ -824,7 +829,7 @@ async def test_unknown_tools_cannot_bypass_model_request_budget(monkeypatch):
     async def invoke_stream(self, *_args, **_kwargs):
         nonlocal request_count
         request_count += 1
-        assert request_count <= 4
+        assert request_count <= 5
         yield ModelResponse(
             tool_calls=[
                 ChoiceDeltaToolCall(
@@ -878,7 +883,7 @@ async def test_unknown_tools_cannot_bypass_model_request_budget(monkeypatch):
     assert result.tool_limit_reached is True
     assert result.successful_tools == set()
     assert result.content == ""
-    assert request_count == 4
+    assert request_count == 5
     assert result.retry_count == 0
 
 

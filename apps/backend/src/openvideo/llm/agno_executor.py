@@ -138,11 +138,6 @@ class AgnoAgentExecutor:
                 definition.agent_id,
                 historical_messages_loader,
             )
-        required_tool_chain = self._required_tool_chain(definition)
-        recovery_reserve = min(
-            len(required_tool_chain),
-            max(0, max_tool_calls - 1),
-        )
         first_result = await self._run_once(
             model,
             profile,
@@ -150,7 +145,7 @@ class AgnoAgentExecutor:
             messages,
             registry,
             on_event,
-            max_tool_calls=max_tool_calls - recovery_reserve,
+            max_tool_calls=max_tool_calls,
             tool_timeout_seconds=tool_timeout_seconds,
             run_context=run_context,
             session_id=session_id,
