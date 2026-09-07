@@ -504,6 +504,11 @@ class AgentRuntime:
         tracker = self._metric_trackers[run.run_id]
         tracker.retry_count = result.retry_count
         tracker.tool_count = max(tracker.tool_count, result.tool_call_count)
+        if result.tool_limit_reached:
+            raise AgentRuntimeError(
+                "助手反复调用工具，已达到本轮上限并停止，请缩小问题范围后重试",
+                "tool_call_limit",
+            )
         missing = definition.required_tools - result.successful_tools
         if missing:
             raise AgentRuntimeError(

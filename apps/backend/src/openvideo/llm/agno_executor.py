@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Protocol, cast
 
 from agno.agent import Agent
+from agno.exceptions import StopAgentRun
 from agno.models.message import Message
 from agno.run.agent import (
     ReasoningStepEvent,
@@ -65,6 +67,17 @@ REQUIRED_TOOL_RECOVERY_INSTRUCTION = (
     "上一步没有完成 Agent 声明的必需工具。不要继续解释过程，也不要普通回答。"
     "先调用尚未完成的前置工具，然后调用必需工具并提交结构化参数。"
 )
+
+
+@dataclass
+class AgentToolExecutionState:
+    """由程序限制工具执行，避免供应商忽略停止提示后继续循环。"""
+
+    max_tool_calls: int
+    call_count: int = 0
+    answer_started: bool = False
+    limit_reached: bool = False
+    results: dict[str, str] = field(default_factory=dict)
 
 
 class AgentToolProvider(Protocol):
@@ -142,7 +155,11 @@ class AgnoAgentExecutor:
         )
         missing_tools = definition.required_tools - first_result.successful_tools
         remaining_tool_calls = max_tool_calls - first_result.tool_call_count
-        if not missing_tools or remaining_tool_calls <= 0:
+        if (
+            first_result.tool_limit_reached
+            or not missing_tools
+            or remaining_tool_calls <= 0
+        ):
             return first_result
 
         recovery_definition, forced_tool_name = self._recovery_definition(
@@ -189,6 +206,7 @@ class AgnoAgentExecutor:
                 first_result.tool_call_count + recovery_result.tool_call_count
             ),
             retry_count=first_result.retry_count + recovery_result.retry_count + 1,
+            tool_limit_reached=recovery_result.tool_limit_reached,
         )
 
     @staticmethod
@@ -310,12 +328,12 @@ class AgnoAgentExecutor:
         run_context: str | None = None,
         session_id: str | None = None,
     ) -> AgentExecutionResult:
-        tool_result_cache: dict[str, str] = {}
+        tool_state = AgentToolExecutionState(max_tool_calls)
         agno_tools = self._tools(
             registry,
             definition,
             tool_timeout_seconds,
-            tool_result_cache,
+            tool_state,
         )
         agno_model = create_agent_model(
             model,
@@ -352,7 +370,8 @@ class AgnoAgentExecutor:
                 if agno_tools
                 else None
             ),
-            tool_call_limit=max_tool_calls,
+            # SDK 超限后仅跳过工具，仍可能继续请求模型；由工具入口显式终止循环。
+            tool_call_limit=None,
             db=(
                 self.session_context.database
                 if self.session_context is not None and session_id is not None
@@ -388,6 +407,7 @@ class AgnoAgentExecutor:
                 stream,
                 on_event,
                 required_tools=definition.required_tools,
+                tool_state=tool_state,
             )
         except asyncio.CancelledError:
             raise
@@ -401,7 +421,7 @@ class AgnoAgentExecutor:
         registry: AgentToolProvider,
         definition: AgentDefinition,
         timeout_seconds: float,
-        result_cache: dict[str, str],
+        tool_state: AgentToolExecutionState,
     ) -> list[Function]:
         functions: list[Function] = []
         for schema in registry.schemas(definition.allowed_tools):
@@ -412,13 +432,19 @@ class AgnoAgentExecutor:
                 _tool_name: str = name,
                 **arguments: Any,
             ) -> str:
+                if tool_state.answer_started:
+                    raise StopAgentRun("正文已开始输出，停止后续工具调用")
+                if tool_state.call_count >= tool_state.max_tool_calls:
+                    tool_state.limit_reached = True
+                    raise StopAgentRun("已达到本轮工具调用上限，停止继续检索")
+                tool_state.call_count += 1
                 signature = json.dumps(
                     {"name": _tool_name, "arguments": arguments},
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
                 )
-                cached_result = result_cache.get(signature)
+                cached_result = tool_state.results.get(signature)
                 if cached_result is not None:
                     return cached_result
                 result = await registry.execute(
@@ -432,7 +458,7 @@ class AgnoAgentExecutor:
                 )
                 serialized_result = json.dumps(result, ensure_ascii=False)
                 if result.get("ok") is not False:
-                    result_cache[signature] = serialized_result
+                    tool_state.results[signature] = serialized_result
                 return serialized_result
 
             functions.append(
@@ -452,6 +478,7 @@ class AgnoAgentExecutor:
         on_event: AgnoEventHandler,
         *,
         required_tools: set[str],
+        tool_state: AgentToolExecutionState,
     ) -> AgentExecutionResult:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
@@ -496,6 +523,8 @@ class AgnoAgentExecutor:
             if isinstance(event, RunContentEvent):
                 if isinstance(event.content, str) and event.content:
                     if publish_text:
+                        if event.content.strip():
+                            tool_state.answer_started = True
                         content_parts.append(event.content)
                         queue_delta(LlmAgentEventType.TEXT_DELTA, event.content)
                 if event.reasoning_content:
@@ -554,7 +583,7 @@ class AgnoAgentExecutor:
             elif isinstance(event, RunCompletedEvent):
                 if (
                     not content_parts
-                    and not successful_tools
+                    and required_tools <= successful_tools
                     and isinstance(event.content, str)
                     and event.content
                 ):
@@ -578,6 +607,7 @@ class AgnoAgentExecutor:
             reasoning_content="".join(reasoning_parts),
             successful_tools=successful_tools,
             tool_call_count=tool_call_count,
+            tool_limit_reached=tool_state.limit_reached,
         )
 
 

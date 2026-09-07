@@ -20,7 +20,7 @@ from openvideo.core.agent_runtime_models import (
     AgentToolDescriptor,
 )
 from openvideo.core.ai_models import AiModelConfiguration
-from openvideo.llm.agno_executor import AgnoAgentExecutor
+from openvideo.llm.agno_executor import AgnoAgentExecutor, AgentToolExecutionState
 from openvideo.llm.agno_session_context import AgnoSessionContext
 from openvideo.llm.events import LlmAgentEventType
 from openvideo.llm.errors import TransientProviderRequestError
@@ -304,7 +304,9 @@ async def test_identical_tool_arguments_reuse_the_first_result():
         prompt="调用工具",
         tools=[AgentToolDescriptor(name="echo", description="回显证据")],
     )
-    functions = AgnoAgentExecutor._tools(registry, definition, 5, {})
+    functions = AgnoAgentExecutor._tools(
+        registry, definition, 5, AgentToolExecutionState(5)
+    )
 
     first_result = await functions[0].entrypoint(text="相同证据")
     second_result = await functions[0].entrypoint(text="相同证据")
@@ -323,6 +325,7 @@ async def test_missing_required_tool_gets_one_forced_recovery(monkeypatch):
     )
     tool_choices = []
     tool_limits = []
+    published_events = []
 
     def arun(self, input, **_options):
         tool_choices.append(self.tool_choice)
@@ -379,7 +382,7 @@ async def test_missing_required_tool_gets_one_forced_recovery(monkeypatch):
         definition,
         [{"role": "user", "content": "执行"}],
         registry,
-        lambda _event: None,
+        published_events.append,
         max_tool_calls=4,
         tool_timeout_seconds=5,
     )
@@ -391,7 +394,13 @@ async def test_missing_required_tool_gets_one_forced_recovery(monkeypatch):
         "auto",
         {"type": "function", "function": {"name": "echo"}},
     ]
-    assert tool_limits == [3, 4]
+    assert tool_limits == [None, None]
+
+    assert [
+        event.content
+        for event in published_events
+        if event.event_type == LlmAgentEventType.TEXT_DELTA
+    ] == [result.content]
 
 
 @pytest.mark.asyncio
@@ -645,7 +654,9 @@ async def test_failed_tool_can_retry_after_prerequisite_is_satisfied():
         prompt="Test",
         tools=[AgentToolDescriptor(name="echo", description="Echo")],
     )
-    function = AgnoAgentExecutor._tools(registry, definition, 5, {})[0]
+    function = AgnoAgentExecutor._tools(
+        registry, definition, 5, AgentToolExecutionState(5)
+    )[0]
     failed = json.loads(await function.entrypoint(text="evidence"))
     ready = True
     succeeded = json.loads(await function.entrypoint(text="evidence"))
@@ -654,3 +665,75 @@ async def test_failed_tool_can_retry_after_prerequisite_is_satisfied():
     assert failed["error_code"] == "prerequisite_not_met"
     assert succeeded == repeated == {"ok": True, "text": "evidence"}
     assert execution_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer_after_search", [False, True])
+async def test_real_agno_loop_stops_repeated_searches(monkeypatch, answer_after_search):
+    import asyncio
+    from agno.models.openai import OpenAIChat
+    from agno.models.response import ModelResponse
+    from openai.types.chat.chat_completion_chunk import (
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
+    )
+
+    request_count = 0
+    execution_count = 0
+
+    async def invoke_stream(self, *_args, **_kwargs):
+        nonlocal request_count
+        request_count += 1
+        assert request_count <= 4, "Model requests must stop within the tool budget"
+        if answer_after_search and request_count == 2:
+            yield ModelResponse(content="Final answer")
+        yield ModelResponse(
+            tool_calls=[
+                ChoiceDeltaToolCall(
+                    index=0,
+                    id=f"call-{request_count}",
+                    type="function",
+                    function=ChoiceDeltaToolCallFunction(
+                        name="echo", arguments='{"text":"same"}'
+                    ),
+                )
+            ]
+        )
+
+    def execute(parameters):
+        nonlocal execution_count
+        execution_count += 1
+        return {"ok": True, "text": parameters.text}
+
+    monkeypatch.setattr(OpenAIChat, "ainvoke_stream", invoke_stream)
+    monkeypatch.setattr(
+        "openvideo.llm.agno_executor.create_agent_model",
+        lambda *_args, **_kwargs: OpenAIChat(id="test", api_key="test"),
+    )
+    registry = AgentToolRegistry()
+    registry.register(AgentTool("echo", "Search", EchoInput, execute))
+    definition = chat_definition().model_copy(
+        update={
+            "tools": [AgentToolDescriptor(name="echo", description="Search")],
+            "required_tools": {"echo"},
+        }
+    )
+    events = []
+    result = await asyncio.wait_for(
+        AgnoAgentExecutor().run(
+            online_model(),
+            text_profile(),
+            definition,
+            [{"role": "user", "content": "Search"}],
+            registry,
+            events.append,
+            max_tool_calls=4,
+            tool_timeout_seconds=1,
+        ),
+        timeout=5,
+    )
+    assert execution_count == 1
+    assert request_count == (2 if answer_after_search else 4)
+    assert result.tool_limit_reached is not answer_after_search
+    if answer_after_search:
+        assert result.content == "Final answer"

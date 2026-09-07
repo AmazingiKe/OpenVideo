@@ -505,3 +505,16 @@ def test_context_attachments_enforce_snapshot_and_time_range_contracts():
             snapshot_text="字幕快照",
             content_digest="a" * 64,
         )
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_limit_finishes_with_actionable_error():
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(
+            successful_tools={"echo"}, tool_call_count=4, tool_limit_reached=True
+        )
+    )
+    finished = await runtime.run(run, model, profile, definition, "search")
+    assert finished.stage == "failed"
+    assert finished.error_code == "tool_call_limit"
+    assert repository.events[run.session_id][-1].event_type == AgentEventType.RUN_FAILED
