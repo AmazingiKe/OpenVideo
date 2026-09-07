@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   format_timeline_time,
@@ -53,6 +53,19 @@ export function TimelineRulerCanvas({
 }: TimelineRulerCanvasProps) {
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const paint_style_ref = useRef<TimelineRulerPaintStyle | null>(null);
+  const [size_revision, set_size_revision] = useState(0);
+
+  useLayoutEffect(() => {
+    const canvas = canvas_ref.current;
+    if (!canvas) return;
+    const observer = new ResizeObserver(() => {
+      // CSS 高度变化后必须同步位图尺寸，不能继续拉伸缓存的旧画布。
+      paint_style_ref.current = null;
+      set_size_revision((revision) => revision + 1);
+    });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
 
   useLayoutEffect(() => {
     const canvas = canvas_ref.current;
@@ -156,6 +169,7 @@ export function TimelineRulerCanvas({
     }
   }, [
     canvas_width,
+    size_revision,
     duration_seconds,
     major_interval_seconds,
     scroll_left,

@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -19,6 +19,7 @@ describe("TimelineRulerCanvas", () => {
       value: DEFAULT_DEVICE_PIXEL_RATIO,
     });
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("keeps the current major interval inside the hysteresis range", () => {
@@ -105,6 +106,19 @@ describe("TimelineRulerCanvas", () => {
   });
 
   it("sizes and draws the bitmap at the current device pixel ratio", () => {
+    let resize_callback: ResizeObserverCallback;
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resize_callback = callback;
+        }
+        observe = vi.fn();
+        disconnect = disconnect;
+      },
+    );
+    let ruler_height = "32px";
     const context = {
       measureText: vi.fn((label: string) => ({ width: label.length * 7 })),
       beginPath: vi.fn(),
@@ -129,7 +143,7 @@ describe("TimelineRulerCanvas", () => {
         if (property_name === "--timeline-color-ruler-tick") return "tick";
         if (property_name === "--timeline-color-ruler-text") return "text";
         if (property_name === "--timeline-ruler-font") return "10px monospace";
-        if (property_name === "--timeline-ruler-height") return "32px";
+        if (property_name === "--timeline-ruler-height") return ruler_height;
         if (property_name === "--timeline-ruler-major-tick-height")
           return "8px";
         if (property_name === "--timeline-ruler-minor-tick-height")
@@ -144,7 +158,7 @@ describe("TimelineRulerCanvas", () => {
       value: 2,
     });
 
-    const { container } = render(
+    const { container, unmount } = render(
       <TimelineRulerCanvas
         canvas_width={123.5}
         duration_seconds={10}
@@ -173,5 +187,13 @@ describe("TimelineRulerCanvas", () => {
       expect(x - half_width).toBeGreaterThanOrEqual(previous_right + 8);
       previous_right = x + half_width;
     }
+    ruler_height = "40px";
+    act(() => resize_callback([], {} as ResizeObserver));
+    expect(canvas).toHaveAttribute("height", "80");
+    expect(context.clearRect).toHaveBeenLastCalledWith(0, 0, 123.5, 40);
+    expect(context.setTransform).toHaveBeenLastCalledWith(2, 0, 0, 2, 0, 0);
+    expect(context.font).toBe("10px monospace");
+    unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 });

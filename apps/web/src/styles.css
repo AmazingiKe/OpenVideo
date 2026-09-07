@@ -218,14 +218,14 @@
   --timeline-color-ruler-minor-tick: #505050;
   --timeline-font-family:
     ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --timeline-font-size-current: 12px;
+  --timeline-font-size-current: 18px;
   --timeline-font-size-label: 12px;
   --timeline-font-size-secondary: 11px;
   --timeline-count-font: 500 var(--timeline-font-size-secondary)
     var(--timeline-font-family);
   --timeline-ruler-font: 500 var(--timeline-font-size-label)
     var(--timeline-font-family);
-  --timeline-ruler-height: 32px;
+  --timeline-ruler-height: 40px;
   --timeline-track-header-width: 144px;
   --timeline-ruler-major-tick-height: 8px;
   --timeline-ruler-minor-tick-height: 4px;
@@ -719,6 +719,7 @@
   height: var(--timeline-ruler-height);
   flex: 0 0 var(--timeline-ruler-height);
   align-items: center;
+  justify-content: center;
   padding-inline: var(--timeline-block-label-padding);
   border-bottom: 1px solid var(--timeline-color-border-subtle);
   color: var(--timeline-color-track-header-muted-foreground);
