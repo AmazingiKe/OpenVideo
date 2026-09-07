@@ -2180,3 +2180,43 @@ def test_routing_reserves_capacity_and_shares_duplicate_requests(
             assert routing_calls == 2
 
         client.portal.call(scenario)
+
+
+@pytest.mark.parametrize("failure_point", ["checkpoint", "probe"])
+def test_completed_run_releases_runtime_when_bookkeeping_fails(
+    tmp_path, monkeypatch, failure_point
+):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(session.session_id, f"request-{uuid7().hex}", MODEL_ID)
+        service.library.save_agent_run(run)
+        service.store.append(
+            session.session_id,
+            run.run_id,
+            AgentEventType.TOOL_STATUS,
+            {"stage": "completed"},
+        )
+        service._tasks[run.run_id] = object()
+        service._runtimes[run.run_id] = object()
+
+        def fail(*_args, **_kwargs):
+            raise RuntimeError("bookkeeping failed")
+
+        target = (
+            service.library
+            if failure_point == "checkpoint"
+            else service.capability_resolver
+        )
+        method = (
+            "update_agent_run_checkpoint"
+            if failure_point == "checkpoint"
+            else "record_probe"
+        )
+        monkeypatch.setattr(target, method, fail)
+        with pytest.raises(RuntimeError, match="bookkeeping failed"):
+            service._complete_run(run.run_id, service.settings.ai_model(MODEL_ID), None)
+        assert run.run_id not in service._tasks
+        assert run.run_id not in service._runtimes

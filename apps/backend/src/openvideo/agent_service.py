@@ -1307,32 +1307,34 @@ class AgentService:
         model: AiModelConfiguration,
         _task: asyncio.Task[AgentRun],
     ) -> None:
-        run = self.library.load_agent_run(run_id)
-        if run is not None:
-            self.library.update_agent_run_checkpoint(
-                run_id,
-                run.stage,
-                resume_allowed=run.stage
-                in {
-                    AgentRunStage.CANCELLED,
-                    AgentRunStage.FAILED,
-                    AgentRunStage.INTERRUPTED,
-                },
-            )
-        if run is not None and any(
-            event.event_type == AgentEventType.TOOL_STATUS
-            and event.payload.get("stage") == "completed"
-            for event in self.run_events(run_id)
-        ):
-            self.capability_resolver.record_probe(
-                model,
-                {
-                    CapabilityName.TOOLS: Support.YES,
-                    CapabilityName.STREAMING_TOOLS: Support.YES,
-                    CapabilityName.TOOL_CHOICE_AUTO: Support.YES,
-                },
-            )
-        self._discard_run(run_id)
+        try:
+            run = self.library.load_agent_run(run_id)
+            if run is not None:
+                self.library.update_agent_run_checkpoint(
+                    run_id,
+                    run.stage,
+                    resume_allowed=run.stage
+                    in {
+                        AgentRunStage.CANCELLED,
+                        AgentRunStage.FAILED,
+                        AgentRunStage.INTERRUPTED,
+                    },
+                )
+            if run is not None and any(
+                event.event_type == AgentEventType.TOOL_STATUS
+                and event.payload.get("stage") == "completed"
+                for event in self.run_events(run_id)
+            ):
+                self.capability_resolver.record_probe(
+                    model,
+                    {
+                        CapabilityName.TOOLS: Support.YES,
+                        CapabilityName.STREAMING_TOOLS: Support.YES,
+                        CapabilityName.TOOL_CHOICE_AUTO: Support.YES,
+                    },
+                )
+        finally:
+            self._discard_run(run_id)
 
     def _registered_agents(self) -> list[RegisteredAgent]:
         marker = AgentDefinition(
