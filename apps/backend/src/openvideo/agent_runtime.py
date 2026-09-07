@@ -104,6 +104,10 @@ class AgentEventRepository(Protocol):
         self, session_id: str, *, after_sequence: int = 0
     ) -> list[AgentEvent]: ...
 
+    def load_agent_message_events(
+        self, session_id: str, *, limit: int | None = None
+    ) -> list[AgentEvent]: ...
+
     def load_agent_artifacts(
         self, *, run_id: str | None = None, session_id: str | None = None
     ) -> list[AgentArtifact]: ...
@@ -139,9 +143,10 @@ class AgentSessionStore:
         session_id: str,
         *,
         exclude_run_id: str | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
-        for event in self.repository.load_agent_events(session_id):
+        for event in self.repository.load_agent_message_events(session_id, limit=limit):
             if event.run_id == exclude_run_id:
                 continue
             payload = event.payload

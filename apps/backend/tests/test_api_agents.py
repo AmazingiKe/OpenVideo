@@ -2220,3 +2220,66 @@ def test_completed_run_releases_runtime_when_bookkeeping_fails(
             service._complete_run(run.run_id, service.settings.ai_model(MODEL_ID), None)
         assert run.run_id not in service._tasks
         assert run.run_id not in service._runtimes
+
+
+def test_recent_messages_exclude_stream_and_tool_events_in_database(
+    tmp_path, monkeypatch
+):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(session.session_id, f"request-{uuid7().hex}", MODEL_ID)
+        service.library.save_agent_run(run)
+        for index in range(8):
+            service.store.append(
+                session.session_id,
+                run.run_id,
+                AgentEventType.RUN_STATUS,
+                {"input": f"question {index}"},
+            )
+            service.store.append(
+                session.session_id,
+                run.run_id,
+                AgentEventType.MESSAGE_COMPLETED,
+                {"content": f"answer {index}"},
+            )
+            service.store.append(
+                session.session_id,
+                run.run_id,
+                AgentEventType.MESSAGE_DELTA,
+                {"content": "delta"},
+            )
+            service.store.append(
+                session.session_id,
+                run.run_id,
+                AgentEventType.TOOL_STATUS,
+                {"result": "tool"},
+            )
+        service.store.append(
+            session.session_id,
+            run.run_id,
+            AgentEventType.RUN_STATUS,
+            {"phase": "reasoning"},
+        )
+        service.store.append(
+            session.session_id,
+            run.run_id,
+            AgentEventType.MESSAGE_COMPLETED,
+            {"content": "   "},
+        )
+
+        def fail(*_args, **_kwargs):
+            pytest.fail("Must not load the full event history")
+
+        monkeypatch.setattr(service.library, "load_agent_events", fail)
+        events = service.library.load_agent_message_events(session.session_id, limit=6)
+        assert len(events) == 6
+        messages = service.store.historical_messages(session.session_id, limit=6)
+        assert [message["content"] for message in messages] == [
+            content
+            for index in range(5, 8)
+            for content in (f"question {index}", f"answer {index}")
+        ]
+        assert len(service.store.historical_messages(session.session_id)) == 16

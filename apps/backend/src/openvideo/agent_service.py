@@ -18,6 +18,7 @@ from openvideo.agent_intent_router import (
     AgentIntent,
     AgentIntentRoute,
     AgentIntentRoutingError,
+    ROUTING_HISTORY_MAX_MESSAGES,
     route_agent_intent,
 )
 from openvideo.agent_model_roles import select_automatic_model_id
@@ -1096,7 +1097,9 @@ class AgentService:
                 requested_intent=(
                     str(requested_intent) if requested_intent is not None else None
                 ),
-                recent_messages=self.store.historical_messages(session.session_id),
+                recent_messages=self.store.historical_messages(
+                    session.session_id, limit=ROUTING_HISTORY_MAX_MESSAGES
+                ),
                 focus_context=request.focus_context,
             )
         except AgentIntentRoutingError as error:

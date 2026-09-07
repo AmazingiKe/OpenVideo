@@ -97,6 +97,15 @@ class MemoryRepository:
             if event.sequence > after_sequence
         ]
 
+    def load_agent_message_events(self, session_id: str, *, limit: int | None = None):
+        events = [
+            event
+            for event in self.events[session_id]
+            if event.event_type
+            in {AgentEventType.RUN_STATUS, AgentEventType.MESSAGE_COMPLETED}
+        ]
+        return events[-limit:] if limit else events
+
     def load_agent_artifacts(
         self, *, run_id: str | None = None, session_id: str | None = None
     ) -> list[AgentArtifact]:

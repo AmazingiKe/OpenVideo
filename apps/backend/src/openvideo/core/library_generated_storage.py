@@ -615,6 +615,34 @@ class LibraryGeneratedStorageMixin:
             events.append(AgentEvent.model_validate(values))
         return events
 
+    def load_agent_message_events(
+        self, session_id: str, *, limit: int | None = None
+    ) -> list[AgentEvent]:
+        self._validate_identifier(session_id, "session")
+        if limit is not None and limit < 1:
+            raise ValueError("Message limit must be positive")
+        parameters: list[str | int] = [
+            session_id,
+            AgentEventType.RUN_STATUS.value,
+            AgentEventType.MESSAGE_COMPLETED.value,
+        ]
+        query = (
+            "SELECT * FROM agent_events WHERE session_id = ? AND ("
+            "(event_type = ? AND length(trim(COALESCE(json_extract(payload, '$.input'), ''))) > 0) OR "
+            "(event_type = ? AND length(trim(COALESCE(json_extract(payload, '$.content'), ''))) > 0)) "
+            "ORDER BY sequence DESC"
+        )
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(limit)
+        rows = self._db().execute(query, parameters).fetchall()
+        events = []
+        for row in reversed(rows):
+            values = dict(row)
+            values["payload"] = json.loads(values["payload"])
+            events.append(AgentEvent.model_validate(values))
+        return events
+
     def interrupt_agent_runs(self) -> None:
         now = datetime.now(UTC)
         active_stages = (AgentRunStage.PENDING.value, AgentRunStage.RUNNING.value)
