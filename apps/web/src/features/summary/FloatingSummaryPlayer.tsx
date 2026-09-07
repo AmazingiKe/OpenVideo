@@ -1,3 +1,4 @@
+import { motion, useReducedMotion } from "motion/react";
 import {
   Captions,
   GripHorizontal,
@@ -14,6 +15,12 @@ import {
   type PointerEvent,
 } from "react";
 
+import {
+  DIALOG_ENTER_SCALE,
+  DIALOG_ENTER_OFFSET_PX,
+  OVERLAY_ENTER_TRANSITION,
+  OVERLAY_EXIT_TRANSITION,
+} from "@/motion_tokens";
 import { Button } from "@/components/ui/button";
 import { Player, type PlayerHandle } from "@/features/player/Player";
 import { record_scrub_preview_metrics } from "@/features/player/scrub_preview_diagnostics";
@@ -116,6 +123,7 @@ export function FloatingSummaryPlayer({
   on_open_change,
   transcript,
 }: FloatingSummaryPlayerProps) {
+  const reduce_motion = useReducedMotion();
   const player_ref = useRef<PlayerHandle>(null);
   const container_ref = useRef<HTMLDivElement>(null);
   const pointer_operation_ref = useRef<PointerOperation | null>(null);
@@ -273,10 +281,10 @@ export function FloatingSummaryPlayer({
           参考视频
         </Button>
       ) : null}
-      <section
+      <motion.section
         className={cn(
           "pointer-events-auto absolute flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-lg",
-          !open && "pointer-events-none size-px opacity-0",
+          !open && "pointer-events-none",
         )}
         style={{
           left: displayed_geometry.x,
@@ -284,6 +292,13 @@ export function FloatingSummaryPlayer({
           width: displayed_geometry.width,
           height: displayed_geometry.height,
         }}
+        initial={false}
+        animate={{
+          opacity: open ? 1 : 0,
+          scale: open || reduce_motion ? 1 : DIALOG_ENTER_SCALE,
+          y: open || reduce_motion ? 0 : DIALOG_ENTER_OFFSET_PX,
+        }}
+        transition={open ? OVERLAY_ENTER_TRANSITION : OVERLAY_EXIT_TRANSITION}
         aria-label="总结参考视频"
         aria-hidden={!open}
         inert={!open}
@@ -374,7 +389,7 @@ export function FloatingSummaryPlayer({
               />
             ))
           : null}
-      </section>
+      </motion.section>
     </div>
   );
 }

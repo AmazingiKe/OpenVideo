@@ -59,9 +59,9 @@ describe("FloatingSummaryPlayer", () => {
       />,
     );
 
-    expect(screen.getByTestId("summary-player").closest("section")).toHaveClass(
-      "size-px",
-    );
+    expect(
+      screen.getByTestId("summary-player").closest("section"),
+    ).toHaveAttribute("aria-hidden", "true");
     fireEvent.click(screen.getByRole("button", { name: "参考视频" }));
 
     expect(on_open_change).toHaveBeenCalledWith(true);

@@ -215,6 +215,7 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
   const desktop_group_ref = useRef<GroupImperativeHandle>(null);
   const panel_size_percent_ref = useRef(panel_size_percent);
   const reduce_motion = useReducedMotion();
+  const [layout_animating, set_layout_animating] = useState(false);
 
   useEffect(() => {
     panel_size_percent_ref.current = panel_size_percent;
@@ -232,21 +233,26 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
       ? panel_size_percent_ref.current
       : 0;
     const update_layout = (assistant_size_percent: number) => {
+      // 停止动画仍可能触发最后一帧，面板卸载后不能再写入布局。
+      if (desktop_group_ref.current !== group) return;
       group.setLayout({
         [WORKSPACE_PANEL_ID]: 100 - assistant_size_percent,
         [ASSISTANT_PANEL_ID]: assistant_size_percent,
       });
     };
-    if (reduce_motion) {
+    if (reduce_motion || current_size_percent === target_size_percent) {
+      set_layout_animating(false);
       update_layout(target_size_percent);
       return;
     }
+    set_layout_animating(true);
     const layout_animation = animate(
       current_size_percent,
       target_size_percent,
       {
         ...ASSISTANT_LAYOUT_TRANSITION,
         onUpdate: update_layout,
+        onComplete: () => set_layout_animating(false),
       },
     );
     return () => layout_animation.stop();
@@ -320,13 +326,16 @@ export function GlobalAssistantLayout({ children }: { children: ReactNode }) {
             withHandle
             className="global_assistant_handle"
             data-open={assistant.open}
-            disabled={!assistant.open}
+            disabled={!assistant.open || layout_animating}
             aria-label="调整助手宽度"
           />
           <ResizablePanel
             id={ASSISTANT_PANEL_ID}
             defaultSize={`${panel_size_percent}%`}
-            minSize={`${ASSISTANT_PANEL_MIN_WIDTH_PX}px`}
+            // 展开过程需要经过最小宽度以下的尺寸，拖拽时仍保留最小宽度限制。
+            minSize={
+              layout_animating ? "0%" : `${ASSISTANT_PANEL_MIN_WIDTH_PX}px`
+            }
             maxSize={`${ASSISTANT_PANEL_MAX_WIDTH_PX}px`}
             collapsedSize="0%"
             collapsible

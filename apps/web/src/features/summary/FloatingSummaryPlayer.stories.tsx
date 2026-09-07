@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, waitFor } from "storybook/test";
 
 import { STORY_ASSETS } from "@/features/library/library_story_fixtures";
 import type { SummaryPlayerGeometry } from "@/shared/types";
@@ -17,6 +18,28 @@ type Story = StoryObj<typeof meta>;
 export const Minimized: Story = {
   args: story_args(false),
   render: () => <PlayerStory initial_open={false} />,
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const video = canvasElement.querySelector("video");
+    const surface = canvasElement.querySelector("section")!;
+    // 逐帧采样验证真实过渡，避免只验证最终可见状态而漏掉瞬间跳变。
+    canvas.getByRole("button", { name: "参考视频" }).click();
+    const opacity_samples: number[] = [];
+    for (let frame = 0; frame < 24; frame += 1) {
+      await new Promise(requestAnimationFrame);
+      opacity_samples.push(Number(getComputedStyle(surface).opacity));
+    }
+    await expect(opacity_samples.some((value) => value > 0 && value < 1)).toBe(
+      true,
+    );
+    await expect(surface).toHaveAttribute("aria-hidden", "false");
+    await userEvent.click(
+      canvas.getByRole("button", { name: "最小化参考视频" }),
+    );
+    await waitFor(() => expect(surface).not.toBeVisible());
+    await userEvent.click(canvas.getByRole("button", { name: "参考视频" }));
+    await waitFor(() => expect(surface).toBeVisible());
+    await expect(canvasElement.querySelector("video")).toBe(video);
+  },
 };
 
 export const Open: Story = {
