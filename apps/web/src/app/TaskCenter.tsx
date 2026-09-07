@@ -31,7 +31,7 @@ const TERMINAL_TASK_STAGES = new Set([
 
 type TaskCenterProps = {
   tasks: TaskRecord[];
-  on_resume: (run_id: string) => Promise<void>;
+  on_retry: (run_id: string) => Promise<void>;
 };
 
 const TASK_TYPES = {
@@ -41,9 +41,9 @@ const TASK_TYPES = {
   index: { label: "索引", icon: Database },
 } as const;
 
-export function TaskCenter({ tasks, on_resume }: TaskCenterProps) {
-  const [resuming_run_id, set_resuming_run_id] = useState<string | null>(null);
-  const [resume_error, set_resume_error] = useState<string | null>(null);
+export function TaskCenter({ tasks, on_retry }: TaskCenterProps) {
+  const [retrying_run_id, set_retrying_run_id] = useState<string | null>(null);
+  const [retry_error, set_retry_error] = useState<string | null>(null);
   const visible_tasks = useMemo(
     () => tasks.slice(0, VISIBLE_TASK_LIMIT),
     [tasks],
@@ -52,17 +52,17 @@ export function TaskCenter({ tasks, on_resume }: TaskCenterProps) {
     (task) => !TERMINAL_TASK_STAGES.has(task.stage),
   ).length;
 
-  async function resume_task(run_id: string) {
-    set_resuming_run_id(run_id);
-    set_resume_error(null);
+  async function retry_task(run_id: string) {
+    set_retrying_run_id(run_id);
+    set_retry_error(null);
     try {
-      await on_resume(run_id);
+      await on_retry(run_id);
     } catch (error) {
-      set_resume_error(
-        error instanceof Error ? error.message : "任务恢复失败，请稍后重试",
+      set_retry_error(
+        error instanceof Error ? error.message : "任务重试失败，请稍后再试",
       );
     } finally {
-      set_resuming_run_id(null);
+      set_retrying_run_id(null);
     }
   }
 
@@ -102,12 +102,12 @@ export function TaskCenter({ tasks, on_resume }: TaskCenterProps) {
             下载、转录与助手任务会在离开页面后继续运行。
           </PopoverDescription>
         </PopoverHeader>
-        {resume_error ? (
+        {retry_error ? (
           <p
             className="rounded-lg bg-error-surface px-2 py-1.5 text-xs text-destructive"
             role="alert"
           >
-            {resume_error}
+            {retry_error}
           </p>
         ) : null}
         {visible_tasks.length === 0 ? (
@@ -120,8 +120,8 @@ export function TaskCenter({ tasks, on_resume }: TaskCenterProps) {
               <TaskCenterItem
                 key={task.task_id}
                 task={task}
-                is_resuming={resuming_run_id === task.task_id}
-                on_resume={resume_task}
+                is_retrying={retrying_run_id === task.task_id}
+                on_retry={retry_task}
               />
             ))}
           </ol>
@@ -133,12 +133,12 @@ export function TaskCenter({ tasks, on_resume }: TaskCenterProps) {
 
 function TaskCenterItem({
   task,
-  is_resuming,
-  on_resume,
+  is_retrying,
+  on_retry,
 }: {
   task: TaskRecord;
-  is_resuming: boolean;
-  on_resume: (run_id: string) => Promise<void>;
+  is_retrying: boolean;
+  on_retry: (run_id: string) => Promise<void>;
 }) {
   const task_type = TASK_TYPES[task.task_type];
   const TaskIcon = task_type.icon;
@@ -172,16 +172,16 @@ function TaskCenterItem({
           {task.error_message ? (
             <p className="text-xs text-destructive">{task.error_message}</p>
           ) : null}
-          {task.task_type === "agent" && task.resume_available ? (
+          {task.task_type === "agent" && task.retry_available ? (
             <Button
               type="button"
               variant="outline"
               size="xs"
-              disabled={is_resuming}
-              onClick={() => void on_resume(task.task_id)}
+              disabled={is_retrying}
+              onClick={() => void on_retry(task.task_id)}
             >
               <RotateCcw aria-hidden="true" />
-              {is_resuming ? "恢复中" : "继续"}
+              {is_retrying ? "重试中" : "从头重试"}
             </Button>
           ) : null}
         </div>

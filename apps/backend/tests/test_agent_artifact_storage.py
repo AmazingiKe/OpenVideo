@@ -145,6 +145,48 @@ def test_agent_checkpoint_survives_library_reopen(tmp_path: Path):
         interrupted = reopened.load_agent_run_checkpoint(artifact.run_id)
         assert interrupted is not None
         assert interrupted.stage == "interrupted"
-        assert interrupted.resume_allowed is True
+        assert interrupted.retry_allowed is True
+    finally:
+        reopened.close()
+
+
+def test_legacy_checkpoint_columns_migrate_without_losing_request(tmp_path):
+    from openvideo.core.agent_checkpoint_store import (
+        open_agent_checkpoint_database,
+        save_agent_checkpoint,
+        load_agent_checkpoint,
+    )
+
+    path = tmp_path / "checkpoints.sqlite3"
+    connection = open_agent_checkpoint_database(path)
+    checkpoint = AgentRunCheckpoint(
+        run_id=f"run-{uuid7().hex}",
+        session_id=f"session-{uuid7().hex}",
+        request=AgentRunCreate(
+            request_key=f"request-{uuid7().hex}",
+            ai_model_id=f"model-{uuid7().hex}",
+            content="retry",
+        ),
+        retry_allowed=True,
+    )
+    save_agent_checkpoint(connection, checkpoint)
+    connection.execute(
+        "ALTER TABLE agent_run_checkpoints RENAME COLUMN retry_allowed TO resume_allowed"
+    )
+    connection.execute(
+        "ALTER TABLE agent_run_checkpoints ADD COLUMN completed_steps TEXT NOT NULL DEFAULT '[]'"
+    )
+    connection.close()
+    reopened = open_agent_checkpoint_database(path)
+    try:
+        assert load_agent_checkpoint(reopened, checkpoint.run_id) == checkpoint
+        columns = {
+            row["name"]
+            for row in reopened.execute("PRAGMA table_info(agent_run_checkpoints)")
+        }
+        assert "retry_allowed" in columns
+        assert "resume_allowed" not in columns
+        assert "completed_steps" not in columns
+        save_agent_checkpoint(reopened, checkpoint)
     finally:
         reopened.close()

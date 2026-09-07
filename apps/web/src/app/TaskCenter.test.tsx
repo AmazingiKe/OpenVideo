@@ -5,15 +5,15 @@ import { TaskCenter } from "@/app/TaskCenter";
 import type { TaskRecord } from "@/features/workbench/tasks";
 
 describe("TaskCenter", () => {
-  it("shows active tasks and resumes an interrupted agent run", async () => {
-    const on_resume = vi.fn().mockResolvedValue(undefined);
+  it("shows active tasks and retries an interrupted agent run", async () => {
+    const on_retry = vi.fn().mockResolvedValue(undefined);
     render(
       <TaskCenter
         tasks={[
           task_record("running", false),
           task_record("interrupted", true),
         ]}
-        on_resume={on_resume}
+        on_retry={on_retry}
       />,
     );
 
@@ -21,10 +21,10 @@ describe("TaskCenter", () => {
       screen.getByRole("button", { name: "任务中心，1 个进行中" }),
     );
     expect(screen.getByText("运行中")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+    fireEvent.click(screen.getByRole("button", { name: "从头重试" }));
 
     await waitFor(() =>
-      expect(on_resume).toHaveBeenCalledWith(
+      expect(on_retry).toHaveBeenCalledWith(
         "run-019c012345677abc8123456789abcdef",
       ),
     );
@@ -46,7 +46,7 @@ describe("TaskCenter", () => {
             name: "资料库证据索引",
           },
         ]}
-        on_resume={vi.fn()}
+        on_retry={vi.fn()}
       />,
     );
 
@@ -58,7 +58,7 @@ describe("TaskCenter", () => {
   });
 });
 
-function task_record(stage: string, resume_available: boolean): TaskRecord {
+function task_record(stage: string, retry_available: boolean): TaskRecord {
   return {
     task_id:
       stage === "running"
@@ -72,6 +72,6 @@ function task_record(stage: string, resume_available: boolean): TaskRecord {
     created_at:
       stage === "running" ? "2026-08-29T10:00:00Z" : "2026-08-29T09:00:00Z",
     name: stage === "running" ? "分析角色动作" : "整理镜头标记",
-    resume_available,
+    retry_available,
   };
 }

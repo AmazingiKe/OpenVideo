@@ -189,10 +189,10 @@ def register_agent_routes(
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 
-    @app.post("/api/agent-runs/{run_id}/resume", response_model=AgentRun)
-    async def resume_agent_run(run_id: str) -> AgentRun:
+    @app.post("/api/agent-runs/{run_id}/retry", response_model=AgentRun)
+    async def retry_agent_run(run_id: str) -> AgentRun:
         try:
-            return await agent_service().resume_run(run_id)
+            return await agent_service().retry_run(run_id)
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 

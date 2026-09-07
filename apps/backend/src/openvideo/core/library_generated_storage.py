@@ -487,7 +487,7 @@ class LibraryGeneratedStorageMixin:
         run_id: str,
         stage: AgentRunStage,
         *,
-        resume_allowed: bool,
+        retry_allowed: bool,
     ) -> AgentRunCheckpoint | None:
         checkpoint = self.load_agent_run_checkpoint(run_id)
         if checkpoint is None:
@@ -495,7 +495,7 @@ class LibraryGeneratedStorageMixin:
         updated = checkpoint.model_copy(
             update={
                 "stage": stage,
-                "resume_allowed": resume_allowed,
+                "retry_allowed": retry_allowed,
                 "updated_at": datetime.now(UTC),
             }
         )
@@ -508,7 +508,7 @@ class LibraryGeneratedStorageMixin:
                 self.update_agent_run_checkpoint(
                     checkpoint.run_id,
                     AgentRunStage.INTERRUPTED,
-                    resume_allowed=True,
+                    retry_allowed=True,
                 )
 
     def load_agent_run(self, run_id: str) -> AgentRun | None:

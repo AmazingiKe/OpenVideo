@@ -8,7 +8,7 @@ export type TaskRecord = {
   error_message: string | null;
   created_at: string;
   name: string;
-  resume_available?: boolean;
+  retry_available?: boolean;
 };
 
 const MAX_TASK_RECORDS = 100;

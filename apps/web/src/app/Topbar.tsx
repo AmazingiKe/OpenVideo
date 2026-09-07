@@ -130,7 +130,7 @@ export function Topbar() {
         {task_manager ? (
           <TaskCenter
             tasks={task_manager.task_records}
-            on_resume={task_manager.resume_agent_task}
+            on_retry={task_manager.retry_agent_task}
           />
         ) : null}
         <NavLink

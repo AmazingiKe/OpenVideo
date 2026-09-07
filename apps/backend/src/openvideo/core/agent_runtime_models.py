@@ -415,14 +415,13 @@ class AgentRunCreate(BaseModel):
 
 
 class AgentRunCheckpoint(BaseModel):
-    """保存已完成的确定性输入准备，恢复时不复用未确认的外部调用结果。"""
+    """保存原始请求供失败后重新执行，不表示工具步骤的恢复进度。"""
 
     run_id: str
     session_id: str
     request: AgentRunCreate
     stage: AgentRunStage = AgentRunStage.PENDING
-    completed_steps: list[str] = Field(default_factory=lambda: ["input_resolved"])
-    resume_allowed: bool = False
+    retry_allowed: bool = False
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -430,7 +429,7 @@ class AgentTaskSnapshot(BaseModel):
     run: AgentRun
     session_title: str
     asset_id: str
-    resume_available: bool = False
+    retry_available: bool = False
 
 
 class AgentIndexStatus(BaseModel):

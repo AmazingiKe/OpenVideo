@@ -565,9 +565,9 @@ class AgentService:
                     run=run,
                     session_title=session.title,
                     asset_id=session.asset_id,
-                    resume_available=bool(
+                    retry_available=bool(
                         checkpoint is not None
-                        and checkpoint.resume_allowed
+                        and checkpoint.retry_allowed
                         and run.stage
                         in {
                             AgentRunStage.CANCELLED,
@@ -679,29 +679,29 @@ class AgentService:
             if label not in capabilities:
                 capabilities.append(label)
 
-    async def resume_run(self, run_id: str) -> AgentRun:
+    async def retry_run(self, run_id: str) -> AgentRun:
         run = self.run(run_id)
         checkpoint = self.library.load_agent_run_checkpoint(run_id)
         if checkpoint is None:
-            raise AgentConflictError("此任务没有可安全继续的检查点")
-        if not checkpoint.resume_allowed:
-            raise AgentConflictError("此任务检查点尚未达到可恢复状态")
+            raise AgentConflictError("此任务没有可重试的原始请求")
+        if not checkpoint.retry_allowed:
+            raise AgentConflictError("此任务尚未达到可重试状态")
         if run.stage not in {
             AgentRunStage.CANCELLED,
             AgentRunStage.FAILED,
             AgentRunStage.INTERRUPTED,
         }:
-            raise AgentConflictError("只有已停止或中断的任务可以继续")
-        resumed_request = checkpoint.request.model_copy(
+            raise AgentConflictError("只有已停止或中断的任务可以重试")
+        retried_request = checkpoint.request.model_copy(
             update={
                 "request_key": f"request-{uuid7().hex}",
                 "task_input": {
                     **checkpoint.request.task_input,
-                    "resumed_from_run_id": run_id,
+                    "retried_from_run_id": run_id,
                 },
             }
         )
-        return await self.create_run(checkpoint.session_id, resumed_request)
+        return await self.create_run(checkpoint.session_id, retried_request)
 
     def run_events(self, run_id: str, after_sequence: int = 0) -> list[AgentEvent]:
         run = self.run(run_id)
@@ -1313,7 +1313,7 @@ class AgentService:
                 self.library.update_agent_run_checkpoint(
                     run_id,
                     run.stage,
-                    resume_allowed=run.stage
+                    retry_allowed=run.stage
                     in {
                         AgentRunStage.CANCELLED,
                         AgentRunStage.FAILED,

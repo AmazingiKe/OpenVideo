@@ -883,7 +883,7 @@ export type AgentTaskSnapshot = {
   run: AgentRun;
   session_title: string;
   asset_id: string;
-  resume_available: boolean;
+  retry_available: boolean;
 };
 
 export type AgentIndexStatus = {

@@ -502,11 +502,11 @@ def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypat
         assert "id: 1\n" not in events.text
         run = client.get(f"/api/agent-runs/{run_id}").json()
         tasks = client.get("/api/agent-tasks").json()
-        resumed = client.post(f"/api/agent-runs/{run_id}/resume")
+        resumed = client.post(f"/api/agent-runs/{run_id}/retry")
         assert run["stage"] == "failed"
         assert run["error_code"] == "required_result_missing"
         assert tasks[0]["run"]["run_id"] == run_id
-        assert tasks[0]["resume_available"] is True
+        assert tasks[0]["retry_available"] is True
         assert resumed.status_code == 200
         assert resumed.json()["run_id"] != run_id
 

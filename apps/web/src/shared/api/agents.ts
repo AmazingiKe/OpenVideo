@@ -116,11 +116,11 @@ export function get_agent_index_status(
   return request_json(`/api/agent-index-status${query}`, { signal });
 }
 
-export function resume_agent_run(
+export function retry_agent_run(
   run_id: string,
   signal?: AbortSignal,
 ): Promise<AgentRun> {
-  return request_json(`/api/agent-runs/${encodeURIComponent(run_id)}/resume`, {
+  return request_json(`/api/agent-runs/${encodeURIComponent(run_id)}/retry`, {
     method: "POST",
     signal,
   });

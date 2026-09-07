@@ -23,7 +23,7 @@ const TASKS: TaskRecord[] = [
     error_message: null,
     created_at: "2026-08-29T09:00:00Z",
     name: "整理镜头标记",
-    resume_available: true,
+    retry_available: true,
   },
   {
     task_id: "job-019c012345677abc8123456789abcdef",
@@ -42,7 +42,7 @@ const meta = {
   component: TaskCenter,
   args: {
     tasks: TASKS,
-    on_resume: async () => undefined,
+    on_retry: async () => undefined,
   },
 } satisfies Meta<typeof TaskCenter>;
 

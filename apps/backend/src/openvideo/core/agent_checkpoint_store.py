@@ -18,9 +18,22 @@ def open_agent_checkpoint_database(path: Path) -> sqlite3.Connection:
             "CREATE TABLE IF NOT EXISTS agent_run_checkpoints ("
             "run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
             "request TEXT NOT NULL, stage TEXT NOT NULL, "
-            "completed_steps TEXT NOT NULL, resume_allowed INTEGER NOT NULL, "
+            "retry_allowed INTEGER NOT NULL, "
             "updated_at TEXT NOT NULL)"
         )
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(agent_run_checkpoints)")
+        }
+        # TODO(删除)：最低支持资料库版本完成重试字段迁移后删除旧结构迁移。
+        if "resume_allowed" in columns:
+            connection.execute(
+                "ALTER TABLE agent_run_checkpoints RENAME COLUMN resume_allowed TO retry_allowed"
+            )
+        if "completed_steps" in columns:
+            connection.execute(
+                "ALTER TABLE agent_run_checkpoints DROP COLUMN completed_steps"
+            )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS agent_checkpoint_session_index "
             "ON agent_run_checkpoints(session_id, updated_at DESC)"
@@ -34,10 +47,6 @@ def save_agent_checkpoint(
 ) -> None:
     values = checkpoint.model_dump(mode="json")
     values["request"] = json.dumps(values["request"], ensure_ascii=False)
-    values["completed_steps"] = json.dumps(
-        values["completed_steps"],
-        ensure_ascii=False,
-    )
     columns = tuple(values)
     updates = ", ".join(
         f"{column}=excluded.{column}" for column in columns if column != "run_id"
@@ -74,6 +83,5 @@ def load_agent_checkpoints(
 def _checkpoint_from_row(row: sqlite3.Row) -> AgentRunCheckpoint:
     values = dict(row)
     values["request"] = json.loads(values["request"])
-    values["completed_steps"] = json.loads(values["completed_steps"])
-    values["resume_allowed"] = bool(values["resume_allowed"])
+    values["retry_allowed"] = bool(values["retry_allowed"])
     return AgentRunCheckpoint.model_validate(values)

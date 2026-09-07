@@ -22,7 +22,7 @@ import {
   list_agent_tasks,
   list_assets,
   list_downloads,
-  resume_agent_run,
+  retry_agent_run,
 } from "@/shared/api";
 import type {
   AgentIndexStatus,
@@ -37,7 +37,7 @@ vi.mock("@/shared/api", () => ({
   get_agent_index_status: vi.fn(),
   list_agent_tasks: vi.fn(),
   list_downloads: vi.fn(),
-  resume_agent_run: vi.fn(),
+  retry_agent_run: vi.fn(),
   list_assets: vi.fn(),
   get_analysis: vi.fn(),
   transcribe_asset: vi.fn(),
@@ -119,10 +119,10 @@ describe("TaskManagerProvider", () => {
     expect(list_downloads).toHaveBeenCalledWith(50, expect.any(AbortSignal));
   });
 
-  it("loads global agent tasks and resumes an interrupted run", async () => {
+  it("loads global agent tasks and retries an interrupted run", async () => {
     vi.mocked(list_downloads).mockResolvedValue([]);
     vi.mocked(list_agent_tasks).mockResolvedValue([agent_task_snapshot()]);
-    vi.mocked(resume_agent_run).mockResolvedValue(
+    vi.mocked(retry_agent_run).mockResolvedValue(
       agent_task_snapshot("running").run,
     );
 
@@ -143,7 +143,7 @@ describe("TaskManagerProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "继续助手任务" }));
 
     await waitFor(() =>
-      expect(resume_agent_run).toHaveBeenCalledWith(
+      expect(retry_agent_run).toHaveBeenCalledWith(
         "run-019c012345677abc8123456789abcdef",
       ),
     );
@@ -248,12 +248,12 @@ function TaskStatus() {
 }
 
 function AgentResumeStarter() {
-  const { resume_agent_task } = use_task_manager();
+  const { retry_agent_task } = use_task_manager();
   return (
     <button
       type="button"
       onClick={() =>
-        void resume_agent_task("run-019c012345677abc8123456789abcdef")
+        void retry_agent_task("run-019c012345677abc8123456789abcdef")
       }
     >
       继续助手任务
@@ -320,7 +320,7 @@ function agent_task_snapshot(
     },
     session_title: "分析角色动作",
     asset_id: "asset-019c012345677abc8123456789abcdef",
-    resume_available: stage === "interrupted",
+    retry_available: stage === "interrupted",
   };
 }
 

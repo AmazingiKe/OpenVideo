@@ -17,7 +17,7 @@ import {
   get_agent_index_status,
   list_downloads,
   list_agent_tasks,
-  resume_agent_run,
+  retry_agent_run,
   transcribe_asset,
 } from "@/shared/api";
 import { poll_transcription_job } from "@/shared/poll_transcription_job";
@@ -53,7 +53,7 @@ type TaskManager = {
     options: TranscriptionOptions,
   ) => Promise<AnalysisJob>;
   is_transcription_running: (asset_id: string) => boolean;
-  resume_agent_task: (run_id: string) => Promise<void>;
+  retry_agent_task: (run_id: string) => Promise<void>;
 };
 
 const TaskManagerContext = createContext<TaskManager | null>(null);
@@ -295,13 +295,13 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [record_transcription_job],
   );
 
-  const resume_agent_task = useCallback(
+  const retry_agent_task = useCallback(
     async (run_id: string) => {
-      await resume_agent_run(run_id);
+      await retry_agent_run(run_id);
       try {
         record_agent_tasks(await list_agent_tasks());
       } catch {
-        // 恢复已成功时不因一次刷新失败误报，下一轮轮询会补齐状态。
+        // 重试已启动时不因一次刷新失败误报，下一轮轮询会补齐状态。
       }
     },
     [record_agent_tasks],
@@ -312,7 +312,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       task_records,
       index_status,
       start_downloads,
-      resume_agent_task,
+      retry_agent_task,
       start_transcription,
       is_transcription_running: (asset_id) =>
         active_transcriptions.has(asset_id) ||
@@ -323,7 +323,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       active_transcriptions,
       index_status,
       start_downloads,
-      resume_agent_task,
+      retry_agent_task,
       start_transcription,
       task_records,
     ],
@@ -371,7 +371,7 @@ function agent_task_record(snapshot: AgentTaskSnapshot): TaskRecord {
     error_message: run.error_message,
     created_at: run.created_at,
     name: snapshot.session_title,
-    resume_available: snapshot.resume_available,
+    retry_available: snapshot.retry_available,
   };
 }
 
