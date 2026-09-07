@@ -90,6 +90,8 @@ def complete_text(
     max_tokens: int | None = None,
     disable_thinking: bool = False,
     priority: ModelRequestPriority = ModelRequestPriority.BACKGROUND,
+    *,
+    response_format: dict[str, object] | None = None,
 ) -> str:
     request = _completion_request(
         model,
@@ -98,6 +100,8 @@ def complete_text(
         max_tokens,
         disable_thinking,
     )
+    if response_format is not None:
+        request["response_format"] = response_format
     content = _complete_with_retry(request, priority)
     return _validated_content(content)
 

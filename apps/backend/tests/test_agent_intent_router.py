@@ -51,6 +51,38 @@ def test_router_validates_structured_fast_model_decision(monkeypatch):
     assert request_payload["user_request"] == "给这一段插入关键画面"
     assert captured["args"][-1] is True
     assert captured["kwargs"]["priority"].name == "FOREGROUND"
+    assert captured["kwargs"]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.parametrize("repaired", [True, False])
+def test_router_repairs_format_once_without_relaxing_validation(monkeypatch, repaired):
+    calls = []
+    invalid = (
+        '{"intent":"edit","model_role":"complex","reason":"提案","confidence":0.9}'
+    )
+    valid = '{"intent":"edit","model_role":"complex","reason":"生成待审批提案"}'
+
+    def complete_route(_model, messages, *_args, **_kwargs):
+        calls.append(list(messages))
+        return valid if repaired and len(calls) == 2 else invalid
+
+    monkeypatch.setattr("openvideo.agent_intent_router.complete_text", complete_route)
+    arguments = dict(
+        agent_id="marker",
+        content="生成两个标记建议，等待审批",
+        retrieval_scope=AgentRetrievalScope.CURRENT_ASSET,
+        requested_intent=None,
+    )
+    if repaired:
+        assert route_agent_intent(model_configuration(), **arguments).intent == "edit"
+    else:
+        with pytest.raises(AgentIntentRoutingError, match="请重试或换个说法"):
+            route_agent_intent(model_configuration(), **arguments)
+    assert len(calls) == 2
+    assert "待审批建议也属于 edit" in calls[0][0]["content"]
+    schema = calls[0][0]["content"]
+    assert '"additionalProperties": false' in schema
+    assert calls[1][-2]["content"] == invalid
 
 
 @pytest.mark.parametrize(
