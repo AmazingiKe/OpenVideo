@@ -30,6 +30,7 @@ storybook-static
 
 # 本地代理配置
 .codex/
+.artifacts/
 
 # 运行日志
 *.log
