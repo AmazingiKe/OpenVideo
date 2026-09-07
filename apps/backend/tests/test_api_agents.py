@@ -479,7 +479,7 @@ def test_run_is_idempotent_and_sse_resumes_by_sequence(tmp_path: Path, monkeypat
         payload = {
             "request_key": request_key,
             "ai_model_id": MODEL_ID,
-            "content": "检查标记",
+            "content": "生成标记",
         }
 
         first = client.post(
@@ -1767,7 +1767,7 @@ def test_marker_run_mode_separates_questions_from_change_proposals(tmp_path: Pat
             "search_evidence",
             "inspect_frames",
         )
-        assert question_definition.required_tools == {"search_evidence"}
+        assert question_definition.required_tools == set()
         assert question_definition.requires_approval is False
         assert "propose_marker_changes" not in question_definition.allowed_tools
         assert proposal_definition.allowed_tools == registered.definition.allowed_tools

@@ -320,12 +320,13 @@ def _answer_instruction(
     evidence: list[AgentEvidenceItem],
     conflicts: list[AgentEvidenceConflict],
 ) -> str:
-    citations = "、".join(f"[{item.citation_key}]" for item in evidence)
     if conflicts:
-        return f"只能给出暂定结论；并列说明冲突证据 {citations}，不得自行选边。"
+        return "简短说明证据的具体冲突，不能据此作出确定结论。"
+    if not evidence:
+        return "说明本次未找到相关内容，不要猜测，也不要把未检索到说成视频中不存在。"
     if confidence == AgentEvidenceConfidence.LOW:
-        return f"明确标注确定性低并说明缺少什么；只能引用现有证据 {citations}。"
-    return f"结论中的事实必须引用对应证据 {citations}，并标注确定性{_confidence_label(confidence)}。"
+        return "仅回答证据支持的部分，简短说明缺少的信息；不要扩展推测。"
+    return "直接回答问题，关键结论引用对应证据；无需说明置信度等级或检索过程。"
 
 
 def _answer_status(
@@ -338,14 +339,6 @@ def _answer_status(
     if confidence == AgentEvidenceConfidence.LOW or conflicts:
         return AgentAnswerStatus.PROVISIONAL
     return AgentAnswerStatus.FINAL
-
-
-def _confidence_label(confidence: AgentEvidenceConfidence) -> str:
-    return {
-        AgentEvidenceConfidence.HIGH: "高",
-        AgentEvidenceConfidence.MEDIUM: "中",
-        AgentEvidenceConfidence.LOW: "低",
-    }[confidence]
 
 
 def _coverage_range(
