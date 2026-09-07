@@ -2273,3 +2273,41 @@ def test_recent_messages_exclude_stream_and_tool_events_in_database(
             for content in (f"question {index}", f"answer {index}")
         ]
         assert len(service.store.historical_messages(session.session_id)) == 16
+
+
+def test_completed_creation_does_not_reserve_capacity_before_callback(
+    tmp_path, monkeypatch
+):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        service.settings.agent = service.settings.agent.model_copy(
+            update={"max_concurrent_runs": 1}
+        )
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+
+        async def scenario():
+            completed = asyncio.create_task(asyncio.sleep(0))
+            await completed
+            previous_key = f"request-{uuid7().hex}"
+            service._run_creations[previous_key] = (session.session_id, completed)
+
+            async def route(*_args):
+                raise RuntimeError("admitted")
+
+            monkeypatch.setattr(service, "_route_request", route)
+            try:
+                with pytest.raises(RuntimeError, match="admitted"):
+                    await service.create_run(
+                        session.session_id,
+                        AgentRunCreate(
+                            request_key=f"request-{uuid7().hex}",
+                            ai_model_id=MODEL_ID,
+                            content="test",
+                        ),
+                    )
+            finally:
+                service._run_creations.pop(previous_key)
+
+        client.portal.call(scenario)

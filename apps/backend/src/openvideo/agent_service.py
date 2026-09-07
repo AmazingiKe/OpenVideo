@@ -328,18 +328,20 @@ class AgentService:
             if creation_session != session_id:
                 raise AgentConflictError("请求键已被其他会话使用")
             return await asyncio.shield(creation_task)
+        routing_sessions = {
+            creation_session
+            for creation_session, task in self._run_creations.values()
+            if not task.done()
+        }
         active_run_count = sum(not task.done() for task in self._tasks.values()) + len(
-            self._run_creations
+            routing_sessions
         )
         concurrent_limit = self.settings.agent.max_concurrent_runs
         if registered.definition.mode == AgentMode.TASK:
             concurrent_limit = max(1, concurrent_limit - 1)
         if active_run_count >= concurrent_limit:
             raise AgentConflictError("Agent 并行任务已达到用户设置的上限")
-        if any(
-            creation_session == session_id
-            for creation_session, _ in self._run_creations.values()
-        ):
+        if session_id in routing_sessions:
             raise AgentConflictError("当前会话已有正在判断意图的请求")
         if any(
             run.stage not in TERMINAL_AGENT_RUN_STAGES
