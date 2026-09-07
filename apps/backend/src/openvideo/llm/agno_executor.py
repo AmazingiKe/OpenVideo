@@ -58,7 +58,7 @@ AgnoEventHandler = Callable[[LlmAgentEvent], None]
 STREAM_DELTA_CHARACTER_LIMIT = 256
 STREAM_DELTA_INTERVAL_SECONDS = 0.2
 TOOL_SEQUENCE_INSTRUCTION = (
-    "相同工具和相同参数只允许调用一次；所有工具调用结束后再输出最终正文，"
+    "成功的工具调用无需用相同参数重复执行；失败后可在修正原因后重试。所有工具调用结束后再输出最终正文，"
     "一旦开始输出最终正文就不得继续调用工具。"
 )
 REQUIRED_TOOL_RECOVERY_INSTRUCTION = (
@@ -431,7 +431,8 @@ class AgnoAgentExecutor:
                     timeout_seconds,
                 )
                 serialized_result = json.dumps(result, ensure_ascii=False)
-                result_cache[signature] = serialized_result
+                if result.get("ok") is not False:
+                    result_cache[signature] = serialized_result
                 return serialized_result
 
             functions.append(

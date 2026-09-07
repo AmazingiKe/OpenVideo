@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from agno.agent import Agent
 from agno.models.response import ToolExecution
@@ -613,3 +615,42 @@ def test_required_tool_chain_reserves_recovery_budget():
         "search",
         "propose",
     }
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_can_retry_after_prerequisite_is_satisfied():
+    ready = False
+    execution_count = 0
+
+    def execute(parameters: EchoInput):
+        nonlocal execution_count
+        execution_count += 1
+        return {"ok": True, "text": parameters.text}
+
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="echo",
+            description="Echo",
+            parameters_model=EchoInput,
+            handler=execute,
+            prerequisite=lambda: (ready, "Not ready"),
+        )
+    )
+    definition = AgentDefinition(
+        agent_id="test",
+        title="Test",
+        description="Retry after prerequisite",
+        mode=AgentMode.CHAT,
+        prompt="Test",
+        tools=[AgentToolDescriptor(name="echo", description="Echo")],
+    )
+    function = AgnoAgentExecutor._tools(registry, definition, 5, {})[0]
+    failed = json.loads(await function.entrypoint(text="evidence"))
+    ready = True
+    succeeded = json.loads(await function.entrypoint(text="evidence"))
+    repeated = json.loads(await function.entrypoint(text="evidence"))
+
+    assert failed["error_code"] == "prerequisite_not_met"
+    assert succeeded == repeated == {"ok": True, "text": "evidence"}
+    assert execution_count == 1
