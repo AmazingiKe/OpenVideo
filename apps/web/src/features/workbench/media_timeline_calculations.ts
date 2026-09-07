@@ -119,14 +119,33 @@ export function clamp_timeline_row_height(height: number): number {
 
 export function selected_timeline_range(
   rows: TimelineRow[],
+  aggregates: TimelineAggregate[] = [],
 ): TimelineSelectionRange | null {
   const selected_actions = rows.flatMap((row) =>
     (row.actions as MediaTimelineAction[]).filter((action) => action.selected),
   );
   if (selected_actions.length === 0) return null;
+  const selected_ids = new Set(selected_actions.map((action) => action.id));
+  const selected_groups = aggregates.filter((group) =>
+    group.members.some((member) => selected_ids.has(member.id)),
+  );
+  const grouped_ids = new Set(
+    selected_groups.flatMap((group) =>
+      group.members.map((member) => member.id),
+    ),
+  );
+  const ranges = [
+    ...selected_groups,
+    ...selected_actions
+      .filter((action) => !grouped_ids.has(action.id))
+      .map((action) => ({
+        start_seconds: action.start,
+        end_seconds: action.end,
+      })),
+  ];
   return {
-    start_seconds: Math.min(...selected_actions.map((action) => action.start)),
-    end_seconds: Math.max(...selected_actions.map((action) => action.end)),
+    start_seconds: Math.min(...ranges.map((range) => range.start_seconds)),
+    end_seconds: Math.max(...ranges.map((range) => range.end_seconds)),
   };
 }
 
@@ -173,13 +192,17 @@ export function hit_test_timeline_marquee({
   rectangle,
   rows,
   viewport,
+  aggregates = [],
+  ruler_height = TIMELINE_RULER_HEIGHT,
 }: {
   rectangle: TimelineMarqueeRectangle;
   rows: TimelineRow[];
   viewport: TimelineViewportState;
+  aggregates?: TimelineAggregate[];
+  ruler_height?: number;
 }): MediaTimelineAction[] {
   const matches: MediaTimelineAction[] = [];
-  let row_top = TIMELINE_RULER_HEIGHT - viewport.scroll_top;
+  let row_top = ruler_height - viewport.scroll_top;
 
   for (const row of rows) {
     const row_height = row.rowHeight ?? TIMELINE_ROW_HEIGHT;
@@ -202,6 +225,21 @@ export function hit_test_timeline_marquee({
       }
     }
     row_top = row_bottom;
+  }
+
+  for (const group of aggregates) {
+    const left = group.left - viewport.scroll_left;
+    const right = group.right - viewport.scroll_left;
+    const top = ruler_height + group.top - viewport.scroll_top;
+    const bottom = top + group.height;
+    if (
+      left <= rectangle.right &&
+      right >= rectangle.left &&
+      top <= rectangle.bottom &&
+      bottom >= rectangle.top
+    ) {
+      matches.push(...group.members);
+    }
   }
 
   return matches;

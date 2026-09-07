@@ -530,6 +530,7 @@ export function MediaTimeline({
     handle_timeline_scroll,
     handle_timeline_scroll_capture,
     playhead_ref,
+    read_playhead_time,
     set_playhead_time,
     timeline_host_ref,
     timeline_ref,
@@ -641,10 +642,6 @@ export function MediaTimeline({
       interaction_revision,
     ],
   );
-  const selected_action_range = useMemo(
-    () => selected_timeline_range(full_editor_data),
-    [full_editor_data],
-  );
   const aggregate_rows = useMemo(() => create_timeline_aggregator(), []);
   const aggregation_zoom = interaction_zoom ?? viewport.zoom_pixels_per_second;
   const aggregation = useMemo(
@@ -692,6 +689,10 @@ export function MediaTimeline({
       aggregation_zoom,
       viewport.zoom_pixels_per_second,
     ],
+  );
+  const selected_action_range = useMemo(
+    () => selected_timeline_range(full_editor_data, aggregation.aggregates),
+    [full_editor_data, aggregation.aggregates],
   );
   const independent_editor_rows = useMemo(
     () =>
@@ -917,7 +918,7 @@ export function MediaTimeline({
       if (event.repeat || is_text_editing_target(event.target)) return;
       if (event.ctrlKey && event.key.toLowerCase() === "m") {
         event.preventDefault();
-        void add_marker_and_select(bounded_time);
+        void add_marker_and_select(read_playhead_time());
         return;
       }
       if (
@@ -929,14 +930,14 @@ export function MediaTimeline({
         if (event.key === "[" || event.code === "BracketLeft") {
           event.preventDefault();
           on_set_focus_in?.(
-            selected_action_range?.start_seconds ?? bounded_time,
+            selected_action_range?.start_seconds ?? read_playhead_time(),
           );
           return;
         }
         if (event.key === "]" || event.code === "BracketRight") {
           event.preventDefault();
           on_set_focus_out?.(
-            selected_action_range?.end_seconds ?? bounded_time,
+            selected_action_range?.end_seconds ?? read_playhead_time(),
           );
           return;
         }
@@ -962,7 +963,7 @@ export function MediaTimeline({
   }, [
     add_marker_and_select,
     is_workspace_active,
-    bounded_time,
+    read_playhead_time,
     on_update_marker,
     on_set_focus_in,
     on_set_focus_out,
@@ -985,10 +986,13 @@ export function MediaTimeline({
   function commit_marquee_selection(
     rectangle: TimelineMarqueeRectangle,
     toggle_selection: boolean,
+    ruler_height: number,
   ): number {
     const actions = hit_test_timeline_marquee({
       rectangle,
-      rows: full_editor_data,
+      rows: independent_editor_rows,
+      aggregates: selected_aggregates,
+      ruler_height,
       viewport,
     });
     return select_members(actions, toggle_selection);
@@ -1209,7 +1213,7 @@ export function MediaTimeline({
     set_context_transcript_indices([]);
     set_context_track_id(null);
     if (event.clientX === 0 && event.clientY === 0) {
-      set_context_time(bounded_time);
+      set_context_time(read_playhead_time());
       return;
     }
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -1612,7 +1616,8 @@ export function MediaTimeline({
                 disabled={!on_set_focus_in}
                 onSelect={() =>
                   on_set_focus_in?.(
-                    selected_action_range?.start_seconds ?? context_time,
+                    selected_action_range?.start_seconds ??
+                      read_playhead_time(),
                   )
                 }
               >
@@ -1623,7 +1628,7 @@ export function MediaTimeline({
                 disabled={!on_set_focus_out}
                 onSelect={() =>
                   on_set_focus_out?.(
-                    selected_action_range?.end_seconds ?? context_time,
+                    selected_action_range?.end_seconds ?? read_playhead_time(),
                   )
                 }
               >
@@ -1784,6 +1789,7 @@ export function MediaTimeline({
   function start_ruler_scrub(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || ruler_pointer_id_ref.current !== null) return;
     event.preventDefault();
+    clear_timeline_selection();
     hide_ruler_hover();
     ruler_pointer_id_ref.current = event.pointerId;
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -1791,7 +1797,7 @@ export function MediaTimeline({
     event.currentTarget.setPointerCapture(event.pointerId);
     const time = ruler_time_from_pointer(event.clientX);
     ruler_scrub_time_ref.current = time;
-    set_playhead_time(time, { keep_visible: true });
+    set_playhead_time(time, { keep_visible: true, scrubbing: true });
     update_ruler_scrub_feedback(event.currentTarget, time);
     on_scrub_start_bounded(time);
   }
@@ -1832,6 +1838,7 @@ export function MediaTimeline({
     ruler_scrub_time_ref.current = time;
     event.currentTarget.releasePointerCapture(event.pointerId);
     set_playhead_time(time, {
+      scrubbing: false,
       follow_viewport: true,
       keep_visible: true,
     });
@@ -1843,17 +1850,22 @@ export function MediaTimeline({
     if (ruler_pointer_id_ref.current !== event.pointerId) return;
     ruler_pointer_id_ref.current = null;
     ruler_bounds_ref.current = null;
+    on_scrub_cancel();
     const presented_time = Math.min(
       Math.max(read_playback_time?.() ?? current_time, 0),
       duration,
     );
     ruler_scrub_time_ref.current = presented_time;
-    set_playhead_time(presented_time, { follow_viewport: true });
+    set_playhead_time(presented_time, {
+      follow_viewport: true,
+      scrubbing: false,
+    });
     update_ruler_scrub_feedback(event.currentTarget, presented_time);
-    on_scrub_cancel();
   }
 
   function scrub_with_keyboard(event: KeyboardEvent<HTMLDivElement>) {
+    if (!["Home", "End", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    clear_timeline_selection();
     if (event.key === "Home") {
       event.preventDefault();
       on_seek_bounded(0);
@@ -1864,10 +1876,9 @@ export function MediaTimeline({
       on_seek_bounded(duration);
       return;
     }
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const direction = event.key === "ArrowLeft" ? -1 : 1;
-    on_seek_bounded(bounded_time + direction);
+    on_seek_bounded(read_playhead_time() + direction);
   }
 }
 

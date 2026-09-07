@@ -569,7 +569,7 @@ describe("MediaTimeline", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("marquee-selects original member ranges inside an aggregate", () => {
+  it("marquee-selects the whole visible aggregate when touching one member", () => {
     const { change_selected_transcript_indices } = render_timeline({
       transcript_segments: [
         {
@@ -589,7 +589,95 @@ describe("MediaTimeline", () => {
       ],
     });
     drag_timeline_marquee({ from: { x: 95, y: 66 }, to: { x: 99, y: 90 } });
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([0, 1]);
+  });
+
+  it("uses the whole selected aggregate for range endpoints after zooming out", () => {
+    const frames = install_animation_frame_mock();
+    const { set_focus_in, set_focus_out } = render_timeline({
+      transcript_segments: [
+        {
+          start_seconds: 5,
+          end_seconds: 6,
+          text: "第一段",
+          emotion: null,
+          audio_events: [],
+        },
+        {
+          start_seconds: 6.1,
+          end_seconds: 8,
+          text: "第二段",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /转写：第一段/ }));
+    zoom_timeline_with_wheel(frames, 8);
+    expect(screen.getByRole("button", { name: /^聚合 2/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.keyDown(window, { key: "[", code: "BracketLeft" });
+    fireEvent.keyDown(window, { key: "]", code: "BracketRight" });
+    expect(set_focus_in).toHaveBeenLastCalledWith(5);
+    expect(set_focus_out).toHaveBeenLastCalledWith(8);
+  });
+
+  it("sets unselected endpoints from the live clock before a parent render", () => {
+    let playback_time = 30.023;
+    const { set_focus_in, set_focus_out } = render_timeline({
+      read_playback_time: () => playback_time,
+    });
+    playback_time = 30.137;
+    fireEvent.keyDown(window, { key: "[", code: "BracketLeft" });
+    playback_time = 30.291;
+    fireEvent.keyDown(window, { key: "]", code: "BracketRight" });
+    expect(set_focus_in).toHaveBeenLastCalledWith(30.137);
+    expect(set_focus_out).toHaveBeenLastCalledWith(30.291);
+  });
+
+  it("uses the rendered ruler height when marquee selecting the bottom of a track", () => {
+    const { change_selected_transcript_indices } = render_timeline();
+    screen
+      .getByLabelText(/时间线画布/)
+      .style.setProperty("--timeline-ruler-height", "40px");
+    drag_timeline_marquee({ from: { x: 420, y: 98 }, to: { x: 430, y: 102 } });
     expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([0]);
+  });
+
+  it("uses the current playhead for an unselected range menu instead of the pointer location", () => {
+    const { set_focus_in } = render_timeline({
+      read_playback_time: () => 30.137,
+    });
+    fireEvent.contextMenu(install_timeline_bounds(), {
+      clientX: 516,
+      clientY: 200,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: /设置范围起点/ }));
+    expect(set_focus_in).toHaveBeenLastCalledWith(30.137);
+  });
+
+  it("clears clip selection and uses the ruler preview for range shortcuts", () => {
+    const { set_focus_in, set_focus_out, change_selected_transcript_indices } =
+      render_timeline({
+        read_playback_time: () => 30.023,
+      });
+    fireEvent.click(screen.getByRole("button", { name: /转写：原始转写/ }));
+    const ruler = screen.getByRole("slider", { name: "时间线播放头" });
+    vi.spyOn(ruler, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 800, 40),
+    );
+    ruler.setPointerCapture = vi.fn();
+    ruler.releasePointerCapture = vi.fn();
+    fireEvent.pointerDown(ruler, { button: 0, clientX: 416, pointerId: 7 });
+    fireEvent.keyDown(window, { key: "[", code: "BracketLeft" });
+    fireEvent.pointerMove(ruler, { clientX: 496, pointerId: 7 });
+    fireEvent.keyDown(window, { key: "]", code: "BracketRight" });
+    expect(change_selected_transcript_indices).toHaveBeenLastCalledWith([]);
+    expect(set_focus_in).toHaveBeenLastCalledWith(5);
+    expect(set_focus_out).toHaveBeenLastCalledWith(6);
+    fireEvent.pointerUp(ruler, { clientX: 496, pointerId: 7 });
   });
 
   it("does not recalculate aggregation for playback or selection updates", () => {

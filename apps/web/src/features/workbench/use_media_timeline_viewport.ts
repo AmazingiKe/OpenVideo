@@ -48,6 +48,7 @@ type PlayheadPositionOptions = {
   follow_viewport?: boolean;
   keep_visible?: boolean;
   synchronous_viewport?: boolean;
+  scrubbing?: boolean;
 };
 
 type MediaTimelineViewportOptions = {
@@ -98,6 +99,7 @@ export function use_media_timeline_viewport({
     frame_time: performance.now(),
   });
   const playhead_time_ref = useRef(bounded_time);
+  const scrubbing_ref = useRef(false);
   const previous_bounded_time_ref = useRef(bounded_time);
   const playback_metrics_ref = useRef({ duration, playback_rate });
   const playback_time_reader_ref = useRef(read_playback_time);
@@ -179,6 +181,8 @@ export function use_media_timeline_viewport({
 
   const set_playhead_time = useCallback(
     (time: number, options: PlayheadPositionOptions = {}) => {
+      if (options.scrubbing !== undefined)
+        scrubbing_ref.current = options.scrubbing;
       playhead_time_ref.current = time;
       const wheel_frame_is_pending =
         pending_wheel_frame_ref.current !== null ||
@@ -215,6 +219,17 @@ export function use_media_timeline_viewport({
     [position_playhead],
   );
 
+  const read_playhead_time = useCallback(() => {
+    const reported_time = scrubbing_ref.current
+      ? playhead_time_ref.current
+      : playback_time_reader_ref.current?.();
+    const time =
+      typeof reported_time === "number" && Number.isFinite(reported_time)
+        ? reported_time
+        : playhead_time_ref.current;
+    return Math.min(render_metrics_ref.current.duration, Math.max(0, time));
+  }, []);
+
   const cancel_pending_wheel_zoom = useCallback(() => {
     if (pending_wheel_frame_ref.current !== null) {
       window.cancelAnimationFrame(pending_wheel_frame_ref.current);
@@ -240,6 +255,7 @@ export function use_media_timeline_viewport({
     const should_follow_viewport =
       bounded_time !== previous_bounded_time_ref.current;
     previous_bounded_time_ref.current = bounded_time;
+    if (scrubbing_ref.current) return;
     set_playhead_time(bounded_time, {
       follow_viewport: should_follow_viewport,
     });
@@ -255,6 +271,7 @@ export function use_media_timeline_viewport({
 
   useEffect(() => {
     cancel_pending_wheel_zoom();
+    scrubbing_ref.current = false;
     const initial_viewport: TimelineViewportState = {
       zoom_pixels_per_second: DEFAULT_ZOOM_PIXELS_PER_SECOND,
       scroll_left: 0,
@@ -277,6 +294,7 @@ export function use_media_timeline_viewport({
 
   useEffect(() => {
     if (is_paused) {
+      if (scrubbing_ref.current) return;
       const reported_time = playback_time_reader_ref.current?.();
       if (typeof reported_time === "number" && Number.isFinite(reported_time)) {
         const bounded_reported_time = Math.min(
@@ -296,6 +314,11 @@ export function use_media_timeline_viewport({
     };
 
     function animate_playhead(frame_time: number) {
+      if (scrubbing_ref.current) {
+        playhead_frame_ref.current =
+          window.requestAnimationFrame(animate_playhead);
+        return;
+      }
       const anchor = playhead_anchor_ref.current;
       const metrics = playback_metrics_ref.current;
       const elapsed_seconds = Math.max(
@@ -560,6 +583,7 @@ export function use_media_timeline_viewport({
     handle_timeline_scroll,
     handle_timeline_scroll_capture,
     playhead_ref,
+    read_playhead_time,
     set_playhead_time,
     timeline_host_ref,
     timeline_ref,

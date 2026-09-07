@@ -425,6 +425,69 @@ export const ScrollSynchronization: Story = {
   },
 };
 
+export const AggregatedRangeSelection: Story = {
+  args: {
+    initial_time: 0,
+    initial_markers: [],
+    analysis_segments: [],
+    transcript_segments: [
+      {
+        start_seconds: 5,
+        end_seconds: 6,
+        text: "第一段",
+        emotion: null,
+        audio_events: [],
+      },
+      {
+        start_seconds: 6.1,
+        end_seconds: 8,
+        text: "第二段",
+        emotion: null,
+        audio_events: [],
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const story = within(canvasElement);
+    await userEvent.click(story.getByRole("button", { name: /转写：第一段/ }));
+    await zoom_timeline_overview(canvasElement);
+    const group = story.getByRole("button", { name: /^聚合 2/ });
+    expect(group).toHaveAttribute("aria-pressed", "true");
+    await userEvent.keyboard("[BracketLeft][BracketRight]");
+    const host = story.getByLabelText(/时间线画布/);
+    const selection = host.querySelector<HTMLElement>(
+      ".media_timeline_range_selection",
+    )!;
+    expect(parseFloat(selection.style.width)).toBeCloseTo(
+      3 * timeline_story_zoom(canvasElement),
+      0,
+    );
+    await userEvent.click(group);
+    await userEvent.keyboard("[BracketLeft][BracketRight]");
+    expect(parseFloat(selection.style.width)).toBeCloseTo(
+      3 * timeline_story_zoom(canvasElement),
+      0,
+    );
+    const bounds = group.getBoundingClientRect();
+    await userEvent.pointer([
+      {
+        target: host,
+        keys: "[MouseLeft>]",
+        coords: { clientX: bounds.left - 4, clientY: bounds.bottom + 4 },
+      },
+      {
+        target: host,
+        coords: {
+          clientX: bounds.left + bounds.width / 3,
+          clientY: bounds.top + bounds.height / 2,
+        },
+      },
+      { target: host, keys: "[/MouseLeft]" },
+    ]);
+    expect(story.getByText("已框选 2 个片段")).toBeInTheDocument();
+  },
+};
+
 export const DynamicAnalysisTracks: Story = {
   args: {
     event_analyses: EVENT_ANALYSES,

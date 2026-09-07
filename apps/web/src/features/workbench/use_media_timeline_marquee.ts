@@ -27,6 +27,7 @@ type TimelineMarqueeInteraction = {
   anchor: TimelineMarqueePoint;
   current: TimelineMarqueePoint;
   toggle_selection: boolean;
+  ruler_height: number;
 };
 
 type MediaTimelineMarqueeOptions = {
@@ -34,6 +35,7 @@ type MediaTimelineMarqueeOptions = {
   on_commit_selection: (
     rectangle: TimelineMarqueeRectangle,
     toggle_selection: boolean,
+    ruler_height: number,
   ) => number;
 };
 
@@ -72,6 +74,7 @@ export function use_media_timeline_marquee({
         active_interaction.timeline_host,
         event.clientX,
         event.clientY,
+        active_interaction.ruler_height,
       );
       if (!current) return;
       const next_interaction = { ...active_interaction, current };
@@ -103,6 +106,7 @@ export function use_media_timeline_marquee({
           active_interaction.timeline_host,
           event.clientX,
           event.clientY,
+          active_interaction.ruler_height,
         ) ?? active_interaction.current;
       const rectangle = normalize_timeline_marquee_rectangle(
         active_interaction.anchor,
@@ -126,6 +130,7 @@ export function use_media_timeline_marquee({
       const selected_count = latest_options_ref.current.on_commit_selection(
         rectangle,
         active_interaction.toggle_selection,
+        active_interaction.ruler_height,
       );
       set_announcement(`已框选 ${selected_count} 个片段`);
     }
@@ -173,18 +178,26 @@ export function use_media_timeline_marquee({
     ) {
       return;
     }
+    const ruler_height =
+      parseFloat(
+        getComputedStyle(event.currentTarget).getPropertyValue(
+          "--timeline-ruler-height",
+        ),
+      ) || TIMELINE_RULER_HEIGHT;
     const anchor = timeline_pointer_position(
       event.currentTarget,
       event.clientX,
       event.clientY,
+      ruler_height,
     );
-    if (!anchor || anchor.y <= TIMELINE_RULER_HEIGHT) return;
+    if (!anchor || anchor.y <= ruler_height) return;
     const next_interaction = {
       pointer_id: event.pointerId,
       timeline_host: event.currentTarget,
       anchor,
       current: anchor,
       toggle_selection: event.ctrlKey || event.metaKey,
+      ruler_height,
     };
     interaction_ref.current = next_interaction;
     set_interaction(next_interaction);
@@ -217,15 +230,13 @@ function timeline_pointer_position(
   timeline_host: HTMLDivElement | null,
   client_x: number,
   client_y: number,
+  ruler_height: number,
 ): TimelineMarqueePoint | null {
   if (!timeline_host) return null;
   const bounds = timeline_host.getBoundingClientRect();
   return {
     x: Math.min(Math.max(client_x - bounds.left, 0), bounds.width),
-    y: Math.min(
-      Math.max(client_y - bounds.top, TIMELINE_RULER_HEIGHT),
-      bounds.height,
-    ),
+    y: Math.min(Math.max(client_y - bounds.top, ruler_height), bounds.height),
   };
 }
 
