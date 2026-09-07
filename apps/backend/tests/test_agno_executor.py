@@ -980,9 +980,10 @@ async def test_failed_tool_can_retry_after_prerequisite_is_satisfied():
     [(False, False), (True, False), (False, True)],
 )
 async def test_real_agno_loop_stops_repeated_searches(
-    monkeypatch, answer_after_search, requires_approval
+    monkeypatch, tmp_path, answer_after_search, requires_approval
 ):
     import asyncio
+    from agno.run.base import RunStatus
     from agno.models.openai import OpenAIChat
     from agno.models.response import ModelResponse
     from openai.types.chat.chat_completion_chunk import (
@@ -1001,6 +1002,10 @@ async def test_real_agno_loop_stops_repeated_searches(
         )
         if request_count == 6:
             assert not _kwargs.get("tools")
+            assert not any(
+                message.content == "Earlier tool instructions"
+                for message in _kwargs["messages"]
+            )
             yield ModelResponse(content="Final answer")
             return
         if answer_after_search and request_count == 2:
@@ -1053,19 +1058,38 @@ async def test_real_agno_loop_stops_repeated_searches(
     )
     events = []
     budget = 2 if answer_after_search else 4
-    result = await asyncio.wait_for(
-        AgnoAgentExecutor().run(
-            online_model(),
-            text_profile(),
-            definition,
-            [{"role": "user", "content": "Search"}],
-            registry,
-            events.append,
-            max_tool_calls=budget,
-            tool_timeout_seconds=1,
-        ),
-        timeout=5,
+    context = AgnoSessionContext(tmp_path / "context.sqlite3")
+    await context.ensure_session(
+        "bounded-session",
+        "test",
+        lambda: [
+            {"role": "user", "content": "Earlier tool instructions"},
+            {"role": "assistant", "content": "Earlier answer"},
+        ],
     )
+    try:
+        result = await asyncio.wait_for(
+            AgnoAgentExecutor(context).run(
+                online_model(),
+                text_profile(),
+                definition,
+                [{"role": "user", "content": "Search"}],
+                registry,
+                events.append,
+                max_tool_calls=budget,
+                tool_timeout_seconds=1,
+                session_id="bounded-session",
+            ),
+            timeout=5,
+        )
+        if not requires_approval:
+            session = await context.database.get_session("bounded-session")
+            assert session.runs[-1].status == RunStatus.completed
+            assert any(
+                message.content == "Final answer" for message in session.get_messages()
+            )
+    finally:
+        await context.database.close()
     assert execution_count == (2 if answer_after_search else 1)
     if requires_approval:
         assert request_count == 4

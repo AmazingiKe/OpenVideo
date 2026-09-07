@@ -431,7 +431,9 @@ class AgnoAgentExecutor:
             ),
             session_id=session_id,
             add_history_to_context=(
-                self.session_context is not None and session_id is not None
+                self.session_context is not None
+                and session_id is not None
+                and max_tool_calls > 0
             ),
             num_history_runs=AGNO_HISTORY_RUN_COUNT,
             max_tool_calls_from_history=AGNO_HISTORY_TOOL_CALL_LIMIT,
