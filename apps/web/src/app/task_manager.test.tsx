@@ -31,6 +31,11 @@ import {
   transcribe_asset,
   get_analysis,
   retry_agent_run,
+  ApiError,
+  delete_download,
+  pause_download,
+  probe_source,
+  resume_download,
 } from "@/shared/api";
 import type {
   AgentIndexStatus,
@@ -38,9 +43,15 @@ import type {
   AgentTaskSnapshot,
   DownloadJob,
   AnalysisJob,
+  ProbeResponse,
 } from "@/shared/types";
 
-vi.mock("@/shared/api", () => ({
+vi.mock("@/shared/api", async () => ({
+  ApiError: (await import("@/shared/api/client")).ApiError,
+  delete_download: vi.fn(),
+  pause_download: vi.fn(),
+  probe_source: vi.fn(),
+  resume_download: vi.fn(),
   create_download: vi.fn(),
   get_download: vi.fn(),
   get_agent_index_status: vi.fn(),
@@ -60,6 +71,8 @@ const load_analysis_resource = vi.fn(async () => "loaded");
 
 describe("TaskManagerProvider", () => {
   beforeEach(() => {
+    vi.mocked(list_downloads).mockResolvedValue([]);
+    vi.mocked(list_agent_tasks).mockResolvedValue([]);
     vi.mocked(get_agent_index_status).mockResolvedValue(agent_index_status());
     load_analysis_resource.mockClear();
   });
@@ -104,6 +117,170 @@ describe("TaskManagerProvider", () => {
     // 离开素材页面后只使缓存过期，下次进入视频库时再读取。
     expect(list_assets).not.toHaveBeenCalled();
     expect(screen.getByText("complete")).toBeInTheDocument();
+  });
+
+  it("opens an optimistic task before acceptance and retries the same identifier after a failed submission", async () => {
+    const pending = deferred<DownloadJob[]>();
+    vi.mocked(create_download).mockReturnValueOnce(pending.promise);
+    const { result } = render_task_manager();
+    let request!: Promise<DownloadJob[]>;
+    act(() => {
+      request = result.current.start_downloads(["https://example.com/video"]);
+    });
+    const task = result.current.task_records.find(
+      (item) => item.task_type === "download",
+    )!;
+    expect(task.stage).toBe("submitting");
+    expect(task.task_id).toMatch(
+      /^job-[0-9a-f]{12}7[0-9a-f]{3}[89ab][0-9a-f]{15}$/,
+    );
+    expect(result.current.task_center_open).toBe(true);
+    await act(async () => {
+      pending.reject(new Error("连接失败"));
+      await expect(request).rejects.toThrow("连接失败");
+    });
+    expect(
+      result.current.task_records.find((item) => item.task_id === task.task_id),
+    ).toMatchObject({
+      stage: "failed",
+      retry_available: true,
+      delete_available: true,
+    });
+    vi.mocked(get_download).mockRejectedValueOnce(
+      new ApiError("任务不存在", 404),
+    );
+    vi.mocked(create_download).mockResolvedValueOnce([
+      { ...download_job("complete"), job_id: task.task_id },
+    ]);
+    await act(async () => result.current.retry_task(task.task_id));
+    expect(
+      vi.mocked(create_download).mock.calls.map((call) => call[3]),
+    ).toEqual([[task.task_id], [task.task_id]]);
+    expect(
+      result.current.task_records.filter(
+        (item) => item.task_type === "download",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("reconnects an accepted task after its response was lost instead of creating another download", async () => {
+    vi.mocked(create_download).mockRejectedValueOnce(new Error("响应丢失"));
+    const { result } = render_task_manager();
+    await act(async () => {
+      await expect(
+        result.current.start_downloads(["https://example.com/video"]),
+      ).rejects.toThrow();
+    });
+    const task = result.current.task_records.find(
+      (item) => item.task_type === "download",
+    )!;
+    vi.mocked(get_download).mockResolvedValueOnce({
+      ...download_job("failed"),
+      job_id: task.task_id,
+    });
+    vi.mocked(resume_download).mockResolvedValueOnce({
+      ...download_job("downloading"),
+      job_id: task.task_id,
+    });
+    await act(async () => result.current.retry_task(task.task_id));
+    expect(create_download).toHaveBeenCalledOnce();
+    expect(resume_download).toHaveBeenCalledWith(task.task_id);
+  });
+
+  it("pauses optimistically, ignores late polling, resumes, and restores a task when deletion fails", async () => {
+    vi.useFakeTimers();
+    const job = download_job("downloading");
+    vi.mocked(list_downloads).mockResolvedValueOnce([job]);
+    const stale_poll = deferred<DownloadJob>();
+    vi.mocked(get_download).mockReturnValueOnce(stale_poll.promise);
+    const pause = deferred<DownloadJob>();
+    vi.mocked(pause_download).mockReturnValueOnce(pause.promise);
+    const { result } = render_task_manager();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    let request!: Promise<void>;
+    act(() => {
+      request = result.current.pause_task(job.job_id);
+    });
+    expect(
+      result.current.task_records.find((item) => item.task_id === job.job_id)
+        ?.stage,
+    ).toBe("pausing");
+    await act(async () => {
+      pause.resolve({ ...job, stage: "paused" });
+      await request;
+      stale_poll.resolve(job);
+    });
+    expect(
+      result.current.task_records.find((item) => item.task_id === job.job_id)
+        ?.stage,
+    ).toBe("paused");
+    vi.mocked(get_download).mockResolvedValueOnce({ ...job, stage: "paused" });
+    vi.mocked(resume_download).mockResolvedValueOnce(job);
+    await act(async () => result.current.retry_task(job.job_id));
+    expect(resume_download).toHaveBeenCalledWith(job.job_id);
+    vi.mocked(pause_download).mockResolvedValueOnce({
+      ...job,
+      stage: "paused",
+    });
+    await act(async () => result.current.pause_task(job.job_id));
+    vi.mocked(get_download).mockResolvedValue({ ...job, stage: "paused" });
+    const deletion = deferred<void>();
+    vi.mocked(delete_download).mockReturnValueOnce(deletion.promise);
+    act(() => {
+      request = result.current.delete_task(job.job_id);
+    });
+    expect(
+      result.current.task_records.some((item) => item.task_id === job.job_id),
+    ).toBe(false);
+    await act(async () => {
+      deletion.reject(new Error("删除失败"));
+      await expect(request).rejects.toThrow("删除失败");
+    });
+    expect(
+      result.current.task_records.find((item) => item.task_id === job.job_id)
+        ?.stage,
+    ).toBe("paused");
+    vi.mocked(delete_download).mockResolvedValueOnce(undefined);
+    await act(async () => result.current.delete_task(job.job_id));
+    expect(
+      result.current.task_records.some((item) => item.task_id === job.job_id),
+    ).toBe(false);
+  });
+
+  it("keeps slow parsing in the task center and makes failed parses retryable and removable", async () => {
+    const pending = deferred<ProbeResponse>();
+    vi.mocked(probe_source).mockReturnValueOnce(pending.promise);
+    const { result } = render_task_manager();
+    act(() => result.current.start_probe("https://example.com/video"));
+    const task = result.current.task_records.find(
+      (item) => item.task_type === "probe",
+    )!;
+    expect(task.stage).toBe("probing");
+    expect(result.current.task_center_open).toBe(true);
+    act(() => result.current.set_task_center_open(false));
+    await act(async () => pending.reject(new Error("解析失败")));
+    expect(result.current.task_center_open).toBe(false);
+    expect(
+      result.current.task_records.find((item) => item.task_id === task.task_id)
+        ?.retry_available,
+    ).toBe(true);
+    const probe: ProbeResponse = {
+      platform: "youtube",
+      title: "视频",
+      is_playlist: false,
+      entries: [],
+      total_count: 0,
+      truncated: false,
+    };
+    vi.mocked(probe_source).mockResolvedValueOnce(probe);
+    await act(async () => result.current.retry_task(task.task_id));
+    act(() => result.current.view_probe_result(task.task_id));
+    expect(result.current.selected_probe?.result).toEqual(probe);
+    expect(result.current.task_center_open).toBe(false);
+    await act(async () => result.current.delete_task(task.task_id));
+    expect(
+      result.current.task_records.some((item) => item.task_id === task.task_id),
+    ).toBe(false);
   });
 
   it("loads the latest 50 persisted download tasks on startup", async () => {
@@ -395,13 +572,11 @@ function TaskStatus() {
 }
 
 function AgentResumeStarter() {
-  const { retry_agent_task } = use_task_manager();
+  const { retry_task } = use_task_manager();
   return (
     <button
       type="button"
-      onClick={() =>
-        void retry_agent_task("run-019c012345677abc8123456789abcdef")
-      }
+      onClick={() => void retry_task("run-019c012345677abc8123456789abcdef")}
     >
       继续助手任务
     </button>
@@ -487,4 +662,14 @@ function agent_index_status(): AgentIndexStatus {
     error_message: null,
     updated_at: "2025-01-01T00:00:00Z",
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((accept, fail) => {
+    resolve = accept;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
 }

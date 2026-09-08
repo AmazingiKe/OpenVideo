@@ -39,7 +39,7 @@ describe("DownloadSelection", () => {
         current_source_video_id={null}
         current_entry_url={null}
         entry_filter=""
-        is_submitting={false}
+
         on_entry_filter_change={vi.fn()}
         on_toggle_url={vi.fn()}
         on_replace_selection={vi.fn()}

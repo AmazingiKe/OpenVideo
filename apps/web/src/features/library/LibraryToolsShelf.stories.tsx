@@ -24,11 +24,19 @@ const PROBE: ProbeResponse = {
 };
 
 function DownloadWorkspace() {
-  const { task_records, retry_agent_task } = use_task_manager();
+  const manager = use_task_manager();
   return (
     <div className="flex min-h-screen flex-col gap-8 p-4">
       <div className="flex justify-end">
-        <TaskCenter tasks={task_records} on_retry={retry_agent_task} />
+        <TaskCenter
+          tasks={manager.task_records}
+          on_retry={manager.retry_task}
+          open={manager.task_center_open}
+          on_open_change={manager.set_task_center_open}
+          on_pause={manager.pause_task}
+          on_delete={manager.delete_task}
+          on_view_result={manager.view_probe_result}
+        />
       </div>
       <LibraryToolsShelf />
     </div>
@@ -51,8 +59,11 @@ const meta = {
         });
       if (path === "/api/downloads/probe") return Response.json(PROBE);
       if (path === "/api/downloads" && options?.method === "POST") {
+        const request = JSON.parse(String(options.body)) as {
+          job_ids: string[];
+        };
         jobs.push({
-          job_id: "job-019c0000000070008000000000000001",
+          job_id: request.job_ids[0],
           asset_id: "asset-019c0000000070008000000000000001",
           video_quality: "best",
           stage: "downloading",
@@ -66,7 +77,25 @@ const meta = {
         return Response.json(jobs);
       }
       if (path === "/api/downloads") return Response.json(jobs);
-      if (path.startsWith("/api/downloads/job-")) return Response.json(jobs[0]);
+      if (path.startsWith("/api/downloads/job-")) {
+        if (path.endsWith("/pause"))
+          jobs[0] = {
+            ...jobs[0],
+            stage: "paused",
+            message: "已暂停，继续时尝试续传",
+          };
+        if (path.endsWith("/resume"))
+          jobs[0] = {
+            ...jobs[0],
+            stage: "downloading",
+            message: "正在下载视频",
+          };
+        if (options?.method === "DELETE") {
+          jobs.splice(0);
+          return new Response(null, { status: 204 });
+        }
+        return Response.json(jobs[0]);
+      }
       if (
         [
           "/api/media/assets",
@@ -99,6 +128,9 @@ const meta = {
       STORY_URL,
     );
     await userEvent.click(body.getByRole("button", { name: "解析链接" }));
+    await userEvent.click(
+      await body.findByRole("button", { name: "选择视频" }),
+    );
     const button = await body.findByRole("button", { name: "下载 1 个视频" });
     const dialog = body.getByRole("dialog", { name: "解析下载" });
     await waitFor(() => expect(getComputedStyle(dialog).opacity).toBe("1"));
@@ -133,11 +165,24 @@ export const SubmitToTaskCenter: Story = {
         body.queryByRole("dialog", { name: "解析下载" }),
       ).not.toBeInTheDocument(),
     );
-    await userEvent.click(
-      body.getByRole("button", { name: "任务中心，1 个进行中" }),
-    );
     await waitFor(() =>
       expect(body.getByText("镜头语言与剪辑技巧")).toBeVisible(),
+    );
+    await userEvent.click(
+      await body.findByRole("button", { name: "暂停下载" }),
+    );
+    await userEvent.click(
+      await body.findByRole("button", { name: "继续下载" }),
+    );
+    await userEvent.click(
+      await body.findByRole("button", { name: "暂停下载" }),
+    );
+    const download_item = body.getByText("镜头语言与剪辑技巧").closest("li")!;
+    await userEvent.click(
+      await within(download_item).findByRole("button", { name: "删除任务" }),
+    );
+    await waitFor(() =>
+      expect(body.queryByText("镜头语言与剪辑技巧")).not.toBeInTheDocument(),
     );
   },
 };

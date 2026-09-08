@@ -235,6 +235,8 @@ export type MarkersPageSettings = {
 };
 
 type DownloadStage =
+  | "pausing"
+  | "paused"
   | "pending"
   | "reading_metadata"
   | "downloading"

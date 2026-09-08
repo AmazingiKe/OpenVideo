@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, FolderInput, KeyRound, Wrench } from "lucide-react";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
+import { TASK_CENTER_CONTENT_ID } from "@/app/TaskCenter";
 import { use_task_manager } from "@/app/task_manager";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -32,7 +33,6 @@ import {
   get_health,
   import_download_account_from_browser,
   list_folders,
-  probe_source,
   save_download_account,
   test_download_account,
 } from "@/shared/api";
@@ -67,7 +67,8 @@ type LibraryTool = "accounts" | "download" | "folder_import";
 
 export function LibraryToolsShelf() {
   const query_client = useQueryClient();
-  const { start_downloads } = use_task_manager();
+  const { start_downloads, start_probe, selected_probe, clear_selected_probe } =
+    use_task_manager();
   const health_query = useQuery({
     queryKey: RESOURCE_QUERY_KEYS.download_health,
     queryFn: ({ signal }) => get_health(signal),
@@ -88,7 +89,6 @@ export function LibraryToolsShelf() {
   const [target_folder_id, set_target_folder_id] =
     useState<DownloadFolderSelection>(undefined);
   const [video_quality, set_video_quality] = useState<DownloadQuality>("best");
-  const [is_submitting, set_is_submitting] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [active_tool, set_active_tool] = useState<LibraryTool | null>(null);
   const [submission_origin, set_submission_origin] = useState<{
@@ -97,6 +97,7 @@ export function LibraryToolsShelf() {
   } | null>(null);
   const [download_notice, set_download_notice] = useState("");
   const download_trigger_ref = useRef<HTMLButtonElement>(null);
+  const task_handoff_pending = useRef(false);
   const clear_submission_feedback = useCallback(
     () => set_submission_origin(null),
     [],
@@ -135,7 +136,22 @@ export function LibraryToolsShelf() {
     };
   }, []);
 
-  async function submit_source_probe(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    if (!selected_probe) return;
+    set_source_url(selected_probe.source_url);
+    set_probe_result(selected_probe.result);
+    set_selected_urls(
+      initial_selected_urls(
+        selected_probe.result.entries,
+        selected_probe.source_url,
+      ),
+    );
+    set_page_error(null);
+    set_active_tool("download");
+    clear_selected_probe();
+  }, [selected_probe, clear_selected_probe]);
+
+  function submit_source_probe(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     set_probe_result(null);
     set_selected_urls(new Set());
@@ -145,25 +161,14 @@ export function LibraryToolsShelf() {
       set_page_error("请先粘贴 Bilibili、抖音或 YouTube 视频地址");
       return;
     }
-    set_is_submitting(true);
     set_page_error(null);
-    try {
-      const probe = await probe_source(normalized_url);
-      set_probe_result(probe);
-      set_selected_urls(initial_selected_urls(probe.entries, normalized_url));
-    } catch (error) {
-      if (!is_abort_error(error)) {
-        set_page_error(error_message(error));
-        await refresh_download_accounts();
-      }
-    } finally {
-      set_is_submitting(false);
-    }
+    set_active_tool(null);
+    task_handoff_pending.current = true;
+    start_probe(normalized_url);
+    set_download_notice("解析任务已加入任务中心，可继续使用其他功能。");
   }
 
-  async function start_selected_downloads(
-    event: MouseEvent<HTMLButtonElement>,
-  ) {
+  function start_selected_downloads(event: MouseEvent<HTMLButtonElement>) {
     const bounds = event.currentTarget.getBoundingClientRect();
     const origin = {
       x: bounds.x + bounds.width / 2,
@@ -174,33 +179,27 @@ export function LibraryToolsShelf() {
       set_page_error("请至少选择一个视频");
       return;
     }
-    set_is_submitting(true);
     set_page_error(null);
-    try {
-      const automatic_folder_name =
-        target_folder_id === undefined && probe_result?.is_playlist
-          ? probe_result.title
-          : null;
-      const jobs = await start_downloads(urls, {
-        video_quality,
-        folder_id: target_folder_id ?? null,
-        automatic_folder_name,
-        assign_folder:
-          target_folder_id !== undefined || automatic_folder_name !== null,
-      });
-      set_probe_result(null);
-      set_selected_urls(new Set());
-      set_source_url("");
-      set_active_tool((current) => (current === "download" ? null : current));
-      set_submission_origin(origin);
-      set_download_notice(
-        `已添加 ${jobs.length} 个下载任务，可在右上角任务中心查看进度。`,
-      );
-    } catch (error) {
-      if (!is_abort_error(error)) set_page_error(error_message(error));
-    } finally {
-      set_is_submitting(false);
-    }
+    const automatic_folder_name =
+      target_folder_id === undefined && probe_result?.is_playlist
+        ? probe_result.title
+        : null;
+    task_handoff_pending.current = true;
+    void start_downloads(urls, {
+      video_quality,
+      folder_id: target_folder_id ?? null,
+      automatic_folder_name,
+      assign_folder:
+        target_folder_id !== undefined || automatic_folder_name !== null,
+    }).catch(() => undefined);
+    set_probe_result(null);
+    set_selected_urls(new Set());
+    set_source_url("");
+    set_active_tool((current) => (current === "download" ? null : current));
+    set_submission_origin(origin);
+    set_download_notice(
+      `已添加 ${urls.length} 个下载任务，可在右上角任务中心查看进度。`,
+    );
   }
 
   async function save_platform_account(
@@ -445,7 +444,12 @@ export function LibraryToolsShelf() {
           className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] flex-col overflow-hidden sm:max-w-5xl"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            download_trigger_ref.current?.focus();
+            const focus_target = task_handoff_pending.current
+              ? (document.getElementById(TASK_CENTER_CONTENT_ID) ??
+                download_trigger_ref.current)
+              : download_trigger_ref.current;
+            task_handoff_pending.current = false;
+            focus_target?.focus();
           }}
         >
           <DialogHeader className="shrink-0 pr-8">
@@ -466,7 +470,6 @@ export function LibraryToolsShelf() {
               current_probe_entry(probe_result?.entries ?? [], source_url)
                 ?.source_video_id ?? null
             }
-            is_submitting={is_submitting}
             error={download_error}
             on_source_url_change={set_source_url}
             on_submit_probe={submit_source_probe}
@@ -474,7 +477,7 @@ export function LibraryToolsShelf() {
             on_replace_selection={(urls) => set_selected_urls(new Set(urls))}
             on_target_folder_change={set_target_folder_id}
             on_video_quality_change={set_video_quality}
-            on_start_download={(event) => void start_selected_downloads(event)}
+            on_start_download={start_selected_downloads}
           />
         </DialogContent>
       </Dialog>

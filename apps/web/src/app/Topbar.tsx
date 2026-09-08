@@ -1,6 +1,6 @@
 import { Bot, FileText, Flag, Library, Settings } from "lucide-react";
 import { useEffect } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 
 import { SETTINGS_ROUTE, WORKSPACE_ROUTES } from "@/app/workspace_routes";
 import { TaskCenter } from "@/app/TaskCenter";
@@ -23,6 +23,7 @@ const WORKSPACE_ICONS = {
 } as const;
 
 export function Topbar() {
+  const navigate = useNavigate();
   const task_manager = use_optional_task_manager();
   const { assistant_open, set_assistant_open } =
     use_global_assistant_controls();
@@ -91,7 +92,15 @@ export function Topbar() {
         {task_manager ? (
           <TaskCenter
             tasks={task_manager.task_records}
-            on_retry={task_manager.retry_agent_task}
+            open={task_manager.task_center_open}
+            on_open_change={task_manager.set_task_center_open}
+            on_retry={task_manager.retry_task}
+            on_pause={task_manager.pause_task}
+            on_delete={task_manager.delete_task}
+            on_view_result={(task_id) => {
+              task_manager.view_probe_result(task_id);
+              void navigate("/library");
+            }}
           />
         ) : null}
         <NavLink

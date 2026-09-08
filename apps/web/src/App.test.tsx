@@ -325,6 +325,7 @@ describe("App", () => {
       target: { value: "https://www.bilibili.com/video/BV1xx411c7mD" },
     });
     fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
+    fireEvent.click(await screen.findByRole("button", { name: "选择视频" }));
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "已检测的视频" }),
@@ -512,6 +513,7 @@ describe("App", () => {
       target: { value: first_probe.entries[0].url },
     });
     fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
+    fireEvent.click(await screen.findByRole("button", { name: "选择视频" }));
     expect(
       await screen.findByRole("heading", { name: "第一次解析结果" }),
     ).toBeInTheDocument();
@@ -522,9 +524,14 @@ describe("App", () => {
         screen.queryByRole("heading", { name: "第一次解析结果" }),
       ).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: /正在解析/ })).toBeDisabled();
+    expect(
+      screen.getByRole("dialog", { name: "任务中心" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("解析中")).toBeInTheDocument();
 
     resolve_second_probe(second_probe);
+    await screen.findByText("第二次解析结果");
+    fireEvent.click(screen.getAllByRole("button", { name: "选择视频" })[0]);
     expect(
       await screen.findByRole("heading", { name: "第二次解析结果" }),
     ).toBeInTheDocument();
@@ -647,7 +654,13 @@ describe("App", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
 
-    await waitFor(() => expect(probe_source).toHaveBeenCalledWith(source_url));
+    await waitFor(() =>
+      expect(probe_source).toHaveBeenCalledWith(
+        source_url,
+        expect.any(AbortSignal),
+      ),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "选择视频" }));
     expect(await screen.findByRole("checkbox")).toBeChecked();
     expect(screen.getByRole("button", { name: "下载 1 个视频" })).toBeEnabled();
   });
@@ -692,7 +705,13 @@ describe("App", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
 
-    await waitFor(() => expect(probe_source).toHaveBeenCalledWith(source_url));
+    await waitFor(() =>
+      expect(probe_source).toHaveBeenCalledWith(
+        source_url,
+        expect.any(AbortSignal),
+      ),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "选择视频" }));
     const entries = await screen.findAllByRole("checkbox");
     expect(entries[0]).not.toBeChecked();
     expect(entries[1]).toBeChecked();
@@ -966,81 +985,86 @@ describe("App", () => {
     });
   });
 
-  it.each([false, true])(
-    "allows closing the download dialog while tasks are submitted or running (close early: %s)",
-    async (close_early) => {
-      vi.mocked(get_health).mockResolvedValue({
-        status: "ready",
-        dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
-      });
-      const source_url = "https://www.bilibili.com/video/BV1xx411c7mD";
-      vi.mocked(probe_source).mockResolvedValue({
-        platform: "bilibili",
-        is_playlist: false,
-        title: "下载测试视频",
-        total_count: 1,
-        truncated: false,
-        entries: [
-          {
-            source_video_id: "BV1xx411c7mD",
-            url: source_url,
-            title: "下载测试视频",
-            duration_seconds: 20,
-            uploader: null,
-          },
-        ],
-      });
-      let accept_download!: (jobs: DownloadJob[]) => void;
-      vi.mocked(create_download).mockReturnValue(
-        new Promise((resolve) => {
-          accept_download = resolve;
-        }),
-      );
-      render(<App />);
-      await open_download_tool();
-      fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
-        target: { value: source_url },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
-      fireEvent.click(
-        await screen.findByRole("button", { name: "下载 1 个视频" }),
-      );
-      const dialog = screen.getByRole("dialog", { name: "解析下载" });
-      if (close_early) {
-        fireEvent.click(screen.getByRole("button", { name: "Close" }));
-        await waitForElementToBeRemoved(dialog);
-      }
-      accept_download([
+  it("opens the task center before download acceptance and keeps the download dialog usable", async () => {
+    vi.mocked(get_health).mockResolvedValue({
+      status: "ready",
+      dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+    });
+    const source_url = "https://www.bilibili.com/video/BV1xx411c7mD";
+    vi.mocked(probe_source).mockResolvedValue({
+      platform: "bilibili",
+      is_playlist: false,
+      title: "下载测试视频",
+      total_count: 1,
+      truncated: false,
+      entries: [
         {
-          job_id: "job-019c0000000070008000000000000001",
-          asset_id: ASSET_ID,
-          video_quality: "best",
-          stage: "downloading",
-          name: "下载测试视频",
-          progress_percent: 10,
-          message: "正在下载视频",
-          error_message: null,
-          created_at: "2026-09-08T00:00:00Z",
-          updated_at: "2026-09-08T00:00:00Z",
+          source_video_id: "BV1xx411c7mD",
+          url: source_url,
+          title: "下载测试视频",
+          duration_seconds: 20,
+          uploader: null,
         },
-      ]);
-      await waitFor(() =>
-        expect(
-          screen.queryByRole("dialog", { name: "解析下载" }),
-        ).not.toBeInTheDocument(),
-      );
+      ],
+    });
+    let accept_download!: (jobs: DownloadJob[]) => void;
+    vi.mocked(create_download).mockReturnValue(
+      new Promise((resolve) => {
+        accept_download = resolve;
+      }),
+    );
+    render(<App />);
+    await open_download_tool();
+    fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
+      target: { value: source_url },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
+    fireEvent.click(await screen.findByRole("button", { name: "选择视频" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "下载 1 个视频" }),
+    );
+    await waitFor(() =>
       expect(
-        await screen.findByRole("button", { name: "任务中心，1 个进行中" }),
-      ).toBeInTheDocument();
-      await open_download_tool();
-      fireEvent.click(screen.getByRole("button", { name: "Close" }));
-      await waitFor(() =>
-        expect(
-          screen.queryByRole("dialog", { name: "解析下载" }),
-        ).not.toBeInTheDocument(),
-      );
-    },
-  );
+        screen.queryByRole("dialog", { name: "解析下载" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "任务中心" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("提交中")).toBeInTheDocument();
+    accept_download([
+      {
+        job_id: "job-019c0000000070008000000000000001",
+        asset_id: ASSET_ID,
+        video_quality: "best",
+        stage: "downloading",
+        name: "下载测试视频",
+        progress_percent: 10,
+        message: "正在下载视频",
+        error_message: null,
+        created_at: "2026-09-08T00:00:00Z",
+        updated_at: "2026-09-08T00:00:00Z",
+      },
+    ]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "解析下载" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByRole("button", { name: "任务中心，1 个进行中" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "任务中心，1 个进行中" }),
+    );
+    await open_download_tool();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "解析下载" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
 
   it("preserves workspace input while switching modules", async () => {
     vi.mocked(get_health).mockResolvedValue({

@@ -1,6 +1,6 @@
 export type TaskRecord = {
   task_id: string;
-  task_type: "download" | "transcription" | "agent" | "index";
+  task_type: "probe" | "download" | "transcription" | "agent" | "index";
   stage: string;
   message: string;
   progress_percent: number;
@@ -9,6 +9,9 @@ export type TaskRecord = {
   created_at: string;
   name: string;
   retry_available?: boolean;
+  pause_available?: boolean;
+  delete_available?: boolean;
+  result_available?: boolean;
 };
 
 const MAX_TASK_RECORDS = 100;
@@ -39,6 +42,10 @@ function compare_task_records(left: TaskRecord, right: TaskRecord): number {
 }
 
 export const TASK_STAGE_LABELS: Record<string, string> = {
+  submitting: "提交中",
+  probing: "解析中",
+  pausing: "正在暂停",
+  paused: "已暂停",
   pending: "等待中",
   preparing_transcription_model: "准备转录模型",
   reading_metadata: "读取信息",

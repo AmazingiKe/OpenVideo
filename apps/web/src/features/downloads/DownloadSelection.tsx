@@ -73,7 +73,6 @@ type DownloadSelectionProps = {
   current_source_video_id: string | null;
   current_entry_url: string | null;
   entry_filter: string;
-  is_submitting: boolean;
   on_entry_filter_change: (value: string) => void;
   on_toggle_url: (url: string) => void;
   on_replace_selection: (urls: string[]) => void;
@@ -92,7 +91,6 @@ export function DownloadSelection({
   current_source_video_id,
   current_entry_url,
   entry_filter,
-  is_submitting,
   on_entry_filter_change,
   on_toggle_url,
   on_replace_selection,
@@ -153,7 +151,6 @@ export function DownloadSelection({
                       on_entry_filter_change(event.target.value)
                     }
                     placeholder="筛选标题"
-                    disabled={is_submitting}
                   />
                 </div>
               </Field>
@@ -189,7 +186,6 @@ export function DownloadSelection({
                   size="sm"
                   variant="secondary"
                   onClick={() => on_replace_selection([current_entry_url])}
-                  disabled={is_submitting}
                 >
                   <CheckCircle2 data-icon="inline-start" />
                   当前视频
@@ -204,7 +200,6 @@ export function DownloadSelection({
                     probe_result.entries.map((entry) => entry.url),
                   )
                 }
-                disabled={is_submitting}
               >
                 全选
               </Button>
@@ -213,7 +208,7 @@ export function DownloadSelection({
                 size="sm"
                 variant="ghost"
                 onClick={() => on_replace_selection([])}
-                disabled={is_submitting || selected_urls.size === 0}
+                disabled={selected_urls.size === 0}
               >
                 清空
               </Button>
@@ -237,7 +232,7 @@ export function DownloadSelection({
               entry_numbers={entry_numbers}
               selected_urls={selected_urls}
               current_source_video_id={current_source_video_id}
-              is_submitting={is_submitting}
+
               on_toggle_url={on_toggle_url}
             />
           ) : (
@@ -246,7 +241,7 @@ export function DownloadSelection({
               entry_numbers={entry_numbers}
               selected_urls={selected_urls}
               current_source_video_id={current_source_video_id}
-              is_submitting={is_submitting}
+
               on_toggle_url={on_toggle_url}
             />
           )}
@@ -269,7 +264,6 @@ export function DownloadSelection({
                   );
                 }
               }}
-              disabled={is_submitting}
             >
               <SelectTrigger id="download_target_folder" className="w-full">
                 <SelectValue />
@@ -300,7 +294,6 @@ export function DownloadSelection({
               onValueChange={(value) =>
                 on_video_quality_change(value as DownloadQuality)
               }
-              disabled={is_submitting}
             >
               <SelectTrigger id="download_video_quality" className="w-full">
                 <SelectValue />
@@ -327,7 +320,7 @@ export function DownloadSelection({
           className="shrink-0"
           type="button"
           onClick={on_start_download}
-          disabled={is_submitting || selected_urls.size === 0}
+          disabled={selected_urls.size === 0}
         >
           <Download data-icon="inline-start" />
           下载 {selected_urls.size} 个视频
@@ -342,7 +335,6 @@ type DownloadEntryCollectionProps = {
   entry_numbers: Map<string, number>;
   selected_urls: Set<string>;
   current_source_video_id: string | null;
-  is_submitting: boolean;
   on_toggle_url: (url: string) => void;
 };
 
@@ -351,7 +343,6 @@ function DownloadEntryList({
   entry_numbers,
   selected_urls,
   current_source_video_id,
-  is_submitting,
   on_toggle_url,
 }: DownloadEntryCollectionProps) {
   return (
@@ -374,7 +365,6 @@ function DownloadEntryList({
                 id={checkbox_id}
                 checked={selected_urls.has(entry.url)}
                 onCheckedChange={() => on_toggle_url(entry.url)}
-                disabled={is_submitting}
               />
               <span className="font-mono text-xs text-muted-foreground">
                 {format_entry_number(entry_numbers.get(entry.source_video_id))}
@@ -412,7 +402,6 @@ function DownloadEntryCards({
   entry_numbers,
   selected_urls,
   current_source_video_id,
-  is_submitting,
   on_toggle_url,
 }: DownloadEntryCollectionProps) {
   return (
@@ -433,7 +422,6 @@ function DownloadEntryCards({
                   id={checkbox_id}
                   checked={selected_urls.has(entry.url)}
                   onCheckedChange={() => on_toggle_url(entry.url)}
-                  disabled={is_submitting}
                 />
                 <span className="font-mono text-xs text-muted-foreground">
                   {format_entry_number(

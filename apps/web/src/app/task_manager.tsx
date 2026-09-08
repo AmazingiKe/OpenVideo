@@ -14,26 +14,34 @@ import { use_asset_catalog } from "@/app/asset_catalog";
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
   create_download,
+  ApiError,
+  delete_download,
+  get_download,
   get_agent_index_status,
   list_downloads,
   list_agent_tasks,
   retry_agent_run,
+  pause_download,
+  probe_source,
+  resume_download,
   transcribe_asset,
 } from "@/shared/api";
 import { poll_transcription_job } from "@/shared/poll_transcription_job";
 import { poll_download } from "@/shared/poll_download";
 import { error_message, is_abort_error } from "@/shared/errors";
+import { uuid7 } from "@/shared/identifiers";
 import type {
   AnalysisJob,
   AgentIndexStatus,
   AgentTaskSnapshot,
   DownloadDestination,
   DownloadJob,
+  ProbeResponse,
   TranscriptionOptions,
 } from "@/shared/types";
 import { merge_task_record, type TaskRecord } from "@/features/workbench/tasks";
 
-const TERMINAL_DOWNLOAD_STAGES = new Set(["complete", "failed"]);
+const INACTIVE_DOWNLOAD_STAGES = new Set(["complete", "failed", "paused"]);
 const INITIAL_DOWNLOAD_TASK_LIMIT = 50;
 const AGENT_TASK_REFRESH_INTERVAL_MS = 2_000;
 const TRANSCRIPTION_STAGES = new Set<AgentIndexStatus["stage"]>([
@@ -44,6 +52,15 @@ const TRANSCRIPTION_STAGES = new Set<AgentIndexStatus["stage"]>([
 
 type TaskManager = {
   task_records: TaskRecord[];
+  task_center_open: boolean;
+  set_task_center_open: (open: boolean) => void;
+  selected_probe: ProbeResult | null;
+  clear_selected_probe: () => void;
+  start_probe: (source_url: string) => void;
+  view_probe_result: (task_id: string) => void;
+  retry_task: (task_id: string) => Promise<void>;
+  pause_task: (task_id: string) => Promise<void>;
+  delete_task: (task_id: string) => Promise<void>;
   index_status: AgentIndexStatus | null;
   start_downloads: (
     urls: string[],
@@ -54,7 +71,17 @@ type TaskManager = {
     options: TranscriptionOptions,
   ) => Promise<AnalysisJob>;
   is_transcription_running: (asset_id: string) => boolean;
-  retry_agent_task: (run_id: string) => Promise<void>;
+};
+
+type ProbeResult = { source_url: string; result: ProbeResponse };
+type ProbeTask = {
+  source_url: string;
+  controller: AbortController;
+  result?: ProbeResponse;
+};
+type DownloadSubmission = {
+  source_url: string;
+  destination?: DownloadDestination;
 };
 
 const TaskManagerContext = createContext<TaskManager | null>(null);
@@ -63,6 +90,13 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const query_client = useQueryClient();
   const { assets, selected_asset_id } = use_asset_catalog();
   const [task_records, set_task_records] = useState<TaskRecord[]>([]);
+  const [task_center_open, set_task_center_open] = useState(false);
+  const [selected_probe, set_selected_probe] = useState<ProbeResult | null>(
+    null,
+  );
+  const probe_tasks = useRef(new Map<string, ProbeTask>());
+  const download_submissions = useRef(new Map<string, DownloadSubmission>());
+  const download_actions = useRef(new Set<string>());
   const [index_status, set_index_status] = useState<AgentIndexStatus | null>(
     null,
   );
@@ -78,6 +112,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     const downloads = download_controllers.current;
     const requests = download_requests.current;
     const transcriptions = transcription_controllers.current;
+    const probes = probe_tasks.current;
     return () => {
       downloads.forEach((controller) => controller.abort());
       requests.forEach((controller) => controller.abort());
@@ -85,6 +120,8 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       downloads.clear();
       requests.clear();
       transcriptions.clear();
+      probes.forEach((task) => task.controller.abort());
+      probes.clear();
     };
   }, []);
 
@@ -94,6 +131,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
 
   const record_download_job = useCallback(
     (job: DownloadJob) => {
+      if (download_actions.current.has(job.job_id)) return;
       record_task({
         task_id: job.job_id,
         task_type: "download",
@@ -103,6 +141,10 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         error_message: job.error_message,
         created_at: job.created_at,
         name: job.name,
+        retry_available: job.stage === "failed" || job.stage === "paused",
+        pause_available:
+          !INACTIVE_DOWNLOAD_STAGES.has(job.stage) && job.stage !== "pausing",
+        delete_available: INACTIVE_DOWNLOAD_STAGES.has(job.stage),
       });
     },
     [record_task],
@@ -199,38 +241,46 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     };
   }, [query_client, record_task, selected_asset_id]);
 
+  const refresh_download_catalog = useCallback(
+    () =>
+      Promise.all([
+        query_client.invalidateQueries({
+          queryKey: RESOURCE_QUERY_KEYS.assets,
+        }),
+        query_client.invalidateQueries({
+          queryKey: RESOURCE_QUERY_KEYS.library_folders,
+        }),
+      ]),
+    [query_client],
+  );
+
   const track_download_jobs = useCallback(
     (jobs: DownloadJob[]) => {
+      if (jobs.length > 0) void refresh_download_catalog();
       for (const job of jobs) {
         record_download_job(job);
         if (
-          TERMINAL_DOWNLOAD_STAGES.has(job.stage) ||
+          INACTIVE_DOWNLOAD_STAGES.has(job.stage) ||
+          download_actions.current.has(job.job_id) ||
           download_controllers.current.has(job.job_id)
         )
           continue;
         const controller = new AbortController();
         download_controllers.current.set(job.job_id, controller);
         void poll_download(job, record_download_job, controller.signal)
-          .then(() =>
-            Promise.all([
-              query_client.invalidateQueries({
-                queryKey: RESOURCE_QUERY_KEYS.assets,
-              }),
-              query_client.invalidateQueries({
-                queryKey: RESOURCE_QUERY_KEYS.library_folders,
-              }),
-            ]),
-          )
+          .then(refresh_download_catalog)
           .catch((error: unknown) => {
-            if (!is_abort_error(error)) {
+            if (!controller.signal.aborted && !is_abort_error(error)) {
               set_task_records((current) =>
                 current.map((task) =>
                   task.task_id === job.job_id
                     ? {
                         ...task,
                         stage: "interrupted",
-                        message: "下载进度同步中断，重新打开应用可恢复查看",
+                        message: "下载进度同步中断，可重新连接查看",
                         error_message: error_message(error),
+                        retry_available: true,
+                        delete_available: true,
                       }
                     : task,
                 ),
@@ -243,7 +293,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
           });
       }
     },
-    [query_client, record_download_job],
+    [refresh_download_catalog, record_download_job],
   );
 
   useEffect(() => {
@@ -256,29 +306,226 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     return () => controller.abort();
   }, [track_download_jobs]);
 
-  const start_downloads = useCallback(
-    async (urls: string[], destination?: DownloadDestination) => {
+  const submit_downloads = useCallback(
+    async (
+      urls: string[],
+      destination: DownloadDestination | undefined,
+      job_ids: string[],
+    ) => {
       const controller = new AbortController();
       download_requests.current.add(controller);
+      for (const [index, job_id] of job_ids.entries()) {
+        const source_url = urls[index];
+        download_submissions.current.set(job_id, { source_url, destination });
+        record_task({
+          task_id: job_id,
+          task_type: "download",
+          stage: "submitting",
+          message: "已加入队列，正在提交下载",
+          name: source_url,
+          progress_percent: 0,
+          progress_known: false,
+          error_message: null,
+          created_at: new Date().toISOString(),
+        });
+      }
+      set_task_center_open(true);
       try {
         const jobs = await create_download(
           urls,
           controller.signal,
           destination,
+          job_ids,
+        );
+        controller.signal.throwIfAborted();
+        // 后端可能复用同一视频的已有任务，替换临时行以免显示两份。
+        const confirmed_ids = new Set(jobs.map((job) => job.job_id));
+        set_task_records((current) =>
+          current.filter(
+            (task) =>
+              !job_ids.includes(task.task_id) ||
+              confirmed_ids.has(task.task_id),
+          ),
+        );
+        job_ids.forEach((job_id) =>
+          download_submissions.current.delete(job_id),
         );
         track_download_jobs(jobs);
-        void query_client.invalidateQueries({
-          queryKey: RESOURCE_QUERY_KEYS.assets,
-        });
-        void query_client.invalidateQueries({
-          queryKey: RESOURCE_QUERY_KEYS.library_folders,
-        });
         return jobs;
+      } catch (error) {
+        if (!is_abort_error(error)) {
+          set_task_records((current) =>
+            current.map((task) =>
+              job_ids.includes(task.task_id)
+                ? {
+                    ...task,
+                    stage: "failed",
+                    message: "提交失败，可重新开始或删除任务",
+                    error_message: error_message(error),
+                    retry_available: true,
+                    delete_available: true,
+                  }
+                : task,
+            ),
+          );
+        }
+        throw error;
       } finally {
         download_requests.current.delete(controller);
       }
     },
-    [query_client, track_download_jobs],
+    [record_task, track_download_jobs],
+  );
+
+  const start_downloads = useCallback(
+    (urls: string[], destination?: DownloadDestination) =>
+      submit_downloads(
+        urls,
+        destination,
+        urls.map(() => `job-${uuid7().replaceAll("-", "")}`),
+      ),
+    [submit_downloads],
+  );
+
+  const run_probe = useCallback(
+    async (task_id: string, source_url: string) => {
+      const controller = new AbortController();
+      probe_tasks.current.set(task_id, { source_url, controller });
+      const task: TaskRecord = {
+        task_id,
+        task_type: "probe",
+        name: source_url,
+        stage: "probing",
+        message: "正在解析视频列表，可继续使用其他功能",
+        progress_percent: 0,
+        progress_known: false,
+        error_message: null,
+        created_at: new Date().toISOString(),
+      };
+      record_task(task);
+      set_task_center_open(true);
+      try {
+        const result = await probe_source(source_url, controller.signal);
+        controller.signal.throwIfAborted();
+        probe_tasks.current.set(task_id, { source_url, controller, result });
+        record_task({
+          ...task,
+          name: result.title ?? source_url,
+          stage: "complete",
+          message: `已找到 ${result.entries.length} 个视频，请选择要下载的内容`,
+          progress_percent: 100,
+          result_available: true,
+          delete_available: true,
+        });
+      } catch (error) {
+        if (!is_abort_error(error))
+          record_task({
+            ...task,
+            stage: "failed",
+            message: "链接解析失败",
+            error_message: error_message(error),
+            retry_available: true,
+            delete_available: true,
+          });
+      }
+    },
+    [record_task],
+  );
+
+  const start_probe = useCallback(
+    (source_url: string) => {
+      void run_probe(`probe-${uuid7().replaceAll("-", "")}`, source_url);
+    },
+    [run_probe],
+  );
+
+  const view_probe_result = useCallback((task_id: string) => {
+    const task = probe_tasks.current.get(task_id);
+    if (!task?.result) return;
+    set_task_center_open(false);
+    set_selected_probe({ source_url: task.source_url, result: task.result });
+  }, []);
+  const clear_selected_probe = useCallback(() => set_selected_probe(null), []);
+
+  const pause_task = useCallback(
+    async (task_id: string) => {
+      download_actions.current.add(task_id);
+      download_controllers.current.get(task_id)?.abort();
+      download_controllers.current.delete(task_id);
+      set_task_records((current) =>
+        current.map((task) =>
+          task.task_id === task_id
+            ? {
+                ...task,
+                stage: "pausing",
+                message: "正在停止下载，保留续传分片",
+                pause_available: false,
+              }
+            : task,
+        ),
+      );
+      try {
+        const job = await pause_download(task_id);
+        download_actions.current.delete(task_id);
+        track_download_jobs([job]);
+      } catch (error) {
+        download_actions.current.delete(task_id);
+        set_task_records((current) =>
+          current.map((task) =>
+            task.task_id === task_id
+              ? {
+                  ...task,
+                  stage: "interrupted",
+                  message: "未能确认暂停状态，请重新连接",
+                  error_message: error_message(error),
+                  retry_available: true,
+                  delete_available: true,
+                }
+              : task,
+          ),
+        );
+        throw error;
+      }
+    },
+    [track_download_jobs],
+  );
+
+  const delete_task = useCallback(
+    async (task_id: string) => {
+      const previous_task = task_records.find(
+        (task) => task.task_id === task_id,
+      );
+      if (!previous_task) return;
+      set_task_records((current) =>
+        current.filter((task) => task.task_id !== task_id),
+      );
+      const probe = probe_tasks.current.get(task_id);
+      if (probe) {
+        probe.controller.abort();
+        probe_tasks.current.delete(task_id);
+        return;
+      }
+      download_actions.current.add(task_id);
+      download_controllers.current.get(task_id)?.abort();
+      download_controllers.current.delete(task_id);
+      try {
+        // 请求失败可能只是响应丢失，删除前先确认服务器是否已启动下载。
+        try {
+          const job = await get_download(task_id);
+          if (!INACTIVE_DOWNLOAD_STAGES.has(job.stage))
+            await pause_download(task_id);
+          await delete_download(task_id);
+        } catch (error) {
+          if (!(error instanceof ApiError && error.status === 404)) throw error;
+        }
+        download_submissions.current.delete(task_id);
+      } catch (error) {
+        record_task({ ...previous_task, error_message: error_message(error) });
+        download_actions.current.delete(task_id);
+        throw error;
+      }
+    },
+    [record_task, task_records],
   );
 
   const start_transcription = useCallback(
@@ -322,24 +569,88 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [query_client, record_transcription_job],
   );
 
-  const retry_agent_task = useCallback(
-    async (run_id: string) => {
-      await retry_agent_run(run_id);
+  const retry_task = useCallback(
+    async (task_id: string) => {
+      const probe = probe_tasks.current.get(task_id);
+      if (probe) {
+        await run_probe(task_id, probe.source_url);
+        return;
+      }
+      const submission = download_submissions.current.get(task_id);
+      const previous_task = task_records.find(
+        (task) => task.task_id === task_id,
+      );
+      if (previous_task?.task_type === "download") {
+        download_actions.current.add(task_id);
+        download_controllers.current.get(task_id)?.abort();
+        download_controllers.current.delete(task_id);
+        record_task({
+          ...previous_task,
+          stage: "submitting",
+          message: "正在重新连接下载任务",
+          error_message: null,
+          retry_available: false,
+          delete_available: false,
+          pause_available: false,
+        });
+        try {
+          const current_job = await get_download(task_id);
+          download_submissions.current.delete(task_id);
+          const job =
+            current_job.stage === "failed" || current_job.stage === "paused"
+              ? await resume_download(task_id)
+              : current_job;
+          download_actions.current.delete(task_id);
+          track_download_jobs([job]);
+        } catch (error) {
+          download_actions.current.delete(task_id);
+          if (submission && error instanceof ApiError && error.status === 404) {
+            await submit_downloads(
+              [submission.source_url],
+              submission.destination,
+              [task_id],
+            );
+            return;
+          }
+          record_task({
+            ...previous_task,
+            error_message: error_message(error),
+          });
+          throw error;
+        }
+        return;
+      }
+      await retry_agent_run(task_id);
       try {
         record_agent_tasks(await list_agent_tasks());
       } catch {
         // 重试已启动时不因一次刷新失败误报，下一轮轮询会补齐状态。
       }
     },
-    [record_agent_tasks],
+    [
+      record_agent_tasks,
+      record_task,
+      run_probe,
+      submit_downloads,
+      task_records,
+      track_download_jobs,
+    ],
   );
 
   const value = useMemo<TaskManager>(
     () => ({
       task_records,
+      task_center_open,
+      set_task_center_open,
+      selected_probe,
+      clear_selected_probe,
+      start_probe,
+      view_probe_result,
+      pause_task,
+      delete_task,
       index_status,
       start_downloads,
-      retry_agent_task,
+      retry_task,
       start_transcription,
       is_transcription_running: (asset_id) =>
         active_transcriptions.has(asset_id) ||
@@ -350,7 +661,14 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       active_transcriptions,
       index_status,
       start_downloads,
-      retry_agent_task,
+      retry_task,
+      task_center_open,
+      selected_probe,
+      clear_selected_probe,
+      start_probe,
+      view_probe_result,
+      pause_task,
+      delete_task,
       start_transcription,
       task_records,
     ],

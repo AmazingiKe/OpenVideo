@@ -19,7 +19,6 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import { DownloadSelection } from "@/features/downloads/DownloadSelection";
 import type {
   DownloadFolderSelection,
@@ -38,7 +37,6 @@ type OnlineDownloadToolProps = {
   target_folder_id: DownloadFolderSelection;
   video_quality: DownloadQuality;
   current_source_video_id: string | null;
-  is_submitting: boolean;
   error: string | null;
   on_source_url_change: (value: string) => void;
   on_submit_probe: (event: FormEvent<HTMLFormElement>) => void;
@@ -58,7 +56,6 @@ export function OnlineDownloadTool({
   target_folder_id,
   video_quality,
   current_source_video_id,
-  is_submitting,
   error,
   on_source_url_change,
   on_submit_probe,
@@ -112,7 +109,7 @@ export function OnlineDownloadTool({
       <CardContent>
         <form onSubmit={on_submit_probe}>
           <FieldGroup>
-            <Field data-disabled={is_submitting || !dependencies_ready}>
+            <Field data-disabled={!dependencies_ready}>
               <FieldLabel htmlFor="source_url">视频或播放列表地址</FieldLabel>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Input
@@ -122,19 +119,12 @@ export function OnlineDownloadTool({
                   value={source_url}
                   onChange={(event) => on_source_url_change(event.target.value)}
                   placeholder="https://www.bilibili.com/video/..."
-                  disabled={is_submitting}
+
                   aria-invalid={Boolean(error)}
                 />
-                <Button
-                  type="submit"
-                  disabled={is_submitting || !dependencies_ready}
-                >
-                  {is_submitting ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : (
-                    <Search data-icon="inline-start" />
-                  )}
-                  {is_submitting ? "正在解析" : "解析链接"}
+                <Button type="submit" disabled={!dependencies_ready}>
+                  <Search data-icon="inline-start" />
+                  解析链接
                 </Button>
               </div>
               <FieldDescription>
@@ -162,7 +152,7 @@ export function OnlineDownloadTool({
           current_source_video_id={current_source_video_id}
           current_entry_url={current_entry?.url ?? null}
           entry_filter={entry_filter}
-          is_submitting={is_submitting}
+
           on_entry_filter_change={set_entry_filter}
           on_toggle_url={on_toggle_url}
           on_replace_selection={on_replace_selection}

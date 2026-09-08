@@ -123,11 +123,12 @@ export function create_download(
     automatic_folder_name: null,
     assign_folder: false,
   },
+  job_ids?: string[],
 ): Promise<DownloadJob[]> {
   return request_json("/api/downloads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_urls, ...destination }),
+    body: JSON.stringify({ source_urls, ...destination, job_ids }),
     signal,
   });
 }
@@ -147,4 +148,25 @@ export function get_download(
   return request_json(`/api/downloads/${encodeURIComponent(job_id)}`, {
     signal,
   });
+}
+
+export function pause_download(job_id: string): Promise<DownloadJob> {
+  return request_json(`/api/downloads/${encodeURIComponent(job_id)}/pause`, {
+    method: "POST",
+  });
+}
+
+export function resume_download(job_id: string): Promise<DownloadJob> {
+  return request_json(`/api/downloads/${encodeURIComponent(job_id)}/resume`, {
+    method: "POST",
+  });
+}
+
+export async function delete_download(job_id: string): Promise<void> {
+  const response = await fetch(
+    `${api_base_url}/api/downloads/${encodeURIComponent(job_id)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok)
+    throw new ApiError(`删除任务失败（${response.status}）`, response.status);
 }

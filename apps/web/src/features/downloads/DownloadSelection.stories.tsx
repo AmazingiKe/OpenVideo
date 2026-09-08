@@ -56,7 +56,6 @@ const meta = {
     current_source_video_id: probe_result.entries[0].source_video_id,
     current_entry_url: probe_result.entries[0].url,
     entry_filter: "",
-    is_submitting: false,
     on_entry_filter_change: () => undefined,
     on_toggle_url: () => undefined,
     on_replace_selection: () => undefined,
