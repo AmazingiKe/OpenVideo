@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import {
+  AudioLines,
   CheckSquare,
   FolderInput,
   FolderOpen,
@@ -46,6 +47,8 @@ type LibraryBrowserProps = {
   compact?: boolean;
   className?: string;
   on_open_video: (asset: MediaAsset) => void | Promise<void>;
+  on_transcribe_videos?: (assets: MediaAsset[]) => void;
+  is_transcription_running?: (asset_id: string) => boolean;
 };
 
 export function LibraryBrowser({
@@ -54,6 +57,8 @@ export function LibraryBrowser({
   compact = false,
   className,
   on_open_video,
+  on_transcribe_videos,
+  is_transcription_running,
 }: LibraryBrowserProps) {
   const {
     assets,
@@ -158,6 +163,13 @@ export function LibraryBrowser({
     set_current_folder_id,
     set_operation_error,
   });
+
+  const transcribable_assets = assets.filter(
+    (asset) =>
+      selected_asset_ids.has(asset.asset_id) &&
+      asset.status === "ready" &&
+      !is_transcription_running?.(asset.asset_id),
+  );
 
   return (
     <section
@@ -373,6 +385,24 @@ export function LibraryBrowser({
               </ContextMenuItem>
             </ContextMenuGroup>
           )}
+          {!context_folder &&
+          on_transcribe_videos &&
+          selected_asset_ids.size > 0 ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuGroup>
+                <ContextMenuItem
+                  disabled={transcribable_assets.length === 0}
+                  onSelect={() => on_transcribe_videos(transcribable_assets)}
+                >
+                  <AudioLines />
+                  {selected_asset_ids.size > 1
+                    ? `批量转写（${transcribable_assets.length} 个视频）`
+                    : "转写"}
+                </ContextMenuItem>
+              </ContextMenuGroup>
+            </>
+          ) : null}
         </ContextMenuContent>
       </ContextMenu>
 

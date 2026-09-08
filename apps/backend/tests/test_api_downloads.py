@@ -462,7 +462,7 @@ def test_download_history_restores_title_without_exposing_logs_after_restart(
 
 
 @pytest.mark.asyncio
-async def test_initialization_start_failure_does_not_rollback_completed_download(
+async def test_completed_download_does_not_create_analysis_or_transcription(
     monkeypatch,
     tmp_path,
 ):
@@ -487,7 +487,7 @@ async def test_initialization_start_failure_does_not_rollback_completed_download
         return DownloadedMedia(
             metadata=DownloadMetadata(
                 source_video_id="BaW_jenozKc",
-                title="下载完成后初始化",
+                title="下载后等待手动转写",
                 author_name="OpenVideo",
                 description=None,
                 duration_seconds=20,
@@ -506,14 +506,10 @@ async def test_initialization_start_failure_does_not_rollback_completed_download
         lambda *_: MediaProbe(20, 1920, 1080, "h264", "aac"),
     )
 
-    def fail_initialization(_asset_id: str) -> None:
-        raise RuntimeError("模拟后台初始化启动失败")
-
     manager = DownloadManager(
         library,
         settings,
         account_store,
-        on_asset_ready=fail_initialization,
     )
     created = manager.create(
         SourceMatch(
@@ -533,6 +529,9 @@ async def test_initialization_start_failure_does_not_rollback_completed_download
     assert asset is not None
     assert asset.status == MediaAssetStatus.READY
     assert asset.error_message is None
+    assert library.load_analysis_jobs() == []
+    assert library.load_transcript(created.asset_id) is None
+    assert library.load_transcription_metadata(created.asset_id) is None
     library.close()
 
 

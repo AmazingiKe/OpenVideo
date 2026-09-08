@@ -125,7 +125,6 @@ def create_app(
     | None = None,
     capability_resolver: CapabilityResolver | None = None,
     retrieval_models: NeuralRetrievalModels | None = None,
-    automatic_initialization: bool = False,
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
@@ -173,7 +172,6 @@ def create_app(
             opened_library,
             resolved_settings,
             account_store,
-            analysis_manager.initialize_asset if automatic_initialization else None,
         )
         event_analysis_manager = EventAnalysisManager(opened_library, resolved_settings)
         summary_manager = SummaryManager(opened_library, resolved_settings)
@@ -200,8 +198,6 @@ def create_app(
             opened_library.library_path / LEGACY_PAGE_SETTINGS_FILE_NAME,
         )
         analysis_manager.restore()
-        if automatic_initialization:
-            analysis_manager.initialize_ready_assets()
         event_analysis_manager.restore()
         summary_illustration_manager.restore()
         app.state.library = opened_library
@@ -667,5 +663,4 @@ def _validate_online_ai_models(models: list[AiModelConfiguration]) -> None:
 
 app = create_app(
     retrieval_models=NeuralRetrievalModels(),
-    automatic_initialization=True,
 )

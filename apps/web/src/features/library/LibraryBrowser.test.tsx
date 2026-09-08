@@ -79,6 +79,37 @@ describe("LibraryBrowser", () => {
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 
+  it("excludes unfinished and running videos from batch transcription", async () => {
+    vi.mocked(list_assets).mockResolvedValue(ASSETS);
+    const on_transcribe_videos = vi.fn();
+    render_browser({
+      on_transcribe_videos,
+      is_transcription_running: (asset_id) => asset_id === ROOT_ASSET_ID,
+    });
+    const first = await screen.findByRole("button", { name: /未分类访谈/ });
+    fireEvent.keyDown(first, { key: "a", ctrlKey: true });
+    fireEvent.contextMenu(first);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "批量转写（2 个视频）" }),
+    );
+    expect(on_transcribe_videos).toHaveBeenCalledWith([ASSETS[1], ASSETS[2]]);
+  });
+
+  it("starts transcription from the keyboard without also opening the video", async () => {
+    const on_open_video = vi.fn();
+    const on_transcribe_videos = vi.fn();
+    render_browser({ on_open_video, on_transcribe_videos });
+    fireEvent.contextMenu(
+      await screen.findByRole("button", { name: /未分类访谈/ }),
+    );
+    const transcribe = await screen.findByRole("menuitem", {
+      name: "转写",
+    });
+    fireEvent.keyDown(transcribe, { key: "Enter" });
+    expect(on_transcribe_videos).toHaveBeenCalledWith([ASSETS[0]]);
+    expect(on_open_video).not.toHaveBeenCalled();
+  });
+
   it("shows only direct children and restores the current folder after global search", async () => {
     render_browser();
 
@@ -347,8 +378,12 @@ describe("LibraryBrowser", () => {
 
 function render_browser({
   on_open_video = vi.fn(),
+  on_transcribe_videos,
+  is_transcription_running,
 }: {
   on_open_video?: (asset: MediaAsset) => void | Promise<void>;
+  on_transcribe_videos?: (assets: MediaAsset[]) => void;
+  is_transcription_running?: (asset_id: string) => boolean;
 } = {}) {
   const query_client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
@@ -359,6 +394,8 @@ function render_browser({
         <LibraryBrowser
           initial_folder_id={null}
           on_open_video={on_open_video}
+          on_transcribe_videos={on_transcribe_videos}
+          is_transcription_running={is_transcription_running}
         />
       </div>
     </QueryClientProvider>,

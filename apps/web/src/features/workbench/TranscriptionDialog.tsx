@@ -1,5 +1,6 @@
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -38,6 +39,8 @@ type TranscriptionDialogProps = {
   open: boolean;
   on_open_change: (open: boolean) => void;
   asset: MediaAsset | null;
+  asset_count?: number;
+  error?: string | null;
   has_transcript: boolean;
   is_transcribing: boolean;
   on_start_transcription: (options: TranscriptionOptions) => void;
@@ -50,6 +53,8 @@ export function TranscriptionDialog({
   open,
   on_open_change,
   asset,
+  asset_count = 1,
+  error = null,
   has_transcript,
   is_transcribing,
   on_start_transcription,
@@ -71,15 +76,23 @@ export function TranscriptionDialog({
     <Dialog open={open} onOpenChange={on_open_change}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>转录</DialogTitle>
+          <DialogTitle>{asset_count > 1 ? "批量转写" : "转写"}</DialogTitle>
           <DialogDescription>
-            选择本地语音模型，为当前视频生成可编辑字幕。
+            {asset_count > 1
+              ? `为所选 ${asset_count} 个视频生成可编辑字幕，任务会在后台排队执行。`
+              : "选择本地语音模型，为当前视频生成可编辑字幕。"}
           </DialogDescription>
         </DialogHeader>
+        {error ? (
+          <Alert variant="destructive">
+            <AlertTitle>无法读取转写设置</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>状态</span>
           <Badge variant="secondary">
-            {is_transcribing ? "转录中" : has_transcript ? "已完成" : "未开始"}
+            {is_transcribing ? "转写中" : has_transcript ? "已完成" : "未开始"}
           </Badge>
         </div>
         <FieldGroup>
@@ -186,16 +199,18 @@ export function TranscriptionDialog({
           >
             {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
             {is_transcribing
-              ? "转录中…"
-              : has_transcript
-                ? "重新转录"
-                : "生成转录"}
+              ? "转写中…"
+              : asset_count > 1
+                ? `转写 ${asset_count} 个视频`
+                : has_transcript
+                  ? "重新转写"
+                  : "生成转写"}
           </Button>
         )}
         <FieldDescription>
           {has_transcript
-            ? "重新转录会在成功后替换当前文字；失败时保留现有结果。"
-            : "转录生成可编辑文字，完成后可继续修正内容。"}
+            ? "重新转写会在成功后替换当前文字；失败时保留现有结果。"
+            : "已有转写会在成功后替换，失败时保留原结果；完成后可继续修正文字。"}
         </FieldDescription>
       </DialogContent>
     </Dialog>

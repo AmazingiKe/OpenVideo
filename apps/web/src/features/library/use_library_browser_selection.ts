@@ -167,6 +167,8 @@ export function use_library_browser_selection({
 
   function handle_key_down(event: KeyboardEvent<HTMLDivElement>) {
     const target = event.target instanceof Element ? event.target : null;
+    // 浮层通过 Portal 冒泡到浏览器，菜单快捷键不能再次打开所选视频。
+    if (target && !event.currentTarget.contains(target)) return;
     if (target?.matches(SEARCH_INPUT_SELECTOR)) return;
     if (target?.closest("[data-library-drag-handle]")) return;
     const target_item = target?.closest<HTMLElement>(LIBRARY_ITEM_SELECTOR);

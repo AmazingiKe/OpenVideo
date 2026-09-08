@@ -387,11 +387,6 @@ class AnalysisManager:
             self.start(job.job_id)
         return job
 
-    def initialize_ready_assets(self) -> None:
-        for asset in self.library.list():
-            if asset.status == MediaAssetStatus.READY:
-                self.initialize_asset(asset.asset_id)
-
     def start(self, job_id: str) -> None:
         with self._lock:
             current = self._tasks.get(job_id)

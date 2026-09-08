@@ -45,6 +45,7 @@ const meta = {
     current_video_id: STORY_ASSETS[0].asset_id,
     initial_folder_id: null,
     on_open_video: () => undefined,
+    on_transcribe_videos: () => undefined,
   },
   beforeEach() {
     const original_fetch = window.fetch;

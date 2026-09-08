@@ -38,6 +38,29 @@ const ASSET: MediaAsset = {
 };
 
 const select_asset = vi.fn();
+const start_transcription = vi.fn();
+const DEFAULT_TRANSCRIPTION = {
+  engine: "faster-whisper",
+  model: "small",
+  language: "zh",
+  device: "cpu",
+  compute_type: "int8",
+} as const;
+
+vi.mock("@/app/task_manager", () => ({
+  use_task_manager: () => ({
+    start_transcription,
+    is_transcription_running: () => false,
+  }),
+}));
+
+vi.mock("@/features/workbench/use_processing_resources", () => ({
+  use_transcription_resources: () => ({
+    default_transcription: DEFAULT_TRANSCRIPTION,
+    transcription_models: [],
+    error: null,
+  }),
+}));
 
 vi.mock("@/app/asset_catalog", () => ({
   use_asset_catalog: () => ({
@@ -119,6 +142,41 @@ describe("LibraryPage", () => {
 
     expect(await screen.findByText("摘要不可用")).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent("/library");
+    expect(select_asset).not.toHaveBeenCalled();
+  });
+
+  it("only transcribes selected videos after the user starts the batch", async () => {
+    const second_asset = {
+      ...ASSET,
+      asset_id: "asset-019c0000000070008000000000000002",
+      title: "第二个视频",
+    };
+    vi.mocked(list_assets).mockResolvedValue([ASSET, second_asset]);
+    start_transcription.mockResolvedValue({ stage: "complete" });
+    render_page();
+    const first = await screen.findByRole("button", { name: /镜头语言入门/ });
+    fireEvent.click(first);
+    fireEvent.click(screen.getByRole("button", { name: /第二个视频/ }), {
+      ctrlKey: true,
+    });
+    fireEvent.contextMenu(first);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "批量转写（2 个视频）" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "批量转写" }),
+    ).toBeInTheDocument();
+    expect(start_transcription).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "转写 2 个视频" }));
+    await waitFor(() => expect(start_transcription).toHaveBeenCalledTimes(2));
+    expect(start_transcription).toHaveBeenCalledWith(
+      ASSET_ID,
+      DEFAULT_TRANSCRIPTION,
+    );
+    expect(start_transcription).toHaveBeenCalledWith(
+      second_asset.asset_id,
+      DEFAULT_TRANSCRIPTION,
+    );
     expect(select_asset).not.toHaveBeenCalled();
   });
 });

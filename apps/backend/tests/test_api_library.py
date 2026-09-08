@@ -5,10 +5,39 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from openvideo.preferences import PreferenceStore
+from openvideo.core.library import MediaLibrary
+from openvideo.core.media_models import MediaAsset, MediaAssetStatus, SourcePlatform
 from openvideo.settings import PROJECT_ROOT, Settings
 from openvideo.tools.media import MediaProbe
 from openvideo.ui.api import create_app
 from openvideo.ui.directory_picker import DirectoryPickerError
+
+
+def test_opening_library_leaves_untranscribed_videos_for_manual_transcription(
+    tmp_path: Path,
+):
+    library_path = tmp_path / "manual-transcription"
+    library_path.mkdir()
+    library = MediaLibrary.initialize_directory(library_path)
+    asset_id = "019c0000-0000-7000-8000-000000000001"
+    library.save(
+        MediaAsset(
+            asset_id=asset_id,
+            source_url="https://example.com/manual-video",
+            source_platform=SourcePlatform.YOUTUBE,
+            status=MediaAssetStatus.READY,
+        )
+    )
+    library.close()
+    app = create_app(
+        Settings(library_path=library_path),
+        PreferenceStore(tmp_path / "config" / "preferences.json"),
+    )
+    with TestClient(app) as client:
+        assert client.get("/api/media/assets").status_code == 200
+        assert app.state.library.load_analysis_jobs() == []
+        assert app.state.library.load_transcription_metadata(asset_id) is None
+        assert not app.state.analysis_manager.has_active_jobs()
 
 
 def test_library_gate_activate_close_and_reactivate(tmp_path: Path):

@@ -39,7 +39,7 @@ describe("TranscriptionDialog", () => {
   it("shows transcription configuration", () => {
     render_tools();
 
-    expect(screen.getByRole("dialog", { name: "转录" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "转写" })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "字幕修正" }),
     ).not.toBeInTheDocument();
@@ -50,7 +50,7 @@ describe("TranscriptionDialog", () => {
     render_tools({ start_transcription, has_transcript: false });
 
     expect(screen.getByText("Whisper Small")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "生成转录" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
 
     expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
   });
@@ -71,7 +71,7 @@ describe("TranscriptionDialog", () => {
       pointerType: "mouse",
     });
     fireEvent.click(screen.getByRole("option", { name: "自动检测" }));
-    fireEvent.click(screen.getByRole("button", { name: "生成转录" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
 
     expect(start_transcription).toHaveBeenCalledWith({
       ...DEFAULT_TRANSCRIPTION,
@@ -83,11 +83,11 @@ describe("TranscriptionDialog", () => {
     const start_transcription = vi.fn();
     render_tools({ start_transcription });
 
-    fireEvent.click(screen.getByRole("button", { name: "重新转录" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新转写" }));
 
     expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
     expect(
-      screen.getByText("重新转录会在成功后替换当前文字；失败时保留现有结果。"),
+      screen.getByText("重新转写会在成功后替换当前文字；失败时保留现有结果。"),
     ).toBeInTheDocument();
   });
 
@@ -104,7 +104,7 @@ describe("TranscriptionDialog", () => {
 
     expect(screen.getByRole("button", { name: "下载并使用" })).toBeEnabled();
     expect(
-      screen.queryByRole("button", { name: "生成转录" }),
+      screen.queryByRole("button", { name: "生成转写" }),
     ).not.toBeInTheDocument();
   });
 });

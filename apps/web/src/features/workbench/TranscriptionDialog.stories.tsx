@@ -102,6 +102,8 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
 
+export const Batch: Story = { args: { asset_count: 3, has_transcript: false } };
+
 export const Transcribing: Story = {
   args: { is_transcribing: true },
 };
