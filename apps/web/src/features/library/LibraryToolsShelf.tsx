@@ -1,4 +1,11 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, FolderInput, KeyRound, Wrench } from "lucide-react";
 
@@ -6,6 +13,7 @@ import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { use_task_manager } from "@/app/task_manager";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { TaskSubmissionFeedback } from "@/components/TaskSubmissionFeedback";
 import {
   Dialog,
   DialogContent,
@@ -83,6 +91,16 @@ export function LibraryToolsShelf() {
   const [is_submitting, set_is_submitting] = useState(false);
   const [page_error, set_page_error] = useState<string | null>(null);
   const [active_tool, set_active_tool] = useState<LibraryTool | null>(null);
+  const [submission_origin, set_submission_origin] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [download_notice, set_download_notice] = useState("");
+  const download_trigger_ref = useRef<HTMLButtonElement>(null);
+  const clear_submission_feedback = useCallback(
+    () => set_submission_origin(null),
+    [],
+  );
   const [account_loading_platform, set_account_loading_platform] =
     useState<SourcePlatform | null>(null);
   const [account_errors, set_account_errors] = useState<
@@ -143,7 +161,14 @@ export function LibraryToolsShelf() {
     }
   }
 
-  async function start_selected_downloads() {
+  async function start_selected_downloads(
+    event: MouseEvent<HTMLButtonElement>,
+  ) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const origin = {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    };
     const urls = [...selected_urls];
     if (urls.length === 0) {
       set_page_error("请至少选择一个视频");
@@ -156,7 +181,7 @@ export function LibraryToolsShelf() {
         target_folder_id === undefined && probe_result?.is_playlist
           ? probe_result.title
           : null;
-      const final_jobs = await start_downloads(urls, {
+      const jobs = await start_downloads(urls, {
         video_quality,
         folder_id: target_folder_id ?? null,
         automatic_folder_name,
@@ -165,12 +190,12 @@ export function LibraryToolsShelf() {
       });
       set_probe_result(null);
       set_selected_urls(new Set());
-      if (final_jobs.some((job) => job.stage === "complete"))
-        set_source_url("");
-      const failed_job = final_jobs.find((job) => job.stage === "failed");
-      if (failed_job)
-        set_page_error(failed_job.error_message ?? "部分视频下载失败");
-      if (failed_job) await refresh_download_accounts();
+      set_source_url("");
+      set_active_tool((current) => (current === "download" ? null : current));
+      set_submission_origin(origin);
+      set_download_notice(
+        `已添加 ${jobs.length} 个下载任务，可在右上角任务中心查看进度。`,
+      );
     } catch (error) {
       if (!is_abort_error(error)) set_page_error(error_message(error));
     } finally {
@@ -378,6 +403,7 @@ export function LibraryToolsShelf() {
           工具
         </span>
         <Button
+          ref={download_trigger_ref}
           type="button"
           size="icon-sm"
           variant="outline"
@@ -412,11 +438,17 @@ export function LibraryToolsShelf() {
       <Dialog
         open={active_tool === "download"}
         onOpenChange={(open) => {
-          if (!open && !is_submitting) set_active_tool(null);
+          if (!open) set_active_tool(null);
         }}
       >
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-5xl">
-          <DialogHeader>
+        <DialogContent
+          className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] flex-col overflow-hidden sm:max-w-5xl"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            download_trigger_ref.current?.focus();
+          }}
+        >
+          <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>解析下载</DialogTitle>
             <DialogDescription>
               解析视频或播放列表，选择内容后加入后台下载队列。
@@ -442,10 +474,20 @@ export function LibraryToolsShelf() {
             on_replace_selection={(urls) => set_selected_urls(new Set(urls))}
             on_target_folder_change={set_target_folder_id}
             on_video_quality_change={set_video_quality}
-            on_start_download={() => void start_selected_downloads()}
+            on_start_download={(event) => void start_selected_downloads(event)}
           />
         </DialogContent>
       </Dialog>
+
+      <p className="sr-only" role="status">
+        {download_notice}
+      </p>
+      {submission_origin ? (
+        <TaskSubmissionFeedback
+          origin={submission_origin}
+          on_complete={clear_submission_feedback}
+        />
+      ) : null}
 
       <Dialog
         open={active_tool === "accounts"}

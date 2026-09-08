@@ -22,6 +22,7 @@ import {
 } from "@/shared/api";
 import { poll_transcription_job } from "@/shared/poll_transcription_job";
 import { poll_download } from "@/shared/poll_download";
+import { error_message, is_abort_error } from "@/shared/errors";
 import type {
   AnalysisJob,
   AgentIndexStatus,
@@ -60,8 +61,7 @@ const TaskManagerContext = createContext<TaskManager | null>(null);
 
 export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const query_client = useQueryClient();
-  const { refresh_assets, select_asset, selected_asset_id } =
-    use_asset_catalog();
+  const { assets, selected_asset_id } = use_asset_catalog();
   const [task_records, set_task_records] = useState<TaskRecord[]>([]);
   const [index_status, set_index_status] = useState<AgentIndexStatus | null>(
     null,
@@ -69,17 +69,24 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const [active_transcriptions, set_active_transcriptions] = useState<
     Set<string>
   >(new Set());
-  const download_controller_ref = useRef<AbortController | null>(null);
-  const transcription_controller_ref = useRef<AbortController | null>(null);
+  const download_controllers = useRef(new Map<string, AbortController>());
+  const download_requests = useRef(new Set<AbortController>());
+  const transcription_controllers = useRef(new Map<string, AbortController>());
   const previous_index_status_ref = useRef<AgentIndexStatus | null>(null);
 
-  useEffect(
-    () => () => {
-      download_controller_ref.current?.abort();
-      transcription_controller_ref.current?.abort();
-    },
-    [],
-  );
+  useEffect(() => {
+    const downloads = download_controllers.current;
+    const requests = download_requests.current;
+    const transcriptions = transcription_controllers.current;
+    return () => {
+      downloads.forEach((controller) => controller.abort());
+      requests.forEach((controller) => controller.abort());
+      transcriptions.forEach((controller) => controller.abort());
+      downloads.clear();
+      requests.clear();
+      transcriptions.clear();
+    };
+  }, []);
 
   const record_task = useCallback((task: TaskRecord) => {
     set_task_records((current) => merge_task_record(current, task));
@@ -111,10 +118,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         progress_percent: job.progress_percent,
         error_message: job.error_message,
         created_at: job.created_at,
-        name: "素材转录",
+        name:
+          assets.find((asset) => asset.asset_id === job.asset_id)?.title ??
+          "素材转写",
       });
     },
-    [record_task],
+    [assets, record_task],
   );
 
   const record_agent_tasks = useCallback((snapshots: AgentTaskSnapshot[]) => {
@@ -126,18 +135,6 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       ),
     );
   }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    try {
-      void list_downloads(INITIAL_DOWNLOAD_TASK_LIMIT, controller.signal)
-        .then((jobs) => jobs.forEach(record_download_job))
-        .catch(() => undefined);
-    } catch {
-      // 测试或离线壳层未提供历史端点时，实时任务仍可正常工作。
-    }
-    return () => controller.abort();
-  }, [record_download_job]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -203,64 +200,93 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   }, [query_client, record_task, selected_asset_id]);
 
   const track_download_jobs = useCallback(
-    async (jobs: DownloadJob[], controller: AbortController) => {
-      jobs.forEach(record_download_job);
-      const final_jobs = await Promise.all(
-        jobs.map((job) =>
-          TERMINAL_DOWNLOAD_STAGES.has(job.stage)
-            ? Promise.resolve(job)
-            : poll_download(job, record_download_job, controller.signal),
-        ),
-      );
-      final_jobs.forEach(record_download_job);
-      const completed_jobs = final_jobs.filter(
-        (job) => job.stage === "complete",
-      );
-      if (completed_jobs.length > 0) {
-        await refresh_assets(controller.signal);
-        select_asset(completed_jobs.at(-1)?.asset_id ?? null);
+    (jobs: DownloadJob[]) => {
+      for (const job of jobs) {
+        record_download_job(job);
+        if (
+          TERMINAL_DOWNLOAD_STAGES.has(job.stage) ||
+          download_controllers.current.has(job.job_id)
+        )
+          continue;
+        const controller = new AbortController();
+        download_controllers.current.set(job.job_id, controller);
+        void poll_download(job, record_download_job, controller.signal)
+          .then(() =>
+            Promise.all([
+              query_client.invalidateQueries({
+                queryKey: RESOURCE_QUERY_KEYS.assets,
+              }),
+              query_client.invalidateQueries({
+                queryKey: RESOURCE_QUERY_KEYS.library_folders,
+              }),
+            ]),
+          )
+          .catch((error: unknown) => {
+            if (!is_abort_error(error)) {
+              set_task_records((current) =>
+                current.map((task) =>
+                  task.task_id === job.job_id
+                    ? {
+                        ...task,
+                        stage: "interrupted",
+                        message: "下载进度同步中断，重新打开应用可恢复查看",
+                        error_message: error_message(error),
+                      }
+                    : task,
+                ),
+              );
+            }
+          })
+          .finally(() => {
+            if (download_controllers.current.get(job.job_id) === controller)
+              download_controllers.current.delete(job.job_id);
+          });
       }
-      return final_jobs;
     },
-    [record_download_job, refresh_assets, select_asset],
+    [query_client, record_download_job],
   );
 
-  const with_download_controller = useCallback(
-    async <Result,>(
-      operation: (controller: AbortController) => Promise<Result>,
-    ) => {
-      download_controller_ref.current?.abort();
-      const controller = new AbortController();
-      download_controller_ref.current = controller;
-      try {
-        return await operation(controller);
-      } finally {
-        if (download_controller_ref.current === controller) {
-          download_controller_ref.current = null;
-        }
-      }
-    },
-    [],
-  );
+  useEffect(() => {
+    const controller = new AbortController();
+    void list_downloads(INITIAL_DOWNLOAD_TASK_LIMIT, controller.signal)
+      .then((jobs) => {
+        if (!controller.signal.aborted) track_download_jobs(jobs);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [track_download_jobs]);
 
   const start_downloads = useCallback(
-    (urls: string[], destination?: DownloadDestination) =>
-      with_download_controller(async (controller) => {
+    async (urls: string[], destination?: DownloadDestination) => {
+      const controller = new AbortController();
+      download_requests.current.add(controller);
+      try {
         const jobs = await create_download(
           urls,
           controller.signal,
           destination,
         );
-        return track_download_jobs(jobs, controller);
-      }),
-    [track_download_jobs, with_download_controller],
+        track_download_jobs(jobs);
+        void query_client.invalidateQueries({
+          queryKey: RESOURCE_QUERY_KEYS.assets,
+        });
+        void query_client.invalidateQueries({
+          queryKey: RESOURCE_QUERY_KEYS.library_folders,
+        });
+        return jobs;
+      } finally {
+        download_requests.current.delete(controller);
+      }
+    },
+    [query_client, track_download_jobs],
   );
 
   const start_transcription = useCallback(
     async (asset_id: string, options: TranscriptionOptions) => {
-      transcription_controller_ref.current?.abort();
+      if (transcription_controllers.current.has(asset_id))
+        throw new Error("该视频已在转写队列中");
       const controller = new AbortController();
-      transcription_controller_ref.current = controller;
+      transcription_controllers.current.set(asset_id, controller);
       set_active_transcriptions((current) => new Set(current).add(asset_id));
       try {
         const job = await transcribe_asset(
@@ -280,6 +306,9 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         if (final_job.stage === "failed") {
           throw new Error(final_job.error_message ?? "转录失败");
         }
+        await query_client.invalidateQueries({
+          queryKey: RESOURCE_QUERY_KEYS.asset_analysis(asset_id),
+        });
         return final_job;
       } finally {
         set_active_transcriptions((current) => {
@@ -287,12 +316,10 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
           next.delete(asset_id);
           return next;
         });
-        if (transcription_controller_ref.current === controller) {
-          transcription_controller_ref.current = null;
-        }
+        transcription_controllers.current.delete(asset_id);
       }
     },
-    [record_transcription_job],
+    [query_client, record_transcription_job],
   );
 
   const retry_agent_task = useCallback(

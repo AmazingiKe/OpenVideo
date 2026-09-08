@@ -29,6 +29,12 @@ export const ASSISTANT_CONTENT_TRANSITION: Transition = {
   ease: MOTION_EASE_ENTER,
 };
 
+export const TASK_SUBMISSION_TRANSITION: Transition = {
+  duration: 0.64,
+  ease: MOTION_EASE_ENTER,
+};
+export const TASK_SUBMISSION_END_SCALE = 0.5;
+
 export const DIALOG_ENTER_SCALE = 0.98;
 export const DIALOG_ENTER_OFFSET_PX = 8;
 export const SHEET_ENTER_OFFSET_PX = 32;

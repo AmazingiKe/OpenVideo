@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type MouseEvent, useState } from "react";
 import {
   CheckCircle2,
   Download,
@@ -79,7 +79,7 @@ type DownloadSelectionProps = {
   on_replace_selection: (urls: string[]) => void;
   on_target_folder_change: (folder_id: DownloadFolderSelection) => void;
   on_video_quality_change: (quality: DownloadQuality) => void;
-  on_start_download: () => void;
+  on_start_download: (event: MouseEvent<HTMLButtonElement>) => void;
 };
 
 export function DownloadSelection({
@@ -251,9 +251,7 @@ export function DownloadSelection({
             />
           )}
         </section>
-      </CardContent>
-      <CardFooter className="flex-col items-stretch gap-4 lg:flex-row lg:items-end">
-        <FieldGroup className="grid flex-1 gap-4 sm:grid-cols-2">
+        <FieldGroup className="mt-4 grid gap-4 sm:grid-cols-2">
           <Field>
             <FieldLabel htmlFor="download_target_folder">目标文件夹</FieldLabel>
             <Select
@@ -322,6 +320,9 @@ export function DownloadSelection({
             </FieldDescription>
           </Field>
         </FieldGroup>
+      </CardContent>
+      <CardFooter className="sticky bottom-0 flex-wrap justify-between gap-2 bg-card">
+        <span className="text-xs text-muted-foreground">下载后可手动转写</span>
         <Button
           className="shrink-0"
           type="button"

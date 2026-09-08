@@ -9,6 +9,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { TASK_CENTER_TRIGGER_ID } from "@/components/TaskSubmissionFeedback";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -70,6 +71,7 @@ export function TaskCenter({ tasks, on_retry }: TaskCenterProps) {
     <Popover>
       <PopoverTrigger asChild>
         <Button
+          id={TASK_CENTER_TRIGGER_ID}
           type="button"
           variant="ghost"
           size="icon"
@@ -94,6 +96,7 @@ export function TaskCenter({ tasks, on_retry }: TaskCenterProps) {
       </PopoverTrigger>
       <PopoverContent
         align="end"
+        aria-label="任务中心"
         className="w-80 max-w-[var(--radix-popover-content-available-width)]"
       >
         <PopoverHeader className="px-1">

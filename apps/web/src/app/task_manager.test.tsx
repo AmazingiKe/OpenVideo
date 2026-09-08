@@ -2,11 +2,17 @@ import {
   act,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
 } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetCatalogProvider } from "@/app/asset_catalog";
@@ -22,6 +28,8 @@ import {
   list_agent_tasks,
   list_assets,
   list_downloads,
+  transcribe_asset,
+  get_analysis,
   retry_agent_run,
 } from "@/shared/api";
 import type {
@@ -29,6 +37,7 @@ import type {
   AgentRun,
   AgentTaskSnapshot,
   DownloadJob,
+  AnalysisJob,
 } from "@/shared/types";
 
 vi.mock("@/shared/api", () => ({
@@ -92,7 +101,8 @@ describe("TaskManagerProvider", () => {
     await act(async () => vi.advanceTimersByTimeAsync(1000));
 
     expect(get_download).toHaveBeenCalledOnce();
-    expect(list_assets).toHaveBeenCalledOnce();
+    // 离开素材页面后只使缓存过期，下次进入视频库时再读取。
+    expect(list_assets).not.toHaveBeenCalled();
     expect(screen.getByText("complete")).toBeInTheDocument();
   });
 
@@ -117,6 +127,129 @@ describe("TaskManagerProvider", () => {
       await screen.findByText("Blender 角色绑定完整教程"),
     ).toBeInTheDocument();
     expect(list_downloads).toHaveBeenCalledWith(50, expect.any(AbortSignal));
+  });
+
+  it("returns queued downloads immediately and refreshes each completion without cancelling another batch", async () => {
+    vi.useFakeTimers();
+    vi.mocked(list_downloads).mockResolvedValue([]);
+    const first_job = download_job("downloading");
+    const second_job = {
+      ...first_job,
+      job_id: "job-019c0000000070008000000000000002",
+      asset_id: "asset-019c0000000070008000000000000002",
+    };
+    vi.mocked(create_download)
+      .mockResolvedValueOnce([first_job])
+      .mockResolvedValueOnce([second_job]);
+    vi.mocked(get_download).mockImplementation(async (job_id) =>
+      job_id === first_job.job_id
+        ? { ...first_job, stage: "complete" }
+        : second_job,
+    );
+    const query_client = new QueryClient();
+    const refresh = vi.spyOn(query_client, "invalidateQueries");
+    const { result } = render_task_manager(query_client);
+    await act(async () => {
+      expect(
+        await result.current.start_downloads(["https://example.com/first"]),
+      ).toEqual([first_job]);
+      expect(
+        await result.current.start_downloads(["https://example.com/second"]),
+      ).toEqual([second_job]);
+    });
+    refresh.mockClear();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(get_download).toHaveBeenCalledTimes(2);
+    for (const [, signal] of vi.mocked(get_download).mock.calls)
+      expect(signal?.aborted).toBe(false);
+    expect(refresh).toHaveBeenCalledWith({
+      queryKey: RESOURCE_QUERY_KEYS.assets,
+    });
+    expect(refresh).toHaveBeenCalledWith({
+      queryKey: RESOURCE_QUERY_KEYS.library_folders,
+    });
+    expect(
+      result.current.task_records.find(
+        (task) => task.task_id === first_job.job_id,
+      )?.stage,
+    ).toBe("complete");
+    expect(
+      result.current.task_records.find(
+        (task) => task.task_id === second_job.job_id,
+      )?.stage,
+    ).toBe("downloading");
+  });
+
+  it("resumes polling unfinished downloads from history", async () => {
+    vi.useFakeTimers();
+    vi.mocked(list_downloads).mockResolvedValue([download_job("downloading")]);
+    vi.mocked(get_download).mockResolvedValue(download_job("complete"));
+    const { result } = render_task_manager();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(get_download).toHaveBeenCalledOnce();
+    expect(
+      result.current.task_records.some(
+        (task) => task.task_type === "download" && task.stage === "complete",
+      ),
+    ).toBe(true);
+  });
+
+  it("tracks multiple transcriptions independently and refreshes their results", async () => {
+    vi.useFakeTimers();
+    vi.mocked(list_downloads).mockResolvedValue([]);
+    const options = {
+      engine: "faster-whisper",
+      model: "small",
+      language: null,
+      device: "cpu",
+      compute_type: "int8",
+    } as const;
+    const jobs = ["asset-first", "asset-second"].map(
+      (asset_id, index) =>
+        ({
+          job_id: `job-${index}`,
+          asset_id,
+          stage: "pending",
+          progress_percent: 0,
+          message: "等待转写",
+          created_at: "2026-01-01T00:00:00Z",
+        }) as AnalysisJob,
+    );
+    vi.mocked(transcribe_asset).mockImplementation(async (asset_id) =>
+      jobs.find((job) => job.asset_id === asset_id)!,
+    );
+    vi.mocked(get_analysis).mockImplementation(async (job_id) => ({
+      ...jobs.find((job) => job.job_id === job_id)!,
+      stage: "complete",
+    }));
+    const query_client = new QueryClient();
+    const refresh = vi.spyOn(query_client, "invalidateQueries");
+    const { result } = render_task_manager(query_client);
+    let pending: Promise<AnalysisJob[]>;
+    await act(async () => {
+      pending = Promise.all(
+        jobs.map((job) =>
+          result.current.start_transcription(job.asset_id, options),
+        ),
+      );
+    });
+    expect(
+      jobs.every((job) =>
+        result.current.is_transcription_running(job.asset_id),
+      ),
+    ).toBe(true);
+    for (const [, , signal] of vi.mocked(transcribe_asset).mock.calls)
+      expect(signal?.aborted).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      await pending;
+    });
+    for (const job of jobs) {
+      expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+      expect(refresh).toHaveBeenCalledWith({
+        queryKey: RESOURCE_QUERY_KEYS.asset_analysis(job.asset_id),
+      });
+    }
   });
 
   it("loads global agent tasks and retries an interrupted run", async () => {
@@ -221,6 +354,20 @@ describe("TaskManagerProvider", () => {
     expect(load_analysis_resource).toHaveBeenCalledTimes(2);
   });
 });
+
+function render_task_manager(query_client = new QueryClient()) {
+  return renderHook(use_task_manager, {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <MemoryRouter>
+        <QueryClientProvider client={query_client}>
+          <AssetCatalogProvider>
+            <TaskManagerProvider>{children}</TaskManagerProvider>
+          </AssetCatalogProvider>
+        </QueryClientProvider>
+      </MemoryRouter>
+    ),
+  });
+}
 
 function TaskStarter() {
   const { start_downloads } = use_task_manager();

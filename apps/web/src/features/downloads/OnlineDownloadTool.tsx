@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type MouseEvent, useEffect, useState } from "react";
 import { CircleAlert, Link2, Search } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -46,7 +46,7 @@ type OnlineDownloadToolProps = {
   on_replace_selection: (urls: string[]) => void;
   on_target_folder_change: (folder_id: DownloadFolderSelection) => void;
   on_video_quality_change: (quality: DownloadQuality) => void;
-  on_start_download: () => void;
+  on_start_download: (event: MouseEvent<HTMLButtonElement>) => void;
 };
 
 export function OnlineDownloadTool({
@@ -90,7 +90,7 @@ export function OnlineDownloadTool({
     ) ?? null;
 
   return (
-    <Card>
+    <Card className="min-h-0 overflow-y-auto overscroll-contain [&>*]:shrink-0">
       <CardHeader className="border-b">
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-lg bg-primary-muted text-primary">

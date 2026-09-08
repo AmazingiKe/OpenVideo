@@ -43,6 +43,7 @@ import {
   update_markers_page_settings,
 } from "./shared/api";
 import type {
+  DownloadJob,
   DownloadAccountLoginSession,
   MediaAsset,
   ProbeResponse,
@@ -67,6 +68,7 @@ vi.mock("./shared/api", () => ({
   get_formula_model: vi.fn(),
   get_formula_model_download: vi.fn(),
   get_download_accounts: vi.fn(),
+  get_download: vi.fn(() => new Promise(() => undefined)),
   get_download_account_login_session: vi.fn(),
   get_markers_page_settings: vi.fn(),
   get_library: vi.fn(),
@@ -963,6 +965,82 @@ describe("App", () => {
       ).toHaveAttribute("aria-current", "page");
     });
   });
+
+  it.each([false, true])(
+    "allows closing the download dialog while tasks are submitted or running (close early: %s)",
+    async (close_early) => {
+      vi.mocked(get_health).mockResolvedValue({
+        status: "ready",
+        dependencies: { yt_dlp: true, ffmpeg: true, ffprobe: true },
+      });
+      const source_url = "https://www.bilibili.com/video/BV1xx411c7mD";
+      vi.mocked(probe_source).mockResolvedValue({
+        platform: "bilibili",
+        is_playlist: false,
+        title: "下载测试视频",
+        total_count: 1,
+        truncated: false,
+        entries: [
+          {
+            source_video_id: "BV1xx411c7mD",
+            url: source_url,
+            title: "下载测试视频",
+            duration_seconds: 20,
+            uploader: null,
+          },
+        ],
+      });
+      let accept_download!: (jobs: DownloadJob[]) => void;
+      vi.mocked(create_download).mockReturnValue(
+        new Promise((resolve) => {
+          accept_download = resolve;
+        }),
+      );
+      render(<App />);
+      await open_download_tool();
+      fireEvent.change(await screen.findByLabelText("视频或播放列表地址"), {
+        target: { value: source_url },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "解析链接" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "下载 1 个视频" }),
+      );
+      const dialog = screen.getByRole("dialog", { name: "解析下载" });
+      if (close_early) {
+        fireEvent.click(screen.getByRole("button", { name: "Close" }));
+        await waitForElementToBeRemoved(dialog);
+      }
+      accept_download([
+        {
+          job_id: "job-019c0000000070008000000000000001",
+          asset_id: ASSET_ID,
+          video_quality: "best",
+          stage: "downloading",
+          name: "下载测试视频",
+          progress_percent: 10,
+          message: "正在下载视频",
+          error_message: null,
+          created_at: "2026-09-08T00:00:00Z",
+          updated_at: "2026-09-08T00:00:00Z",
+        },
+      ]);
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "解析下载" }),
+        ).not.toBeInTheDocument(),
+      );
+      expect(
+        await screen.findByRole("button", { name: "任务中心，1 个进行中" }),
+      ).toBeInTheDocument();
+      await open_download_tool();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "解析下载" }),
+        ).not.toBeInTheDocument(),
+      );
+    },
+  );
 
   it("preserves workspace input while switching modules", async () => {
     vi.mocked(get_health).mockResolvedValue({
