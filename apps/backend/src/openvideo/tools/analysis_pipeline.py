@@ -76,6 +76,9 @@ def build_segments(
         transcript.segments,
         chapter_model,
         scene_boundaries=scene_boundaries,
+        on_progress=lambda message: progress_callback(
+            AnalysisStage.BUILDING_TIMELINE, 70, message
+        ),
     )
     if chapter_model is not None and semantic_chapters and (describer or ocr_reader):
         progress_callback(
@@ -97,6 +100,9 @@ def build_segments(
                 transcript.segments,
                 chapter_model,
                 visual_evidence=visual_evidence,
+                on_progress=lambda message: progress_callback(
+                    AnalysisStage.BUILDING_TIMELINE, 72, message
+                ),
             )
     moments = (
         select_timeline_moments(
@@ -250,7 +256,12 @@ def _build_segment(
     title = moment.title or _event_title(moment)
     summary = (
         summarize_chapter(
-            chapter_model, title, moment.transcript_text, ocr_text, visual_description
+            chapter_model,
+            title,
+            moment.transcript_text,
+            ocr_text,
+            visual_description,
+            moment.content_summary,
         )
         if chapter_model is not None
         else visual_description

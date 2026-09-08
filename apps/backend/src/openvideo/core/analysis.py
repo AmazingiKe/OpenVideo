@@ -67,6 +67,7 @@ class TimelineMoment:
     detailed: bool = True
     marker_weight: float = 0
     marker_influences: tuple[MarkerInfluence, ...] = ()
+    content_summary: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class SemanticChapter:
     start_index: int
     end_index: int
     title: str = ""
+    content_summary: str = ""
 
 
 def select_timeline_moments(
@@ -200,6 +202,7 @@ def _full_timeline_moments(
                 segments[chapter.start_index : chapter.end_index + 1]
             ),
             title=chapter.title,
+            content_summary=chapter.content_summary,
         )
         for chapter in chapters
     ]
