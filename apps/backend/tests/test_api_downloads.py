@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import asyncio
 import pytest
 import time
 from threading import Event
@@ -6,6 +7,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 from openvideo.core.download_models import DownloadStage
+from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAssetStatus, SourcePlatform
 from openvideo import download_manager
@@ -41,6 +43,168 @@ class MemoryDownloadAccountSecretStore:
 
     def delete(self, account_id: str) -> None:
         self.secrets.pop(account_id, None)
+
+
+def test_optimistic_download_ids_are_idempotent_and_paused_tasks_survive_restart(
+    monkeypatch, tmp_path
+):
+    started_jobs = []
+    monkeypatch.setattr(
+        DownloadManager, "start", lambda _self, job_id: started_jobs.append(job_id)
+    )
+    settings = Settings(library_path=tmp_path)
+    job_id = f"job-{uuid7().hex}"
+    request = {
+        "source_urls": ["https://www.youtube.com/watch?v=BaW_jenozKc"],
+        "job_ids": [job_id],
+    }
+    with TestClient(api.create_app(settings)) as client:
+        first = client.post("/api/downloads", json=request)
+        second = client.post("/api/downloads", json=request)
+        assert first.status_code == second.status_code == 202
+        assert first.json()[0]["job_id"] == second.json()[0]["job_id"] == job_id
+        asset_id = first.json()[0]["asset_id"]
+        assert len(client.get("/api/downloads").json()) == 1
+        assert client.delete(f"/api/downloads/{job_id}").status_code == 409
+        paused = client.post(f"/api/downloads/{job_id}/pause")
+        assert paused.status_code == 200
+        assert paused.json()["stage"] == "paused"
+    with TestClient(api.create_app(settings)) as client:
+        assert client.get(f"/api/downloads/{job_id}").json()["stage"] == "paused"
+        resumed = client.post(f"/api/downloads/{job_id}/resume")
+        assert resumed.status_code == 200
+        assert resumed.json()["stage"] == "pending"
+        assert resumed.json()["asset_id"] == asset_id
+        assert client.post(f"/api/downloads/{job_id}/resume").status_code == 409
+        assert client.post(f"/api/downloads/{job_id}/pause").json()["stage"] == "paused"
+        assert client.delete(f"/api/downloads/{job_id}").status_code == 204
+        assert client.delete(f"/api/downloads/{job_id}").status_code == 204
+        assert client.get(f"/api/downloads/{job_id}").status_code == 404
+        assert any(
+            asset["asset_id"] == asset_id
+            for asset in client.get("/api/media/assets").json()
+        )
+
+
+@pytest.mark.parametrize(
+    "job_ids", [["job-invalid"], [], [f"job-{uuid7().hex}", f"job-{uuid7().hex}"]]
+)
+def test_invalid_optimistic_download_identifiers_do_not_create_tasks(tmp_path, job_ids):
+    with TestClient(api.create_app(Settings(library_path=tmp_path))) as client:
+        response = client.post(
+            "/api/downloads",
+            json={
+                "source_urls": ["https://www.youtube.com/watch?v=BaW_jenozKc"],
+                "job_ids": job_ids,
+            },
+        )
+        assert response.status_code == 422
+        assert client.get("/api/downloads").json() == []
+
+
+def test_failed_download_can_restart_in_place_then_delete_only_its_record(
+    monkeypatch, tmp_path
+):
+    failed = Event()
+    attempts = []
+
+    def fail_download(*_args, **_options):
+        attempts.append(True)
+        failed.set()
+        raise DownloadFailure("网络连接中断")
+
+    monkeypatch.setattr(download_manager, "download_video", fail_download)
+    with TestClient(api.create_app(Settings(library_path=tmp_path))) as client:
+        response = client.post(
+            "/api/downloads",
+            json={"source_urls": ["https://www.youtube.com/watch?v=BaW_jenozKc"]},
+        )
+        job_id = response.json()[0]["job_id"]
+        asset_id = response.json()[0]["asset_id"]
+        for attempt in range(2):
+            assert failed.wait(timeout=5)
+            for _ in range(100):
+                if client.get(f"/api/downloads/{job_id}").json()["stage"] == "failed":
+                    break
+                time.sleep(0.01)
+            assert client.get(f"/api/downloads/{job_id}").json()["stage"] == "failed"
+            if attempt == 0:
+                failed.clear()
+                assert client.post(f"/api/downloads/{job_id}/resume").status_code == 200
+        assert len(attempts) == 2
+        assert len(client.get("/api/downloads").json()) == 1
+        assert client.delete(f"/api/downloads/{job_id}").status_code == 204
+        assert any(
+            asset["asset_id"] == asset_id
+            for asset in client.get("/api/media/assets").json()
+        )
+
+
+@pytest.mark.asyncio
+async def test_pausing_running_and_queued_downloads_keeps_partials_and_releases_workers(
+    monkeypatch, tmp_path
+):
+    library_path = tmp_path / "library"
+    library_path.mkdir()
+    library = MediaLibrary.initialize_directory(library_path)
+    manager = DownloadManager(
+        library,
+        Settings(library_path=library_path),
+        DownloadAccountStore(tmp_path / "config", MemoryDownloadAccountSecretStore()),
+    )
+    started = Event()
+    attempts = []
+
+    def download_until_paused(*_args, control, staging_directory, **_options):
+        partial_file = staging_directory / "download.mp4.part"
+        if attempts:
+            assert partial_file.read_bytes() == b"partial"
+        else:
+            partial_file.write_bytes(b"partial")
+        attempts.append(True)
+        started.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            control.checkpoint()
+            time.sleep(0.01)
+        raise DownloadFailure("未收到暂停请求")
+
+    monkeypatch.setattr(download_manager, "download_video", download_until_paused)
+    source = SourceMatch(
+        platform=SourcePlatform.YOUTUBE,
+        normalized_url="https://www.youtube.com/watch?v=BaW_jenozKc",
+        source_video_id="BaW_jenozKc",
+        is_playlist=False,
+    )
+    job = manager.create(source)
+    manager.start(job.job_id)
+    for attempt in range(2):
+        assert await asyncio.to_thread(started.wait, 5)
+        assert manager.has_active_jobs()
+        with pytest.raises(ValueError):
+            manager.delete(job.job_id)
+        paused = await manager.pause(job.job_id)
+        assert paused.stage == DownloadStage.PAUSED
+        assert not manager.has_active_jobs()
+        assert job.job_id not in manager._tasks
+        assert library.get(job.asset_id).error_message is None
+        if attempt == 0:
+            started.clear()
+            manager.resume(job.job_id)
+    assert len(attempts) == 2
+    manager.delete(job.job_id)
+    assert library.get(job.asset_id) is not None
+    assert (
+        library.download_temporary_directory(job.asset_id) / "download.mp4.part"
+    ).read_bytes() == b"partial"
+
+    queued = manager.create(source)
+    manager._download_slots = asyncio.Semaphore(0)
+    manager.start(queued.job_id)
+    assert (await manager.pause(queued.job_id)).stage == DownloadStage.PAUSED
+    assert len(attempts) == 2
+    assert not manager.has_active_jobs()
+    library.close()
 
 
 def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):

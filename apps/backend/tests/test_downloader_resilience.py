@@ -1,4 +1,9 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+import sys
+import subprocess
+from unittest.mock import Mock
 
 import pytest
 
@@ -16,6 +21,54 @@ from openvideo.tools.downloader import (
 
 
 SOURCE_URL = "https://www.youtube.com/watch?v=BaW_jenozKc"
+
+
+def test_process_stop_failure_is_not_reported_as_successful_pause(monkeypatch):
+    control = downloader.DownloadControl()
+    control.stop()
+    process = Mock()
+    process.poll.return_value = None
+    monkeypatch.setattr(
+        control, "stop", Mock(side_effect=subprocess.TimeoutExpired("taskkill", 10))
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        with control.track(process):
+            pytest.fail("仍在运行的进程不应进入已暂停状态")
+    assert control._process is process
+
+
+@pytest.mark.parametrize("pause_before_launch", [False, True])
+def test_pause_stops_actual_process_and_preserves_partial_files(
+    tmp_path, pause_before_launch
+):
+    partial_file = tmp_path / "download.mp4.part"
+    partial_file.write_bytes(b"partial")
+    started = Event()
+    control = downloader.DownloadControl()
+    command = [
+        sys.executable,
+        "-c",
+        "import time; print('openvideo-progress:1%|1MiB/s|60', flush=True); time.sleep(60)",
+    ]
+    if pause_before_launch:
+        control.stop()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        running = executor.submit(
+            downloader._run_download,
+            command,
+            tmp_path,
+            lambda *_: started.set(),
+            control,
+        )
+        try:
+            if not pause_before_launch:
+                assert started.wait(timeout=5)
+                control.stop()
+            with pytest.raises(downloader.DownloadPaused):
+                running.result(timeout=5)
+        finally:
+            control.stop()
+    assert partial_file.read_bytes() == b"partial"
 
 
 def test_transfer_directory_reuses_matching_partial_files(tmp_path: Path):
@@ -82,7 +135,7 @@ def test_failed_download_keeps_partial_and_retry_resumes_it(
     monkeypatch.setattr(
         downloader,
         "read_download_metadata",
-        lambda *_: DownloadMetadata(
+        lambda *_, **__: DownloadMetadata(
             source_video_id="BaW_jenozKc",
             title="续传测试",
             author_name=None,
@@ -94,7 +147,7 @@ def test_failed_download_keeps_partial_and_retry_resumes_it(
         ),
     )
 
-    def run_download(command, transfer_directory, _on_progress):
+    def run_download(command, transfer_directory, _on_progress, _control):
         nonlocal attempts
         attempts += 1
         commands.append(command)

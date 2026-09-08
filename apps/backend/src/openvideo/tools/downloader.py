@@ -5,6 +5,9 @@ import re
 import shutil
 import subprocess
 import sys
+import signal
+from contextlib import contextmanager, nullcontext
+from threading import Event, RLock
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +31,7 @@ PROGRESS_SEPARATOR = "|"
 TRANSFER_DIRECTORY_PREFIX = "transfer-"
 PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
 COMMAND_TIMEOUT_SECONDS = 60 * 60 * 6
+PROCESS_STOP_TIMEOUT_SECONDS = 10
 MAX_DIAGNOSTIC_LINES = 30
 PLAYLIST_PROBE_LIMIT = 100
 DOWNLOAD_PROGRESS_CEILING = 96
@@ -90,6 +94,63 @@ _QUALITY_SHORT_EDGES = {
 
 class DownloadFailure(RuntimeError):
     pass
+
+
+class DownloadPaused(RuntimeError):
+    """用户停止传输后保留分片，不把主动暂停记录为下载失败。"""
+
+
+class DownloadControl:
+    """跨线程停止下载及其子进程，等待退出后才允许继续或移除任务。"""
+
+    def __init__(self) -> None:
+        self._stopped = Event()
+        self._lock = RLock()
+        self._process: subprocess.Popen[str] | None = None
+
+    def checkpoint(self) -> None:
+        if self._stopped.is_set():
+            raise DownloadPaused("下载已暂停")
+
+    def stop(self) -> None:
+        self._stopped.set()
+        with self._lock:
+            process = self._process
+            if process is not None and process.poll() is None:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        capture_output=True,
+                        check=False,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        timeout=PROCESS_STOP_TIMEOUT_SECONDS,
+                    )
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
+
+    @contextmanager
+    def track(self, process: subprocess.Popen[str]):
+        """暂停可能先于子进程注册到达，注册后立即补做停止检查。"""
+        with self._lock:
+            self._process = process
+        try:
+            if self._stopped.is_set():
+                self.stop()
+            self.checkpoint()
+            yield
+            self.checkpoint()
+        except BaseException:
+            if process.poll() is not None:
+                self.checkpoint()
+            raise
+        finally:
+            with self._lock:
+                if process.poll() is not None:
+                    self._process = None
 
 
 @dataclass(frozen=True)
@@ -162,13 +223,16 @@ def download_video(
     cookie_source: Path | None = None,
     staging_directory: Path | None = None,
     download_proxy: str | None = None,
+    control: DownloadControl | None = None,
 ) -> DownloadedMedia:
     """同一来源和清晰度复用隔离目录，使网络故障后的新任务能续传旧分片。"""
     if not yt_dlp_available():
         raise DownloadFailure("未安装 yt-dlp，请先执行 uv sync")
     ffmpeg_path = resolve_tool(configured_ffmpeg_path, "ffmpeg", project_bin_dir)
     if not ffmpeg_path:
-        raise DownloadFailure("未找到 ffmpeg，请安装后加入 PATH 或配置 OPENVIDEO_FFMPEG_PATH")
+        raise DownloadFailure(
+            "未找到 ffmpeg，请安装后加入 PATH 或配置 OPENVIDEO_FFMPEG_PATH"
+        )
 
     staging_root = staging_directory or asset_directory / ".staging"
     transfer_directory = _transfer_directory(
@@ -184,6 +248,7 @@ def download_video(
         platform,
         cookie_source,
         download_proxy,
+        control=control,
     )
     on_metadata(metadata)
     on_stage(DOWNLOADING_MEDIA_MESSAGE)
@@ -224,7 +289,9 @@ def download_video(
         *_cookie_arguments(cookie_source),
         source_url,
     ]
-    output_file = _run_download(command, transfer_directory, on_progress)
+    output_file = _run_download(command, transfer_directory, on_progress, control)
+    if control:
+        control.checkpoint()
     published_file = _publish_file(output_file, asset_directory)
     thumbnail_file = _publish_thumbnail(transfer_directory, asset_directory)
     _remove_completed_transfer(transfer_directory, staging_root)
@@ -240,6 +307,8 @@ def read_download_metadata(
     platform: SourcePlatform,
     cookie_source: Path | None = None,
     download_proxy: str | None = None,
+    *,
+    control: DownloadControl | None = None,
 ) -> DownloadMetadata:
     command = [
         sys.executable,
@@ -254,13 +323,29 @@ def read_download_metadata(
         *_cookie_arguments(cookie_source),
         source_url,
     ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=120,
-    )
+    if control is None:
+        result = subprocess.run(
+            command, capture_output=True, check=False, text=True, timeout=120
+        )
+    else:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=os.name != "nt",
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        with control.track(process):
+            try:
+                stdout, stderr = process.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                raise DownloadFailure("读取视频信息超时")
+            result = subprocess.CompletedProcess(
+                command, process.returncode, stdout, stderr
+            )
     if result.returncode != 0:
         raise DownloadFailure(_friendly_failure(result.stderr or result.stdout))
     try:
@@ -388,7 +473,8 @@ def _bilibili_season_entry(episode: object) -> PlaylistEntry | None:
     return PlaylistEntry(
         source_video_id=source_video_id,
         url=build_bilibili_video_url(source_video_id),
-        title=_optional_text(episode.get("title")) or _optional_text(metadata.get("title")),
+        title=_optional_text(episode.get("title"))
+        or _optional_text(metadata.get("title")),
         duration_seconds=_optional_float(metadata.get("duration")),
         uploader=_optional_text(author_data.get("name")),
     )
@@ -423,8 +509,7 @@ def download_format(
         candidate
         for dimension_filter in dimension_filters
         for candidate in (
-            f"bestvideo[vcodec^=avc1]{dimension_filter}"
-            "+bestaudio[acodec^=mp4a]",
+            f"bestvideo[vcodec^=avc1]{dimension_filter}+bestaudio[acodec^=mp4a]",
             f"bestvideo[vcodec^=avc1]{dimension_filter}+bestaudio",
             f"bestvideo[ext=mp4]{dimension_filter}+bestaudio[ext=m4a]",
             f"best[ext=mp4]{dimension_filter}",
@@ -526,9 +611,7 @@ def _single_entry(item: object) -> PlaylistEntry | None:
     if not isinstance(item, dict):
         return None
     entry_url = (
-        _optional_text(item.get("url"))
-        or _optional_text(item.get("webpage_url"))
-        or ""
+        _optional_text(item.get("url")) or _optional_text(item.get("webpage_url")) or ""
     )
     video_id = _optional_text(item.get("id"))
     if not video_id and entry_url:
@@ -632,6 +715,7 @@ def _run_download(
     command: list[str],
     staging_directory: Path,
     on_progress: ProgressCallback,
+    control: DownloadControl | None = None,
 ) -> Path:
     process = subprocess.Popen(
         command,
@@ -641,7 +725,19 @@ def _run_download(
         text=True,
         encoding="utf-8",
         errors="replace",
+        start_new_session=os.name != "nt",
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
+    with control.track(process) if control else nullcontext():
+        return _read_download_output(process, staging_directory, on_progress)
+
+
+def _read_download_output(
+    process: subprocess.Popen[str],
+    staging_directory: Path,
+    on_progress: ProgressCallback,
+) -> Path:
+    """下载器输出同时携带进度和最终路径，发布前必须验证路径属于分片目录。"""
     output_file: Path | None = None
     diagnostics: list[str] = []
     assert process.stdout is not None
@@ -679,7 +775,11 @@ def _run_download(
     resolved_staging = staging_directory.resolve()
     if not resolved_output.is_relative_to(resolved_staging):
         raise DownloadFailure("下载工具返回了资源目录外的文件")
-    if not resolved_output.is_file() or resolved_output.is_symlink() or resolved_output.stat().st_size == 0:
+    if (
+        not resolved_output.is_file()
+        or resolved_output.is_symlink()
+        or resolved_output.stat().st_size == 0
+    ):
         raise DownloadFailure("下载结果不完整，无法发布")
     return resolved_output
 
@@ -738,7 +838,10 @@ def _publish_thumbnail(staging_directory: Path, asset_directory: Path) -> Path |
     if not thumbnail_candidates:
         return None
     source_file = thumbnail_candidates[0].resolve()
-    if not source_file.is_relative_to(staging_directory.resolve()) or source_file.is_symlink():
+    if (
+        not source_file.is_relative_to(staging_directory.resolve())
+        or source_file.is_symlink()
+    ):
         return None
     extension = source_file.suffix.casefold()
     published_file = asset_directory / f"thumbnail{extension}"

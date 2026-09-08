@@ -491,6 +491,11 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         )
         return DownloadJob.model_validate(dict(row)) if row else None
 
+    def delete_download_job(self, job_id: str) -> None:
+        """清除任务历史时保留素材与续传分片。"""
+        with self._lock, self._db():
+            self._db().execute("DELETE FROM download_jobs WHERE job_id = ?", (job_id,))
+
     def list_download_jobs(self, limit: int | None = None) -> list[DownloadJob]:
         statement = "SELECT * FROM download_jobs ORDER BY created_at DESC, job_id DESC"
         parameters: tuple[int, ...] = ()
@@ -701,11 +706,15 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
 
     def _recover_interrupted_downloads(self) -> None:
         now = datetime.now(UTC)
-        terminal_stages = (DownloadStage.COMPLETE.value, DownloadStage.FAILED.value)
+        terminal_stages = (
+            DownloadStage.COMPLETE.value,
+            DownloadStage.FAILED.value,
+            DownloadStage.PAUSED.value,
+        )
         rows = (
             self._db()
             .execute(
-                "SELECT * FROM download_jobs WHERE stage NOT IN (?, ?)",
+                "SELECT * FROM download_jobs WHERE stage NOT IN (?, ?, ?)",
                 terminal_stages,
             )
             .fetchall()
@@ -725,8 +734,13 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
             MediaAssetStatus.DOWNLOADING,
             MediaAssetStatus.PROCESSING,
         }
+        paused_asset_ids = {
+            job.asset_id
+            for job in self.list_download_jobs()
+            if job.stage == DownloadStage.PAUSED
+        }
         for asset in self.list():
-            if asset.status in interrupted:
+            if asset.status in interrupted and asset.asset_id not in paused_asset_ids:
                 self.save(
                     asset.model_copy(
                         update={

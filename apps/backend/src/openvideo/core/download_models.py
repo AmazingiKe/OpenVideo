@@ -11,6 +11,8 @@ class DownloadStage(StrEnum):
     READING_METADATA = "reading_metadata"
     DOWNLOADING = "downloading"
     PROCESSING = "processing"
+    PAUSING = "pausing"
+    PAUSED = "paused"
     COMPLETE = "complete"
     FAILED = "failed"
 
@@ -25,6 +27,7 @@ class DownloadQuality(StrEnum):
 
 
 TERMINAL_DOWNLOAD_STAGES = {DownloadStage.COMPLETE, DownloadStage.FAILED}
+INACTIVE_DOWNLOAD_STAGES = {*TERMINAL_DOWNLOAD_STAGES, DownloadStage.PAUSED}
 
 
 class DownloadJob(BaseModel):
