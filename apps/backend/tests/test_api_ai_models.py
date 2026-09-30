@@ -215,6 +215,50 @@ def test_preferences_patch_preserves_typed_ai_models(tmp_path: Path):
     assert payload["profile"]["capabilities"]["tools"] == "unknown"
 
 
+def test_environment_key_stays_a_reference_in_api_and_preferences(tmp_path, monkeypatch):
+    dummy_key = "dummy-api-test-key-not-a-real-credential"
+    monkeypatch.setenv("DEEPSEEK_API_KEY", dummy_key)
+    request = {
+        **MODEL_REQUEST,
+        "litellm_model": "deepseek/deepseek-test-model",
+        "api_key": "env:DEEPSEEK_API_KEY",
+        "api_base": "https://api.deepseek.com",
+    }
+
+    def reject_provider(**kwargs):
+        assert kwargs["api_key"] == dummy_key
+        raise RuntimeError(f"authentication rejected {dummy_key}")
+
+    monkeypatch.setattr("openvideo.tools.llm.litellm.completion", reject_provider)
+    with create_client(tmp_path) as client:
+        updated = client.patch("/api/preferences", json={"ai_models": [request]})
+        preferences = client.get("/api/preferences")
+        tested = client.post("/api/ai/models/test", json=request)
+    assert updated.status_code == preferences.status_code == tested.status_code == 200
+    assert "env:DEEPSEEK_API_KEY" in preferences.text
+    assert "[已隐藏]" in tested.text
+    for response in (updated, preferences, tested):
+        assert dummy_key not in response.text
+    saved = (tmp_path / "config" / "preferences.json").read_text()
+    assert "env:DEEPSEEK_API_KEY" in saved
+    assert dummy_key not in saved
+
+
+def test_missing_environment_key_is_rejected_before_model_test(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(ai_routes, "complete_text", lambda *_args, **_kwargs: pytest.fail("不能请求供应商"))
+    request = {
+        **MODEL_REQUEST,
+        "litellm_model": "deepseek/deepseek-test-model",
+        "api_key": "env:DEEPSEEK_API_KEY",
+        "api_base": "https://api.deepseek.com",
+    }
+    with create_client(tmp_path) as client:
+        response = client.post("/api/ai/models/test", json=request)
+    assert response.status_code == 422
+    assert "未设置后端环境变量" in response.text
+
+
 def test_preferences_patch_rejects_local_ai_models(tmp_path: Path):
     request = {
         **MODEL_REQUEST,

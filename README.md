@@ -111,6 +111,8 @@ Vite 会把 `/api` 和媒体播放请求代理到 FastAPI。开发日志写入 `
 
 基础的资料库管理、下载、播放和本地转写不要求配置在线 AI；总结生成和 Agent 功能需要可用的在线模型。
 
+如需通过后端环境变量使用 DeepSeek 密钥，参见 [环境密钥配置](docs/deepseek-environment.md)。
+
 ## AI 与本地模型
 
 OpenVideo 把本地处理和在线推理分开：

@@ -15,6 +15,12 @@ from openvideo.core.ai_models import (
     AiModelConfiguration,
     online_api_configuration_error,
 )
+from openvideo.llm.credentials import (
+    DEFAULT_DEEPSEEK_API_BASE,
+    ModelCredentialError,
+    redact_model_secrets,
+    resolve_model_api_key,
+)
 from openvideo.llm.errors import (
     MAX_PROVIDER_REQUEST_RETRIES,
     TransientProviderRequestError,
@@ -137,7 +143,9 @@ def _complete_with_retry(
                 response = litellm.completion(**request)
             return response.choices[0].message.content
         except litellm.exceptions.ContextWindowExceededError as error:
-            raise LlmContextLengthError(f"模型上下文不足：{error}") from error
+            raise LlmContextLengthError(
+                f"模型上下文不足：{redact_model_secrets(str(error))}"
+            ) from None
         except Exception as error:
             classified = classify_provider_error(error)
             if (
@@ -148,7 +156,7 @@ def _complete_with_retry(
                     provider_retry_delay_seconds(classified, attempt)
                 )
                 continue
-            raise LlmCompletionError(f"模型请求失败：{classified}") from error
+            raise LlmCompletionError(f"模型请求失败：{classified}") from None
     raise AssertionError("模型重试循环必须返回或抛出异常")
 
 
@@ -162,7 +170,9 @@ async def _complete_with_retry_async(
                 response = await litellm.acompletion(**request)
             return response.choices[0].message.content
         except litellm.exceptions.ContextWindowExceededError as error:
-            raise LlmContextLengthError(f"模型上下文不足：{error}") from error
+            raise LlmContextLengthError(
+                f"模型上下文不足：{redact_model_secrets(str(error))}"
+            ) from None
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -175,7 +185,7 @@ async def _complete_with_retry_async(
                     provider_retry_delay_seconds(classified, attempt)
                 )
                 continue
-            raise LlmCompletionError(f"模型请求失败：{classified}") from error
+            raise LlmCompletionError(f"模型请求失败：{classified}") from None
     raise AssertionError("模型重试循环必须返回或抛出异常")
 
 
@@ -201,10 +211,16 @@ def _completion_request(
         "messages": messages,
         "timeout": timeout_seconds,
     }
-    if model.api_key:
-        request["api_key"] = model.api_key
+    try:
+        api_key = resolve_model_api_key(model)
+    except ModelCredentialError as error:
+        raise LlmCompletionError(str(error)) from None
+    if api_key:
+        request["api_key"] = api_key
     if model.api_base:
         request["api_base"] = model.api_base
+    elif model.litellm_model.partition("/")[0].casefold() == "deepseek":
+        request["api_base"] = DEFAULT_DEEPSEEK_API_BASE
     if model.api_version:
         request["api_version"] = model.api_version
     if max_tokens is not None:
@@ -243,7 +259,11 @@ def resolved_image_transport_model(model: AiModelConfiguration) -> str:
 def _vision_transport_cache_key(
     model: AiModelConfiguration,
 ) -> VisionTransportCacheKey:
-    api_key_digest = hashlib.sha256((model.api_key or "").encode()).hexdigest()
+    try:
+        api_key = resolve_model_api_key(model)
+    except ModelCredentialError as error:
+        raise LlmCompletionError(str(error)) from None
+    api_key_digest = hashlib.sha256((api_key or "").encode()).hexdigest()
     return (
         model.model_id,
         model.litellm_model,

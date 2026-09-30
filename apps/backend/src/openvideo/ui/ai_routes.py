@@ -11,6 +11,11 @@ from openvideo.core.ai_models import (
     online_api_configuration_error,
 )
 from openvideo.llm.capability_resolver import CapabilityResolver
+from openvideo.llm.credentials import (
+    ModelCredentialError,
+    redact_model_secrets,
+    resolve_model_api_key,
+)
 from openvideo.llm.errors import LlmRuntimeError, ToolCallingUnsupportedError
 from openvideo.llm.model_profile import (
     CAPABILITY_NAMES,
@@ -90,6 +95,10 @@ def register_ai_routes(
         configuration_error = online_api_configuration_error(request)
         if configuration_error is not None:
             raise HTTPException(status_code=422, detail=configuration_error)
+        try:
+            resolve_model_api_key(request)
+        except ModelCredentialError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
         started_at = perf_counter()
         capabilities: dict[str, AiModelCapabilityTest] = {}
         profile = capability_resolver.resolve(request, refresh_models_dev=True)
@@ -239,9 +248,9 @@ def register_ai_routes(
 
 
 def redact_model_test_error(message: str, api_key: str | None) -> str:
-    if not api_key:
-        return message
-    return message.replace(api_key, MODEL_TEST_REDACTED_SECRET)
+    if api_key:
+        message = message.replace(api_key, MODEL_TEST_REDACTED_SECRET)
+    return redact_model_secrets(message)
 
 
 def run_model_probe(

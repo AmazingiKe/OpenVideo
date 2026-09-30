@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
+from openvideo.llm.credentials import redact_model_secrets
+
 
 class LlmRuntimeError(RuntimeError):
     """模型调用失败时保留可供运行层判断的稳定分类。"""
@@ -59,8 +61,8 @@ PROVIDER_RETRY_BASE_DELAY_SECONDS = 1.0
 
 
 def classify_provider_error(error: Exception) -> LlmRuntimeError:
-    message = str(error)
-    normalized_message = message.lower()
+    message = redact_model_secrets(str(error))
+    normalized_message = str(error).lower()
     if THINKING_TOOL_CHOICE_ERROR in normalized_message:
         return FeatureCombinationUnsupportedError(message)
     if any(marker in normalized_message for marker in TOOL_UNSUPPORTED_MARKERS):

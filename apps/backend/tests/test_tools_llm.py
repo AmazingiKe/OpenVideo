@@ -255,7 +255,7 @@ def test_image_probe_does_not_hide_authentication_failure(monkeypatch):
         input_modalities=["text", "image"],
     )
 
-    with pytest.raises(llm.LlmCompletionError, match="invalid api key"):
+    with pytest.raises(llm.LlmCompletionError, match=r"\[已隐藏\] api key"):
         llm.probe_image_input(model, timeout_seconds=30)
 
     assert attempted_models == ["custom/vision-model"]

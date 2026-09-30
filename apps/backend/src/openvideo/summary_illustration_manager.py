@@ -35,6 +35,7 @@ from openvideo.core.summary_models import (
     SummaryMediaType,
     TERMINAL_SUMMARY_ILLUSTRATION_STAGES,
 )
+from openvideo.llm.credentials import ModelCredentialError, resolve_model_api_key
 from openvideo.llm.capability_resolver import CapabilityResolver
 from openvideo.settings import Settings
 from openvideo.summary_manager import SummaryManager
@@ -768,7 +769,11 @@ class SummaryIllustrationManager:
         model = self.settings.ai_model(model_id)
         if model is None or IMAGE_INPUT_MODALITY not in model.input_modalities:
             return "视觉模型不可用"
-        api_key_digest = hashlib.sha256((model.api_key or "").encode()).hexdigest()
+        try:
+            api_key = resolve_model_api_key(model)
+        except ModelCredentialError as error:
+            return str(error)
+        api_key_digest = hashlib.sha256((api_key or "").encode()).hexdigest()
         cache_key = (
             model.model_id,
             model.litellm_model,

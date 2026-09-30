@@ -3,7 +3,6 @@ from __future__ import annotations
 from agno.models.anthropic import Claude
 from agno.models.base import Model
 from agno.models.dashscope import DashScope
-from agno.models.deepseek import DeepSeek
 from agno.models.google import Gemini
 from agno.models.mistral import MistralChat
 from agno.models.openai import OpenAIChat
@@ -15,11 +14,16 @@ from openvideo.core.ai_models import (
     AiModelConfiguration,
     online_api_configuration_error,
 )
+from openvideo.llm.credential_safe_deepseek import CredentialSafeDeepSeek
+from openvideo.llm.credentials import (
+    DEFAULT_DEEPSEEK_API_BASE,
+    ModelCredentialError,
+    resolve_model_api_key,
+)
 from openvideo.llm.errors import ProviderRequestError
 from openvideo.llm.model_profile import ModelProfile
 
 
-DEFAULT_DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEFAULT_OPENROUTER_API_BASE = "https://openrouter.ai/api/v1"
 DEFAULT_QWEN_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_XAI_API_BASE = "https://api.x.ai/v1"
@@ -43,13 +47,17 @@ def create_agent_model(
         and profile.quirks.disable_named_tool_choice_when_reasoning
     ):
         reasoning_enabled = False
+    try:
+        api_key = resolve_model_api_key(config)
+    except ModelCredentialError as error:
+        raise ProviderRequestError(str(error)) from None
     common = {
         "id": profile.model,
-        "api_key": config.api_key,
+        "api_key": api_key,
         "timeout": 120,
     }
     if profile.provider == "deepseek":
-        return DeepSeek(
+        return CredentialSafeDeepSeek(
             **common,
             base_url=config.api_base or DEFAULT_DEEPSEEK_API_BASE,
             use_thinking=reasoning_enabled,

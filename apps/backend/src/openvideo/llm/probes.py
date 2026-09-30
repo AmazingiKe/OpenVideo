@@ -7,6 +7,11 @@ from typing import Any
 import litellm
 
 from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.llm.credentials import (
+    DEFAULT_DEEPSEEK_API_BASE,
+    ModelCredentialError,
+    resolve_model_api_key,
+)
 from openvideo.llm.errors import (
     MAX_PROVIDER_REQUEST_RETRIES,
     ModelCapabilityUnknownError,
@@ -177,10 +182,16 @@ def _base_request(model: AiModelConfiguration, timeout_seconds: int) -> dict[str
         "timeout": timeout_seconds,
         "max_tokens": 64,
     }
-    if model.api_key:
-        request["api_key"] = model.api_key
+    try:
+        api_key = resolve_model_api_key(model)
+    except ModelCredentialError as error:
+        raise ProviderRequestError(str(error)) from None
+    if api_key:
+        request["api_key"] = api_key
     if model.api_base:
         request["api_base"] = model.api_base
+    elif model.litellm_model.partition("/")[0].casefold() == "deepseek":
+        request["api_base"] = DEFAULT_DEEPSEEK_API_BASE
     if model.api_version:
         request["api_version"] = model.api_version
     return request
@@ -203,7 +214,7 @@ def _completion(request: dict[str, Any]) -> Any:
                     provider_retry_delay_seconds(classified, attempt)
                 )
                 continue
-            raise classified from error
+            raise classified from None
     raise AssertionError("模型重试循环必须返回或抛出异常")
 
 
@@ -227,7 +238,7 @@ def _stream_completion(request: dict[str, Any]) -> Iterator[Any]:
                     provider_retry_delay_seconds(classified, attempt)
                 )
                 continue
-            raise classified from error
+            raise classified from None
 
 
 def _require_tool_calls(tool_calls: Any, expected_names: set[str]) -> None:

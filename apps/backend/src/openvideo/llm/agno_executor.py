@@ -467,10 +467,10 @@ class AgnoAgentExecutor:
                 )
         except asyncio.CancelledError:
             raise
-        except (FeatureCombinationUnsupportedError, ProviderRequestError):
-            raise
+        except (FeatureCombinationUnsupportedError, ProviderRequestError) as error:
+            raise error from None
         except Exception as error:
-            raise classify_provider_error(error) from error
+            raise classify_provider_error(error) from None
 
     @staticmethod
     def _tools(

@@ -19,7 +19,8 @@ __pycache__/
 
 # Environment and editors
 .env
-.env.local
+.env.*
+!.env.example
 .vscode/
 .idea/
 .DS_Store
