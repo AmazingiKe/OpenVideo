@@ -5,6 +5,7 @@ import { STORY_ASSETS } from "@/features/library/library_story_fixtures";
 import type { PlayerHandle } from "@/features/player/Player";
 import { VideoWorkspace } from "./VideoWorkspace";
 import { fn } from "storybook/test";
+import { MIXED_VISUAL_COVERAGE_SEGMENTS } from "@/features/analysis/visual_coverage_story_fixtures";
 
 const meta = {
   title: "Workbench/VideoWorkspace",
@@ -66,4 +67,18 @@ export const GeneratingChapters: Story = {
 
 export const ChaptersWithoutTranscript: Story = {
   args: { on_generate_chapters: fn() },
+};
+
+export const SavedVisualCoverage: Story = {
+  args: {
+    ...ChapterGeneration.args,
+    chapters: MIXED_VISUAL_COVERAGE_SEGMENTS,
+  },
+};
+
+export const RegeneratingWithSavedCoverage: Story = {
+  args: {
+    ...SavedVisualCoverage.args,
+    chapter_generation_message: "正在核对章节主题与关键画面",
+  },
 };

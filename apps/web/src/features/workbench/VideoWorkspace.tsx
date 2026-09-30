@@ -13,6 +13,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Player, type PlayerHandle } from "@/features/player/Player";
+import { VisualCoverageNotice } from "@/features/analysis/VisualCoverageNotice";
 import { record_scrub_preview_metrics } from "@/features/player/scrub_preview_diagnostics";
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_settings";
 import { use_storyboard_preview } from "@/features/player/use_storyboard_preview";
@@ -207,6 +208,15 @@ export const VideoWorkspace = memo(function VideoWorkspace({
           </p>
         </div>
       </header>
+      {chapters.some((chapter) => chapter.asset_id === asset.asset_id) ? (
+        <div className="shrink-0 px-4 pt-4 max-[600px]:px-2 max-[600px]:pt-2">
+          <VisualCoverageNotice
+            segments={chapters.filter(
+              (chapter) => chapter.asset_id === asset.asset_id,
+            )}
+          />
+        </div>
+      ) : null}
       <div className="workspace_stage flex min-h-0 flex-1">
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-player-canvas">
           <div className="min-h-0 flex-1 bg-player-canvas p-4 max-[600px]:p-2">

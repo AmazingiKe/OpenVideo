@@ -295,7 +295,8 @@ export type AnalysisStrategy = {
   marker_range_before_seconds: number;
   marker_range_after_seconds: number;
 };
-type AnalysisOperation = "transcription" | "analysis" | "initialization" | "chapters";
+type AnalysisOperation =
+  "transcription" | "analysis" | "initialization" | "chapters";
 export type TranscriptionEngine = "faster-whisper" | "qwen3-asr" | "sensevoice";
 export type TranscriptionDevice = "auto" | "cpu" | "cuda";
 export type TranscriptionComputeType = "auto" | "int8" | "float16";
@@ -350,6 +351,20 @@ export type FormulaModelState = {
 type AnalysisCapability =
   "transcript" | "timeline" | "chapters" | "key_frames" | "ocr" | "visual";
 
+export type VisualAnalysisStatus =
+  "unknown" | "not_requested" | "skipped" | "no_frames" | "failed" | "sampled";
+
+export type VisualAnalysisCoverage = {
+  total_segments: number;
+  sampled_segments: number;
+  sampled_frame_count: number;
+  skipped_segments: number;
+  no_frames_segments: number;
+  failed_segments: number;
+  not_requested_segments: number;
+  unknown_segments: number;
+};
+
 export type AnalysisJob = {
   job_id: string;
   asset_id: string;
@@ -358,6 +373,7 @@ export type AnalysisJob = {
   ai_model_id: string | null;
   strategy: AnalysisStrategy;
   capabilities: AnalysisCapability[];
+  visual_coverage?: VisualAnalysisCoverage | null;
   stage: AnalysisStage;
   progress_percent: number;
   message: string;
@@ -433,6 +449,7 @@ export type MediaSegment = {
   speaker_name: string | null;
   key_frame_paths: string[];
   visual_description: string | null;
+  visual_analysis_status?: VisualAnalysisStatus;
   ocr_text: string | null;
   formula_latex: string[];
   marker_ids: string[];

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PlayerHandle } from "@/features/player/Player";
 import type { MediaAsset } from "@/shared/types";
+import { create_coverage_segment } from "@/features/analysis/visual_coverage_story_fixtures";
 import { VideoWorkspace } from "./VideoWorkspace";
 
 const player_render = vi.hoisted(() => vi.fn());
@@ -71,6 +72,70 @@ describe("VideoWorkspace", () => {
     workspace.rerender(<VideoWorkspace {...props} />);
 
     expect(player_render).toHaveBeenCalledOnce();
+  });
+
+  it("keeps saved visual failures visible during and after generation", () => {
+    const asset = create_asset();
+    const props = {
+      asset,
+      markers: [],
+      transcript: {
+        asset_id: asset.asset_id,
+        language: "zh",
+        created_at: asset.created_at,
+        segments: [
+          {
+            start_seconds: 0,
+            end_seconds: 10,
+            text: "字幕",
+            emotion: null,
+            audio_events: [],
+          },
+        ],
+      },
+      chapters: [
+        { ...create_coverage_segment("failed"), asset_id: asset.asset_id },
+      ],
+      player_ref: createRef<PlayerHandle>(),
+      on_generate_chapters: vi.fn(),
+      on_time_change: vi.fn(),
+      on_pause_change: vi.fn(),
+      on_playback_rate_change: vi.fn(),
+    };
+    const view = render(
+      <VideoWorkspace {...props} chapter_generation_message="正在分析" />,
+    );
+    expect(
+      screen.getByRole("status", { name: "画面分析覆盖" }),
+    ).toHaveTextContent("视觉分析失败 1 章");
+    expect(screen.getByRole("button", { name: /生成中/ })).toBeDisabled();
+
+    view.rerender(
+      <VideoWorkspace {...props} chapter_generation_message={null} />,
+    );
+    expect(
+      screen.getByRole("status", { name: "画面分析覆盖" }),
+    ).toHaveTextContent("视觉分析失败 1 章");
+    expect(screen.getByRole("button", { name: "重新生成章节" })).toBeEnabled();
+    expect(screen.getByTestId("marker-player")).toBeInTheDocument();
+  });
+
+  it("never attributes another video's saved coverage to the selected video", () => {
+    render(
+      <VideoWorkspace
+        asset={create_asset()}
+        markers={[]}
+        transcript={null}
+        chapters={[create_coverage_segment("sampled")]}
+        player_ref={createRef<PlayerHandle>()}
+        on_time_change={vi.fn()}
+        on_pause_change={vi.fn()}
+        on_playback_rate_change={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("status", { name: "画面分析覆盖" }),
+    ).not.toBeInTheDocument();
   });
 });
 
