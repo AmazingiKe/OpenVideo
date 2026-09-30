@@ -1,4 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import {
+  type Mutation,
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
@@ -35,6 +41,8 @@ import {
 } from "./agent_context";
 import { resolve_agent_command, type AgentCommand } from "./agent_commands";
 
+const AGENT_SUBMISSION_MUTATION_KEY = "agent_submission";
+
 const TERMINAL_RUN_STAGES = new Set<AgentRun["stage"]>([
   "waiting_for_approval",
   "complete",
@@ -60,6 +68,14 @@ type AgentSubmission = {
   started_at: number;
 };
 
+type AgentSubmissionRequest = {
+  content: string;
+  context_attachment_drafts: AgentContextAttachmentDraft[];
+  selected_model_id: string;
+  submission_task_input: Record<string, unknown>;
+  signal: AbortSignal;
+};
+
 export function use_agent_panel({
   agent_id,
   asset_id,
@@ -71,10 +87,24 @@ export function use_agent_panel({
   task_input,
   default_thinking_mode,
 }: AgentPanelStateOptions) {
+  const query_client = useQueryClient();
   const scope_key = useMemo(
     () => (asset_id ? agent_scope_key(agent_id, asset_id) : "no-asset"),
     [agent_id, asset_id],
   );
+  const submission_key = useMemo(
+    () => [AGENT_SUBMISSION_MUTATION_KEY, scope_key],
+    [scope_key],
+  );
+  const pending_submission_count = useIsMutating({
+    mutationKey: submission_key,
+  });
+  const submission_mutation = useMutation({
+    mutationKey: submission_key,
+    mutationFn: start_submission,
+    networkMode: "always",
+    retry: false,
+  });
   const definitions_query = useQuery({
     queryKey: RESOURCE_QUERY_KEYS.agent_definitions,
     queryFn: ({ signal }) => list_agent_definitions(signal),
@@ -115,6 +145,7 @@ export function use_agent_panel({
   const connection_ref = useRef<AbortController | null>(null);
   const view_controller_ref = useRef<AbortController | null>(null);
   const submission_ref = useRef(false);
+  const waiting_for_submission_ref = useRef<Mutation | null>(null);
   const run_sequence_ref = useRef(new Map<string, number>());
   const restore_panel_event = useEffectEvent(restore_panel);
   const restoring = Boolean(asset_id) && restored_scope_key !== scope_key;
@@ -139,6 +170,7 @@ export function use_agent_panel({
     const controller = new AbortController();
     view_controller_ref.current = controller;
     connection_ref.current?.abort();
+    set_restored_scope_key(null);
     set_sessions([]);
     set_state(null);
     set_active_run(null);
@@ -155,16 +187,46 @@ export function use_agent_panel({
     submission_ref.current = false;
     run_sequence_ref.current.clear();
     set_error(null);
+    waiting_for_submission_ref.current = null;
     if (!asset_id) {
       set_restored_scope_key(null);
       return () => view_controller_ref.current?.abort();
     }
-    void restore_panel_event(asset_id, controller.signal);
+    // 组件重挂载时，先等原请求落盘，避免把尚未接受的任务当成空会话。
+    const pending_submission = query_client.getMutationCache().find({
+      mutationKey: submission_key,
+      status: "pending",
+    });
+    if (pending_submission) {
+      waiting_for_submission_ref.current = pending_submission;
+      set_connection_message("请求正在提交，确认后将恢复任务进度");
+    } else {
+      void restore_panel_event(asset_id, controller.signal);
+    }
     return () => {
       view_controller_ref.current?.abort();
       connection_ref.current?.abort();
     };
-  }, [agent_id, asset_id, scope_key]);
+  }, [agent_id, asset_id, query_client, scope_key, submission_key]);
+
+  useEffect(() => {
+    const signal = view_controller_ref.current?.signal;
+    if (
+      !asset_id ||
+      !signal ||
+      signal.aborted ||
+      !waiting_for_submission_ref.current ||
+      query_client.isMutating({ mutationKey: submission_key }) > 0
+    )
+      return;
+    const submission_error = waiting_for_submission_ref.current.state.error;
+    waiting_for_submission_ref.current = null;
+    set_connection_message(null);
+    void restore_panel_event(asset_id, signal).then(() => {
+      if (!signal.aborted && submission_error)
+        set_error(error_message(submission_error));
+    });
+  }, [asset_id, pending_submission_count, query_client, submission_key]);
 
   useEffect(() => {
     set_thinking_mode(default_thinking_mode);
@@ -233,6 +295,7 @@ export function use_agent_panel({
     connection_ref.current?.abort();
     const controller = new AbortController();
     view_controller_ref.current = controller;
+    waiting_for_submission_ref.current = null;
     set_restored_scope_key(null);
     set_compacting_context(false);
     set_submission(null);
@@ -267,6 +330,7 @@ export function use_agent_panel({
     view_controller_ref.current?.abort();
     view_controller_ref.current = new AbortController();
     connection_ref.current?.abort();
+    waiting_for_submission_ref.current = null;
     set_restored_scope_key(scope_key);
     set_compacting_context(false);
     run_sequence_ref.current.clear();
@@ -294,6 +358,7 @@ export function use_agent_panel({
       !asset_id ||
       pending ||
       submission_ref.current ||
+      query_client.isMutating({ mutationKey: submission_key }) > 0 ||
       !model_id ||
       (!next_content.trim() && definition?.definition.input_mode !== "task")
     ) {
@@ -318,23 +383,23 @@ export function use_agent_panel({
     set_last_task_input(command_resolution.task_input);
     set_draft("");
     set_submission({ content, started_at: Date.now() });
-    void start_submission(
+    submission_mutation.mutate({
       content,
       context_attachment_drafts,
-      model_id,
-      command_resolution.task_input,
+      selected_model_id: model_id,
+      submission_task_input: command_resolution.task_input,
       signal,
-    );
+    });
     return true;
   }
 
-  async function start_submission(
-    content: string,
-    context_attachment_drafts: AgentContextAttachmentDraft[],
-    selected_model_id: string,
-    submission_task_input: Record<string, unknown>,
-    signal: AbortSignal,
-  ) {
+  async function start_submission({
+    content,
+    context_attachment_drafts,
+    selected_model_id,
+    submission_task_input,
+    signal,
+  }: AgentSubmissionRequest) {
     try {
       const context_attachments = await materialize_context_attachments(
         context_attachment_drafts,
@@ -356,11 +421,13 @@ export function use_agent_panel({
       void follow_run(run, current.events, signal);
       if (!scope_pinned) set_retrieval_scope("current_asset");
     } catch (caught) {
-      if (signal.aborted) return;
-      set_error(error_message(caught));
-      set_draft((current) => (current.trim() ? current : content));
-      set_submission(null);
-      submission_ref.current = false;
+      if (!signal.aborted) {
+        set_error(error_message(caught));
+        set_draft((current) => (current.trim() ? current : content));
+        set_submission(null);
+        submission_ref.current = false;
+      }
+      throw caught;
     }
   }
 

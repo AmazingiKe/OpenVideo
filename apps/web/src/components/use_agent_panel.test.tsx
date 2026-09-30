@@ -268,6 +268,123 @@ describe("use_agent_panel", () => {
     expect(api.stream_unified_agent_run).not.toHaveBeenCalled();
   });
 
+  it("waits for a previously submitted request when reopened before acceptance", async () => {
+    const acceptance = deferred<AgentRun>();
+    api.create_agent_run.mockReturnValueOnce(acceptance.promise);
+    const query_wrapper = create_query_wrapper();
+    const first = render_panel(vi.fn(), query_wrapper);
+    await waitFor(() => expect(first.result.current.restoring).toBe(false));
+    act(() => first.result.current.submit("翻译字幕"));
+    await waitFor(() => expect(api.create_agent_run).toHaveBeenCalledOnce());
+    first.unmount();
+
+    const reopened = render_panel(vi.fn(), query_wrapper);
+    await waitFor(() =>
+      expect(reopened.result.current.model_id).toBe(MODEL.model_id),
+    );
+    expect(reopened.result.current.restoring).toBe(true);
+    expect(reopened.result.current.connection_message).toBe(
+      "请求正在提交，确认后将恢复任务进度",
+    );
+    expect(api.list_agent_sessions).toHaveBeenCalledOnce();
+    act(() =>
+      expect(reopened.result.current.submit("重复翻译字幕")).toBe(false),
+    );
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    await act(async () => acceptance.resolve(RUN));
+
+    await waitFor(() => expect(reopened.result.current.pending).toBe(true));
+    expect(reopened.result.current.active_run?.run_id).toBe(RUN.run_id);
+    expect(reopened.result.current.connection_message).toBeNull();
+    expect(api.create_agent_run).toHaveBeenCalledOnce();
+    expect(api.cancel_agent_run).not.toHaveBeenCalled();
+  });
+
+  it("restores a new session submitted before closing without creating another session", async () => {
+    const session_creation = deferred<AgentSession>();
+    api.list_agent_sessions.mockResolvedValue([]);
+    api.create_agent_session.mockReturnValueOnce(session_creation.promise);
+    const query_wrapper = create_query_wrapper();
+    const first = render_panel(vi.fn(), query_wrapper);
+    await waitFor(() =>
+      expect(first.result.current.model_id).toBe(MODEL.model_id),
+    );
+    act(() => first.result.current.submit("分析字幕"));
+    await waitFor(() =>
+      expect(api.create_agent_session).toHaveBeenCalledOnce(),
+    );
+    first.unmount();
+    const reopened = render_panel(vi.fn(), query_wrapper);
+    expect(reopened.result.current.restoring).toBe(true);
+    api.list_agent_sessions.mockResolvedValue([SESSION]);
+    api.get_agent_session.mockReset().mockResolvedValue(FINAL_STATE);
+    await act(async () => session_creation.resolve(SESSION));
+
+    await waitFor(() =>
+      expect(reopened.result.current.active_run?.stage).toBe("complete"),
+    );
+    expect(api.create_agent_session).toHaveBeenCalledOnce();
+    expect(api.create_agent_run).toHaveBeenCalledOnce();
+    expect(reopened.result.current.state?.session.session_id).toBe(
+      SESSION.session_id,
+    );
+  });
+
+  it("waits for the original video submission when navigating away and back", async () => {
+    const acceptance = deferred<AgentRun>();
+    api.create_agent_run.mockReturnValueOnce(acceptance.promise);
+    const { result, rerender } = render_panel();
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    act(() => result.current.submit("翻译原视频字幕"));
+    await waitFor(() => expect(api.create_agent_run).toHaveBeenCalledOnce());
+    api.list_agent_sessions.mockResolvedValue([]);
+    rerender({ asset_id: OTHER_ASSET_ID, default_thinking_mode: "auto" });
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    rerender({ asset_id: ASSET_ID, default_thinking_mode: "auto" });
+    expect(result.current.restoring).toBe(true);
+    api.list_agent_sessions.mockResolvedValue([SESSION]);
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    await act(async () => acceptance.resolve(RUN));
+
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    expect(result.current.state?.session.asset_id).toBe(ASSET_ID);
+    expect(api.create_agent_run).toHaveBeenCalledOnce();
+  });
+
+  it("unblocks history recovery when a detached submission fails", async () => {
+    const acceptance = deferred<AgentRun>();
+    api.create_agent_run.mockReturnValueOnce(acceptance.promise);
+    const query_wrapper = create_query_wrapper();
+    const first = render_panel(vi.fn(), query_wrapper);
+    await waitFor(() => expect(first.result.current.restoring).toBe(false));
+    act(() => first.result.current.submit("翻译字幕"));
+    await waitFor(() => expect(api.create_agent_run).toHaveBeenCalledOnce());
+    first.unmount();
+    const reopened = render_panel(vi.fn(), query_wrapper);
+    expect(reopened.result.current.restoring).toBe(true);
+    api.get_agent_session.mockReset().mockResolvedValue(INITIAL_STATE);
+    await act(async () => acceptance.reject(new Error("服务不可用")));
+
+    await waitFor(() => expect(reopened.result.current.restoring).toBe(false));
+    expect(reopened.result.current.state).toEqual(INITIAL_STATE);
+    expect(reopened.result.current.connection_message).toBeNull();
+    expect(reopened.result.current.error).toBe("服务不可用");
+    act(() =>
+      expect(reopened.result.current.submit("重试字幕翻译")).toBe(true),
+    );
+    await waitFor(() => expect(api.create_agent_run).toHaveBeenCalledTimes(2));
+  });
+
   it("detaches on close and reconnects the same running task when reopened", async () => {
     api.get_agent_session
       .mockReset()
@@ -578,8 +695,11 @@ describe("use_agent_panel", () => {
 const OTHER_ASSET_ID = "asset-0198f10e3f9871239c79000000000002";
 const OTHER_SESSION_ID = "session-0198f10e3f9871239c79000000000002";
 
-function render_panel(on_artifact_change = vi.fn()) {
-  const { wrapper } = create_query_wrapper();
+function render_panel(
+  on_artifact_change = vi.fn(),
+  query_wrapper = create_query_wrapper(),
+) {
+  const { wrapper } = query_wrapper;
   return renderHook(
     ({
       asset_id,
