@@ -180,16 +180,20 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    const refresh_agent_tasks = () => {
+    let refresh_pending = false;
+    const refresh_agent_tasks = async () => {
+      if (controller.signal.aborted || refresh_pending) return;
+      refresh_pending = true;
       try {
-        void list_agent_tasks(controller.signal)
-          .then(record_agent_tasks)
-          .catch(() => undefined);
+        const snapshots = await list_agent_tasks(controller.signal);
+        if (!controller.signal.aborted) record_agent_tasks(snapshots);
       } catch {
         // 离线壳层未提供 Agent 端点时不影响下载与转录任务。
+      } finally {
+        refresh_pending = false;
       }
     };
-    refresh_agent_tasks();
+    void refresh_agent_tasks();
     const interval_id = window.setInterval(
       refresh_agent_tasks,
       AGENT_TASK_REFRESH_INTERVAL_MS,
@@ -204,33 +208,39 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     previous_index_status_ref.current = null;
     set_index_status(null);
-    const refresh_index_status = () => {
+    let refresh_pending = false;
+    const refresh_index_status = async () => {
+      if (controller.signal.aborted || refresh_pending) return;
+      refresh_pending = true;
       try {
-        void get_agent_index_status(selected_asset_id, controller.signal)
-          .then((status) => {
-            const previous_status = previous_index_status_ref.current;
-            previous_index_status_ref.current = status;
-            set_index_status(status);
-            record_task(index_task_record(status));
-            if (
-              previous_status?.asset_id &&
-              previous_status.asset_id === status.asset_id &&
-              TRANSCRIPTION_STAGES.has(previous_status.stage) &&
-              !TRANSCRIPTION_STAGES.has(status.stage)
-            ) {
-              void query_client.invalidateQueries({
-                queryKey: RESOURCE_QUERY_KEYS.asset_analysis(
-                  previous_status.asset_id,
-                ),
-              });
-            }
-          })
-          .catch(() => undefined);
+        const status = await get_agent_index_status(
+          selected_asset_id,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        const previous_status = previous_index_status_ref.current;
+        previous_index_status_ref.current = status;
+        set_index_status(status);
+        record_task(index_task_record(status));
+        if (
+          previous_status?.asset_id &&
+          previous_status.asset_id === status.asset_id &&
+          TRANSCRIPTION_STAGES.has(previous_status.stage) &&
+          !TRANSCRIPTION_STAGES.has(status.stage)
+        ) {
+          void query_client.invalidateQueries({
+            queryKey: RESOURCE_QUERY_KEYS.asset_analysis(
+              previous_status.asset_id,
+            ),
+          });
+        }
       } catch {
         // 离线壳层未提供索引端点时，其余任务仍可继续。
+      } finally {
+        refresh_pending = false;
       }
     };
-    refresh_index_status();
+    void refresh_index_status();
     const interval_id = window.setInterval(
       refresh_index_status,
       AGENT_TASK_REFRESH_INTERVAL_MS,
@@ -541,6 +551,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
           options,
           controller.signal,
         );
+        controller.signal.throwIfAborted();
         record_transcription_job(job);
         const final_job =
           job.stage === "complete"

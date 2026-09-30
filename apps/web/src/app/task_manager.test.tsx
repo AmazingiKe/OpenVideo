@@ -15,7 +15,7 @@ import {
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AssetCatalogProvider } from "@/app/asset_catalog";
+import { AssetCatalogProvider, use_asset_catalog } from "@/app/asset_catalog";
 import {
   ApplicationQueryProvider,
   RESOURCE_QUERY_KEYS,
@@ -80,6 +80,86 @@ describe("TaskManagerProvider", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  it("keeps the current video status when a previous request finishes late", async () => {
+    const stale_status = deferred<AgentIndexStatus>();
+    const first_asset_id = "asset-0198f10e3f9871239c79000000000001";
+    const second_asset_id = "asset-0198f10e3f9871239c79000000000002";
+    vi.mocked(get_agent_index_status).mockImplementation(async (asset_id) => {
+      if (asset_id === first_asset_id) return stale_status.promise;
+      return { ...agent_index_status(), asset_id: asset_id ?? null };
+    });
+    const { result } = render_task_manager();
+    act(() => result.current.select_asset(first_asset_id));
+    act(() => result.current.select_asset(second_asset_id));
+    await waitFor(() =>
+      expect(result.current.index_status?.asset_id).toBe(second_asset_id),
+    );
+    await act(async () =>
+      stale_status.resolve({
+        ...agent_index_status(),
+        asset_id: first_asset_id,
+        stage: "transcribing",
+      }),
+    );
+    expect(result.current.index_status?.asset_id).toBe(second_asset_id);
+    expect(result.current.is_transcription_running(first_asset_id)).toBe(false);
+  });
+
+  it("does not stack polling requests while the backend is slow", async () => {
+    vi.useFakeTimers();
+    const index_request = deferred<AgentIndexStatus>();
+    const task_request = deferred<AgentTaskSnapshot[]>();
+    vi.mocked(get_agent_index_status).mockReturnValueOnce(
+      index_request.promise,
+    );
+    vi.mocked(list_agent_tasks).mockReturnValueOnce(task_request.promise);
+    render_task_manager();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(get_agent_index_status).toHaveBeenCalledOnce();
+    expect(list_agent_tasks).toHaveBeenCalledOnce();
+    await act(async () => {
+      index_request.resolve(agent_index_status());
+      task_request.resolve([]);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(get_agent_index_status).toHaveBeenCalledTimes(2);
+    expect(list_agent_tasks).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not restart observation if transcription acceptance arrives after provider unmount", async () => {
+    const acceptance = deferred<AnalysisJob>();
+    vi.mocked(transcribe_asset).mockReturnValueOnce(acceptance.promise);
+    const query_client = new QueryClient();
+    const refresh = vi.spyOn(query_client, "invalidateQueries");
+    const { result, unmount } = render_task_manager(query_client);
+    let task!: Promise<AnalysisJob>;
+    act(() => {
+      task = result.current.start_transcription(
+        "asset-0198f10e3f9871239c79000000000001",
+        {
+          engine: "faster-whisper",
+          model: "small",
+          language: null,
+          device: "cpu",
+          compute_type: "int8",
+        },
+      );
+    });
+    const rejection = expect(task).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    unmount();
+    await act(async () => {
+      acceptance.resolve({
+        job_id: "job-0198f10e3f9871239c79000000000001",
+        stage: "complete",
+      } as AnalysisJob);
+      await rejection;
+    });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(get_analysis).not.toHaveBeenCalled();
   });
 
   it("keeps polling a download after the initiating page unmounts", async () => {
@@ -533,17 +613,23 @@ describe("TaskManagerProvider", () => {
 });
 
 function render_task_manager(query_client = new QueryClient()) {
-  return renderHook(use_task_manager, {
-    wrapper: ({ children }: { children: ReactNode }) => (
-      <MemoryRouter>
-        <QueryClientProvider client={query_client}>
-          <AssetCatalogProvider>
-            <TaskManagerProvider>{children}</TaskManagerProvider>
-          </AssetCatalogProvider>
-        </QueryClientProvider>
-      </MemoryRouter>
-    ),
-  });
+  return renderHook(
+    () => ({
+      ...use_task_manager(),
+      select_asset: use_asset_catalog().select_asset,
+    }),
+    {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <MemoryRouter>
+          <QueryClientProvider client={query_client}>
+            <AssetCatalogProvider>
+              <TaskManagerProvider>{children}</TaskManagerProvider>
+            </AssetCatalogProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      ),
+    },
+  );
 }
 
 function TaskStarter() {

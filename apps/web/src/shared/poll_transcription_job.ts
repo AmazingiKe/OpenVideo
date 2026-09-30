@@ -17,6 +17,7 @@ export async function poll_transcription_job(
     }
     await wait_for_poll(signal);
     current_job = await get_analysis(current_job.job_id, signal);
+    signal.throwIfAborted();
     on_update(current_job);
   }
   throw new Error("转录任务等待超时，请稍后重新查看");
@@ -24,14 +25,15 @@ export async function poll_transcription_job(
 
 function wait_for_poll(signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(resolve, TRANSCRIPTION_POLL_INTERVAL_MS);
-    signal.addEventListener(
-      "abort",
-      () => {
-        window.clearTimeout(timeout);
-        reject(new DOMException("请求已取消", "AbortError"));
-      },
-      { once: true },
-    );
+    signal.throwIfAborted();
+    const on_abort = () => {
+      window.clearTimeout(timeout);
+      reject(new DOMException("请求已取消", "AbortError"));
+    };
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener("abort", on_abort);
+      resolve();
+    }, TRANSCRIPTION_POLL_INTERVAL_MS);
+    signal.addEventListener("abort", on_abort, { once: true });
   });
 }
