@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextvars import ContextVar
 from pathlib import Path
-from time import time
+from time import monotonic, time
 from typing import Any
 
 from agno.db.sqlite import AsyncSqliteDb
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.agent import RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.session import AgentSession
-from agno.session.summary import SessionSummaryManager
+from agno.session.summary import SessionSummary, SessionSummaryManager
 
 from openvideo.core.identifiers import uuid7
 
@@ -23,6 +25,36 @@ AGNO_CONTEXT_DATABASE_FILE_NAME = "agent-context.sqlite3"
 AGNO_CONTEXT_SESSION_TABLE = "openvideo_agent_context"
 AGNO_HISTORY_RUN_COUNT = 3
 AGNO_HISTORY_TOOL_CALL_LIMIT = 3
+SESSION_SUMMARY_TIMEOUT_SECONDS = 10
+SESSION_FINALIZATION_RESERVE_SECONDS = 1
+AGENT_RUN_COMPLETION_DEADLINE: ContextVar[float | None] = ContextVar(
+    "openvideo_agent_run_completion_deadline",
+    default=None,
+)
+
+
+class BoundedSessionSummaryManager(SessionSummaryManager):
+    """辅助历史摘要有独立预算，避免拖延或取消已生成的主回答。"""
+
+    async def acreate_session_summary(
+        self,
+        session: AgentSession | None = None,
+        run_metrics: RunMetrics | None = None,
+    ) -> SessionSummary | None:
+        timeout_seconds = SESSION_SUMMARY_TIMEOUT_SECONDS
+        deadline = AGENT_RUN_COMPLETION_DEADLINE.get()
+        if deadline is not None:
+            remaining_seconds = (
+                deadline - monotonic() - SESSION_FINALIZATION_RESERVE_SECONDS
+            )
+            timeout_seconds = min(timeout_seconds, remaining_seconds)
+        if timeout_seconds <= 0:
+            return None
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                return await super().acreate_session_summary(session, run_metrics)
+        except TimeoutError:
+            return None
 
 
 class AgnoSessionContext:

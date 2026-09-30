@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections import defaultdict
 from typing import Any
@@ -196,6 +197,74 @@ def setup_runtime(
         capabilities=ModelCapabilities(tools=tools_support),
     )
     return repository, registry, executor, runtime, run, model, profile, definition
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reserve_seconds", [0.1, 1.0])
+async def test_completed_answer_keeps_time_for_finalization(
+    tmp_path, monkeypatch, reserve_seconds
+):
+    from agno.models.openai import OpenAIChat
+    from agno.models.response import ModelResponse
+
+    from openvideo.llm import agno_session_context
+    from openvideo.llm.agno_executor import AgnoAgentExecutor
+    from openvideo.llm.agno_session_context import AgnoSessionContext
+
+    summary_started = False
+    summary_cancelled = False
+
+    async def answer(self, *_args, **_kwargs):
+        await asyncio.sleep(0.1)
+        yield ModelResponse(content="已生成的答案")
+
+    async def summarize(self, *_args, **_kwargs):
+        nonlocal summary_started, summary_cancelled
+        summary_started = True
+        try:
+            await asyncio.Future()
+        finally:
+            summary_cancelled = True
+
+    monkeypatch.setattr(OpenAIChat, "ainvoke_stream", answer)
+    monkeypatch.setattr(OpenAIChat, "ainvoke", summarize)
+    monkeypatch.setattr(
+        "openvideo.llm.agno_executor.create_agent_model",
+        lambda *_args, **_kwargs: OpenAIChat(
+            id="dummy-model", api_key="dummy-not-real"
+        ),
+    )
+    monkeypatch.setattr(
+        agno_session_context, "SESSION_FINALIZATION_RESERVE_SECONDS", reserve_seconds
+    )
+    context = AgnoSessionContext(tmp_path / "agent-context.sqlite3")
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult()
+    )
+    runtime.executor = AgnoAgentExecutor(context)
+    try:
+        finished = await runtime.run(
+            run,
+            model,
+            profile,
+            definition,
+            "完成这次回答",
+            run_timeout_seconds=0.5,
+        )
+        assert finished.stage == "complete"
+        assert finished.error_code is None
+        completed = [
+            event
+            for event in repository.load_agent_events(run.session_id)
+            if event.event_type == AgentEventType.MESSAGE_COMPLETED
+        ]
+        assert len(completed) == 1
+        assert completed[0].payload["content"] == "已生成的答案"
+        assert summary_started is (reserve_seconds < 0.5)
+        assert summary_cancelled is summary_started
+        assert agno_session_context.AGENT_RUN_COMPLETION_DEADLINE.get() is None
+    finally:
+        await context.database.close()
 
 
 def test_session_store_notifies_after_event_is_persisted():

@@ -15,6 +15,7 @@ from agno.run.agent import (
     ReasoningStepEvent,
     RunCancelledEvent,
     RunCompletedEvent,
+    RunContentCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
     RunOutputEvent,
@@ -34,6 +35,7 @@ from openvideo.llm.agno_session_context import (
     AGNO_HISTORY_RUN_COUNT,
     AGNO_HISTORY_TOOL_CALL_LIMIT,
     AgnoSessionContext,
+    BoundedSessionSummaryManager,
 )
 from openvideo.llm.errors import (
     FeatureCombinationUnsupportedError,
@@ -437,6 +439,14 @@ class AgnoAgentExecutor:
             ),
             num_history_runs=AGNO_HISTORY_RUN_COUNT,
             max_tool_calls_from_history=AGNO_HISTORY_TOOL_CALL_LIMIT,
+            session_summary_manager=(
+                BoundedSessionSummaryManager(
+                    id=f"summary-{uuid7().hex}",
+                    model=agno_model,
+                )
+                if self.session_context is not None and session_id is not None
+                else None
+            ),
             enable_session_summaries=(
                 self.session_context is not None and session_id is not None
             ),
@@ -660,14 +670,16 @@ class AgnoAgentExecutor:
             elif isinstance(event, RunCancelledEvent):
                 flush_deltas(force=True)
                 raise asyncio.CancelledError
-            elif isinstance(event, RunCompletedEvent):
-                # 带工具的消息正文可能只是操作前言，等完整运行结束后才发布最终消息。
+            elif isinstance(event, (RunContentCompletedEvent, RunCompletedEvent)):
+                # 正文结束即可展示；辅助摘要与会话落盘仍需正常耗尽流。
                 if has_tools and publish_text and not tool_state.limit_reached:
                     for content in response_text:
                         content_parts.append(content)
                         queue_delta(LlmAgentEventType.TEXT_DELTA, content)
+                    response_text.clear()
                 if (
-                    not content_parts
+                    isinstance(event, RunCompletedEvent)
+                    and not content_parts
                     and not received_text
                     and not tool_state.limit_reached
                     and required_tools <= successful_tools
@@ -676,19 +688,24 @@ class AgnoAgentExecutor:
                 ):
                     content_parts.append(event.content)
                     queue_delta(LlmAgentEventType.TEXT_DELTA, event.content)
-                if not reasoning_parts and event.reasoning_content:
+                if (
+                    isinstance(event, RunCompletedEvent)
+                    and not reasoning_parts
+                    and event.reasoning_content
+                ):
                     reasoning_parts.append(event.reasoning_content)
                     queue_delta(
                         LlmAgentEventType.REASONING_DELTA,
                         event.reasoning_content,
                     )
                 flush_deltas(force=True)
-                on_event(
-                    LlmAgentEvent(
-                        event_type=LlmAgentEventType.RESPONSE_COMPLETED,
-                        content="".join(content_parts),
+                if isinstance(event, RunCompletedEvent):
+                    on_event(
+                        LlmAgentEvent(
+                            event_type=LlmAgentEventType.RESPONSE_COMPLETED,
+                            content="".join(content_parts),
+                        )
                     )
-                )
                 # 正常耗尽流，让 Agno 完成收尾；提前关闭会被 SDK 按取消覆盖历史。
         return AgentExecutionResult(
             content="".join(content_parts),

@@ -31,6 +31,7 @@ from openvideo.core.agent_governance_models import AgentModelRole
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
 from openvideo.llm.agno_executor import AgentExecutor
+from openvideo.llm.agno_session_context import AGENT_RUN_COMPLETION_DEADLINE
 from openvideo.llm.errors import (
     FeatureCombinationUnsupportedError,
     ProviderRequestError,
@@ -381,8 +382,9 @@ class AgentRuntime:
         if current_task is not None:
             self._active_tasks[run.run_id] = current_task
         started_at = datetime.now(UTC)
+        run_started_at = monotonic()
         self._metric_trackers[run.run_id] = AgentRunMetricTracker(
-            monotonic(),
+            run_started_at,
             routing_ms=routing_ms,
             model_role=model_role,
         )
@@ -392,6 +394,9 @@ class AgentRuntime:
                 "started_at": started_at,
                 "updated_at": started_at,
             }
+        )
+        deadline_token = AGENT_RUN_COMPLETION_DEADLINE.set(
+            run_started_at + run_timeout_seconds
         )
         try:
             self.store.repository.save_agent_run(running)
@@ -468,6 +473,7 @@ class AgentRuntime:
                 str(error) or "Agent 运行失败",
             )
         finally:
+            AGENT_RUN_COMPLETION_DEADLINE.reset(deadline_token)
             self._cancel_events.pop(run.run_id, None)
             self._active_tasks.pop(run.run_id, None)
             self._metric_trackers.pop(run.run_id, None)
