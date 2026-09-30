@@ -26,7 +26,7 @@ from openvideo.tools.downloader import (
     download_video,
     is_authentication_failure,
 )
-from openvideo.tools.media import probe_media
+from openvideo.tools.media import probe_media, validate_video_duration
 from openvideo.tools.sources import SourceMatch
 
 
@@ -364,6 +364,7 @@ class DownloadManager:
                     self.settings.ffmpeg_bin_dir,
                 )
                 metadata = downloaded.metadata
+                validate_video_duration(probe, metadata.duration_seconds)
                 control.checkpoint()
                 if not asset.source_video_id:
                     # 短链接等无法从地址识别 BV 号时，采用 yt-dlp 返回的视频 ID 用于去重。

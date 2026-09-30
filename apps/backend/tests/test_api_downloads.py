@@ -667,7 +667,7 @@ async def test_completed_download_does_not_create_analysis_or_transcription(
     monkeypatch.setattr(
         download_manager,
         "probe_media",
-        lambda *_: MediaProbe(20, 1920, 1080, "h264", "aac"),
+        lambda *_: MediaProbe(20, 1920, 1080, "h264", "aac", 20, 20),
     )
 
     manager = DownloadManager(
