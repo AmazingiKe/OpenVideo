@@ -113,6 +113,7 @@ export function use_agent_panel({
     null,
   );
   const connection_ref = useRef<AbortController | null>(null);
+  const view_controller_ref = useRef<AbortController | null>(null);
   const submission_ref = useRef(false);
   const run_sequence_ref = useRef(new Map<string, number>());
   const restore_panel_event = useEffectEvent(restore_panel);
@@ -136,13 +137,17 @@ export function use_agent_panel({
 
   useEffect(() => {
     const controller = new AbortController();
+    view_controller_ref.current = controller;
     connection_ref.current?.abort();
     set_sessions([]);
     set_state(null);
     set_active_run(null);
     set_stream_text("");
     set_stream_complete(false);
-    set_thinking_mode(default_thinking_mode);
+    set_draft("");
+    set_last_content("");
+    set_last_task_input({});
+    set_connection_message(null);
     set_retrieval_scope("current_asset");
     set_scope_pinned(false);
     set_submission(null);
@@ -152,14 +157,18 @@ export function use_agent_panel({
     set_error(null);
     if (!asset_id) {
       set_restored_scope_key(null);
-      return () => controller.abort();
+      return () => view_controller_ref.current?.abort();
     }
     void restore_panel_event(asset_id, controller.signal);
     return () => {
-      controller.abort();
+      view_controller_ref.current?.abort();
       connection_ref.current?.abort();
     };
-  }, [agent_id, asset_id, default_thinking_mode, scope_key]);
+  }, [agent_id, asset_id, scope_key]);
+
+  useEffect(() => {
+    set_thinking_mode(default_thinking_mode);
+  }, [default_thinking_mode, scope_key]);
 
   async function restore_panel(asset: string, signal: AbortSignal) {
     try {
@@ -167,28 +176,38 @@ export function use_agent_panel({
         { agent_id, asset_id: asset },
         signal,
       );
+      signal.throwIfAborted();
       set_sessions(loaded_sessions);
       if (!loaded_sessions[0]) return;
       const restored = await get_agent_session(
         loaded_sessions[0].session_id,
         signal,
       );
+      signal.throwIfAborted();
       set_state(restored);
+      for (const artifact of restored.artifacts) {
+        if (artifact.status === "approved") void on_artifact_change?.(artifact);
+      }
       const running = [...restored.runs]
         .reverse()
         .find((run) => !TERMINAL_RUN_STAGES.has(run.stage));
-      if (running) {
-        set_active_run(running);
-        void follow_run(running, restored.events, signal);
+      const latest_run = running ?? restored.runs.at(-1) ?? null;
+      set_active_run(latest_run);
+      if (latest_run?.stage === "failed") {
+        set_error(latest_run.error_message ?? "助手运行失败");
       }
+      if (running) void follow_run(running, restored.events, signal);
     } catch (caught) {
-      if (!is_abort_error(caught)) set_error(error_message(caught));
+      if (!signal.aborted && !is_abort_error(caught))
+        set_error(error_message(caught));
     } finally {
       if (!signal.aborted) set_restored_scope_key(scope_key);
     }
   }
 
-  async function ensure_session(): Promise<AgentSessionState> {
+  async function ensure_session(
+    signal: AbortSignal,
+  ): Promise<AgentSessionState> {
     if (state) return state;
     if (!asset_id) throw new Error("未选择素材");
     const session = await create_agent_session({
@@ -202,36 +221,54 @@ export function use_agent_panel({
       events: [],
       artifacts: [],
     };
-    set_sessions((current) => [session, ...current]);
-    set_state(created_state);
+    if (!signal.aborted) {
+      set_sessions((current) => [session, ...current]);
+      set_state(created_state);
+    }
     return created_state;
   }
 
   async function select_session(session_id: string) {
+    view_controller_ref.current?.abort();
     connection_ref.current?.abort();
+    const controller = new AbortController();
+    view_controller_ref.current = controller;
+    set_restored_scope_key(null);
+    set_compacting_context(false);
     set_submission(null);
     submission_ref.current = false;
+    set_active_run(null);
+    set_stream_text("");
+    set_stream_complete(false);
+    set_connection_message(null);
+    set_error(null);
     try {
-      const selected = await get_agent_session(session_id);
+      const selected = await get_agent_session(session_id, controller.signal);
+      controller.signal.throwIfAborted();
       set_state(selected);
-      set_active_run(null);
-      set_stream_text("");
-      set_stream_complete(false);
-      set_error(null);
       const running = [...selected.runs]
         .reverse()
         .find((run) => !TERMINAL_RUN_STAGES.has(run.stage));
-      if (running) {
-        set_active_run(running);
-        void follow_run(running, selected.events);
+      const latest_run = running ?? selected.runs.at(-1) ?? null;
+      set_active_run(latest_run);
+      if (latest_run?.stage === "failed") {
+        set_error(latest_run.error_message ?? "助手运行失败");
       }
+      if (running) void follow_run(running, selected.events, controller.signal);
     } catch (caught) {
-      set_error(error_message(caught));
+      if (!controller.signal.aborted && !is_abort_error(caught))
+        set_error(error_message(caught));
+    } finally {
+      if (!controller.signal.aborted) set_restored_scope_key(scope_key);
     }
   }
 
   function start_new_conversation() {
+    view_controller_ref.current?.abort();
+    view_controller_ref.current = new AbortController();
     connection_ref.current?.abort();
+    set_restored_scope_key(scope_key);
+    set_compacting_context(false);
     run_sequence_ref.current.clear();
     set_state(null);
     set_active_run(null);
@@ -253,6 +290,8 @@ export function use_agent_panel({
   ): boolean {
     const next_content = content_override ?? draft;
     if (
+      restoring ||
+      !asset_id ||
       pending ||
       submission_ref.current ||
       !model_id ||
@@ -268,6 +307,8 @@ export function use_agent_panel({
       set_error(command_resolution.error);
       return false;
     }
+    const signal = view_controller_ref.current?.signal;
+    if (!signal || signal.aborted) return false;
     submission_ref.current = true;
     set_error(null);
     set_connection_message(null);
@@ -282,6 +323,7 @@ export function use_agent_panel({
       context_attachment_drafts,
       model_id,
       command_resolution.task_input,
+      signal,
     );
     return true;
   }
@@ -291,12 +333,14 @@ export function use_agent_panel({
     context_attachment_drafts: AgentContextAttachmentDraft[],
     selected_model_id: string,
     submission_task_input: Record<string, unknown>,
+    signal: AbortSignal,
   ) {
     try {
       const context_attachments = await materialize_context_attachments(
         context_attachment_drafts,
       );
-      const current = await ensure_session();
+      // 关闭窗口只停止观察；已经提交的请求仍属于原视频和会话。
+      const current = await ensure_session(signal);
       const run = await create_agent_run(current.session.session_id, {
         request_key: `request-${uuid7().replaceAll("-", "")}`,
         ai_model_id: selected_model_id,
@@ -307,10 +351,12 @@ export function use_agent_panel({
         focus_context,
         context_attachments,
       });
+      if (signal.aborted) return;
       set_active_run(run);
-      void follow_run(run, current.events);
+      void follow_run(run, current.events, signal);
       if (!scope_pinned) set_retrieval_scope("current_asset");
     } catch (caught) {
+      if (signal.aborted) return;
       set_error(error_message(caught));
       set_draft((current) => (current.trim() ? current : content));
       set_submission(null);
@@ -321,14 +367,14 @@ export function use_agent_panel({
   async function follow_run(
     run: AgentRun,
     known_events: AgentEvent[],
-    inherited_signal?: AbortSignal,
+    inherited_signal = view_controller_ref.current?.signal,
   ) {
+    if (!inherited_signal || inherited_signal.aborted) return;
     connection_ref.current?.abort();
     const controller = new AbortController();
     connection_ref.current = controller;
-    inherited_signal?.addEventListener("abort", () => controller.abort(), {
-      once: true,
-    });
+    const disconnect = () => controller.abort();
+    inherited_signal.addEventListener("abort", disconnect, { once: true });
     let last_sequence = Math.max(
       0,
       run_sequence_ref.current.get(run.run_id) ?? 0,
@@ -340,6 +386,8 @@ export function use_agent_panel({
       await stream_unified_agent_run(
         run.run_id,
         ({ event, data }) => {
+          if (controller.signal.aborted || data.sequence <= last_sequence)
+            return;
           last_sequence = Math.max(last_sequence, data.sequence);
           run_sequence_ref.current.set(run.run_id, last_sequence);
           if (event === "message.delta") {
@@ -390,11 +438,14 @@ export function use_agent_panel({
         controller.signal,
         last_sequence,
       );
+      controller.signal.throwIfAborted();
       const final_run = await get_agent_run(run.run_id, controller.signal);
+      controller.signal.throwIfAborted();
       const refreshed = await get_agent_session(
         run.session_id,
         controller.signal,
       );
+      controller.signal.throwIfAborted();
       set_active_run(final_run);
       set_state(refreshed);
       for (const artifact of refreshed.artifacts) {
@@ -409,29 +460,44 @@ export function use_agent_panel({
         set_error(final_run.error_message ?? "助手运行失败");
       }
     } catch (caught) {
-      if (is_abort_error(caught)) return;
+      if (controller.signal.aborted || is_abort_error(caught)) return;
       set_connection_message("连接已中断，可重试并从上次事件继续");
       set_error(error_message(caught));
+    } finally {
+      inherited_signal.removeEventListener("abort", disconnect);
     }
   }
 
   async function cancel_run(run_id: string) {
+    const signal = view_controller_ref.current?.signal;
+    if (!signal || signal.aborted) return;
     try {
       const cancelled = await cancel_agent_run(run_id);
+      if (signal.aborted) return;
       set_active_run(cancelled);
       set_stream_text("");
       set_stream_complete(false);
       set_submission(null);
       submission_ref.current = false;
       connection_ref.current?.abort();
-      if (state) set_state(await get_agent_session(state.session.session_id));
+      set_connection_message(null);
+      if (state) {
+        const refreshed = await get_agent_session(
+          state.session.session_id,
+          signal,
+        );
+        if (!signal.aborted) set_state(refreshed);
+      }
     } catch (caught) {
-      set_error(error_message(caught));
+      if (!signal.aborted && !is_abort_error(caught))
+        set_error(error_message(caught));
     }
   }
 
   async function compact_context() {
-    if (!state || pending || compacting_context) return;
+    const signal = view_controller_ref.current?.signal;
+    if (!state || pending || compacting_context || !signal || signal.aborted)
+      return;
     set_compacting_context(true);
     set_error(null);
     set_connection_message(null);
@@ -439,12 +505,19 @@ export function use_agent_panel({
       const result = await compact_agent_session_context(
         state.session.session_id,
       );
-      set_state(await get_agent_session(state.session.session_id));
+      if (signal.aborted) return;
+      const refreshed = await get_agent_session(
+        state.session.session_id,
+        signal,
+      );
+      if (signal.aborted) return;
+      set_state(refreshed);
       if (!result.compressed) set_connection_message(result.message);
     } catch (caught) {
-      set_error(error_message(caught));
+      if (!signal.aborted && !is_abort_error(caught))
+        set_error(error_message(caught));
     } finally {
-      set_compacting_context(false);
+      if (!signal.aborted) set_compacting_context(false);
     }
   }
 
@@ -453,12 +526,15 @@ export function use_agent_panel({
     action: "approve" | "reject" | "undo",
     grant_scope: AgentPermissionGrantScope = "once",
   ) {
+    const signal = view_controller_ref.current?.signal;
+    if (!signal || signal.aborted) return;
     try {
       const resolved = await resolve_agent_artifact(
         artifact.artifact_id,
         action,
         grant_scope,
       );
+      if (signal.aborted) return;
       set_state((current) =>
         current
           ? {
@@ -471,7 +547,8 @@ export function use_agent_panel({
       );
       await on_artifact_change?.(resolved);
     } catch (caught) {
-      set_error(error_message(caught));
+      if (!signal.aborted && !is_abort_error(caught))
+        set_error(error_message(caught));
     }
   }
 

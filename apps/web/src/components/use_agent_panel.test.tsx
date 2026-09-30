@@ -14,6 +14,7 @@ import type {
   AgentRun,
   AgentSession,
   AgentSessionState,
+  AgentThinkingMode,
   AiModelSummary,
 } from "@/shared/types";
 import type { AgentCommand } from "./agent_commands";
@@ -146,7 +147,7 @@ function create_query_wrapper() {
 
 describe("use_agent_panel", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     api.list_agent_definitions.mockResolvedValue([DEFINITION]);
     api.list_agent_sessions.mockResolvedValue([SESSION]);
     api.get_agent_session
@@ -159,6 +160,315 @@ describe("use_agent_panel", () => {
       compressed: true,
       message: "已整理较早的对话内容",
     });
+  });
+
+  it("blocks submissions until the current video history has loaded", async () => {
+    const history = deferred<AgentSession[]>();
+    api.list_agent_sessions.mockReturnValue(history.promise);
+    const { result } = render_panel();
+    await waitFor(() => expect(result.current.model_id).toBe(MODEL.model_id));
+
+    act(() => expect(result.current.submit("翻译字幕")).toBe(false));
+    expect(api.create_agent_run).not.toHaveBeenCalled();
+    await act(async () => history.resolve([]));
+    expect(result.current.restoring).toBe(false);
+  });
+
+  it("ignores an old video history response after switching videos", async () => {
+    const history = deferred<AgentSession[]>();
+    api.list_agent_sessions.mockReturnValueOnce(history.promise);
+    api.list_agent_sessions.mockResolvedValue([]);
+    const { result, rerender } = render_panel();
+    const old_signal = api.list_agent_sessions.mock.calls[0][1];
+    rerender({ asset_id: OTHER_ASSET_ID, default_thinking_mode: "auto" });
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    await act(async () => history.resolve([SESSION]));
+
+    expect(old_signal.aborted).toBe(true);
+    expect(result.current.sessions).toEqual([]);
+    expect(result.current.state).toBeNull();
+    expect(api.get_agent_session).not.toHaveBeenCalled();
+  });
+
+  it("ignores an old session response after changing the video", async () => {
+    const old_session = deferred<AgentSessionState>();
+    api.get_agent_session.mockReset().mockReturnValueOnce(old_session.promise);
+    const { result, rerender } = render_panel();
+    await waitFor(() => expect(api.get_agent_session).toHaveBeenCalledOnce());
+    api.list_agent_sessions.mockResolvedValue([]);
+    rerender({ asset_id: OTHER_ASSET_ID, default_thinking_mode: "auto" });
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    await act(async () =>
+      old_session.resolve({ ...INITIAL_STATE, runs: [RUN] }),
+    );
+
+    expect(result.current.state).toBeNull();
+    expect(result.current.active_run).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(api.stream_unified_agent_run).not.toHaveBeenCalled();
+  });
+
+  it("keeps an accepted submission bound to its original video after navigation", async () => {
+    const acceptance = deferred<AgentRun>();
+    api.create_agent_run.mockReturnValueOnce(acceptance.promise);
+    const { result, rerender } = render_panel();
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    act(() => {
+      expect(result.current.submit("翻译字幕")).toBe(true);
+      expect(result.current.submit("翻译字幕")).toBe(false);
+    });
+    await waitFor(() => expect(api.create_agent_run).toHaveBeenCalledOnce());
+    api.list_agent_sessions.mockResolvedValue([]);
+    rerender({ asset_id: OTHER_ASSET_ID, default_thinking_mode: "auto" });
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    await act(async () => acceptance.resolve(RUN));
+
+    expect(api.create_agent_run.mock.calls[0][0]).toBe(SESSION.session_id);
+    expect(api.create_agent_run.mock.calls[0][2]).toBeUndefined();
+    expect(api.cancel_agent_run).not.toHaveBeenCalled();
+    expect(api.stream_unified_agent_run).not.toHaveBeenCalled();
+    expect(result.current.active_run).toBeNull();
+    expect(result.current.submitting).toBe(false);
+  });
+
+  it("does not restore an old failed submission into the new video draft", async () => {
+    const acceptance = deferred<AgentRun>();
+    api.create_agent_run.mockReturnValueOnce(acceptance.promise);
+    const { result, rerender } = render_panel();
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    act(() => result.current.submit("原视频指令"));
+    await waitFor(() => expect(api.create_agent_run).toHaveBeenCalledOnce());
+    api.list_agent_sessions.mockResolvedValue([]);
+    rerender({ asset_id: OTHER_ASSET_ID, default_thinking_mode: "auto" });
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    act(() => result.current.set_draft("新视频问题"));
+    await act(async () => acceptance.reject(new Error("旧请求失败")));
+
+    expect(result.current.draft).toBe("新视频问题");
+    expect(result.current.error).toBeNull();
+    expect(result.current.last_content).toBe("");
+  });
+
+  it("finishes submitting the original request when closed during session creation", async () => {
+    const session_creation = deferred<AgentSession>();
+    api.list_agent_sessions.mockResolvedValue([]);
+    api.create_agent_session.mockReturnValueOnce(session_creation.promise);
+    const { result, unmount } = render_panel();
+    await waitFor(() => expect(result.current.model_id).toBe(MODEL.model_id));
+    act(() => result.current.submit("翻译字幕"));
+    await waitFor(() =>
+      expect(api.create_agent_session).toHaveBeenCalledOnce(),
+    );
+    unmount();
+    await act(async () => session_creation.resolve(SESSION));
+
+    expect(api.create_agent_run).toHaveBeenCalledOnce();
+    expect(api.create_agent_run.mock.calls[0][0]).toBe(SESSION.session_id);
+    expect(api.cancel_agent_run).not.toHaveBeenCalled();
+    expect(api.stream_unified_agent_run).not.toHaveBeenCalled();
+  });
+
+  it("detaches on close and reconnects the same running task when reopened", async () => {
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const first = render_panel();
+    await waitFor(() => expect(first.result.current.pending).toBe(true));
+    const first_signal = api.stream_unified_agent_run.mock.calls[0][2];
+    first.unmount();
+    expect(first_signal.aborted).toBe(true);
+    expect(api.cancel_agent_run).not.toHaveBeenCalled();
+
+    const reopened = render_panel();
+    await waitFor(() => expect(reopened.result.current.pending).toBe(true));
+    expect(reopened.result.current.active_run?.run_id).toBe(RUN.run_id);
+    expect(api.stream_unified_agent_run).toHaveBeenCalledTimes(2);
+    expect(api.create_agent_run).not.toHaveBeenCalled();
+  });
+
+  it("restores the latest terminal task status when reopened", async () => {
+    api.get_agent_session.mockReset().mockResolvedValue(FINAL_STATE);
+    const on_artifact_change = vi.fn();
+    const { result } = render_panel(on_artifact_change);
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    expect(on_artifact_change).toHaveBeenCalledWith(ARTIFACT);
+    expect(result.current.active_run?.stage).toBe("complete");
+    expect(result.current.pending).toBe(false);
+    expect(api.stream_unified_agent_run).not.toHaveBeenCalled();
+  });
+
+  it("ignores late stream events and completion after a video switch", async () => {
+    const stream = deferred<void>();
+    const on_artifact_change = vi.fn();
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockReturnValueOnce(stream.promise);
+    const { result, rerender } = render_panel(on_artifact_change);
+    await waitFor(() =>
+      expect(api.stream_unified_agent_run).toHaveBeenCalledOnce(),
+    );
+    const on_event = api.stream_unified_agent_run.mock.calls[0][1];
+    api.list_agent_sessions.mockResolvedValue([]);
+    rerender({ asset_id: OTHER_ASSET_ID, default_thinking_mode: "auto" });
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    await act(async () => {
+      on_event({
+        event: "message.delta",
+        data: { event_id: "late-message", sequence: 1, content: "旧字幕" },
+      });
+      on_event({
+        event: "artifact.created",
+        data: { event_id: "late-artifact", sequence: 2, artifact: ARTIFACT },
+      });
+      stream.resolve();
+    });
+
+    expect(result.current.stream_text).toBe("");
+    expect(result.current.state).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(on_artifact_change).not.toHaveBeenCalled();
+    expect(api.get_agent_run).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a new conversation with a late final session refresh", async () => {
+    const final_refresh = deferred<AgentSessionState>();
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValueOnce({ ...INITIAL_STATE, runs: [RUN] })
+      .mockReturnValueOnce(final_refresh.promise);
+    const { result } = render_panel();
+    await waitFor(() => expect(api.get_agent_session).toHaveBeenCalledTimes(2));
+    act(() => result.current.start_new_conversation());
+    await act(async () => final_refresh.resolve(FINAL_STATE));
+    expect(result.current.state).toBeNull();
+    expect(result.current.active_run).toBeNull();
+    expect(result.current.restoring).toBe(false);
+  });
+
+  it("does not detach a running task when default thinking preferences arrive late", async () => {
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const { result, rerender } = render_panel();
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    const signal = api.stream_unified_agent_run.mock.calls[0][2];
+    rerender({ asset_id: ASSET_ID, default_thinking_mode: "fast" });
+    expect(signal.aborted).toBe(false);
+    expect(result.current.active_run?.run_id).toBe(RUN.run_id);
+    expect(api.list_agent_sessions).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a slower history selection after the latest selection finishes", async () => {
+    const slow_session = deferred<AgentSessionState>();
+    const other_state = {
+      ...INITIAL_STATE,
+      session: { ...SESSION, session_id: OTHER_SESSION_ID },
+    };
+    const { result } = render_panel();
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    api.get_agent_session
+      .mockReset()
+      .mockReturnValueOnce(slow_session.promise)
+      .mockResolvedValueOnce(other_state);
+    let slow_selection!: Promise<void>;
+    act(() => {
+      slow_selection = result.current.select_session(SESSION.session_id);
+    });
+    await act(async () => result.current.select_session(OTHER_SESSION_ID));
+    await act(async () => {
+      slow_session.resolve(INITIAL_STATE);
+      await slow_selection;
+    });
+    expect(result.current.state?.session.session_id).toBe(OTHER_SESSION_ID);
+  });
+
+  it("sends explicit cancel while keeping late cancel responses out of a new conversation", async () => {
+    const cancellation = deferred<AgentRun>();
+    api.cancel_agent_run.mockReturnValueOnce(cancellation.promise);
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const { result } = render_panel();
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    let cancel_request!: Promise<void>;
+    act(() => {
+      cancel_request = result.current.cancel_run(RUN.run_id);
+    });
+    expect(api.cancel_agent_run).toHaveBeenCalledWith(RUN.run_id);
+    act(() => result.current.start_new_conversation());
+    await act(async () => {
+      cancellation.resolve({ ...RUN, stage: "cancelled" });
+      await cancel_request;
+    });
+    expect(result.current.state).toBeNull();
+    expect(result.current.active_run).toBeNull();
+  });
+
+  it("does not restore a compacted conversation after starting a new one", async () => {
+    const compression = deferred<{ compressed: boolean; message: string }>();
+    api.compact_agent_session_context.mockReturnValueOnce(compression.promise);
+    const { result } = render_panel();
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    let compact_request!: Promise<void>;
+    act(() => {
+      compact_request = result.current.compact_context();
+    });
+    act(() => result.current.start_new_conversation());
+    await act(async () => {
+      compression.resolve({ compressed: true, message: "已整理" });
+      await compact_request;
+    });
+    expect(result.current.state).toBeNull();
+    expect(api.get_agent_session).toHaveBeenCalledOnce();
+    expect(result.current.compacting_context).toBe(false);
+  });
+
+  it("deduplicates replayed stream chunks after a reconnect", async () => {
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const { result } = render_panel();
+    await waitFor(() =>
+      expect(api.stream_unified_agent_run).toHaveBeenCalledOnce(),
+    );
+    const first_event = api.stream_unified_agent_run.mock.calls[0][1];
+    act(() => {
+      first_event({
+        event: "message.delta",
+        data: { event_id: "event-1", sequence: 1, content: "已翻译" },
+      });
+      void result.current.follow_run(RUN, []);
+    });
+    const next_event = api.stream_unified_agent_run.mock.calls[1][1];
+    act(() => {
+      first_event({
+        event: "message.delta",
+        data: { event_id: "event-2", sequence: 2, content: "旧连接" },
+      });
+      next_event({
+        event: "message.delta",
+        data: { event_id: "event-1", sequence: 1, content: "已翻译" },
+      });
+      next_event({
+        event: "message.delta",
+        data: { event_id: "event-2", sequence: 2, content: "完成" },
+      });
+    });
+    expect(api.stream_unified_agent_run.mock.calls[1][3]).toBe(1);
+    expect(result.current.stream_text).toBe("已翻译完成");
   });
 
   it("submits slash-command metadata through the native conversation", async () => {
@@ -264,3 +574,45 @@ describe("use_agent_panel", () => {
     expect(result.current.compacting_context).toBe(false);
   });
 });
+
+const OTHER_ASSET_ID = "asset-0198f10e3f9871239c79000000000002";
+const OTHER_SESSION_ID = "session-0198f10e3f9871239c79000000000002";
+
+function render_panel(on_artifact_change = vi.fn()) {
+  const { wrapper } = create_query_wrapper();
+  return renderHook(
+    ({
+      asset_id,
+      default_thinking_mode,
+    }: {
+      asset_id: string;
+      default_thinking_mode: AgentThinkingMode;
+    }) =>
+      use_agent_panel({
+        agent_id: "marker",
+        asset_id,
+        context: {},
+        models: [MODEL],
+        task_input: {},
+        default_thinking_mode,
+        on_artifact_change,
+      }),
+    {
+      wrapper,
+      initialProps: {
+        asset_id: ASSET_ID,
+        default_thinking_mode: "auto" as AgentThinkingMode,
+      },
+    },
+  );
+}
+
+function deferred<Value>() {
+  let resolve!: (value: Value) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<Value>((accept, fail) => {
+    resolve = accept;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
