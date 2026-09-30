@@ -267,6 +267,62 @@ async def test_completed_answer_keeps_time_for_finalization(
         await context.database.close()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["", "   "])
+async def test_empty_chat_response_is_not_reported_as_success(content):
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(content=content)
+    )
+    finished = await runtime.run(run, model, profile, definition, "回答问题")
+    assert finished.stage == "failed"
+    assert finished.error_code == "empty_response"
+    assert "未返回可显示的回答" in finished.error_message
+    assert all(
+        event.event_type != AgentEventType.MESSAGE_COMPLETED
+        for event in repository.load_agent_events(run.session_id)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("artifact_status", "expected_stage", "expected_error"),
+    [
+        ("pending", "waiting_for_approval", None),
+        ("applying", "waiting_for_approval", None),
+        ("approved", "complete", None),
+        ("failed", "failed", "artifact_apply_failed"),
+        ("stale", "failed", "artifact_apply_failed"),
+    ],
+)
+async def test_artifact_only_answer_preserves_approval_and_failure_states(
+    artifact_status, expected_stage, expected_error
+):
+    repository, _, _, runtime, run, model, profile, definition = setup_runtime(
+        AgentExecutionResult(successful_tools={"echo"})
+    )
+    definition = definition.model_copy(
+        update={
+            "requires_approval": True,
+            "required_tools": {"echo"},
+        }
+    )
+    repository.artifacts.append(
+        AgentArtifact(
+            artifact_id=f"artifact-{uuid7().hex}",
+            run_id=run.run_id,
+            session_id=run.session_id,
+            agent_id=definition.agent_id,
+            asset_id=repository.sessions[run.session_id].asset_id,
+            result_type="test_result",
+            payload={"changes": []},
+            status=artifact_status,
+        )
+    )
+    finished = await runtime.run(run, model, profile, definition, "生成审批预览")
+    assert finished.stage == expected_stage
+    assert finished.error_code == expected_error
+
+
 def test_session_store_notifies_after_event_is_persisted():
     repository = MemoryRepository()
     observed_events: list[AgentEvent] = []

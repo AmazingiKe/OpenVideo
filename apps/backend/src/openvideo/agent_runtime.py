@@ -540,6 +540,10 @@ class AgentRuntime:
                 failed_artifacts[0].error_message or "自动应用 Agent 结果失败",
                 "artifact_apply_failed",
             )
+        if not artifacts and not result.content.strip():
+            raise AgentRuntimeError(
+                "模型未返回可显示的回答，请重试", "empty_response"
+            )
         stage = (
             AgentRunStage.WAITING_FOR_APPROVAL
             if any(

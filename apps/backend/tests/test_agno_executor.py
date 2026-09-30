@@ -20,6 +20,7 @@ from openvideo.core.agent_runtime_models import (
     AgentToolDescriptor,
 )
 from openvideo.core.ai_models import AiModelConfiguration
+from openvideo.core.identifiers import uuid7
 from openvideo.llm.agno_executor import AgnoAgentExecutor, AgentToolExecutionState
 from openvideo.llm.agno_session_context import AgnoSessionContext
 from openvideo.llm.events import LlmAgentEventType
@@ -1256,3 +1257,102 @@ async def test_cancelling_shared_tool_cancels_execution_and_clears_pending_state
     assert stopped.is_set()
     assert not state.in_flight
     assert not state.results
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persist_session", [False, True])
+@pytest.mark.parametrize("needs_tool_recovery", [False, True])
+@pytest.mark.parametrize("final_answer", ["依据已有证据给出的回答", ""])
+async def test_successful_tool_without_text_gets_one_answer_only_recovery(
+    tmp_path, monkeypatch, persist_session, needs_tool_recovery, final_answer
+):
+    from agno.models.openai import OpenAIChat
+    from agno.models.response import ModelResponse
+    from openai.types.chat.chat_completion_chunk import (
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
+    )
+
+    requests = []
+    execution_count = 0
+    tool_request_index = 2 if needs_tool_recovery else 1
+
+    async def invoke_stream(self, **request):
+        requests.append(request)
+        if needs_tool_recovery and len(requests) == 1:
+            yield ModelResponse(content="")
+        elif len(requests) == tool_request_index:
+            yield ModelResponse(
+                tool_calls=[
+                    ChoiceDeltaToolCall(
+                        index=0,
+                        id=f"tool-{uuid7().hex}",
+                        type="function",
+                        function=ChoiceDeltaToolCallFunction(
+                            name="echo", arguments='{"text":"evidence-value"}'
+                        ),
+                    )
+                ]
+            )
+        elif len(requests) == tool_request_index + 1:
+            yield ModelResponse(content="")
+        else:
+            assert len(requests) == tool_request_index + 2
+            assert not request.get("tools")
+            assert "evidence-value" in str(
+                [message.content for message in request["messages"]]
+            )
+            yield ModelResponse(content=final_answer)
+
+    async def summarize(self, *_args, **_kwargs):
+        return ModelResponse(content='{"summary":"测试摘要","topics":[]}')
+
+    def execute(parameters):
+        nonlocal execution_count
+        execution_count += 1
+        return {"ok": True, "text": parameters.text}
+
+    monkeypatch.setattr(OpenAIChat, "ainvoke_stream", invoke_stream)
+    monkeypatch.setattr(OpenAIChat, "ainvoke", summarize)
+    monkeypatch.setattr(
+        "openvideo.llm.agno_executor.create_agent_model",
+        lambda *_args, **_kwargs: OpenAIChat(
+            id="dummy-model", api_key="dummy-not-real"
+        ),
+    )
+    registry = AgentToolRegistry()
+    registry.register(AgentTool("echo", "读取证据", EchoInput, execute))
+    definition = chat_definition().model_copy(
+        update={
+            "tools": [AgentToolDescriptor(name="echo", description="读取证据")],
+            "required_tools": {"echo"},
+        }
+    )
+    context = (
+        AgnoSessionContext(tmp_path / "context.sqlite3") if persist_session else None
+    )
+    events = []
+    try:
+        result = await AgnoAgentExecutor(context).run(
+            online_model(),
+            text_profile(),
+            definition,
+            [{"role": "user", "content": "根据证据回答"}],
+            registry,
+            events.append,
+            max_tool_calls=6,
+            tool_timeout_seconds=1,
+            session_id=f"session-{uuid7().hex}" if persist_session else None,
+        )
+        assert result.content == final_answer
+        assert result.retry_count == (2 if needs_tool_recovery else 1)
+        assert result.tool_call_count == 1
+        assert execution_count == 1
+        assert [
+            event.content
+            for event in events
+            if event.event_type == LlmAgentEventType.TEXT_DELTA
+        ] == ([final_answer] if final_answer else [])
+    finally:
+        if context is not None:
+            await context.database.close()
