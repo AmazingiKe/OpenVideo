@@ -6,16 +6,19 @@ import pytest
 from openvideo.core.analysis import MarkerInfluence, TimelineMoment
 from openvideo.core.analysis_models import AnalysisDepth, AnalysisStrategy
 from openvideo.core.identifiers import uuid7
+from openvideo.core.media_models import VisualAnalysisStatus
 from openvideo.core.transcription_models import Transcript, TranscriptSegment
 from openvideo.tools.analysis_pipeline import (
     MAX_CHAPTER_CONTEXT_FRAME_COUNT,
     MAX_CHAPTER_FRAME_COUNT,
     SCENE_FRAME_MARGIN_SECONDS,
     _analysis_prompt,
+    _build_segment,
     _extract_event_frames,
     _select_event_frame_times,
     build_segments,
 )
+from openvideo.tools.vision import VisionDescriptionError
 
 
 def test_marker_event_frames_include_marker_point_and_context(
@@ -395,3 +398,61 @@ def test_visual_only_video_is_split_for_keyframe_and_ocr_analysis(
     assert all(segment.title == "画面片段" for segment in segments)
     assert all(segment.key_frame_paths == ["frame.jpg"] for segment in segments)
     assert all(segment.ocr_text == "画面文字" for segment in segments)
+
+
+@pytest.mark.parametrize(
+    "configured,detailed,has_frames,response,expected_status",
+    [
+        (False, True, True, "画面", VisualAnalysisStatus.NOT_REQUESTED),
+        (True, False, True, "画面", VisualAnalysisStatus.SKIPPED),
+        (True, True, False, "画面", VisualAnalysisStatus.NO_FRAMES),
+        (True, True, True, VisionDescriptionError("失败"), VisualAnalysisStatus.FAILED),
+        (True, True, True, " \n ", VisualAnalysisStatus.FAILED),
+        (True, True, True, " 节点画面 ", VisualAnalysisStatus.SAMPLED),
+    ],
+)
+def test_segment_preserves_visual_outcome_without_losing_transcript(
+    monkeypatch, tmp_path, configured, detailed, has_frames, response, expected_status
+):
+    frame = tmp_path / "frame.jpg"
+    calls = []
+
+    def describe(frames, prompt):
+        calls.append((frames, prompt))
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(
+        "openvideo.tools.analysis_pipeline._extract_event_frames",
+        lambda *_: [frame] if has_frames else [],
+    )
+    segment = _build_segment(
+        TimelineMoment(
+            start_seconds=0,
+            end_seconds=10,
+            transcript_text="连接雾效材质节点",
+            detailed=detailed,
+        ),
+        tmp_path / "video.mp4",
+        "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
+        tmp_path,
+        SimpleNamespace(ffmpeg_path=None, ffmpeg_bin_dir=None),
+        SimpleNamespace(describe=describe) if configured else None,
+        AnalysisStrategy(),
+        [],
+        None,
+        None,
+        lambda: None,
+        lambda: None,
+    )
+
+    assert segment.transcript_text == "连接雾效材质节点"
+    assert segment.visual_analysis_status == expected_status
+    if expected_status == VisualAnalysisStatus.SAMPLED:
+        assert segment.visual_description == "节点画面"
+        assert "抽样关键帧" in calls[0][1]
+        assert "节点连接、参数数值和操作步骤必须标明无法确认" in calls[0][1]
+    else:
+        assert segment.visual_description is None
+    assert bool(calls) == (configured and detailed and has_frames)

@@ -58,6 +58,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     _ensure_agent_permission_grant_schema(connection)
     _ensure_download_quality_schema(connection)
     _ensure_marker_annotation_schema(connection)
+    _ensure_visual_analysis_schema(connection)
     _migrate_transcript_agent_sessions(connection)
     synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
@@ -211,7 +212,7 @@ def replace_asset_projection(
             "INSERT INTO timeline_segments "
             "(segment_id, asset_id, position, start_seconds, end_seconds, title, "
             "detailed_summary, transcript_text, speaker_name, visual_description, ocr_text, "
-            "formula_latex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "formula_latex, visual_analysis_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 segment.segment_id,
                 segment.asset_id,
@@ -225,6 +226,7 @@ def replace_asset_projection(
                 segment.visual_description,
                 segment.ocr_text,
                 json.dumps(segment.formula_latex, ensure_ascii=False),
+                segment.visual_analysis_status.value,
             ),
         )
         connection.executemany(
@@ -460,6 +462,25 @@ def _ensure_marker_annotation_schema(connection: sqlite3.Connection) -> None:
             connection.execute("DELETE FROM index_states")
 
 
+def _ensure_visual_analysis_schema(connection: sqlite3.Connection) -> None:
+    """增量记录视觉采样状态，避免重建查询库丢失待确认任务和会话。"""
+    job_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(analysis_jobs)")
+    }
+    segment_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(timeline_segments)")
+    }
+    with connection:
+        if "visual_coverage" not in job_columns:
+            connection.execute("ALTER TABLE analysis_jobs ADD COLUMN visual_coverage TEXT")
+        if "visual_analysis_status" not in segment_columns:
+            connection.execute(
+                "ALTER TABLE timeline_segments ADD COLUMN "
+                "visual_analysis_status TEXT NOT NULL DEFAULT 'unknown'"
+            )
+            connection.execute("DELETE FROM index_states")
+
+
 def _migrate_transcript_agent_sessions(connection: sqlite3.Connection) -> None:
     """字幕处理已并入视频对话，旧会话迁移后仍可继续原生对话。"""
 
@@ -643,6 +664,7 @@ CREATE TABLE analysis_jobs (
     operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, strategy TEXT NOT NULL,
     stage TEXT NOT NULL, progress_percent REAL NOT NULL, message TEXT NOT NULL,
     error_message TEXT, proposal_base_digest TEXT, proposed_segments TEXT NOT NULL,
+    visual_coverage TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE timeline_segments (
@@ -650,6 +672,7 @@ CREATE TABLE timeline_segments (
     position INTEGER NOT NULL, start_seconds REAL NOT NULL, end_seconds REAL NOT NULL,
     title TEXT NOT NULL, detailed_summary TEXT, transcript_text TEXT, speaker_name TEXT,
     visual_description TEXT, ocr_text TEXT, formula_latex TEXT NOT NULL DEFAULT '[]',
+    visual_analysis_status TEXT NOT NULL DEFAULT 'unknown',
     UNIQUE(asset_id, position)
 );
 CREATE TABLE markers (

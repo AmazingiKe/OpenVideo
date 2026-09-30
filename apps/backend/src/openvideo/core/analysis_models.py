@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
-from openvideo.core.media_models import MediaSegment
+from openvideo.core.media_models import MediaSegment, VisualAnalysisStatus
 
 
 MARKER_RANGE_MIN_SECONDS = 0
@@ -184,6 +184,38 @@ ANALYSIS_STRATEGY_PRESETS = (
 )
 
 
+class VisualAnalysisCoverage(BaseModel):
+    """记录章节级采样执行情况，不把章节比例解释为视频逐帧覆盖率。"""
+
+    total_segments: int = Field(default=0, ge=0)
+    sampled_segments: int = Field(default=0, ge=0)
+    sampled_frame_count: int = Field(default=0, ge=0)
+    skipped_segments: int = Field(default=0, ge=0)
+    no_frames_segments: int = Field(default=0, ge=0)
+    failed_segments: int = Field(default=0, ge=0)
+    not_requested_segments: int = Field(default=0, ge=0)
+    unknown_segments: int = Field(default=0, ge=0)
+
+    @classmethod
+    def from_segments(cls, segments: list[MediaSegment]) -> "VisualAnalysisCoverage":
+        counts = {status: 0 for status in VisualAnalysisStatus}
+        sampled_frame_count = 0
+        for segment in segments:
+            counts[segment.visual_analysis_status] += 1
+            if segment.visual_analysis_status == VisualAnalysisStatus.SAMPLED:
+                sampled_frame_count += len(segment.key_frame_paths)
+        return cls(
+            total_segments=len(segments),
+            sampled_segments=counts[VisualAnalysisStatus.SAMPLED],
+            sampled_frame_count=sampled_frame_count,
+            skipped_segments=counts[VisualAnalysisStatus.SKIPPED],
+            no_frames_segments=counts[VisualAnalysisStatus.NO_FRAMES],
+            failed_segments=counts[VisualAnalysisStatus.FAILED],
+            not_requested_segments=counts[VisualAnalysisStatus.NOT_REQUESTED],
+            unknown_segments=counts[VisualAnalysisStatus.UNKNOWN],
+        )
+
+
 class AnalysisJob(BaseModel):
     job_id: str
     asset_id: str
@@ -192,6 +224,7 @@ class AnalysisJob(BaseModel):
     ai_model_id: str | None = None
     strategy: AnalysisStrategy = Field(default_factory=AnalysisStrategy)
     capabilities: list[AnalysisCapability] = Field(default_factory=list)
+    visual_coverage: VisualAnalysisCoverage | None = None
     stage: AnalysisStage = AnalysisStage.PENDING
     progress_percent: float = 0
     message: str = "等待开始"

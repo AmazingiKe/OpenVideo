@@ -17,7 +17,7 @@ from openvideo.core.analysis import (
 from openvideo.core.analysis_models import AnalysisStage, AnalysisStrategy
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.identifiers import uuid7
-from openvideo.core.media_models import MediaMarker, MediaSegment
+from openvideo.core.media_models import MediaMarker, MediaSegment, VisualAnalysisStatus
 from openvideo.core.transcription_models import Transcript
 from openvideo.settings import Settings
 from openvideo.tools.frames import FrameExtractionError, extract_frames
@@ -251,7 +251,9 @@ def _build_segment(
     )
     if describer is not None and frames:
         on_describing_visuals()
-    visual_description = _describe_event(moment, frames, describer, strategy)
+    visual_description, visual_analysis_status = _describe_event(
+        moment, frames, describer, strategy
+    )
     transcript_text = moment.transcript_text or None
     title = moment.title or _event_title(moment)
     summary = (
@@ -278,6 +280,7 @@ def _build_segment(
             _relative_to_asset(asset_directory, frame) for frame in frames
         ],
         visual_description=visual_description,
+        visual_analysis_status=visual_analysis_status,
         ocr_text=ocr_text,
         formula_latex=formula_latex,
         marker_ids=list(moment.marker_ids),
@@ -431,13 +434,20 @@ def _describe_event(
     frames: list[Path],
     describer: VisionDescriber | None,
     strategy: AnalysisStrategy,
-) -> str | None:
-    if describer is None or not frames:
-        return None
+) -> tuple[str | None, VisualAnalysisStatus]:
+    if describer is None:
+        return None, VisualAnalysisStatus.NOT_REQUESTED
+    if not moment.detailed:
+        return None, VisualAnalysisStatus.SKIPPED
+    if not frames:
+        return None, VisualAnalysisStatus.NO_FRAMES
     try:
-        return describer.describe(frames, _analysis_prompt(moment, strategy))
+        description = describer.describe(frames, _analysis_prompt(moment, strategy)).strip()
     except VisionDescriptionError:
-        return None
+        return None, VisualAnalysisStatus.FAILED
+    if not description:
+        return None, VisualAnalysisStatus.FAILED
+    return description, VisualAnalysisStatus.SAMPLED
 
 
 def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
@@ -465,6 +475,8 @@ def _analysis_prompt(moment: TimelineMoment, strategy: AnalysisStrategy) -> str:
         marker_context = "\n标记范围权重：" + "；".join(marker_lines)
     return (
         "你正在分析同一视频片段按时间排列的多张画面。"
+        "这些画面仅为抽样关键帧，不代表完整逐帧观察；"
+        "未展示的节点连接、参数数值和操作步骤必须标明无法确认。"
         f"分析目标：总结这段课程讲解的主题、过程和结论。策略优先关注：{emphasis or '核心内容'}。"
         "请结合转写、画面文字（OCR）和视觉变化，用中文输出一段可复习的详细笔记；"
         "区分视频明确表达的内容与合理推断，不得补造事实。"

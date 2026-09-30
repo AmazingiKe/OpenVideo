@@ -18,10 +18,16 @@ from openvideo.core.analysis_models import (
     AnalysisStrategy,
     INACTIVE_ANALYSIS_STAGES,
     TERMINAL_ANALYSIS_STAGES,
+    VisualAnalysisCoverage,
 )
 from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
-from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaSegment
+from openvideo.core.media_models import (
+    MediaAsset,
+    MediaAssetStatus,
+    MediaSegment,
+    VisualAnalysisStatus,
+)
 from openvideo.core.transcription_models import (
     Transcript,
     TranscriptionMetadata,
@@ -61,6 +67,23 @@ TRANSCRIPTION_CONTEXT_MAX_CHARACTERS = 400
 SECONDS_PER_MINUTE = 60
 
 
+def _visual_coverage_message(coverage: VisualAnalysisCoverage) -> str:
+    details = [
+        f"视觉关键帧采样：{coverage.sampled_segments}/{coverage.total_segments} 个事件，"
+        f"{coverage.sampled_frame_count} 帧（非逐帧理解）"
+    ]
+    for count, label in (
+        (coverage.failed_segments, "视觉分析失败"),
+        (coverage.no_frames_segments, "未提取到关键帧"),
+        (coverage.skipped_segments, "按策略跳过视觉分析"),
+        (coverage.not_requested_segments, "未请求视觉模型分析"),
+        (coverage.unknown_segments, "视觉状态无法核实"),
+    ):
+        if count:
+            details.append(f"{count} 个事件{label}")
+    return "；".join(details)
+
+
 def _segments_overlap(first: MediaSegment, second: MediaSegment) -> bool:
     return (
         first.start_seconds < second.end_seconds
@@ -69,7 +92,18 @@ def _segments_overlap(first: MediaSegment, second: MediaSegment) -> bool:
 
 
 def _segment_digest(segments: list[MediaSegment]) -> str:
-    payload = [segment.model_dump(mode="json") for segment in segments]
+    # 默认未知状态不改变旧摘要，保证升级前的待确认任务仍能校验原时间轴。
+    payload = [
+        segment.model_dump(
+            mode="json",
+            exclude=(
+                {"visual_analysis_status"}
+                if segment.visual_analysis_status == VisualAnalysisStatus.UNKNOWN
+                else set()
+            ),
+        )
+        for segment in segments
+    ]
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -178,7 +212,8 @@ class AnalysisManager:
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法分析")
-        if self.library.load_transcript(asset_id) is None:
+        transcript = self.library.load_transcript(asset_id)
+        if transcript is None:
             raise AnalysisPrerequisiteError("请先完成视频转录，再开始内容分析")
         if ai_model_id:
             model = self.settings.ai_model(ai_model_id)
@@ -190,11 +225,26 @@ class AnalysisManager:
                 raise AnalysisPrerequisiteError("所选 AI 模型不支持视觉分析")
         active_job = self._active_job_for(asset_id)
         if active_job:
-            return active_job
+            if (
+                active_job.operation == AnalysisOperation.ANALYSIS
+                and active_job.mode == mode
+                and active_job.ai_model_id == ai_model_id
+                and active_job.strategy == strategy
+            ):
+                return active_job
+            raise AnalysisPrerequisiteError(
+                "该视频正在执行不同的任务、模型或分析策略，请等待完成后再开始内容分析"
+            )
         existing_segments = self.library.load_segments(asset_id)
         has_full_timeline = any(not segment.marker_ids for segment in existing_segments)
-        if mode == AnalysisMode.FULL and has_full_timeline and not force:
-            return self._completed_job(asset_id, mode)
+        # 旧时间轴没有模型来源记录，不能据此跳过用户明确请求的视觉分析。
+        if (
+            mode == AnalysisMode.FULL
+            and has_full_timeline
+            and not force
+            and ai_model_id is None
+        ):
+            return self._completed_job(asset_id, mode, transcript, existing_segments)
 
         job_id = f"job-{uuid7().hex}"
         job = AnalysisJob(
@@ -495,7 +545,13 @@ class AnalysisManager:
             raise AnalysisError("时间轴已发生变化，请重新运行分析")
         self.library.save_segments(job.asset_id, job.proposed_segments)
         self._on_evidence_ready()
-        self._finish_analysis_proposal(job_id, AnalysisStage.COMPLETE, "分析结果已确认")
+        visual_coverage = job.visual_coverage or VisualAnalysisCoverage.from_segments(
+            job.proposed_segments
+        )
+        message = f"分析结果已确认；{_visual_coverage_message(visual_coverage)}"
+        self._finish_analysis_proposal(
+            job_id, AnalysisStage.COMPLETE, message, visual_coverage
+        )
         return self.get(job_id) or job
 
     def reject_proposal(self, job_id: str) -> AnalysisJob:
@@ -672,6 +728,10 @@ class AnalysisManager:
                     raise AnalysisError(
                         "未能生成时间轴事件，请检查视频时长和本地媒体文件"
                     )
+                visual_coverage = VisualAnalysisCoverage.from_segments(proposed_segments)
+                with self._lock:
+                    self._jobs[job_id].visual_coverage = visual_coverage
+                    self.library.save_analysis_job(self._jobs[job_id])
                 self._add_capability(job_id, AnalysisCapability.TIMELINE)
                 self._add_capability(job_id, AnalysisCapability.CHAPTERS)
                 has_key_frames = any(
@@ -707,7 +767,8 @@ class AnalysisManager:
                         job_id,
                         AnalysisStage.COMPLETE,
                         100,
-                        f"已生成 {len(proposed_segments)} 个章节及摘要",
+                        f"已生成 {len(proposed_segments)} 个章节及摘要；"
+                        f"{_visual_coverage_message(visual_coverage)}",
                     )
                     return
                 if job.operation == AnalysisOperation.INITIALIZATION:
@@ -739,6 +800,7 @@ class AnalysisManager:
                     if describer is not None
                     else "音频时间轴预览已生成，等待确认（未配置视觉模型）"
                 )
+                message += f"；{_visual_coverage_message(visual_coverage)}"
                 self._set_analysis_proposal(
                     job_id,
                     _segment_digest(self.library.load_segments(asset.asset_id)),
@@ -902,7 +964,11 @@ class AnalysisManager:
             self.library.save_analysis_job(job)
 
     def _finish_analysis_proposal(
-        self, job_id: str, stage: AnalysisStage, message: str
+        self,
+        job_id: str,
+        stage: AnalysisStage,
+        message: str,
+        visual_coverage: VisualAnalysisCoverage | None = None,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -911,6 +977,8 @@ class AnalysisManager:
             job.stage = stage
             job.progress_percent = 100
             job.message = message
+            if visual_coverage is not None:
+                job.visual_coverage = visual_coverage
             job.proposal_base_digest = None
             job.proposed_segments = []
             job.updated_at = datetime.now(UTC)
@@ -1038,18 +1106,23 @@ class AnalysisManager:
             capabilities.append(AnalysisCapability.VISUAL)
         return capabilities
 
-    @staticmethod
     def _completed_job(
+        self,
         asset_id: str,
         mode: AnalysisMode,
+        transcript: Transcript,
+        segments: list[MediaSegment],
     ) -> AnalysisJob:
+        visual_coverage = VisualAnalysisCoverage.from_segments(segments)
         return AnalysisJob(
             job_id=f"job-{uuid7().hex}",
             asset_id=asset_id,
             mode=mode,
             strategy=AnalysisStrategy(),
-            capabilities=[AnalysisCapability.TRANSCRIPT, AnalysisCapability.TIMELINE],
+            capabilities=self._existing_capabilities(transcript, segments),
+            visual_coverage=visual_coverage,
             stage=AnalysisStage.COMPLETE,
             progress_percent=100,
-            message="该视频已有时间轴分析结果",
+            message="该视频已有时间轴分析结果；"
+            f"{_visual_coverage_message(visual_coverage)}",
         )

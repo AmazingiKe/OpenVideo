@@ -223,6 +223,17 @@ class AssetMetadata(BaseModel):
     updated_at: datetime
 
 
+class VisualAnalysisStatus(StrEnum):
+    """区分关键帧采样结果与未执行、失败及无法核实的旧视觉产物。"""
+
+    UNKNOWN = "unknown"
+    NOT_REQUESTED = "not_requested"
+    SKIPPED = "skipped"
+    NO_FRAMES = "no_frames"
+    FAILED = "failed"
+    SAMPLED = "sampled"
+
+
 class MediaSegment(BaseModel):
     segment_id: str
     asset_id: str
@@ -234,6 +245,7 @@ class MediaSegment(BaseModel):
     speaker_name: str | None = None
     key_frame_paths: list[str] = Field(default_factory=list)
     visual_description: str | None = None
+    visual_analysis_status: VisualAnalysisStatus = VisualAnalysisStatus.UNKNOWN
     ocr_text: str | None = None
     formula_latex: list[str] = Field(default_factory=list)
     marker_ids: list[str] = Field(default_factory=list)

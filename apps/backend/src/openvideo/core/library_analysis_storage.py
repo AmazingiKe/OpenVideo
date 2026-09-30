@@ -152,6 +152,11 @@ class LibraryAnalysisStorageMixin:
             values = dict(row)
             values["strategy"] = json.loads(values["strategy"])
             values["proposed_segments"] = json.loads(values["proposed_segments"])
+            values["visual_coverage"] = (
+                json.loads(values["visual_coverage"])
+                if values["visual_coverage"] is not None
+                else None
+            )
             values["capabilities"] = self._relation_values(
                 "analysis_job_capabilities",
                 "capability",
