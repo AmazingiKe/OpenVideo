@@ -469,6 +469,147 @@ def test_failed_retranscription_preserves_existing_result(tmp_path: Path, monkey
         assert metadata.attempt_count == 2
 
 
+def test_download_and_transcribe_continues_in_one_background_job(
+    tmp_path: Path, monkeypatch
+):
+    model_download_started = Event()
+    finish_download = Event()
+    installer_calls = []
+
+    def install_model(descriptor, models_root_directory, report_progress):
+        installer_calls.append(descriptor.model)
+        report_progress(50, 100)
+        model_download_started.set()
+        assert finish_download.wait(timeout=5)
+        model_directory = (
+            models_root_directory / descriptor.engine.value / descriptor.model
+        )
+        model_directory.mkdir(parents=True)
+        (model_directory / "model.bin").write_bytes(b"mock-model")
+        report_progress(100, 100)
+
+    def transcribe_after_download(*args, **_kwargs):
+        args[-1]()
+        return TranscriptionResult(
+            transcript=Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(
+                        start_seconds=0, end_seconds=1, text="后台生成字幕"
+                    )
+                ],
+            ),
+            output_source="faster-whisper",
+        )
+
+    monkeypatch.setattr(
+        analysis_manager_module, "download_transcription_model", install_model
+    )
+    monkeypatch.setattr(
+        analysis_manager_module, "transcribe_media", transcribe_after_download
+    )
+    with create_client(tmp_path) as client:
+        created_response = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcribe",
+            json={"force": True, "download_model": True},
+        )
+        assert created_response.status_code == 202
+        created = created_response.json()
+        try:
+            assert model_download_started.wait(timeout=5)
+            running = client.get(f"/api/analysis/{created['job_id']}").json()
+            assert running["stage"] == "preparing_transcription_model"
+            assert running["download_model"] is True
+            repeated = client.post(
+                f"/api/media/assets/{ASSET_ID}/transcribe",
+                json={"force": True, "download_model": True},
+            ).json()
+            assert repeated["job_id"] == created["job_id"]
+        finally:
+            finish_download.set()
+        completed = wait_for_analysis_job(client, created["job_id"])
+        assert completed["stage"] == "complete"
+        assert installer_calls == ["small"]
+        assert (
+            client.get(f"/api/media/assets/{ASSET_ID}/transcript").json()["segments"][
+                0
+            ]["text"]
+            == "后台生成字幕"
+        )
+        persisted = client.app.state.library.load_analysis_jobs()[0]
+        assert persisted.download_model is True
+
+
+def test_download_failure_preserves_existing_transcript_and_allows_retry(
+    tmp_path: Path, monkeypatch
+):
+    download_attempts = []
+
+    def fail_download(descriptor, models_root_directory, _report_progress):
+        download_attempts.append(descriptor.model)
+        if len(download_attempts) == 1:
+            raise RuntimeError("模型下载失败")
+        model_directory = (
+            models_root_directory / descriptor.engine.value / descriptor.model
+        )
+        model_directory.mkdir(parents=True)
+        (model_directory / "model.bin").write_bytes(b"mock-model")
+
+    def use_local_transcriber(*args, **_kwargs):
+        args[-1]()
+        return TranscriptionResult(
+            transcript=Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(start_seconds=0, end_seconds=1, text="重试字幕")
+                ],
+            ),
+            output_source="faster-whisper",
+        )
+
+    monkeypatch.setattr(
+        analysis_manager_module, "download_transcription_model", fail_download
+    )
+    monkeypatch.setattr(
+        analysis_manager_module, "transcribe_media", use_local_transcriber
+    )
+    with create_client(tmp_path) as client:
+        client.app.state.library.save_transcript(
+            Transcript(
+                asset_id=ASSET_ID,
+                segments=[
+                    TranscriptSegment(start_seconds=0, end_seconds=1, text="原字幕")
+                ],
+            )
+        )
+        created = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcribe",
+            json={"force": True, "download_model": True},
+        ).json()
+        failed = wait_for_analysis_job(client, created["job_id"])
+        assert failed["stage"] == "failed"
+        assert failed["error_message"] == "模型下载失败"
+        assert (
+            client.get(f"/api/media/assets/{ASSET_ID}/transcript").json()["segments"][
+                0
+            ]["text"]
+            == "原字幕"
+        )
+        retry = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcribe",
+            json={"force": True, "download_model": True},
+        ).json()
+        assert retry["job_id"] != created["job_id"]
+        assert wait_for_analysis_job(client, retry["job_id"])["stage"] == "complete"
+        assert download_attempts == ["small", "small"]
+        assert (
+            client.get(f"/api/media/assets/{ASSET_ID}/transcript").json()["segments"][
+                0
+            ]["text"]
+            == "重试字幕"
+        )
+
+
 def test_transcription_requires_downloaded_model(tmp_path: Path):
     with create_client(tmp_path) as client:
         response = client.post(f"/api/media/assets/{ASSET_ID}/transcribe")

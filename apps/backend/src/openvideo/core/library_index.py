@@ -59,6 +59,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     _ensure_download_quality_schema(connection)
     _ensure_marker_annotation_schema(connection)
     _ensure_visual_analysis_schema(connection)
+    _ensure_transcription_download_schema(connection)
     _migrate_transcript_agent_sessions(connection)
     synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
@@ -481,6 +482,17 @@ def _ensure_visual_analysis_schema(connection: sqlite3.Connection) -> None:
             connection.execute("DELETE FROM index_states")
 
 
+def _ensure_transcription_download_schema(connection: sqlite3.Connection) -> None:
+    """旧任务默认不获下载许可，增量迁移保留会话与任务历史。"""
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(analysis_jobs)")}
+    if "download_model" not in columns:
+        with connection:
+            connection.execute(
+                "ALTER TABLE analysis_jobs ADD COLUMN "
+                "download_model INTEGER NOT NULL DEFAULT 0"
+            )
+
+
 def _migrate_transcript_agent_sessions(connection: sqlite3.Connection) -> None:
     """字幕处理已并入视频对话，旧会话迁移后仍可继续原生对话。"""
 
@@ -662,6 +674,7 @@ CREATE TABLE download_jobs (
 CREATE TABLE analysis_jobs (
     job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, strategy TEXT NOT NULL,
+    download_model INTEGER NOT NULL DEFAULT 0,
     stage TEXT NOT NULL, progress_percent REAL NOT NULL, message TEXT NOT NULL,
     error_message TEXT, proposal_base_digest TEXT, proposed_segments TEXT NOT NULL,
     visual_coverage TEXT,

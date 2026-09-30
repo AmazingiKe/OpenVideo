@@ -516,6 +516,27 @@ describe("api client", () => {
     );
   });
 
+  it("only sends model download permission when explicitly requested", async () => {
+    const fetch_mock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ stage: "pending" }, { status: 202 }));
+    await transcribe_asset(
+      "asset-1",
+      {
+        engine: "faster-whisper",
+        model: "small",
+        language: "zh",
+        device: "cpu",
+        compute_type: "int8",
+      },
+      undefined,
+      true,
+    );
+    expect(
+      JSON.parse(fetch_mock.mock.calls[0][1]!.body as string),
+    ).toMatchObject({ download_model: true, force: true });
+  });
+
   it("keeps relative media paths on the current API origin", () => {
     expect(media_url("/api/media/assets/a/stream")).toBe(
       "/api/media/assets/a/stream",

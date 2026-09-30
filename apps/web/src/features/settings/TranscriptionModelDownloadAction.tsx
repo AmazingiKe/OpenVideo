@@ -12,7 +12,6 @@ import { ModelDownloadAction } from "./ModelDownloadAction";
 type TranscriptionModelDownloadActionProps = {
   model: TranscriptionModelDescriptor;
   on_change: (model: TranscriptionModelDescriptor) => void;
-  on_complete?: () => void;
   action_label?: string;
   disabled?: boolean;
 };
@@ -20,7 +19,6 @@ type TranscriptionModelDownloadActionProps = {
 export function TranscriptionModelDownloadAction({
   model,
   on_change,
-  on_complete,
   action_label = "下载",
   disabled = false,
 }: TranscriptionModelDownloadActionProps) {
@@ -39,7 +37,6 @@ export function TranscriptionModelDownloadAction({
           installation_status,
           download_job: job as TranscriptionModelDownloadJob,
         });
-        if (installation_status === "installed") on_complete?.();
       }}
       action_label={action_label}
       disabled={disabled}

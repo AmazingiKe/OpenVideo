@@ -35,7 +35,10 @@ export function LibraryPage() {
   >(null);
   const [transcription_notice, set_transcription_notice] = useState("");
 
-  async function transcribe_selected_videos(options: TranscriptionOptions) {
+  async function transcribe_selected_videos(
+    options: TranscriptionOptions,
+    download_model: boolean,
+  ) {
     const selected_assets = transcription_assets;
     set_transcription_assets([]);
     set_transcription_error(null);
@@ -45,7 +48,7 @@ export function LibraryPage() {
     const results = await Promise.all(
       selected_assets.map(async (asset) => {
         try {
-          await start_transcription(asset.asset_id, options);
+          await start_transcription(asset.asset_id, options, download_model);
           return true;
         } catch (error) {
           const failure = `${asset.title ?? "未命名视频"}：${error_message(error)}`;
@@ -110,16 +113,11 @@ export function LibraryPage() {
         error={resource_error}
         has_transcript={false}
         is_transcribing={false}
-        on_start_transcription={(options) =>
-          void transcribe_selected_videos(options)
+        on_start_transcription={(options, download_model) =>
+          void transcribe_selected_videos(options, download_model)
         }
         transcription_models={transcription_models}
         default_transcription={default_transcription}
-        on_transcription_model_change={() =>
-          void query_client.invalidateQueries({
-            queryKey: RESOURCE_QUERY_KEYS.transcription_resources,
-          })
-        }
       />
     </section>
   );

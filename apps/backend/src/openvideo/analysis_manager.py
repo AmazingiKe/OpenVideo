@@ -265,6 +265,8 @@ class AnalysisManager:
         asset_id: str,
         options: TranscriptionOptions,
         force: bool,
+        *,
+        download_model: bool = False,
     ) -> AnalysisJob:
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
@@ -283,10 +285,11 @@ class AnalysisManager:
             )
         try:
             descriptor = require_transcription_adapter(options)
-            require_transcription_model_installed(
-                descriptor,
-                self.settings.models_root_directory,
-            )
+            if not download_model:
+                require_transcription_model_installed(
+                    descriptor,
+                    self.settings.models_root_directory,
+                )
         except (TranscriptionFailure, TranscriptionModelDownloadError) as error:
             raise AnalysisPrerequisiteError(str(error)) from error
         existing_transcript = self.library.load_transcript(asset_id)
@@ -304,6 +307,7 @@ class AnalysisManager:
             job_id=f"job-{uuid7().hex}",
             asset_id=asset_id,
             operation=AnalysisOperation.TRANSCRIPTION,
+            download_model=download_model,
         )
         with self._lock:
             self._jobs[job.job_id] = job
@@ -857,8 +861,8 @@ class AnalysisManager:
         options: TranscriptionOptions,
         asset: MediaAsset,
     ) -> Transcriber:
-        """仅在平台字幕缺失后准备本地识别，显式转录仍沿用已验证的模型配置。"""
-        if job.operation == AnalysisOperation.INITIALIZATION:
+        """仅在平台字幕缺失后准备识别；手动任务只有明确许可才下载模型。"""
+        if job.operation == AnalysisOperation.INITIALIZATION or job.download_model:
             descriptor = require_transcription_adapter(options)
             if not is_transcription_model_installed(
                 descriptor, self.settings.models_root_directory

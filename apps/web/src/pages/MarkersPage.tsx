@@ -102,7 +102,7 @@ export function MarkersPage() {
   const library_open =
     preferences.video_library_open ?? selected_asset_id === null;
   const {
-    transcription_models: loaded_transcription_models,
+    transcription_models,
     default_transcription,
     error: transcription_resources_error,
   } = use_transcription_resources();
@@ -131,8 +131,6 @@ export function MarkersPage() {
     [],
   );
   const analysis_strategy = DEFAULT_ANALYSIS_STRATEGY;
-  const [transcription_model_overrides, set_transcription_model_overrides] =
-    useState<Record<string, (typeof loaded_transcription_models)[number]>>({});
   const [is_panel_size_transitioning, set_is_panel_size_transitioning] =
     useState(false);
   const panel_transition_timeout_ref = useRef<number | null>(null);
@@ -430,11 +428,14 @@ export function MarkersPage() {
     }
   }
 
-  async function run_transcription(options: TranscriptionOptions) {
+  async function run_transcription(
+    options: TranscriptionOptions,
+    download_model: boolean,
+  ) {
     if (!selected_asset_id) return;
     set_page_error(null);
     try {
-      await start_transcription(selected_asset_id, options);
+      await start_transcription(selected_asset_id, options, download_model);
       if (mounted_ref.current) await reload_analysis();
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
@@ -470,10 +471,6 @@ export function MarkersPage() {
   const is_transcribing = selected_asset_id
     ? is_transcription_running(selected_asset_id)
     : false;
-  const transcription_models = loaded_transcription_models.map(
-    (model) =>
-      transcription_model_overrides[`${model.engine}:${model.model}`] ?? model,
-  );
   const library_panel = (
     <MarkerLibraryPanel
       collapsed={!library_open}
@@ -585,15 +582,11 @@ export function MarkersPage() {
         asset={selected_asset}
         has_transcript={transcript !== null}
         is_transcribing={is_transcribing}
-        on_start_transcription={(options) => void run_transcription(options)}
+        on_start_transcription={(options, download_model) =>
+          void run_transcription(options, download_model)
+        }
         transcription_models={transcription_models}
         default_transcription={default_transcription}
-        on_transcription_model_change={(updated_model) =>
-          set_transcription_model_overrides((current) => ({
-            ...current,
-            [`${updated_model.engine}:${updated_model.model}`]: updated_model,
-          }))
-        }
       />
       <div
         className={cn(

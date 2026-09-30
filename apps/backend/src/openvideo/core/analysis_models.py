@@ -220,6 +220,7 @@ class AnalysisJob(BaseModel):
     job_id: str
     asset_id: str
     operation: AnalysisOperation = AnalysisOperation.ANALYSIS
+    download_model: bool = False
     mode: AnalysisMode = AnalysisMode.FULL
     ai_model_id: str | None = None
     strategy: AnalysisStrategy = Field(default_factory=AnalysisStrategy)

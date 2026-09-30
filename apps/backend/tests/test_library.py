@@ -6,6 +6,7 @@ from threading import Barrier
 
 import pytest
 
+from openvideo.core.analysis_models import AnalysisJob, AnalysisOperation
 from openvideo.core.download_models import DownloadJob, DownloadStage
 from openvideo.core.library import InvalidLibraryError, MediaLibrary
 from openvideo.core.media_models import (
@@ -296,6 +297,35 @@ def test_deleting_sqlite_rebuilds_all_user_results(tmp_path: Path):
         "content",
     }
     rebuilt.close()
+
+
+def test_transcription_download_permission_migrates_without_rebuilding(tmp_path: Path):
+    library = MediaLibrary.initialize_directory(tmp_path)
+    _save_asset(library, _asset())
+    library.save_analysis_job(
+        AnalysisJob(
+            job_id=JOB_ID, asset_id=ASSET_ID, operation=AnalysisOperation.TRANSCRIPTION
+        )
+    )
+    with library._db():
+        library._db().execute("ALTER TABLE analysis_jobs DROP COLUMN download_model")
+        library._db().execute("CREATE TABLE migration_sentinel (value TEXT)")
+        library._db().execute("INSERT INTO migration_sentinel VALUES ('preserved')")
+    library.close()
+
+    restored = MediaLibrary.open(tmp_path)
+    job = restored.load_analysis_jobs()[0]
+    assert job.download_model is False
+    assert (
+        restored._db().execute("SELECT value FROM migration_sentinel").fetchone()[0]
+        == "preserved"
+    )
+    restored.save_analysis_job(job.model_copy(update={"download_model": True}))
+    restored.close()
+
+    reopened = MediaLibrary.open(tmp_path)
+    assert reopened.load_analysis_jobs()[0].download_model is True
+    reopened.close()
 
 
 def test_marker_content_column_migrates_without_rebuilding_database(tmp_path: Path):

@@ -162,6 +162,61 @@ describe("TaskManagerProvider", () => {
     expect(get_analysis).not.toHaveBeenCalled();
   });
 
+  it("keeps download-and-use preparation and transcription running after leaving its page", async () => {
+    vi.useFakeTimers();
+    const preparing_job = {
+      job_id: "job-0198f10e3f9871239c79000000000001",
+      asset_id: "asset-0198f10e3f9871239c79000000000001",
+      stage: "preparing_transcription_model",
+      download_model: true,
+      created_at: "2026-01-01T00:00:00Z",
+      progress_percent: 1,
+      message: "模型准备中",
+      error_message: null,
+    } as AnalysisJob;
+    vi.mocked(transcribe_asset).mockResolvedValue(preparing_job);
+    vi.mocked(get_analysis)
+      .mockResolvedValueOnce({ ...preparing_job, stage: "transcribing" })
+      .mockResolvedValueOnce({
+        ...preparing_job,
+        stage: "complete",
+        progress_percent: 100,
+      });
+    render(
+      <MemoryRouter initialEntries={["/start"]}>
+        <ApplicationQueryProvider>
+          <AssetCatalogProvider>
+            <TaskManagerProvider>
+              <Routes>
+                <Route path="/start" element={<TranscriptionStarter />} />
+                <Route path="/other" element={<TaskStatus />} />
+              </Routes>
+            </TaskManagerProvider>
+          </AssetCatalogProvider>
+        </ApplicationQueryProvider>
+      </MemoryRouter>,
+    );
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "下载模型并转写" })),
+    );
+    expect(transcribe_asset).toHaveBeenCalledWith(
+      preparing_job.asset_id,
+      expect.objectContaining({ model: "small" }),
+      expect.any(AbortSignal),
+      true,
+    );
+    fireEvent.click(screen.getByRole("link", { name: "关闭转写页面" }));
+    expect(
+      screen.getByText("preparing_transcription_model"),
+    ).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(screen.getByText("transcribing")).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(screen.getByText("complete")).toBeInTheDocument();
+    expect(transcribe_asset).toHaveBeenCalledOnce();
+    expect(vi.mocked(transcribe_asset).mock.calls[0][2]?.aborted).toBe(false);
+  });
+
   it("keeps polling a download after the initiating page unmounts", async () => {
     vi.useFakeTimers();
     vi.mocked(list_downloads).mockResolvedValue([]);
@@ -643,6 +698,33 @@ function TaskStarter() {
         开始下载
       </button>
       <Link to="/other">离开页面</Link>
+    </>
+  );
+}
+
+function TranscriptionStarter() {
+  const { start_transcription } = use_task_manager();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          void start_transcription(
+            "asset-0198f10e3f9871239c79000000000001",
+            {
+              engine: "faster-whisper",
+              model: "small",
+              language: null,
+              device: "cpu",
+              compute_type: "int8",
+            },
+            true,
+          )
+        }
+      >
+        下载模型并转写
+      </button>
+      <Link to="/other">关闭转写页面</Link>
     </>
   );
 }

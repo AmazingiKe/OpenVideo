@@ -66,13 +66,11 @@ afterEach(() => {
 describe("TranscriptionModelDownloadAction", () => {
   it("downloads an uninstalled model and reports completion", async () => {
     const change_model = vi.fn();
-    const complete = vi.fn();
     render(
       <TranscriptionModelDownloadAction
         model={MODEL}
         action_label="下载并使用"
         on_change={change_model}
-        on_complete={complete}
       />,
     );
 
@@ -92,6 +90,5 @@ describe("TranscriptionModelDownloadAction", () => {
     expect(change_model).toHaveBeenLastCalledWith(
       expect.objectContaining({ installation_status: "installed" }),
     );
-    expect(complete).toHaveBeenCalledOnce();
   });
 });

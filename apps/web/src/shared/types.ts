@@ -369,6 +369,7 @@ export type AnalysisJob = {
   job_id: string;
   asset_id: string;
   operation: AnalysisOperation;
+  download_model?: boolean;
   mode: AnalysisMode;
   ai_model_id: string | null;
   strategy: AnalysisStrategy;

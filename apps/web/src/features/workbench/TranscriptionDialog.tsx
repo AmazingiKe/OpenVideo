@@ -1,4 +1,3 @@
-import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -43,10 +42,12 @@ type TranscriptionDialogProps = {
   error?: string | null;
   has_transcript: boolean;
   is_transcribing: boolean;
-  on_start_transcription: (options: TranscriptionOptions) => void;
+  on_start_transcription: (
+    options: TranscriptionOptions,
+    download_model: boolean,
+  ) => void;
   transcription_models: TranscriptionModelDescriptor[];
   default_transcription: TranscriptionOptions | null;
-  on_transcription_model_change: (model: TranscriptionModelDescriptor) => void;
 };
 
 export function TranscriptionDialog({
@@ -60,7 +61,6 @@ export function TranscriptionDialog({
   on_start_transcription,
   transcription_models,
   default_transcription,
-  on_transcription_model_change,
 }: TranscriptionDialogProps) {
   const {
     available_transcription_models,
@@ -72,6 +72,9 @@ export function TranscriptionDialog({
     default_transcription,
     transcription_models,
   });
+  const needs_model_download =
+    selected_transcription_model !== null &&
+    selected_transcription_model.installation_status !== "installed";
   return (
     <Dialog open={open} onOpenChange={on_open_change}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-sm">
@@ -173,40 +176,35 @@ export function TranscriptionDialog({
             </FieldDescription>
           </Field>
         </FieldGroup>
-        {selected_transcription_model &&
-        selected_transcription_model.installation_status !== "installed" ? (
-          <TranscriptionModelDownloadAction
-            model={selected_transcription_model}
-            action_label="下载并使用"
-            on_change={on_transcription_model_change}
-            on_complete={() => {
-              if (transcription_options) {
-                on_start_transcription(transcription_options);
-              }
-            }}
-            disabled={!asset || is_transcribing}
-          />
-        ) : (
-          <Button
-            className="w-full"
-            type="button"
-            onClick={() => {
-              if (transcription_options) {
-                on_start_transcription(transcription_options);
-              }
-            }}
-            disabled={!asset || !transcription_options || is_transcribing}
-          >
-            {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
-            {is_transcribing
-              ? "转写中…"
+        <Button
+          className="w-full"
+          type="button"
+          onClick={() => {
+            if (transcription_options) {
+              on_start_transcription(
+                transcription_options,
+                needs_model_download,
+              );
+            }
+          }}
+          disabled={!asset || !transcription_options || is_transcribing}
+        >
+          {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
+          {is_transcribing
+            ? "转写中…"
+            : needs_model_download
+              ? "下载并使用"
               : asset_count > 1
                 ? `转写 ${asset_count} 个视频`
                 : has_transcript
                   ? "重新转写"
                   : "生成转写"}
-          </Button>
-        )}
+        </Button>
+        {is_transcribing || needs_model_download ? (
+          <FieldDescription>
+            模型准备与转写会在后台继续，关闭窗口不会取消任务，可在任务中心查看进度。
+          </FieldDescription>
+        ) : null}
         <FieldDescription>
           {has_transcript
             ? "重新转写会在成功后替换当前文字；失败时保留现有结果。"

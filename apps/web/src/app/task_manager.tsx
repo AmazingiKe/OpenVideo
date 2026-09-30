@@ -69,6 +69,7 @@ type TaskManager = {
   start_transcription: (
     asset_id: string,
     options: TranscriptionOptions,
+    download_model?: boolean,
   ) => Promise<AnalysisJob>;
   is_transcription_running: (asset_id: string) => boolean;
 };
@@ -539,7 +540,11 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   );
 
   const start_transcription = useCallback(
-    async (asset_id: string, options: TranscriptionOptions) => {
+    async (
+      asset_id: string,
+      options: TranscriptionOptions,
+      download_model = false,
+    ) => {
       if (transcription_controllers.current.has(asset_id))
         throw new Error("该视频已在转写队列中");
       const controller = new AbortController();
@@ -550,6 +555,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
           asset_id,
           options,
           controller.signal,
+          download_model,
         );
         controller.signal.throwIfAborted();
         record_transcription_job(job);
@@ -564,9 +570,18 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         if (final_job.stage === "failed") {
           throw new Error(final_job.error_message ?? "转录失败");
         }
-        await query_client.invalidateQueries({
-          queryKey: RESOURCE_QUERY_KEYS.asset_analysis(asset_id),
-        });
+        await Promise.all([
+          query_client.invalidateQueries({
+            queryKey: RESOURCE_QUERY_KEYS.asset_analysis(asset_id),
+          }),
+          ...(download_model
+            ? [
+                query_client.invalidateQueries({
+                  queryKey: RESOURCE_QUERY_KEYS.transcription_resources,
+                }),
+              ]
+            : []),
+        ]);
         return final_job;
       } finally {
         set_active_transcriptions((current) => {

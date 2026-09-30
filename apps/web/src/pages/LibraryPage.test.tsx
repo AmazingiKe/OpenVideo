@@ -172,10 +172,12 @@ describe("LibraryPage", () => {
     expect(start_transcription).toHaveBeenCalledWith(
       ASSET_ID,
       DEFAULT_TRANSCRIPTION,
+      false,
     );
     expect(start_transcription).toHaveBeenCalledWith(
       second_asset.asset_id,
       DEFAULT_TRANSCRIPTION,
+      false,
     );
     expect(select_asset).not.toHaveBeenCalled();
   });

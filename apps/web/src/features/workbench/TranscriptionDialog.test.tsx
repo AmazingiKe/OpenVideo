@@ -52,7 +52,10 @@ describe("TranscriptionDialog", () => {
     expect(screen.getByText("Whisper Small")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
 
-    expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
+    expect(start_transcription).toHaveBeenCalledWith(
+      DEFAULT_TRANSCRIPTION,
+      false,
+    );
   });
 
   it("allows the task language to use automatic detection", () => {
@@ -73,10 +76,13 @@ describe("TranscriptionDialog", () => {
     fireEvent.click(screen.getByRole("option", { name: "自动检测" }));
     fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
 
-    expect(start_transcription).toHaveBeenCalledWith({
-      ...DEFAULT_TRANSCRIPTION,
-      language: null,
-    });
+    expect(start_transcription).toHaveBeenCalledWith(
+      {
+        ...DEFAULT_TRANSCRIPTION,
+        language: null,
+      },
+      false,
+    );
   });
 
   it("allows an existing transcript to be regenerated", () => {
@@ -85,14 +91,19 @@ describe("TranscriptionDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "重新转写" }));
 
-    expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
+    expect(start_transcription).toHaveBeenCalledWith(
+      DEFAULT_TRANSCRIPTION,
+      false,
+    );
     expect(
       screen.getByText("重新转写会在成功后替换当前文字；失败时保留现有结果。"),
     ).toBeInTheDocument();
   });
 
-  it("offers download and use when the selected model is not installed", () => {
-    render_tools({
+  it("submits download and use as one background transcription task", () => {
+    const start_transcription = vi.fn();
+    const dialog = render_tools({
+      start_transcription,
       has_transcript: false,
       transcription_models: [
         {
@@ -103,14 +114,29 @@ describe("TranscriptionDialog", () => {
     });
 
     expect(screen.getByRole("button", { name: "下载并使用" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "下载并使用" }));
+    expect(start_transcription).toHaveBeenCalledWith(
+      DEFAULT_TRANSCRIPTION,
+      true,
+    );
+    expect(
+      screen.getByText(
+        "模型准备与转写会在后台继续，关闭窗口不会取消任务，可在任务中心查看进度。",
+      ),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "生成转写" }),
     ).not.toBeInTheDocument();
+    dialog.unmount();
+    expect(start_transcription).toHaveBeenCalledOnce();
   });
 });
 
 type RenderOptions = {
-  start_transcription?: (options: TranscriptionOptions) => void;
+  start_transcription?: (
+    options: TranscriptionOptions,
+    download_model: boolean,
+  ) => void;
   has_transcript?: boolean;
   transcription_models?: TranscriptionModelDescriptor[];
 };
@@ -128,7 +154,6 @@ function render_tools(options: RenderOptions = {}) {
         options.transcription_models ?? TRANSCRIPTION_MODELS
       }
       default_transcription={DEFAULT_TRANSCRIPTION}
-      on_transcription_model_change={vi.fn()}
     />,
   );
 }

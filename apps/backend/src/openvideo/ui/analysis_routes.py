@@ -71,6 +71,7 @@ class TranscriptSegmentUpdateRequest(BaseModel):
 
 class TranscriptionCreateRequest(BaseModel):
     force: bool = False
+    download_model: bool = False
     engine: TranscriptionEngine | None = None
     model: str | None = None
     language: str | None = None
@@ -150,7 +151,7 @@ def register_analysis_routes(
     ) -> AnalysisJob:
         try:
             option_values = request.model_dump(
-                exclude={"force"},
+                exclude={"force", "download_model"},
                 exclude_unset=True,
             )
             option_values = {
@@ -166,6 +167,7 @@ def register_analysis_routes(
                 asset_id,
                 options,
                 request.force,
+                download_model=request.download_model,
             )
         except ValidationError as error:
             message = (

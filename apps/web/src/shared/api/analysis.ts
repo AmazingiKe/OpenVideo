@@ -20,13 +20,18 @@ export function transcribe_asset(
   asset_id: string,
   options: TranscriptionOptions,
   signal?: AbortSignal,
+  download_model = false,
 ): Promise<AnalysisJob> {
   return request_json(
     `/api/media/assets/${encodeURIComponent(asset_id)}/transcribe`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ force: true, ...options }),
+      body: JSON.stringify({
+        force: true,
+        ...options,
+        ...(download_model ? { download_model: true } : {}),
+      }),
       signal,
     },
   );

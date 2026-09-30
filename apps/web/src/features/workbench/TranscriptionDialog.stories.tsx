@@ -79,7 +79,6 @@ const meta = {
       device: "auto",
       compute_type: "auto",
     },
-    on_transcription_model_change: () => undefined,
   },
   beforeEach() {
     const original_fetch = window.fetch;
@@ -106,4 +105,14 @@ export const Batch: Story = { args: { asset_count: 3, has_transcript: false } };
 
 export const Transcribing: Story = {
   args: { is_transcribing: true },
+};
+
+export const DownloadAndUse: Story = {
+  args: {
+    has_transcript: false,
+    transcription_models: TRANSCRIPTION_MODELS.map((model) => ({
+      ...model,
+      installation_status: "not_installed",
+    })),
+  },
 };
