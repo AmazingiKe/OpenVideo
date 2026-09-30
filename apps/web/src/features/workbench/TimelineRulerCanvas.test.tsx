@@ -169,6 +169,9 @@ describe("TimelineRulerCanvas", () => {
       />,
     );
     const canvas = container.querySelector("canvas");
+    expect(window.getComputedStyle).toHaveBeenCalledWith(
+      document.documentElement,
+    );
 
     expect(timeline_ruler_bitmap_size(123.5, 32, 2)).toEqual({
       width: 247,

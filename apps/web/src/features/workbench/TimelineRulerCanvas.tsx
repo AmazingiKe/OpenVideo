@@ -75,7 +75,9 @@ export function TimelineRulerCanvas({
 
     let paint_style = paint_style_ref.current;
     if (!paint_style) {
-      const computed_style = getComputedStyle(canvas);
+      const computed_style = getComputedStyle(
+        canvas.ownerDocument.documentElement,
+      );
       paint_style = {
         height: parseFloat(
           computed_style.getPropertyValue("--timeline-ruler-height"),

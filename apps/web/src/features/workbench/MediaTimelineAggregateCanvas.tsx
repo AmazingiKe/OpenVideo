@@ -46,7 +46,9 @@ export const MediaTimelineAggregateCanvas = memo(
       if (!canvas) return;
       set_block_inset(
         parseFloat(
-          getComputedStyle(canvas).getPropertyValue("--timeline-block-inset"),
+          getComputedStyle(
+            canvas.ownerDocument.documentElement,
+          ).getPropertyValue("--timeline-block-inset"),
         ),
       );
       const measure = () =>
@@ -99,7 +101,10 @@ export const MediaTimelineAggregateCanvas = memo(
       if (canvas.height !== bitmap_height) canvas.height = bitmap_height;
       let paint_style = paint_style_ref.current;
       if (!paint_style) {
-        const computed_style = getComputedStyle(canvas);
+        // 时间线样式全部定义在根节点，避免深层画布重复解析继承链。
+        const computed_style = getComputedStyle(
+          canvas.ownerDocument.documentElement,
+        );
         paint_style = {
           radius: parseFloat(
             computed_style.getPropertyValue("--timeline-block-radius"),
@@ -131,7 +136,7 @@ export const MediaTimelineAggregateCanvas = memo(
               "--timeline-color-event-analysis-border",
             ),
           },
-          font: computed_style.font,
+          font: computed_style.getPropertyValue("--timeline-ruler-font").trim(),
           count_font: computed_style
             .getPropertyValue("--timeline-count-font")
             .trim(),
