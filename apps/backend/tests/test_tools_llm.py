@@ -91,7 +91,9 @@ def test_completion_retries_transient_provider_failure(monkeypatch):
         if attempts < 3:
             raise RuntimeError("429 rate limit")
         message = SimpleNamespace(content="完成")
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     monkeypatch.setattr(llm, "defer_model_requests", delays.append)
@@ -151,7 +153,9 @@ def test_image_probe_requires_pixel_semantics(monkeypatch):
                 "**B=LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA**"
             )
         )
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     monkeypatch.setattr(llm, "_vision_probe_challenges", lambda: challenges)
@@ -191,7 +195,9 @@ def test_deepseek_image_uses_openai_compatible_transport(monkeypatch):
                 "B=LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA"
             )
         message = SimpleNamespace(content=content)
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     monkeypatch.setattr(llm, "_vision_probe_challenges", lambda: challenges)
@@ -278,7 +284,9 @@ def test_image_probe_falls_back_after_content_format_failure(monkeypatch):
                 "B=LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA"
             )
         )
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     monkeypatch.setattr(llm, "_vision_probe_challenges", lambda: challenges)
@@ -314,7 +322,9 @@ def test_image_probe_supports_unprefixed_custom_gateway_model(monkeypatch):
                 "B=LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA"
             )
         )
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     monkeypatch.setattr(
@@ -360,7 +370,9 @@ def test_concurrent_image_probes_share_one_provider_request(monkeypatch):
                 "B=LEFT_CYAN_CENTER_YELLOW_RIGHT_MAGENTA"
             )
         )
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     monkeypatch.setattr(llm, "_vision_probe_challenges", lambda: challenges)
@@ -387,7 +399,9 @@ def test_deepseek_text_keeps_native_transport(monkeypatch):
     def completion(**request):
         captured.update(request)
         message = SimpleNamespace(content="完成")
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
 
@@ -412,7 +426,9 @@ def test_deepseek_text_keeps_native_transport(monkeypatch):
 def test_image_probe_rejects_model_that_ignores_pixels(monkeypatch):
     def completion(**_request):
         message = SimpleNamespace(content="No image provided")
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     model = AiModelConfiguration(
@@ -442,12 +458,12 @@ def test_image_probe_png_contains_requested_color_stripes():
     )
     center_y = llm.VISION_PROBE_IMAGE_HEIGHT // 2
     stripe_center = llm.VISION_PROBE_STRIPE_WIDTH // 2
-    assert image.getpixel((stripe_center, center_y)) == (
-        llm.VISION_PROBE_COLORS["RED"]
+    assert image.getpixel((stripe_center, center_y)) == (llm.VISION_PROBE_COLORS["RED"])
+    assert (
+        image.getpixel((llm.VISION_PROBE_STRIPE_WIDTH + stripe_center, center_y))
+        == llm.VISION_PROBE_COLORS["GREEN"]
     )
-    assert image.getpixel(
-        (llm.VISION_PROBE_STRIPE_WIDTH + stripe_center, center_y)
-    ) == llm.VISION_PROBE_COLORS["GREEN"]
-    assert image.getpixel(
-        (2 * llm.VISION_PROBE_STRIPE_WIDTH + stripe_center, center_y)
-    ) == llm.VISION_PROBE_COLORS["BLUE"]
+    assert (
+        image.getpixel((2 * llm.VISION_PROBE_STRIPE_WIDTH + stripe_center, center_y))
+        == llm.VISION_PROBE_COLORS["BLUE"]
+    )

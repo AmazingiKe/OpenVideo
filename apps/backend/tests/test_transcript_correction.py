@@ -36,7 +36,9 @@ def test_normal_correction_sends_complete_transcript_once(monkeypatch):
         message = SimpleNamespace(
             content='{"corrections":[{"index":1,"text":"正确术语"}]}'
         )
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     transcript = Transcript(
@@ -68,7 +70,9 @@ def test_custom_instruction_can_translate_with_full_transcript_context(monkeypat
         message = SimpleNamespace(
             content='{"corrections":[{"index":0,"text":"专业术语"}]}'
         )
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
     transcript = Transcript(
@@ -99,7 +103,10 @@ def test_empty_result_does_not_require_unchanged_segments(monkeypatch):
         "completion",
         lambda **_: SimpleNamespace(
             choices=[
-                SimpleNamespace(message=SimpleNamespace(content='{"corrections":[]}'))
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content='{"corrections":[]}'),
+                )
             ]
         ),
     )
@@ -141,7 +148,12 @@ def test_format_repair_does_not_resend_transcript(monkeypatch):
     def completion(**kwargs):
         messages_by_request.append(kwargs["messages"])
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=next(responses)))]
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content=next(responses)),
+                )
+            ]
         )
 
     monkeypatch.setattr(llm.litellm, "completion", completion)
@@ -170,7 +182,11 @@ def test_invalid_corrections_are_rejected_after_one_repair(monkeypatch, content)
         llm.litellm,
         "completion",
         lambda **_: SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop", message=SimpleNamespace(content=content)
+                )
+            ]
         ),
     )
     transcript = Transcript(

@@ -20,7 +20,9 @@ def test_describe_returns_content(tmp_path: Path, monkeypatch):
     def fake_completion(**kwargs):
         captured.update(kwargs)
         message = SimpleNamespace(content="这是一段画面描述")
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)]
+        )
 
     monkeypatch.setattr(llm.litellm, "completion", fake_completion)
     monkeypatch.setattr(

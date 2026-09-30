@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from openvideo.agent_runtime import AgentCancellation, AgentRuntimeError
 from openvideo.core.agent_runtime_models import (
@@ -136,7 +136,7 @@ class ProposeSummaryMediaInput(BaseModel):
 
 
 class CorrectTranscriptInput(BaseModel):
-    segment_indices: list[int] | None = None
+    segment_indices: list[StrictInt] | None = None
     instruction: str | None = Field(default=None, min_length=1, max_length=4_000)
     execution_mode: str = Field(
         default="automatic", pattern=r"^(automatic|chunked|compressed)$"

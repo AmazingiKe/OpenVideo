@@ -408,7 +408,7 @@ def _parse_corrections(content: str, target_indices: list[int]) -> dict[int, str
         index = segment.get("index")
         text = segment.get("text")
         if (
-            not isinstance(index, int)
+            type(index) is not int
             or index not in expected_indices
             or index in corrections
             or not isinstance(text, str)

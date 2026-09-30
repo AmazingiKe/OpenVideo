@@ -40,7 +40,7 @@ class LlmCompletionError(RuntimeError):
 
 
 class LlmContextLengthError(LlmCompletionError):
-    """输入超过模型上下文时保留可恢复语义，供 Agent 请求用户决策。"""
+    """输入或输出超出模型长度预算时保留可分段恢复的语义。"""
 
 
 VISION_PROBE_COLORS = {
@@ -141,7 +141,9 @@ def _complete_with_retry(
         try:
             with model_request_slot(priority):
                 response = litellm.completion(**request)
-            return response.choices[0].message.content
+            return _completion_content(response)
+        except LlmCompletionError:
+            raise
         except litellm.exceptions.ContextWindowExceededError as error:
             raise LlmContextLengthError(
                 f"模型上下文不足：{redact_model_secrets(str(error))}"
@@ -168,7 +170,9 @@ async def _complete_with_retry_async(
         try:
             async with model_request_slot_async(priority):
                 response = await litellm.acompletion(**request)
-            return response.choices[0].message.content
+            return _completion_content(response)
+        except LlmCompletionError:
+            raise
         except litellm.exceptions.ContextWindowExceededError as error:
             raise LlmContextLengthError(
                 f"模型上下文不足：{redact_model_secrets(str(error))}"
@@ -187,6 +191,19 @@ async def _complete_with_retry_async(
                 continue
             raise LlmCompletionError(f"模型请求失败：{classified}") from None
     raise AssertionError("模型重试循环必须返回或抛出异常")
+
+
+def _completion_content(response: litellm.ModelResponse) -> object:
+    """即使截断结果恰好是有效 JSON，也不能把部分翻译或分析当作完成。"""
+
+    choice = response.choices[0]
+    if choice.finish_reason == "length":
+        raise LlmContextLengthError(
+            "模型输出达到长度上限，内容已截断，请缩小范围或分段处理"
+        )
+    if choice.finish_reason == "content_filter":
+        raise LlmCompletionError("模型服务因内容过滤未完成回答")
+    return choice.message.content
 
 
 def _completion_request(

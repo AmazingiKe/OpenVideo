@@ -45,7 +45,9 @@ def configured_model(**overrides) -> AiModelConfiguration:
 
 def text_response() -> SimpleNamespace:
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="OK"))]
+        choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="OK"))
+        ]
     )
 
 
