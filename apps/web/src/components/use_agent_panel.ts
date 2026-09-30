@@ -73,6 +73,12 @@ type AgentSubmissionRequest = {
   context_attachment_drafts: AgentContextAttachmentDraft[];
   selected_model_id: string;
   submission_task_input: Record<string, unknown>;
+  session_state: AgentSessionState | null;
+  session_request: Parameters<typeof create_agent_session>[0];
+  thinking_mode: AgentThinkingMode;
+  retrieval_scope: AgentRetrievalScope;
+  focus_context?: AgentFocusContext;
+  reset_retrieval_scope: boolean;
   signal: AbortSignal;
 };
 
@@ -268,15 +274,12 @@ export function use_agent_panel({
   }
 
   async function ensure_session(
+    session_state: AgentSessionState | null,
+    session_request: Parameters<typeof create_agent_session>[0],
     signal: AbortSignal,
   ): Promise<AgentSessionState> {
-    if (state) return state;
-    if (!asset_id) throw new Error("未选择素材");
-    const session = await create_agent_session({
-      agent_id,
-      asset_id,
-      context: { ...context, scope_key },
-    });
+    if (session_state) return session_state;
+    const session = await create_agent_session(session_request);
     const created_state: AgentSessionState = {
       session,
       runs: [],
@@ -383,11 +386,22 @@ export function use_agent_panel({
     set_last_task_input(command_resolution.task_input);
     set_draft("");
     set_submission({ content, started_at: Date.now() });
+    // Mutation 可能在下一轮渲染后才执行，提交绑定必须使用点击时的快照。
     submission_mutation.mutate({
       content,
       context_attachment_drafts,
       selected_model_id: model_id,
       submission_task_input: command_resolution.task_input,
+      session_state: state,
+      session_request: {
+        agent_id,
+        asset_id,
+        context: { ...context, scope_key },
+      },
+      thinking_mode,
+      retrieval_scope,
+      focus_context,
+      reset_retrieval_scope: !scope_pinned,
       signal,
     });
     return true;
@@ -398,6 +412,12 @@ export function use_agent_panel({
     context_attachment_drafts,
     selected_model_id,
     submission_task_input,
+    session_state,
+    session_request,
+    thinking_mode,
+    retrieval_scope,
+    focus_context,
+    reset_retrieval_scope,
     signal,
   }: AgentSubmissionRequest) {
     try {
@@ -405,7 +425,11 @@ export function use_agent_panel({
         context_attachment_drafts,
       );
       // 关闭窗口只停止观察；已经提交的请求仍属于原视频和会话。
-      const current = await ensure_session(signal);
+      const current = await ensure_session(
+        session_state,
+        session_request,
+        signal,
+      );
       const run = await create_agent_run(current.session.session_id, {
         request_key: `request-${uuid7().replaceAll("-", "")}`,
         ai_model_id: selected_model_id,
@@ -419,7 +443,7 @@ export function use_agent_panel({
       if (signal.aborted) return;
       set_active_run(run);
       void follow_run(run, current.events, signal);
-      if (!scope_pinned) set_retrieval_scope("current_asset");
+      if (reset_retrieval_scope) set_retrieval_scope("current_asset");
     } catch (caught) {
       if (!signal.aborted) {
         set_error(error_message(caught));

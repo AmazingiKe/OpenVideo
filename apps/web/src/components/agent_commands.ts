@@ -33,13 +33,7 @@ export function resolve_agent_command(
   base_task_input: Record<string, unknown>,
 ): AgentCommandResolution {
   const normalized_content = content.trim();
-  const command = commands.find((candidate) => {
-    const prefix = `/${candidate.name}`;
-    return (
-      normalized_content === prefix ||
-      normalized_content.startsWith(`${prefix} `)
-    );
-  });
+  const command = selected_agent_command(normalized_content, commands);
   if (!command) return { task_input: base_task_input, error: null };
   if (command.disabled) {
     return {
@@ -74,14 +68,6 @@ export function selected_agent_command(
   value: string,
   commands: readonly AgentCommand[],
 ): AgentCommand | null {
-  const normalized_content = value.trim();
-  return (
-    commands.find((command) => {
-      const prefix = `/${command.name}`;
-      return (
-        normalized_content === prefix ||
-        normalized_content.startsWith(`${prefix} `)
-      );
-    }) ?? null
-  );
+  const command_name = value.trim().match(/^\/([^\s]+)/u)?.[1];
+  return commands.find((command) => command.name === command_name) ?? null;
 }

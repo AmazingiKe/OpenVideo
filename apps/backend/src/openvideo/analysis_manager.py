@@ -274,6 +274,14 @@ class AnalysisManager:
         active_job = self._active_job_for(asset_id)
         if active_job:
             if active_job.operation == AnalysisOperation.TRANSCRIPTION:
+                with self._lock:
+                    active_options = self._transcription_options_by_job_id.get(
+                        active_job.job_id
+                    )
+                if active_options != options:
+                    raise AnalysisPrerequisiteError(
+                        "该视频已有不同配置的转写任务，完成后再切换模型、语言或运行参数"
+                    )
                 return active_job
             operation_label = {
                 AnalysisOperation.CHAPTERS: "章节生成",

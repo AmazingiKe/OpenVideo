@@ -25,6 +25,14 @@
 | 缺模型但未许可下载 | 维持 409，不隐式下载大型模型 |
 | 旧库迁移与重开 | 保留历史数据，下载许可往返保存一致 |
 
+## 语言与选区绑定
+
+- 斜杠命令后的空格、换行、制表符和全角空格使用同一解析逻辑，目标语言与字幕范围保持一致
+- 用户明确指定的字幕范围（包括全部字幕）优先于模型生成的工具参数；非法范围直接拒绝，不回退成全部字幕
+- 同视频、同转写配置的重复请求复用任务；更换模型、音频语言、设备或计算精度时明确返回 409，不把旧任务当成新配置成功
+- 发送时快照会话、焦点和思考设置；立即新建对话或调整选区不会改变已经点击提交的绑定
+- 取消尚未确认时继续显示运行状态，取消请求失败时继续观察。关闭窗口不发取消请求
+
 ## 执行
 
 ```sh
@@ -37,7 +45,8 @@ pnpm --filter @openvideo/web exec vitest run --project=unit \
 
 uv run --directory apps/backend pytest \
   tests/test_api_analysis.py tests/test_analysis_initialization.py \
-  tests/test_library.py tests/test_analysis.py tests/test_analysis_integrity.py
+  tests/test_library.py tests/test_analysis.py tests/test_analysis_integrity.py \
+  tests/test_transcript_scope.py
 ```
 
 这些测试使用延迟 Promise、伪时钟、API 替身和模型安装器替身，不发送付费模型请求或下载真实模型。不能据此声称真实转录精度、浏览器布局或指定视频的端到端验收已经通过。

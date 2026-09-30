@@ -4,6 +4,7 @@ from threading import Event
 from time import monotonic, sleep
 
 from fastapi.testclient import TestClient
+import pytest
 
 from openvideo.core.ai_models import (
     IMAGE_INPUT_MODALITY,
@@ -608,6 +609,51 @@ def test_download_failure_preserves_existing_transcript_and_allows_retry(
             ]["text"]
             == "重试字幕"
         )
+
+
+@pytest.mark.parametrize(
+    "changed_options",
+    [
+        {"language": "en"},
+        {"model": "medium"},
+        {"device": "auto"},
+        {"compute_type": "auto"},
+    ],
+)
+def test_active_transcription_reuses_only_matching_options(
+    tmp_path: Path, monkeypatch, changed_options
+):
+    options = {
+        "model": "small",
+        "language": "zh",
+        "device": "cpu",
+        "compute_type": "int8",
+    }
+    with create_client(tmp_path) as client:
+        monkeypatch.setattr(
+            client.app.state.analysis_manager, "start", lambda _job_id: None
+        )
+        created = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcribe",
+            json={**options, "download_model": True},
+        )
+        assert created.status_code == 202
+        repeated = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcribe",
+            json={**options, "download_model": False},
+        )
+        assert repeated.status_code == 202
+        assert repeated.json()["job_id"] == created.json()["job_id"]
+        conflicting = client.post(
+            f"/api/media/assets/{ASSET_ID}/transcribe",
+            json={**options, **changed_options, "download_model": True},
+        )
+        assert conflicting.status_code == 409
+        assert "不同配置" in conflicting.json()["detail"]
+        assert len(client.app.state.library.load_analysis_jobs()) == 1
+        metadata = client.app.state.library.load_transcription_metadata(ASSET_ID)
+        assert metadata.options.model == "small"
+        assert metadata.options.language == "zh"
 
 
 def test_transcription_requires_downloaded_model(tmp_path: Path):

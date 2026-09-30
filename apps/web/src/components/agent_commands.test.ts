@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   agent_command_suggestions,
   resolve_agent_command,
+  selected_agent_command,
   type AgentCommand,
 } from "./agent_commands";
 
@@ -26,6 +27,25 @@ const COMMANDS: AgentCommand[] = [
 ];
 
 describe("agent commands", () => {
+  it.each([" ", "\n", "\t", "　"])(
+    "retains target language and selection with separator %j",
+    (separator) => {
+      const content = `/修正选中字幕${separator}翻译成英文`;
+      expect(resolve_agent_command(content, COMMANDS, {}).task_input).toEqual({
+        intent: "transcript_edit",
+        segment_indices: [1, 2],
+        correction_instruction: "翻译成英文",
+      });
+      expect(selected_agent_command(content, COMMANDS)).toEqual(COMMANDS[0]);
+    },
+  );
+
+  it("does not recognize a command prefix as a complete command", () => {
+    const content = "/修正选中字幕备注 翻译成英文";
+    expect(resolve_agent_command(content, COMMANDS, {}).task_input).toEqual({});
+    expect(selected_agent_command(content, COMMANDS)).toBeNull();
+  });
+
   it("lists matching commands after a slash", () => {
     expect(agent_command_suggestions("/字幕", COMMANDS)).toEqual(COMMANDS);
     expect(agent_command_suggestions("普通问题", COMMANDS)).toEqual([]);

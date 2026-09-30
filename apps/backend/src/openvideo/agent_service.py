@@ -136,6 +136,7 @@ from openvideo.tools.transcript_correction import LiteLlmTranscriptCorrector
 from openvideo.tools.vision import LiteLlmVision
 
 TRANSCRIPT_CORRECTION_INSTRUCTION_INPUT_KEY = "correction_instruction"
+TRANSCRIPT_SEGMENT_INDICES_INPUT_KEY = "segment_indices"
 TRANSCRIPT_CORRECTION_INSTRUCTION_MAX_CHARACTERS = 4_000
 SESSION_TITLE_LENGTH = 60
 FRAME_INSPECTION_MIN_COUNT = 3
@@ -1921,9 +1922,13 @@ class AgentService:
         if transcript is None or not transcript.segments:
             return {"ok": False, "error": "当前视频没有可纠错的字幕"}
         indices = parameters.segment_indices
-        if indices is None:
-            task_indices = context.task_input.get("segment_indices")
-            indices = task_indices if isinstance(task_indices, list) else None
+        if TRANSCRIPT_SEGMENT_INDICES_INPUT_KEY in context.task_input:
+            indices = context.task_input[TRANSCRIPT_SEGMENT_INDICES_INPUT_KEY]
+            if indices is not None and (
+                not isinstance(indices, list)
+                or any(type(index) is not int for index in indices)
+            ):
+                return {"ok": False, "error": "字幕片段范围无效"}
         resolved = (
             list(range(len(transcript.segments)))
             if indices is None

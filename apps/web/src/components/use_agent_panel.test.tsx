@@ -11,6 +11,7 @@ import {
 import type {
   AgentArtifact,
   AgentDefinitionAvailability,
+  AgentFocusContext,
   AgentRun,
   AgentSession,
   AgentSessionState,
@@ -268,6 +269,70 @@ describe("use_agent_panel", () => {
     expect(api.stream_unified_agent_run).not.toHaveBeenCalled();
   });
 
+  it("keeps the clicked submission in its original session when a new conversation opens immediately", async () => {
+    const { result } = render_panel();
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    act(() => {
+      expect(result.current.submit("原会话的字幕翻译")).toBe(true);
+      result.current.start_new_conversation();
+    });
+    await waitFor(() => expect(api.create_agent_run).toHaveBeenCalledOnce());
+    expect(api.create_agent_run.mock.calls[0][0]).toBe(SESSION.session_id);
+    expect(api.create_agent_session).not.toHaveBeenCalled();
+    expect(result.current.state).toBeNull();
+    expect(result.current.active_run).toBeNull();
+  });
+
+  it("uses the clicked focus and thinking mode even when settings change immediately", async () => {
+    const original_focus: AgentFocusContext = {
+      workspace: "markers",
+      surface: "transcript",
+      label: "选中字幕",
+      selected_marker_ids: [],
+      selected_transcript_indices: [0],
+    };
+    const { wrapper } = create_query_wrapper();
+    const { result, rerender } = renderHook(
+      ({
+        focus_context,
+        thinking_mode,
+      }: {
+        focus_context: AgentFocusContext;
+        thinking_mode: AgentThinkingMode;
+      }) =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          context: {},
+          focus_context,
+          models: [MODEL],
+          task_input: {},
+          default_thinking_mode: thinking_mode,
+        }),
+      {
+        wrapper,
+        initialProps: {
+          focus_context: original_focus,
+          thinking_mode: "auto" as AgentThinkingMode,
+        },
+      },
+    );
+    await waitFor(() => expect(result.current.restoring).toBe(false));
+    act(() => {
+      expect(result.current.submit("把选中字幕翻译成英文")).toBe(true);
+      rerender({
+        focus_context: { ...original_focus, selected_transcript_indices: [1] },
+        thinking_mode: "fast",
+      });
+    });
+    await waitFor(() => expect(api.create_agent_run).toHaveBeenCalledOnce());
+    expect(api.create_agent_run.mock.calls[0][1]).toMatchObject({
+      content: "把选中字幕翻译成英文",
+      thinking_mode: "auto",
+      focus_context: original_focus,
+    });
+  });
+
   it("waits for a previously submitted request when reopened before acceptance", async () => {
     const acceptance = deferred<AgentRun>();
     api.create_agent_run.mockReturnValueOnce(acceptance.promise);
@@ -504,6 +569,57 @@ describe("use_agent_panel", () => {
       await slow_selection;
     });
     expect(result.current.state?.session.session_id).toBe(OTHER_SESSION_ID);
+  });
+
+  it("shows a running task until explicit cancellation is confirmed", async () => {
+    const cancellation = deferred<AgentRun>();
+    api.cancel_agent_run.mockReturnValueOnce(cancellation.promise);
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const { result } = render_panel();
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    const observer_signal = api.stream_unified_agent_run.mock.calls[0][2];
+    let cancel_request!: Promise<void>;
+    act(() => {
+      cancel_request = result.current.cancel_run(RUN.run_id);
+    });
+    expect(result.current.active_run?.stage).toBe("running");
+    expect(result.current.pending).toBe(true);
+    expect(observer_signal.aborted).toBe(false);
+    const cancelled_run = { ...RUN, stage: "cancelled" as const };
+    api.get_agent_session.mockResolvedValue({
+      ...INITIAL_STATE,
+      runs: [cancelled_run],
+    });
+    await act(async () => {
+      cancellation.resolve(cancelled_run);
+      await cancel_request;
+    });
+    expect(result.current.active_run?.stage).toBe("cancelled");
+    expect(result.current.pending).toBe(false);
+    expect(observer_signal.aborted).toBe(true);
+  });
+
+  it("keeps observing a task when cancellation fails", async () => {
+    api.cancel_agent_run.mockRejectedValueOnce(new Error("无法确认取消"));
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.stream_unified_agent_run.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const { result } = render_panel();
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    const observer_signal = api.stream_unified_agent_run.mock.calls[0][2];
+    await act(async () => result.current.cancel_run(RUN.run_id));
+    expect(result.current.active_run?.stage).toBe("running");
+    expect(result.current.pending).toBe(true);
+    expect(result.current.error).toBe("无法确认取消");
+    expect(observer_signal.aborted).toBe(false);
   });
 
   it("sends explicit cancel while keeping late cancel responses out of a new conversation", async () => {
