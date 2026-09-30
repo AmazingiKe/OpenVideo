@@ -138,6 +138,13 @@ from openvideo.tools.vision import LiteLlmVision
 TRANSCRIPT_CORRECTION_INSTRUCTION_INPUT_KEY = "correction_instruction"
 TRANSCRIPT_CORRECTION_INSTRUCTION_MAX_CHARACTERS = 4_000
 SESSION_TITLE_LENGTH = 60
+FRAME_INSPECTION_MIN_COUNT = 3
+FRAME_INSPECTION_MAX_COUNT = 12
+FRAME_INSPECTION_INTERVAL_SECONDS = 20
+FRAME_INSPECTION_CONTEXT_COUNT = 2
+FRAME_INSPECTION_SAMPLING_NOTE = (
+    "关键帧抽样，非逐帧理解；未展示的节点连接、参数和连续操作仍需核实。"
+)
 ANSWER_STYLE_INSTRUCTION = (
     "聊天回复使用用户的语言，先给结果，默认用一两句话或短列表；用户要求详细时再展开。"
     "只保留直接支持结论的引用，不复述检索过程、置信度等级或可靠性声明。"
@@ -1571,11 +1578,22 @@ class AgentService:
     async def _inspect_frames(
         self, context: AgentRunContext, parameters: InspectFramesInput
     ) -> dict[str, Any]:
-        if IMAGE_INPUT_MODALITY not in context.model.input_modalities:
+        vision_model_id = self._role_model_ids()[AgentModelRole.VISION]
+        vision_model = (
+            self.settings.ai_model(vision_model_id) if vision_model_id else None
+        )
+        if (
+            vision_model is None
+            or IMAGE_INPUT_MODALITY not in vision_model.input_modalities
+            or self.capability_resolver.resolve(vision_model).support(
+                CapabilityName.VISION
+            )
+            == Support.NO
+        ):
             return {
                 "ok": False,
                 "error_code": "vision_unavailable",
-                "error": "当前模型不支持图像输入",
+                "error": "尚未配置可用的视觉模型，请检查助手的视觉模型设置",
             }
         asset = self.library.get(context.session.asset_id)
         if asset is None:
@@ -1589,7 +1607,14 @@ class AgentService:
         if media_path is None:
             return {"ok": False, "error": "视频文件不存在"}
         duration = parameters.end_seconds - parameters.start_seconds
-        frame_count = max(3, min(12, round(duration / 20) + 2))
+        frame_count = max(
+            FRAME_INSPECTION_MIN_COUNT,
+            min(
+                FRAME_INSPECTION_MAX_COUNT,
+                round(duration / FRAME_INSPECTION_INTERVAL_SECONDS)
+                + FRAME_INSPECTION_CONTEXT_COUNT,
+            ),
+        )
         points = [
             parameters.start_seconds + duration * (index + 0.5) / frame_count
             for index in range(frame_count)
@@ -1606,10 +1631,9 @@ class AgentService:
         selection_question = (
             f"{parameters.question}\n\n{candidate_guide}\n"
             "回答时必须使用上述候选编号和对应的准确秒数；不要自行猜测未提供的时间点。"
+            f"{FRAME_INSPECTION_SAMPLING_NOTE}只根据提供的画面回答。"
         )
-        temporary_directory = self.library.temporary_directory(
-            f"agent-frame-{uuid7().hex}"
-        )
+        temporary_directory = self.library.temporary_directory(f"job-{uuid7().hex}")
         try:
             frames = await asyncio.to_thread(
                 extract_frames,
@@ -1621,7 +1645,7 @@ class AgentService:
                 context.cancellation.thread_event,
             )
             context.cancellation.raise_if_cancelled()
-            description = await LiteLlmVision(context.model).describe_async(
+            description = await LiteLlmVision(vision_model).describe_async(
                 frames, selection_question
             )
         finally:
@@ -1634,7 +1658,14 @@ class AgentService:
         context.evidence.inspected_frame_times.extend(
             float(candidate["time_seconds"]) for candidate in candidates
         )
-        return {"ok": True, "description": description, "candidates": candidates}
+        return {
+            "ok": True,
+            "description": description,
+            "candidates": candidates,
+            "model_id": vision_model.model_id,
+            "sampled_frame_count": len(frames),
+            "sampling_note": FRAME_INSPECTION_SAMPLING_NOTE,
+        }
 
     def _propose_marker_changes(
         self, context: AgentRunContext, parameters: ProposeMarkerChangesInput

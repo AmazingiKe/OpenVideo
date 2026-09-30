@@ -18,6 +18,7 @@ from openvideo.agent_tooling import (
     AgentRunContext,
     CorrectTranscriptInput,
     EvidenceSearchInput,
+    InspectFramesInput,
     ListSummaryDocumentsInput,
     ProposeMarkerChangesInput,
     ProposeSummaryEditInput,
@@ -73,6 +74,7 @@ from openvideo.llm.models_dev import ModelsDevCatalog
 from openvideo.llm.probe_cache import ProbeCache
 from openvideo.preferences import PreferenceStore
 from openvideo.settings import Settings
+from openvideo.tools.vision import VisionDescriptionError
 from openvideo.ui.api import create_app
 
 
@@ -218,6 +220,121 @@ def test_marker_tool_reads_latest_content_without_persisting_fallback(tmp_path: 
         assert payload["content"] == "用户的新注释"
         assert "importance" not in payload
         assert context.evidence.markers_read
+
+
+@pytest.mark.parametrize("explicit_vision_role", [False, True])
+@pytest.mark.parametrize("provider_fails", [False, True])
+def test_frame_tool_uses_vision_role_for_text_only_chat_model(
+    tmp_path, monkeypatch, explicit_vision_role, provider_fails
+):
+    captured = {}
+
+    def extract(_media, points, directory, *_args):
+        captured["points"] = points
+        directory.mkdir(parents=True, exist_ok=True)
+        frames = [directory / f"frame-{index}.jpg" for index in range(len(points))]
+        for frame in frames:
+            frame.write_bytes(b"dummy-frame")
+        return frames
+
+    async def describe(vision, frames, question):
+        captured["model_id"] = vision.model.model_id
+        captured["question"] = question
+        captured["frames"] = frames
+        if provider_fails:
+            raise VisionDescriptionError("模拟视觉供应商失败")
+        return "候选画面 1 展示被选中的节点"
+
+    monkeypatch.setattr("openvideo.agent_service.extract_frames", extract)
+    monkeypatch.setattr(
+        "openvideo.agent_service.LiteLlmVision.describe_async", describe
+    )
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        text_model = AiModelConfiguration(
+            model_id=MODEL_ID,
+            name="文本主持模型",
+            litellm_model="openai/dummy-text",
+            capabilities={"tools": "enabled", "vision": "disabled"},
+        )
+        vision_model = AiModelConfiguration(
+            name="独立视觉模型",
+            litellm_model="openai/dummy-vision",
+            input_modalities=["text", "image"],
+            capabilities={"tools": "enabled", "vision": "enabled"},
+        )
+        service.settings.ai_models = [text_model, vision_model]
+        if explicit_vision_role:
+            service.settings.agent.vision_model_id = vision_model.model_id
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        context = AgentRunContext(
+            service,
+            session,
+            new_agent_run(session.session_id, f"request-{uuid7().hex}", MODEL_ID),
+            text_model,
+            {},
+        )
+        parameters = InspectFramesInput(
+            start_seconds=0, end_seconds=60, question="节点如何连接？"
+        )
+        if provider_fails:
+            with pytest.raises(VisionDescriptionError, match="模拟视觉供应商失败"):
+                client.portal.call(service._inspect_frames, context, parameters)
+            assert context.evidence.frames_inspected is False
+            assert context.evidence.inspected_frame_times == []
+            assert all(not frame.exists() for frame in captured["frames"])
+            return
+        result = client.portal.call(service._inspect_frames, context, parameters)
+        assert result["ok"] is True
+        assert captured["model_id"] == vision_model.model_id
+        assert result["model_id"] == vision_model.model_id
+        assert result["sampled_frame_count"] == len(captured["points"])
+        assert "未展示" in captured["question"]
+        assert "非逐帧" in result["sampling_note"]
+        assert context.model.model_id == text_model.model_id
+        assert context.evidence.frames_inspected is True
+        assert all(not frame.exists() for frame in captured["frames"])
+
+
+@pytest.mark.parametrize("declares_image", [False, True])
+def test_frame_tool_does_not_fallback_from_invalid_explicit_vision_role(
+    tmp_path, monkeypatch, declares_image
+):
+    monkeypatch.setattr(
+        "openvideo.agent_service.extract_frames",
+        lambda *_args: pytest.fail("无视觉模型时不能抽帧或请求供应商"),
+    )
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        original_model = service.settings.ai_model(MODEL_ID)
+        text_model = AiModelConfiguration(
+            name="错误的视觉配置",
+            litellm_model="openai/dummy-text",
+            input_modalities=["text", "image"] if declares_image else ["text"],
+            capabilities={"vision": "disabled"},
+        )
+        service.settings.ai_models.append(text_model)
+        service.settings.agent.vision_model_id = text_model.model_id
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        context = AgentRunContext(
+            service,
+            session,
+            new_agent_run(session.session_id, f"request-{uuid7().hex}", MODEL_ID),
+            original_model,
+            {},
+        )
+        result = client.portal.call(
+            service._inspect_frames,
+            context,
+            InspectFramesInput(start_seconds=0, end_seconds=30, question="检查画面"),
+        )
+        assert result["ok"] is False
+        assert result["error_code"] == "vision_unavailable"
+        assert context.evidence.frames_inspected is False
 
 
 def test_manual_context_compression_records_only_status_event(
