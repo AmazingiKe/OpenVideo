@@ -2,6 +2,8 @@ import type {
   AiModelConfiguration,
   AiModelSummary,
   AiModelTestResult,
+  BailianAsrSettingsUpdate,
+  BailianAsrTestResult,
   FormulaModelState,
   MarkersPageSettings,
   ModelDownloadJob,
@@ -87,14 +89,23 @@ export function test_ai_model(
 
 export function update_preferences(
   preferences: Partial<
-    Omit<Preferences, "managed_fields" | "library_path_managed">
-  >,
+    Omit<Preferences, "managed_fields" | "library_path_managed" | "bailian_asr">
+  > & { bailian_asr?: BailianAsrSettingsUpdate },
   signal?: AbortSignal,
 ): Promise<Preferences> {
   return request_json("/api/preferences", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(preferences),
+    signal,
+  });
+}
+
+export function test_bailian_asr(
+  signal?: AbortSignal,
+): Promise<BailianAsrTestResult> {
+  return request_json("/api/transcription/bailian/test", {
+    method: "POST",
     signal,
   });
 }

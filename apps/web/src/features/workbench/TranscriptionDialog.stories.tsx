@@ -107,3 +107,27 @@ export const Batch: Story = { args: { asset_count: 3, has_transcript: false } };
 export const Transcribing: Story = {
   args: { is_transcribing: true },
 };
+
+export const CloudBatch: Story = {
+  args: {
+    asset_count: 3,
+    has_transcript: false,
+    transcription_models: [
+      {
+        ...TRANSCRIPTION_MODELS[0],
+        engine: "bailian",
+        model: "paraformer-v2",
+        name: "百炼 Paraformer",
+        description: "云端长音频识别，支持时间戳。",
+        repository: "",
+      },
+    ],
+    default_transcription: {
+      engine: "bailian",
+      model: "paraformer-v2",
+      language: "zh",
+      device: "auto",
+      compute_type: "auto",
+    },
+  },
+};

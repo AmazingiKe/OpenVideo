@@ -36,6 +36,7 @@ const ENGINE_LABELS: Record<TranscriptionEngine, string> = {
   "faster-whisper": "Faster Whisper",
   "qwen3-asr": "Qwen3-ASR",
   sensevoice: "SenseVoice",
+  bailian: "阿里云百炼",
 };
 
 const DEVICE_LABELS: Record<TranscriptionDevice, string> = {
@@ -136,7 +137,7 @@ export function TranscriptionModelSettings({
               >
                 <SelectValue
                   placeholder={
-                    selectable_models.length ? "选择已安装模型" : "请先下载模型"
+                    selectable_models.length ? "选择可用模型" : "请先准备模型"
                   }
                 />
               </SelectTrigger>
@@ -196,71 +197,74 @@ export function TranscriptionModelSettings({
             </FieldDescription>
           </Field>
 
-          <Field data-disabled={!selected_model_is_selectable || undefined}>
-            <FieldLabel htmlFor="default_transcription_device">
-              运行设备
-            </FieldLabel>
-            <Select
-              value={value.device}
-              disabled={!selected_model_is_selectable}
-              onValueChange={(device) =>
-                change_device(device as TranscriptionDevice)
-              }
-            >
-              <SelectTrigger
-                id="default_transcription_device"
-                className="w-full"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>推理设备</SelectLabel>
-                  {(runtime_profile?.devices ?? []).map((device) => (
-                    <SelectItem key={device} value={device}>
-                      {DEVICE_LABELS[device]}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-
-          <Field data-disabled={!selected_model_is_selectable || undefined}>
-            <FieldLabel htmlFor="default_transcription_compute_type">
-              推理精度
-            </FieldLabel>
-            <Select
-              value={value.compute_type}
-              disabled={!selected_model_is_selectable}
-              onValueChange={(compute_type) =>
-                on_change({
-                  ...value,
-                  compute_type: compute_type as TranscriptionComputeType,
-                })
-              }
-            >
-              <SelectTrigger
-                id="default_transcription_compute_type"
-                className="w-full"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>推理精度</SelectLabel>
-                  {supported_compute_types.map((compute_type) => (
-                    <SelectItem key={compute_type} value={compute_type}>
-                      {COMPUTE_TYPE_LABELS[compute_type]}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FieldDescription>
-              不同模型会显示各自支持的设备和精度，切换模型时采用推荐值。
-            </FieldDescription>
-          </Field>
+          {value.engine !== "bailian" ? (
+            <>
+              <Field data-disabled={!selected_model_is_selectable || undefined}>
+                <FieldLabel htmlFor="default_transcription_device">
+                  运行设备
+                </FieldLabel>
+                <Select
+                  value={value.device}
+                  disabled={!selected_model_is_selectable}
+                  onValueChange={(device) =>
+                    change_device(device as TranscriptionDevice)
+                  }
+                >
+                  <SelectTrigger
+                    id="default_transcription_device"
+                    className="w-full"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectLabel>推理设备</SelectLabel>
+                      {(runtime_profile?.devices ?? []).map((device) => (
+                        <SelectItem key={device} value={device}>
+                          {DEVICE_LABELS[device]}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field data-disabled={!selected_model_is_selectable || undefined}>
+                <FieldLabel htmlFor="default_transcription_compute_type">
+                  推理精度
+                </FieldLabel>
+                <Select
+                  value={value.compute_type}
+                  disabled={!selected_model_is_selectable}
+                  onValueChange={(compute_type) =>
+                    on_change({
+                      ...value,
+                      compute_type: compute_type as TranscriptionComputeType,
+                    })
+                  }
+                >
+                  <SelectTrigger
+                    id="default_transcription_compute_type"
+                    className="w-full"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectLabel>推理精度</SelectLabel>
+                      {supported_compute_types.map((compute_type) => (
+                        <SelectItem key={compute_type} value={compute_type}>
+                          {COMPUTE_TYPE_LABELS[compute_type]}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  不同模型会显示各自支持的设备和精度，切换模型时采用推荐值。
+                </FieldDescription>
+              </Field>
+            </>
+          ) : null}
         </div>
       </FieldGroup>
 
@@ -276,6 +280,9 @@ export function TranscriptionModelSettings({
           <AlertDescription>
             {selected_model.description} 精度：{selected_model.accuracy}；速度：
             {selected_model.speed}。
+            {value.engine === "bailian"
+              ? " 使用前请保存百炼密钥；音频将上传云端并按量计费。"
+              : null}
           </AlertDescription>
         </Alert>
       ) : (
@@ -283,7 +290,7 @@ export function TranscriptionModelSettings({
           <Gauge aria-hidden="true" />
           <AlertTitle>默认模型尚不可用</AlertTitle>
           <AlertDescription>
-            请先在下方下载并安装模型，再将它设为默认模型。
+            请先下载本地模型，或选择云端模型并配置百炼服务。
           </AlertDescription>
         </Alert>
       )}
@@ -291,16 +298,16 @@ export function TranscriptionModelSettings({
       <section className="flex flex-col gap-4" aria-labelledby="asr_models">
         <div className="flex flex-col gap-1">
           <h3 id="asr_models" className="font-medium">
-            本地模型
+            语音识别模型
           </h3>
           <p className="text-sm text-muted-foreground">
-            默认自动选择国内 ModelScope 或海外 Hugging
-            Face，失败时切换备用源。扩展引擎仍需安装运行适配器才能执行转录。
+            本地模型自动选择 ModelScope 或 Hugging Face
+            下载源；云端模型无需下载，在下方配置百炼密钥后即可使用。
           </p>
         </div>
         <ul
           className="max-h-136 overflow-y-auto overscroll-contain rounded-lg border"
-          aria-label="本地转录模型列表"
+          aria-label="转录模型列表"
           tabIndex={models.length > 6 ? 0 : undefined}
         >
           {models.map((model) => (
@@ -324,7 +331,9 @@ export function TranscriptionModelSettings({
                         : "outline"
                     }
                   >
-                    {INSTALLATION_LABELS[model.installation_status]}
+                    {model.engine === "bailian"
+                      ? "云端 · 无需下载"
+                      : INSTALLATION_LABELS[model.installation_status]}
                   </Badge>
                   {model.integration_status === "adapter_required" ? (
                     <Badge variant="outline">待接入</Badge>
@@ -337,16 +346,24 @@ export function TranscriptionModelSettings({
                   <span>精度 {model.accuracy}</span>
                   <span>速度 {model.speed}</span>
                   <span>{model.languages.join(" / ")}</span>
-                  <span className="min-w-0 truncate font-mono">
-                    {model.repository}
-                  </span>
+                  {model.engine !== "bailian" ? (
+                    <span className="min-w-0 truncate font-mono">
+                      {model.repository}
+                    </span>
+                  ) : null}
                 </div>
               </div>
               <div className="min-w-0">
-                <TranscriptionModelDownloadAction
-                  model={model}
-                  on_change={on_model_change}
-                />
+                {model.engine === "bailian" ? (
+                  <p className="text-xs text-muted-foreground">
+                    上传音频 · 按量计费
+                  </p>
+                ) : (
+                  <TranscriptionModelDownloadAction
+                    model={model}
+                    on_change={on_model_change}
+                  />
+                )}
               </div>
             </li>
           ))}

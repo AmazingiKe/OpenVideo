@@ -5,6 +5,20 @@ import type { TranscriptionModelDescriptor } from "@/shared/types";
 
 const MODELS: TranscriptionModelDescriptor[] = [
   {
+    engine: "bailian",
+    model: "paraformer-v2",
+    name: "百炼 Paraformer",
+    description: "云端长音频识别，支持时间戳。",
+    accuracy: "高",
+    speed: "快",
+    languages: ["中文", "英语", "粤语"],
+    repository: "",
+    recommended: false,
+    integration_status: "available",
+    installation_status: "installed",
+    download_job: null,
+  },
+  {
     engine: "faster-whisper",
     model: "small",
     name: "Whisper Small",
@@ -110,6 +124,18 @@ export const UnavailableDefault: Story = {
     value: {
       engine: "faster-whisper",
       model: "large-v3-turbo",
+      language: "zh",
+      device: "auto",
+      compute_type: "auto",
+    },
+  },
+};
+
+export const CloudDefault: Story = {
+  args: {
+    value: {
+      engine: "bailian",
+      model: "paraformer-v2",
       language: "zh",
       device: "auto",
       compute_type: "auto",

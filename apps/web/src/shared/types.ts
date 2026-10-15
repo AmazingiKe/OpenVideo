@@ -109,10 +109,25 @@ export type Preferences = {
   models_directory: string | null;
   download_proxy: string | null;
   default_transcription: TranscriptionOptions;
+  bailian_asr?: BailianAsrConfiguration;
   ai_models: AiModelConfiguration[];
   agent: AgentPreferences;
   managed_fields: string[];
   library_path_managed: boolean;
+};
+
+export type BailianAsrRegion = "beijing" | "singapore";
+export type BailianAsrConfiguration = {
+  region: BailianAsrRegion;
+  api_key_configured: boolean;
+};
+export type BailianAsrSettingsUpdate = {
+  region?: BailianAsrRegion;
+  api_key?: string | null;
+};
+export type BailianAsrTestResult = {
+  configured: boolean;
+  message: string;
 };
 
 export const AI_INPUT_MODALITIES = ["text", "image", "audio", "video"] as const;
@@ -295,8 +310,10 @@ export type AnalysisStrategy = {
   marker_range_before_seconds: number;
   marker_range_after_seconds: number;
 };
-type AnalysisOperation = "transcription" | "analysis" | "initialization" | "chapters";
-export type TranscriptionEngine = "faster-whisper" | "qwen3-asr" | "sensevoice";
+type AnalysisOperation =
+  "transcription" | "analysis" | "initialization" | "chapters";
+export type TranscriptionEngine =
+  "faster-whisper" | "qwen3-asr" | "sensevoice" | "bailian";
 export type TranscriptionDevice = "auto" | "cpu" | "cuda";
 export type TranscriptionComputeType = "auto" | "int8" | "float16";
 export type TranscriptionIntegrationStatus = "available" | "adapter_required";

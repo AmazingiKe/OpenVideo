@@ -107,12 +107,51 @@ describe("TranscriptionDialog", () => {
       screen.queryByRole("button", { name: "生成转写" }),
     ).not.toBeInTheDocument();
   });
+
+  it("starts batch cloud transcription without local runtime or download controls", () => {
+    const start_transcription = vi.fn();
+    const cloud_options: TranscriptionOptions = {
+      engine: "bailian",
+      model: "paraformer-v2",
+      language: "zh",
+      device: "auto",
+      compute_type: "auto",
+    };
+    render_tools({
+      start_transcription,
+      has_transcript: false,
+      asset_count: 3,
+      default_transcription: cloud_options,
+      transcription_models: [
+        {
+          ...TRANSCRIPTION_MODELS[0],
+          engine: "bailian",
+          model: "paraformer-v2",
+          name: "百炼 Paraformer",
+          description: "云端录音文件识别。",
+        },
+      ],
+    });
+
+    expect(screen.getByText("云端转写 · 按量计费")).toBeInTheDocument();
+    expect(
+      screen.getByText(/所选 3 个视频的音频将上传至阿里云百炼/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/CPU|CUDA|int8/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "下载并使用" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "转写 3 个视频" }));
+    expect(start_transcription).toHaveBeenCalledWith(cloud_options);
+  });
 });
 
 type RenderOptions = {
   start_transcription?: (options: TranscriptionOptions) => void;
   has_transcript?: boolean;
   transcription_models?: TranscriptionModelDescriptor[];
+  default_transcription?: TranscriptionOptions;
+  asset_count?: number;
 };
 
 function render_tools(options: RenderOptions = {}) {
@@ -121,13 +160,16 @@ function render_tools(options: RenderOptions = {}) {
       open
       on_open_change={vi.fn()}
       asset={create_asset()}
+      asset_count={options.asset_count}
       has_transcript={options.has_transcript ?? true}
       is_transcribing={false}
       on_start_transcription={options.start_transcription ?? vi.fn()}
       transcription_models={
         options.transcription_models ?? TRANSCRIPTION_MODELS
       }
-      default_transcription={DEFAULT_TRANSCRIPTION}
+      default_transcription={
+        options.default_transcription ?? DEFAULT_TRANSCRIPTION
+      }
       on_transcription_model_change={vi.fn()}
     />,
   );

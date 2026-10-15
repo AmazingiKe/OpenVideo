@@ -46,6 +46,13 @@ const SENSEVOICE_PROFILE: TranscriptionRuntimeProfile = {
   recommended_compute_type: "auto",
 };
 
+const BAILIAN_PROFILE: TranscriptionRuntimeProfile = {
+  devices: ["auto"],
+  compute_types: ["auto"],
+  recommended_device: "auto",
+  recommended_compute_type: "auto",
+};
+
 const RUNTIME_PROFILES = new Map<string, TranscriptionRuntimeProfile>([
   ["faster-whisper:tiny", WHISPER_CPU_PROFILE],
   ["faster-whisper:base", WHISPER_CPU_PROFILE],
@@ -57,6 +64,8 @@ const RUNTIME_PROFILES = new Map<string, TranscriptionRuntimeProfile>([
   ["qwen3-asr:qwen3-asr-0.6b", QWEN3_ASR_PROFILE],
   ["qwen3-asr:qwen3-asr-1.7b", QWEN3_ASR_PROFILE],
   ["sensevoice:sensevoice-small", SENSEVOICE_PROFILE],
+  ["bailian:paraformer-v2", BAILIAN_PROFILE],
+  ["bailian:fun-asr", BAILIAN_PROFILE],
 ]);
 
 export function transcription_model_is_selectable(

@@ -76,4 +76,20 @@ describe("transcription runtime profiles", () => {
       }),
     ).toBe(false);
   });
+
+  it.each(["paraformer-v2", "fun-asr"])(
+    "uses cloud runtime choices for %s",
+    (model) => {
+      const profile = transcription_runtime_profile({
+        ...MODEL,
+        engine: "bailian",
+        model,
+      });
+
+      expect(profile.devices).toEqual(["auto"]);
+      expect(profile.compute_types).toEqual(["auto"]);
+      expect(profile.recommended_device).toBe("auto");
+      expect(profile.recommended_compute_type).toBe("auto");
+    },
+  );
 });

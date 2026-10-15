@@ -54,6 +54,7 @@ vi.mock("@/shared/api", () => ({
   list_transcription_models: vi.fn(),
   select_directory: vi.fn(),
   test_ai_model: vi.fn(),
+  test_bailian_asr: vi.fn(),
   update_preferences: vi.fn(),
 }));
 
@@ -248,6 +249,41 @@ describe("SettingsPage", () => {
     );
   });
 
+  it("saves cloud credentials separately and refreshes transcription resources", async () => {
+    const saved_preferences = {
+      ...preferences,
+      bailian_asr: { region: "beijing" as const, api_key_configured: true },
+    };
+    vi.mocked(update_preferences).mockResolvedValue(saved_preferences);
+    const { query_client } = render_settings_page();
+    const key_input = await screen.findByLabelText("百炼 API Key");
+    vi.mocked(update_preferences).mockClear();
+    const model_load_count = vi.mocked(list_transcription_models).mock.calls
+      .length;
+    const invalidate_queries = vi.spyOn(query_client, "invalidateQueries");
+
+    fireEvent.change(key_input, { target: { value: "sk-cloud-secret" } });
+    expect(update_preferences).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存百炼配置" }));
+
+    await waitFor(() => expect(key_input).toHaveValue(""));
+    expect(update_preferences).toHaveBeenCalledExactlyOnceWith({
+      bailian_asr: { region: "beijing", api_key: "sk-cloud-secret" },
+    });
+    expect(
+      query_client.getQueryData(RESOURCE_QUERY_KEYS.preferences),
+    ).toMatchObject({
+      bailian_asr: saved_preferences.bailian_asr,
+      default_transcription: preferences.default_transcription,
+    });
+    expect(invalidate_queries).toHaveBeenCalledWith({
+      queryKey: RESOURCE_QUERY_KEYS.transcription_resources,
+    });
+    expect(vi.mocked(list_transcription_models).mock.calls.length).toBe(
+      model_load_count + 1,
+    );
+  });
+
   it("shows safe Agent defaults and saves explicit permission changes", async () => {
     render_settings_page();
 
@@ -274,7 +310,7 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByText("Qwen3-ASR 1.7B")).toBeInTheDocument();
     const model_list = screen.getByRole("list", {
-      name: "本地转录模型列表",
+      name: "转录模型列表",
     });
     expect(within(model_list).getAllByRole("listitem")).toHaveLength(3);
     expect(screen.queryByText("待接入")).not.toBeInTheDocument();
@@ -450,7 +486,7 @@ describe("SettingsPage", () => {
     const { query_client } = render_settings_page();
     const invalidate_queries = vi.spyOn(query_client, "invalidateQueries");
     const model_list = await screen.findByRole("list", {
-      name: "本地转录模型列表",
+      name: "转录模型列表",
     });
     const base_model = within(model_list)
       .getAllByRole("listitem")

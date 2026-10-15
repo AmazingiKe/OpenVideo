@@ -80,7 +80,7 @@ export function TranscriptionDialog({
           <DialogDescription>
             {asset_count > 1
               ? `为所选 ${asset_count} 个视频生成可编辑字幕，任务会在后台排队执行。`
-              : "选择本地语音模型，为当前视频生成可编辑字幕。"}
+              : "选择本地或云端语音模型，为当前视频生成可编辑字幕。"}
           </DialogDescription>
         </DialogHeader>
         {error ? (
@@ -131,10 +131,16 @@ export function TranscriptionDialog({
             </Select>
             {selected_transcription_model && transcription_options ? (
               <FieldDescription>
-                {selected_transcription_model.description} 当前使用
-                {transcription_options.language ?? "自动检测"}、
-                {transcription_options.device.toUpperCase()}、
-                {transcription_options.compute_type}。
+                {selected_transcription_model.description}
+                {selected_transcription_model.engine !== "bailian" ? (
+                  <>
+                    {" "}
+                    当前使用
+                    {transcription_options.language ?? "自动检测"}、
+                    {transcription_options.device.toUpperCase()}、
+                    {transcription_options.compute_type}。
+                  </>
+                ) : null}
               </FieldDescription>
             ) : null}
           </Field>
@@ -173,7 +179,18 @@ export function TranscriptionDialog({
             </FieldDescription>
           </Field>
         </FieldGroup>
+        {selected_transcription_model?.engine === "bailian" ? (
+          <Alert>
+            <AlertTitle>云端转写 · 按量计费</AlertTitle>
+            <AlertDescription>
+              本次{asset_count > 1 ? `所选 ${asset_count} 个视频的` : "视频的"}
+              音频将上传至阿里云百炼。请先在设置中保存对应区域的 API
+              Key，费用按音频时长由百炼计收。
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {selected_transcription_model &&
+        selected_transcription_model.engine !== "bailian" &&
         selected_transcription_model.installation_status !== "installed" ? (
           <TranscriptionModelDownloadAction
             model={selected_transcription_model}

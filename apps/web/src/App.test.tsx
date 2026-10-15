@@ -99,6 +99,7 @@ vi.mock("./shared/api", () => ({
   save_download_account: vi.fn(),
   select_directory: vi.fn(),
   test_ai_model: vi.fn(),
+  test_bailian_asr: vi.fn(),
   test_download_account: vi.fn(),
   transcribe_asset: vi.fn(),
   unload_visual_index: vi.fn(),

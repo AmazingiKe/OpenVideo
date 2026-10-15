@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AudioLines,
   Bot,
+  Cloud,
   Database,
   FolderOpen,
   Info,
@@ -39,6 +40,7 @@ import { LibraryPathForm } from "@/features/library/LibraryPathForm";
 import { error_message, is_abort_error } from "@/shared/errors";
 import { is_online_ai_model } from "@/shared/online_ai_models";
 import { AgentPreferencesSettings } from "@/features/settings/AgentPreferencesSettings";
+import { BailianAsrSettings } from "@/features/settings/BailianAsrSettings";
 import { AiModelConfigurationList } from "@/features/settings/AiModelConfigurationList";
 import { TranscriptionModelSettings } from "@/features/settings/TranscriptionModelSettings";
 import { FormulaRecognitionSettings } from "@/features/settings/FormulaRecognitionSettings";
@@ -50,12 +52,15 @@ import {
   list_transcription_models,
   select_directory,
   test_ai_model,
+  test_bailian_asr,
   update_preferences,
 } from "@/shared/api";
 import type {
   AiModelConfiguration,
   AiModelSummary,
   AiModelTestResult,
+  BailianAsrConfiguration,
+  BailianAsrSettingsUpdate,
   FormulaModelState,
   Preferences,
   TranscriptionModelDescriptor,
@@ -64,11 +69,17 @@ import type {
 type EditableField = "tools_directory" | "models_directory" | "download_proxy";
 
 const SETTINGS_SAVE_DELAY_MS = 500;
+const DEFAULT_BAILIAN_ASR: BailianAsrConfiguration = {
+  region: "beijing",
+  api_key_configured: false,
+};
 
 export function SettingsPage() {
   const { library, set_library } = use_library();
   const query_client = useQueryClient();
   const [preferences, set_preferences] = useState<Preferences | null>(null);
+  const [bailian_asr, set_bailian_asr] =
+    useState<BailianAsrConfiguration>(DEFAULT_BAILIAN_ASR);
   const [transcription_models, set_transcription_models] = useState<
     TranscriptionModelDescriptor[]
   >([]);
@@ -92,6 +103,7 @@ export function SettingsPage() {
     ])
       .then(([loaded_preferences, models, loaded_formula_model, ai_models]) => {
         set_preferences(loaded_preferences);
+        set_bailian_asr(loaded_preferences.bailian_asr ?? DEFAULT_BAILIAN_ASR);
         saved_preferences_ref.current = loaded_preferences;
         set_transcription_models(models);
         set_formula_model(loaded_formula_model);
@@ -157,6 +169,25 @@ export function SettingsPage() {
     set_preferences((current) =>
       current ? { ...current, [field]: value || null } : current,
     );
+  }
+
+  async function save_bailian_asr(
+    update: BailianAsrSettingsUpdate,
+  ): Promise<BailianAsrConfiguration> {
+    const saved = await update_preferences({ bailian_asr: update });
+    const configuration = saved.bailian_asr ?? DEFAULT_BAILIAN_ASR;
+    set_bailian_asr(configuration);
+    query_client.setQueryData<Preferences>(
+      RESOURCE_QUERY_KEYS.preferences,
+      (current) =>
+        current ? { ...current, bailian_asr: configuration } : saved,
+    );
+    await query_client.invalidateQueries({
+      queryKey: RESOURCE_QUERY_KEYS.transcription_resources,
+    });
+    const models = await list_transcription_models();
+    set_transcription_models(models);
+    return configuration;
   }
 
   function update_ai_models(ai_models: Preferences["ai_models"]) {
@@ -309,7 +340,7 @@ export function SettingsPage() {
           <SettingsCard
             icon={AudioLines}
             title="转录模型"
-            description="管理语音识别模型、默认方案和本地推理参数。"
+            description="管理本地与云端语音识别模型、默认方案和推理参数。"
           >
             <FieldGroup>
               <ModelDirectoryInput
@@ -327,6 +358,17 @@ export function SettingsPage() {
                 )
               }
               on_model_change={update_transcription_model}
+            />
+          </SettingsCard>
+          <SettingsCard
+            icon={Cloud}
+            title="阿里云百炼语音"
+            description="配置云端 Fun-ASR / Paraformer 的服务区域与 API 密钥。"
+          >
+            <BailianAsrSettings
+              value={bailian_asr}
+              on_save={save_bailian_asr}
+              on_test={test_bailian_asr}
             />
           </SettingsCard>
           {formula_model ? (
@@ -400,7 +442,7 @@ export function SettingsPage() {
             role="status"
           >
             {saving ? <Spinner /> : null}
-            {saving ? "正在保存设置" : "设置更改后会自动保存"}
+            {saving ? "正在保存设置" : "除百炼语音配置外，设置更改后会自动保存"}
           </p>
         </>
       )}
