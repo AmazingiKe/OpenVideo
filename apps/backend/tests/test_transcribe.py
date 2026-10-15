@@ -123,6 +123,7 @@ def test_deferred_transcriber_is_closed_after_success_or_failure(
 
     def factory():
         return SimpleNamespace(
+            engine=TranscriptionEngine.FASTER_WHISPER,
             output_source="test-local",
             transcribe=transcribe,
             close=lambda: closed.append(True),

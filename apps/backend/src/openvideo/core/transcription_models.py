@@ -5,16 +5,21 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from openvideo.core.bailian_models import BailianRegion
 from openvideo.core.model_download_models import (
     ModelDownloadJob,
     ModelInstallationStatus,
 )
+
+BAILIAN_PARAFORMER_MODEL = "paraformer-v2"
+BAILIAN_FUN_ASR_MODEL = "fun-asr"
 
 
 class TranscriptionEngine(StrEnum):
     FASTER_WHISPER = "faster-whisper"
     QWEN3_ASR = "qwen3-asr"
     SENSEVOICE = "sensevoice"
+    BAILIAN = "bailian"
 
 
 class TranscriptionDevice(StrEnum):
@@ -91,6 +96,28 @@ class TranscriptionModelState(TranscriptionModelDescriptor):
 
 
 TRANSCRIPTION_MODEL_CATALOG = (
+    TranscriptionModelDescriptor(
+        engine=TranscriptionEngine.BAILIAN,
+        model=BAILIAN_PARAFORMER_MODEL,
+        name="百炼 Paraformer",
+        description="云端录音文件识别，返回字幕时间戳，无需下载本地模型，按量计费。",
+        accuracy="标准",
+        speed="云端处理",
+        languages=["中文", "英语", "粤语", "多语言"],
+        repository="",
+        integration_status=TranscriptionIntegrationStatus.AVAILABLE,
+    ),
+    TranscriptionModelDescriptor(
+        engine=TranscriptionEngine.BAILIAN,
+        model=BAILIAN_FUN_ASR_MODEL,
+        name="百炼 Fun-ASR",
+        description="云端多语言与方言转写，返回字幕时间戳，无需下载本地模型，按量计费。",
+        accuracy="高",
+        speed="云端处理",
+        languages=["中文", "英语", "方言", "多语言"],
+        repository="",
+        integration_status=TranscriptionIntegrationStatus.AVAILABLE,
+    ),
     TranscriptionModelDescriptor(
         engine=TranscriptionEngine.FASTER_WHISPER,
         model="tiny",
@@ -230,7 +257,11 @@ class TranscriptionOptions(BaseModel):
     def validate_model_engine(self) -> "TranscriptionOptions":
         if find_transcription_model(self.engine, self.model) is None:
             raise ValueError("转录模型与引擎不匹配")
-        if self.engine == TranscriptionEngine.QWEN3_ASR:
+        if self.engine == TranscriptionEngine.BAILIAN:
+            # 云端执行不使用本机设备参数，旧客户端省略字段时也应得到有效配置。
+            self.device = TranscriptionDevice.AUTO
+            self.compute_type = TranscriptionComputeType.AUTO
+        elif self.engine == TranscriptionEngine.QWEN3_ASR:
             if self.device == TranscriptionDevice.CPU:
                 raise ValueError("Qwen3-ASR 仅支持 CUDA 设备")
             if self.compute_type == TranscriptionComputeType.INT8:
@@ -253,6 +284,8 @@ class TranscriptionMetadata(BaseModel):
     attempt_count: int = Field(default=1, ge=1)
     engine: TranscriptionEngine = TranscriptionEngine.FASTER_WHISPER
     output_source: str | None = None
+    cloud_task_id: str | None = Field(default=None, max_length=200)
+    cloud_region: BailianRegion | None = None
     options: TranscriptionOptions
     started_at: datetime | None = None
     completed_at: datetime | None = None

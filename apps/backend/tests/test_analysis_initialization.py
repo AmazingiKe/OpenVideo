@@ -93,10 +93,11 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     transcription_contexts: list[str] = []
 
     def create_test_transcriber(options, models_root_directory, **kwargs):
-        del options, models_root_directory
+        del models_root_directory
         transcription_steps.append("create")
         transcription_contexts.append(kwargs["context"])
         return SimpleNamespace(
+            engine=options.engine,
             output_source="test-local",
             transcribe=lambda *_args: generated_transcript,
             close=lambda: transcription_steps.append("close"),

@@ -13,7 +13,9 @@ from openvideo.core.model_download_models import (
     TERMINAL_MODEL_DOWNLOAD_STAGES,
     model_resource_is_installed,
 )
+from openvideo.core.bailian_models import BailianRegion
 from openvideo.core.transcription_models import (
+    BAILIAN_PARAFORMER_MODEL,
     TRANSCRIPTION_MODEL_CATALOG,
     TranscriptionEngine,
     TranscriptionModelDescriptor,
@@ -53,7 +55,15 @@ class TranscriptionModelManager:
         self._lock = RLock()
 
     def list_models(self) -> list[TranscriptionModelState]:
-        return [self.state(model) for model in TRANSCRIPTION_MODEL_CATALOG]
+        return [
+            self.state(model)
+            for model in TRANSCRIPTION_MODEL_CATALOG
+            if not (
+                self.settings.bailian_asr.region == BailianRegion.SINGAPORE
+                and model.engine == TranscriptionEngine.BAILIAN
+                and model.model == BAILIAN_PARAFORMER_MODEL
+            )
+        ]
 
     def state(
         self,
@@ -85,6 +95,10 @@ class TranscriptionModelManager:
         descriptor = find_transcription_model(engine, model)
         if descriptor is None:
             raise TranscriptionModelDownloadError("转录模型不存在")
+        if descriptor.engine == TranscriptionEngine.BAILIAN:
+            raise TranscriptionModelDownloadError(
+                "百炼云端模型无需下载，请在设置中配置 API Key"
+            )
         if is_transcription_model_installed(
             descriptor,
             self.settings.models_root_directory,
@@ -92,10 +106,7 @@ class TranscriptionModelManager:
             raise TranscriptionModelDownloadError(f"{descriptor.name} 已经安装")
         with self._lock:
             active_job = self._latest_job(engine, model)
-            if (
-                active_job
-                and active_job.stage not in TERMINAL_MODEL_DOWNLOAD_STAGES
-            ):
+            if active_job and active_job.stage not in TERMINAL_MODEL_DOWNLOAD_STAGES:
                 return active_job
             job = TranscriptionModelDownloadJob(
                 job_id=f"model-download-{uuid7().hex}",
@@ -218,10 +229,11 @@ def is_transcription_model_installed(
     descriptor: TranscriptionModelDescriptor,
     models_root_directory: Path,
 ) -> bool:
+    if descriptor.engine == TranscriptionEngine.BAILIAN:
+        return True
     resources = transcription_model_resources(descriptor, models_root_directory)
     return all(
-        _resource_is_installed(resource, descriptor.engine)
-        for resource in resources
+        _resource_is_installed(resource, descriptor.engine) for resource in resources
     )
 
 
@@ -240,6 +252,8 @@ def download_transcription_model(
     models_root_directory: Path,
     progress_callback: Callable[[int, int], None],
 ) -> None:
+    if descriptor.engine == TranscriptionEngine.BAILIAN:
+        raise TranscriptionModelDownloadError("百炼云端模型无需下载")
     with _MODEL_DOWNLOAD_LOCK:
         _download_transcription_model_resources(
             descriptor,

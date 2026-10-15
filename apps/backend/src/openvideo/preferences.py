@@ -13,6 +13,7 @@ from openvideo.configuration import (
     migrate_configuration_file,
 )
 from openvideo.core.agent_governance_models import AgentPreferences
+from openvideo.core.bailian_models import BailianAsrConfiguration
 from openvideo.core.ai_models import AiModelCollection
 from openvideo.core.transcription_models import TranscriptionOptions
 
@@ -47,6 +48,9 @@ class Preferences(AiModelCollection):
         default_factory=TranscriptionOptions
     )
     agent: AgentPreferences = Field(default_factory=AgentPreferences)
+    bailian_asr: BailianAsrConfiguration = Field(
+        default_factory=BailianAsrConfiguration
+    )
 
 
 class PreferenceStore:
@@ -63,12 +67,16 @@ class PreferenceStore:
         if not self.path.is_file():
             return Preferences()
         try:
-            return Preferences.model_validate_json(self.path.read_text(encoding="utf-8"))
+            return Preferences.model_validate_json(
+                self.path.read_text(encoding="utf-8")
+            )
         except (OSError, ValueError):
             return Preferences()
 
     def save(self, preferences: Preferences) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = self.path.with_suffix(".tmp")
-        temporary_path.write_text(preferences.model_dump_json(indent=2), encoding="utf-8")
+        temporary_path.write_text(
+            preferences.model_dump_json(indent=2), encoding="utf-8"
+        )
         os.replace(temporary_path, self.path)

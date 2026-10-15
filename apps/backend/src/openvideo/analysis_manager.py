@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 
+from openvideo.bailian_credentials import BailianCredentialError, BailianCredentialStore
+from openvideo.core.bailian_models import BailianAsrConfiguration, BailianRegion
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY
 from openvideo.core.analysis import build_local_chapters
 from openvideo.core.analysis_models import (
@@ -23,7 +25,9 @@ from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaSegment
 from openvideo.core.transcription_models import (
+    BAILIAN_PARAFORMER_MODEL,
     Transcript,
+    TranscriptionEngine,
     TranscriptionMetadata,
     TranscriptionModelDescriptor,
     TranscriptionOptions,
@@ -47,6 +51,7 @@ from openvideo.tools.transcribe import (
     transcribe_media,
 )
 from openvideo.tools.vision import LiteLlmVision
+from openvideo.tools.bailian_asr import BailianAsrError, BailianTranscriber
 
 
 TranscriptionModelInstaller = Callable[
@@ -150,9 +155,11 @@ class AnalysisManager:
         ocr_reader: OcrReader | None = None,
         formula_reader: FormulaReader | None = None,
         on_evidence_ready: Callable[[], None] | None = None,
+        bailian_credential_store: BailianCredentialStore | None = None,
     ) -> None:
         self.library = library
         self.settings = settings
+        self._bailian_credentials = bailian_credential_store or BailianCredentialStore()
         self._jobs: dict[str, AnalysisJob] = {}
         self._active_job_id_by_asset_id: dict[str, str] = {}
         self._transcription_options_by_job_id: dict[str, TranscriptionOptions] = {}
@@ -237,7 +244,13 @@ class AnalysisManager:
                 descriptor,
                 self.settings.models_root_directory,
             )
-        except (TranscriptionFailure, TranscriptionModelDownloadError) as error:
+            if options.engine == TranscriptionEngine.BAILIAN:
+                self._require_bailian_credentials(options)
+        except (
+            TranscriptionFailure,
+            TranscriptionModelDownloadError,
+            BailianCredentialError,
+        ) as error:
             raise AnalysisPrerequisiteError(str(error)) from error
         existing_transcript = self.library.load_transcript(asset_id)
         if existing_transcript is not None and not force:
@@ -250,6 +263,16 @@ class AnalysisManager:
                 progress_percent=100,
                 message="该视频已有转录结果",
             )
+        previous_metadata = self.library.load_transcription_metadata(asset_id)
+        cloud_task_id = None
+        if (
+            options.engine == TranscriptionEngine.BAILIAN
+            and previous_metadata is not None
+            and previous_metadata.status == TranscriptionStatus.FAILED
+            and previous_metadata.options == options
+            and previous_metadata.cloud_region == self.settings.bailian_asr.region
+        ):
+            cloud_task_id = previous_metadata.cloud_task_id
         job = AnalysisJob(
             job_id=f"job-{uuid7().hex}",
             asset_id=asset_id,
@@ -271,6 +294,12 @@ class AnalysisManager:
                 ),
                 engine=options.engine,
                 options=options,
+                cloud_task_id=cloud_task_id,
+                cloud_region=(
+                    self.settings.bailian_asr.region
+                    if options.engine == TranscriptionEngine.BAILIAN
+                    else None
+                ),
             )
         )
         return job.model_copy(deep=True)
@@ -329,6 +358,12 @@ class AnalysisManager:
                     ),
                     engine=self.settings.default_transcription.engine,
                     options=self.settings.default_transcription,
+                    cloud_region=(
+                        self.settings.bailian_asr.region
+                        if self.settings.default_transcription.engine
+                        == TranscriptionEngine.BAILIAN
+                        else None
+                    ),
                 )
             )
         return job.model_copy(deep=True)
@@ -408,10 +443,9 @@ class AnalysisManager:
                     self._active_job_id_by_asset_id[job.asset_id] = job.job_id
             with self._lock:
                 self._jobs[job.job_id] = job
-            if job.operation == AnalysisOperation.TRANSCRIPTION:
-                metadata = self.library.load_transcription_metadata(job.asset_id)
-                if metadata and metadata.job_id == job.job_id:
-                    self._transcription_options_by_job_id[job.job_id] = metadata.options
+            metadata = self.library.load_transcription_metadata(job.asset_id)
+            if metadata and metadata.job_id == job.job_id:
+                self._transcription_options_by_job_id[job.job_id] = metadata.options
             if job.stage == AnalysisStage.PENDING:
                 self.start(job.job_id)
 
@@ -552,6 +586,13 @@ class AnalysisManager:
                         )
                     )
                     transcription_started_at = datetime.now(UTC)
+                    cloud_task_id = None
+                    cloud_region = None
+                    if transcription_options.engine == TranscriptionEngine.BAILIAN:
+                        cloud_region = self.settings.bailian_asr.region
+                        if saved_metadata and saved_metadata.job_id == job_id:
+                            cloud_task_id = saved_metadata.cloud_task_id
+                            cloud_region = saved_metadata.cloud_region or cloud_region
                     self.library.save_transcription_metadata(
                         TranscriptionMetadata(
                             job_id=job_id,
@@ -560,6 +601,8 @@ class AnalysisManager:
                             attempt_count=attempt_count,
                             engine=transcription_options.engine,
                             options=transcription_options,
+                            cloud_task_id=cloud_task_id,
+                            cloud_region=cloud_region,
                             started_at=transcription_started_at,
                         )
                     )
@@ -592,6 +635,9 @@ class AnalysisManager:
                     self.library.save_transcript(transcript)
                     self._on_evidence_ready()
                     completed_at = datetime.now(UTC)
+                    cloud_metadata = self.library.load_transcription_metadata(
+                        asset.asset_id
+                    )
                     self.library.save_transcription_metadata(
                         TranscriptionMetadata(
                             job_id=job_id,
@@ -601,6 +647,12 @@ class AnalysisManager:
                             engine=transcription_options.engine,
                             output_source=transcription_result.output_source,
                             options=transcription_options,
+                            cloud_task_id=cloud_metadata.cloud_task_id
+                            if cloud_metadata
+                            else None,
+                            cloud_region=cloud_metadata.cloud_region
+                            if cloud_metadata
+                            else None,
                             started_at=transcription_started_at,
                             completed_at=completed_at,
                             duration_seconds=(
@@ -756,6 +808,14 @@ class AnalysisManager:
                     and not transcription_completed
                 ):
                     failed_at = datetime.now(UTC)
+                    cloud_metadata = self.library.load_transcription_metadata(
+                        asset.asset_id
+                    )
+                    cloud_task_id = (
+                        cloud_metadata.cloud_task_id if cloud_metadata else None
+                    )
+                    if isinstance(error, BailianAsrError) and error.terminal_task:
+                        cloud_task_id = None
                     self.library.save_transcription_metadata(
                         TranscriptionMetadata(
                             job_id=job_id,
@@ -764,6 +824,10 @@ class AnalysisManager:
                             attempt_count=attempt_count,
                             engine=transcription_options.engine,
                             options=transcription_options,
+                            cloud_task_id=cloud_task_id,
+                            cloud_region=cloud_metadata.cloud_region
+                            if cloud_metadata
+                            else None,
                             started_at=transcription_started_at,
                             completed_at=failed_at,
                             duration_seconds=(
@@ -795,7 +859,36 @@ class AnalysisManager:
         options: TranscriptionOptions,
         asset: MediaAsset,
     ) -> Transcriber:
-        """仅在平台字幕缺失后准备本地识别，显式转录仍沿用已验证的模型配置。"""
+        """平台字幕缺失后才准备识别，云端任务复用落盘任务号以避免重复收费。"""
+        if options.engine == TranscriptionEngine.BAILIAN:
+            metadata = self.library.load_transcription_metadata(asset.asset_id)
+            region = (
+                metadata.cloud_region
+                if metadata and metadata.cloud_region is not None
+                else self.settings.bailian_asr.region
+            )
+            self._update_job(
+                job.job_id,
+                AnalysisStage.TRANSCRIBING,
+                TRANSCRIPTION_PROGRESS_START_PERCENT,
+                "正在准备百炼云端转写",
+            )
+            return BailianTranscriber(
+                options,
+                self._require_bailian_credentials(options, region),
+                BailianAsrConfiguration(region=region).base_url,
+                task_id=metadata.cloud_task_id if metadata else None,
+                on_task_submitted=lambda task_id: self._save_cloud_task_id(
+                    asset.asset_id, job.job_id, task_id
+                ),
+                on_status=lambda message: self._update_job(
+                    job.job_id,
+                    AnalysisStage.TRANSCRIBING,
+                    TRANSCRIPTION_PROGRESS_START_PERCENT,
+                    message,
+                ),
+                duration_seconds=asset.duration_seconds,
+            )
         if job.operation == AnalysisOperation.INITIALIZATION:
             descriptor = require_transcription_adapter(options)
             if not is_transcription_model_installed(
@@ -823,6 +916,28 @@ class AnalysisManager:
             ),
             context=self._transcription_context(asset),
         )
+
+    def _require_bailian_credentials(
+        self, options: TranscriptionOptions, region: BailianRegion | None = None
+    ) -> str:
+        """地域和模型必须匹配，避免将密钥或收费请求发送到错误地域。"""
+        region = region or self.settings.bailian_asr.region
+        if (
+            region == BailianRegion.SINGAPORE
+            and options.model == BAILIAN_PARAFORMER_MODEL
+        ):
+            raise BailianCredentialError("Paraformer 仅支持北京地域，请选择 Fun-ASR")
+        return self._bailian_credentials.require_api_key(region)
+
+    def _save_cloud_task_id(self, asset_id: str, job_id: str, task_id: str) -> None:
+        """先落盘供应商任务号，重启后继续查询同一笔转写。"""
+        with self._lock:
+            metadata = self.library.load_transcription_metadata(asset_id)
+            if metadata is None or metadata.job_id != job_id:
+                raise AnalysisError("云端转写任务状态已变更，已停止处理")
+            self.library.save_transcription_metadata(
+                metadata.model_copy(update={"cloud_task_id": task_id})
+            )
 
     def _transcription_context(self, asset: MediaAsset) -> str:
         candidates = [asset.title, asset.author_name]

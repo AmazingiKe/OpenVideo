@@ -42,6 +42,7 @@ from openvideo.tools.media import resolve_tool
 
 AUDIO_SAMPLE_RATE = 16_000
 AUDIO_CHANNELS = 1
+CLOUD_AUDIO_BITRATE = "48k"
 PCM_SAMPLE_WIDTH_BYTES = 2
 PCM16_SCALE = 32_768.0
 MILLISECONDS_PER_SECOND = 1_000
@@ -211,8 +212,10 @@ def extract_audio(
     output_directory: Path,
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None = None,
+    *,
+    compressed: bool = False,
 ) -> AudioExtractionResult:
-    """将视频转成 16kHz 单声道 WAV，兼容本地 ASR 的常用输入格式。"""
+    """本地识别保留 PCM，云端上传压缩音频以降低带宽和临时存储占用。"""
     if not media_path.is_file():
         raise TranscriptionFailure("视频文件不存在，无法提取音频")
     ffmpeg_path = resolve_tool(configured_ffmpeg_path, "ffmpeg", project_bin_dir)
@@ -220,7 +223,12 @@ def extract_audio(
         raise TranscriptionFailure("未找到 ffmpeg，无法提取音频")
 
     output_directory.mkdir(parents=True, exist_ok=True)
-    audio_path = output_directory / "audio.wav"
+    audio_path = output_directory / ("audio.mp3" if compressed else "audio.wav")
+    codec_arguments = (
+        ["-c:a", "libmp3lame", "-b:a", CLOUD_AUDIO_BITRATE]
+        if compressed
+        else ["-c:a", "pcm_s16le"]
+    )
     command = [
         ffmpeg_path,
         "-y",
@@ -231,8 +239,7 @@ def extract_audio(
         str(AUDIO_CHANNELS),
         "-ar",
         str(AUDIO_SAMPLE_RATE),
-        "-c:a",
-        "pcm_s16le",
+        *codec_arguments,
         str(audio_path),
     ]
     result = subprocess.run(
@@ -307,13 +314,19 @@ def transcribe_media(
                 output_source="platform_subtitles",
             )
         if transcriber_factory is None:
-            raise TranscriptionFailure("视频没有可用字幕；请配置本地 ASR 后重试")
+            raise TranscriptionFailure("视频没有可用字幕；请配置转写模型后重试")
         transcriber = transcriber_factory()
+        extraction_options = (
+            {"compressed": True}
+            if transcriber.engine == TranscriptionEngine.BAILIAN
+            else {}
+        )
         audio = extract_audio(
             media_path,
             work_directory / "audio",
             configured_ffmpeg_path,
             project_bin_dir,
+            **extraction_options,
         )
         return TranscriptionResult(
             transcript=transcriber.transcribe(audio.audio_path, asset_id),
@@ -781,7 +794,7 @@ def create_transcriber(
     progress_reporter: TranscriptionProgressReporter | None = None,
     context: str = "",
 ) -> Transcriber:
-    """根据持久化任务选项路由 ASR；未接入的引擎会返回明确状态。"""
+    """准备本地 ASR；云端识别由业务服务注入凭据和持久化任务状态后创建。"""
     require_transcription_adapter(options)
     if options.engine == TranscriptionEngine.FASTER_WHISPER:
         compute_type = (

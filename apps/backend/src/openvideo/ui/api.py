@@ -11,6 +11,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from openvideo.core.agent_governance_models import AgentPreferences
+from openvideo.bailian_credentials import BailianCredentialError, BailianCredentialStore
+from openvideo.core.bailian_models import (
+    BailianAsrConfiguration,
+    BailianAsrPatch,
+    BailianAsrStatus,
+    BailianConnectionResult,
+    BailianRegion,
+)
 from openvideo.agent_service import (
     AgentService,
 )
@@ -27,6 +35,7 @@ from openvideo.core.ai_models import (
 from openvideo.core.formula_models import FormulaModelState
 from openvideo.core.model_download_models import ModelDownloadJob
 from openvideo.core.transcription_models import (
+    BAILIAN_PARAFORMER_MODEL,
     TranscriptionEngine,
     TranscriptionModelDownloadJob,
     TranscriptionModelState,
@@ -46,6 +55,7 @@ from openvideo.core.page_settings import (
 from openvideo.preferences import DownloadProxy, PreferenceStore
 from openvideo.settings import (
     AGENT_PREFERENCES_FIELD,
+    BAILIAN_ASR_FIELD,
     AI_MODELS_FIELD,
     DEFAULT_TRANSCRIPTION_FIELD,
     DOWNLOAD_PROXY_FIELD,
@@ -88,6 +98,7 @@ from openvideo.ui.download_account_routes import (
 )
 from openvideo.ui.download_routes import register_download_routes
 from openvideo.ui.event_analysis_routes import register_event_analysis_routes
+from openvideo.tools.bailian_asr import BailianAsrError, test_bailian_connection
 
 
 class LibraryActivationRequest(BaseModel):
@@ -104,6 +115,7 @@ class PreferencesPatch(AiModelCollection):
     download_proxy: DownloadProxy = None
     default_transcription: TranscriptionOptions | None = None
     agent: AgentPreferences | None = None
+    bailian_asr: BailianAsrPatch | None = None
 
 
 class PreferencesResponse(AiModelCollection):
@@ -112,6 +124,7 @@ class PreferencesResponse(AiModelCollection):
     download_proxy: DownloadProxy
     default_transcription: TranscriptionOptions
     agent: AgentPreferences
+    bailian_asr: BailianAsrStatus
     managed_fields: list[str]
     library_path_managed: bool
 
@@ -125,9 +138,11 @@ def create_app(
     | None = None,
     capability_resolver: CapabilityResolver | None = None,
     retrieval_models: NeuralRetrievalModels | None = None,
+    bailian_credential_store: BailianCredentialStore | None = None,
 ) -> FastAPI:
     preference_store = preference_store or PreferenceStore()
     resolved_settings = settings or load_settings(preference_store)
+    cloud_credentials = bailian_credential_store or BailianCredentialStore()
     configure_model_request_limit(resolved_settings.agent.max_concurrent_runs)
     library: MediaLibrary | None = None
     manager: DownloadManager | None = None
@@ -164,6 +179,7 @@ def create_app(
         analysis_manager = AnalysisManager(
             opened_library,
             resolved_settings,
+            bailian_credential_store=cloud_credentials,
             on_evidence_ready=lambda: (
                 agent_service.refresh_index() if agent_service is not None else None
             ),
@@ -418,7 +434,7 @@ def create_app(
 
     @app.get("/api/preferences", response_model=PreferencesResponse)
     def get_preferences() -> PreferencesResponse:
-        return _preferences_response(resolved_settings)
+        return _preferences_response(resolved_settings, cloud_credentials)
 
     @app.patch("/api/preferences", response_model=PreferencesResponse)
     def update_preferences(request: PreferencesPatch) -> PreferencesResponse:
@@ -438,6 +454,31 @@ def create_app(
         if AI_MODELS_FIELD in provided_fields and AI_MODELS_FIELD not in managed_fields:
             _validate_online_ai_models(candidate_models)
         _validate_agent_model_roles(candidate_agent, candidate_models)
+        bailian_patch = request.bailian_asr
+        candidate_bailian = resolved_settings.bailian_asr
+        if bailian_patch is not None and bailian_patch.region is not None:
+            candidate_bailian = BailianAsrConfiguration(region=bailian_patch.region)
+        candidate_transcription = (
+            request.default_transcription or resolved_settings.default_transcription
+        )
+        if (
+            candidate_bailian.region == BailianRegion.SINGAPORE
+            and candidate_transcription.engine == TranscriptionEngine.BAILIAN
+            and candidate_transcription.model == BAILIAN_PARAFORMER_MODEL
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Paraformer 仅支持北京地域，请先将默认转写模型切换为 Fun-ASR",
+            )
+        if bailian_patch is not None and bailian_patch.api_key is not None:
+            try:
+                cloud_credentials.set_api_key(
+                    candidate_bailian.region, bailian_patch.api_key
+                )
+            except BailianCredentialError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+        if bailian_patch is not None:
+            resolved_settings.bailian_asr = candidate_bailian
         if (
             TOOLS_DIRECTORY_FIELD in provided_fields
             and TOOLS_DIRECTORY_FIELD not in managed_fields
@@ -464,7 +505,21 @@ def create_app(
             resolved_settings.agent = request.agent
             configure_model_request_limit(request.agent.max_concurrent_runs)
         save_current_path(str(library.library_path) if library else None)
-        return _preferences_response(resolved_settings)
+        return _preferences_response(resolved_settings, cloud_credentials)
+
+    @app.post("/api/transcription/bailian/test", response_model=BailianConnectionResult)
+    def test_bailian_asr() -> BailianConnectionResult:
+        try:
+            api_key = cloud_credentials.require_api_key(
+                resolved_settings.bailian_asr.region
+            )
+            test_bailian_connection(api_key, resolved_settings.bailian_asr.base_url)
+        except (BailianCredentialError, BailianAsrError) as error:
+            return BailianConnectionResult(configured=False, message=str(error))
+        return BailianConnectionResult(
+            configured=True,
+            message="百炼连接正常，已验证上传权限；模型开通状态以实际转写结果为准。",
+        )
 
     @app.get(
         "/api/transcription/models",
@@ -613,12 +668,24 @@ def _ensure_switch_allowed(
         )
 
 
-def _preferences_response(settings: Settings) -> PreferencesResponse:
+def _preferences_response(
+    settings: Settings, credential_store: BailianCredentialStore
+) -> PreferencesResponse:
     values = settings.model_dump(
-        exclude={"library_path", "cors_origins", "managed_fields"}
+        exclude={"library_path", "cors_origins", "managed_fields", BAILIAN_ASR_FIELD}
     )
+    try:
+        api_key_configured = bool(
+            credential_store.get_api_key(settings.bailian_asr.region)
+        )
+    except BailianCredentialError:
+        api_key_configured = False
     return PreferencesResponse(
         **values,
+        bailian_asr=BailianAsrStatus(
+            region=settings.bailian_asr.region,
+            api_key_configured=api_key_configured,
+        ),
         managed_fields=sorted(settings.managed_fields),
         library_path_managed=os.getenv("OPENVIDEO_LIBRARY_PATH") is not None,
     )

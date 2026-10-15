@@ -7,8 +7,16 @@ from pathlib import Path
 from pydantic import Field
 
 from openvideo.core.agent_governance_models import AgentPreferences
-from openvideo.core.ai_models import AiModelCollection, AiModelConfiguration, is_online_api_model
-from openvideo.core.transcription_models import TranscriptionEngine, TranscriptionOptions
+from openvideo.core.bailian_models import BailianAsrConfiguration
+from openvideo.core.ai_models import (
+    AiModelCollection,
+    AiModelConfiguration,
+    is_online_api_model,
+)
+from openvideo.core.transcription_models import (
+    TranscriptionEngine,
+    TranscriptionOptions,
+)
 from openvideo.preferences import DownloadProxy, PreferenceStore, Preferences
 
 
@@ -19,6 +27,7 @@ TOOLS_DIRECTORY_FIELD = "tools_directory"
 DOWNLOAD_PROXY_FIELD = "download_proxy"
 DEFAULT_TRANSCRIPTION_FIELD = "default_transcription"
 AGENT_PREFERENCES_FIELD = "agent"
+BAILIAN_ASR_FIELD = "bailian_asr"
 SETTING_ENVIRONMENTS = {
     "ffmpeg_path": "OPENVIDEO_FFMPEG_PATH",
     "ffprobe_path": "OPENVIDEO_FFPROBE_PATH",
@@ -46,6 +55,9 @@ class Settings(AiModelCollection):
         default_factory=TranscriptionOptions
     )
     agent: AgentPreferences = Field(default_factory=AgentPreferences)
+    bailian_asr: BailianAsrConfiguration = Field(
+        default_factory=BailianAsrConfiguration
+    )
     managed_fields: set[str] = Field(default_factory=set)
 
     @property
@@ -96,7 +108,9 @@ def load_settings(store: PreferenceStore | None = None) -> Settings:
         try:
             values[AI_MODELS_FIELD] = json.loads(raw_ai_models)
         except json.JSONDecodeError as error:
-            raise ValueError(f"{AI_MODELS_ENVIRONMENT} 必须是有效的 JSON 数组") from error
+            raise ValueError(
+                f"{AI_MODELS_ENVIRONMENT} 必须是有效的 JSON 数组"
+            ) from error
         managed_fields.add(AI_MODELS_FIELD)
     raw_origins = os.getenv("OPENVIDEO_CORS_ORIGINS")
     origins = (
@@ -105,7 +119,9 @@ def load_settings(store: PreferenceStore | None = None) -> Settings:
         else list(DEFAULT_CORS_ORIGINS)
     )
     environment_library = os.getenv("OPENVIDEO_LIBRARY_PATH")
-    library_path = _load_library_path(environment_library, preferences.current_library_path)
+    library_path = _load_library_path(
+        environment_library, preferences.current_library_path
+    )
     return Settings(
         library_path=library_path,
         cors_origins=origins,
@@ -114,8 +130,12 @@ def load_settings(store: PreferenceStore | None = None) -> Settings:
     )
 
 
-def preferences_from_settings(settings: Settings, current_library_path: str | None) -> Preferences:
-    values = settings.model_dump(exclude={"library_path", "cors_origins", "managed_fields"})
+def preferences_from_settings(
+    settings: Settings, current_library_path: str | None
+) -> Preferences:
+    values = settings.model_dump(
+        exclude={"library_path", "cors_origins", "managed_fields"}
+    )
     return Preferences(current_library_path=current_library_path, **values)
 
 
