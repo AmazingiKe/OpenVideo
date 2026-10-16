@@ -40,6 +40,7 @@ class TranscriptionStatus(StrEnum):
     RUNNING = "running"
     COMPLETE = "complete"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class TranscriptEmotion(StrEnum):

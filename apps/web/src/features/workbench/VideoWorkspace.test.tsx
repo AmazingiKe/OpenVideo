@@ -99,6 +99,22 @@ describe("VideoWorkspace", () => {
     expect(player_render).toHaveBeenCalledTimes(initial_render_count);
   });
 
+  it("stops chapter generation and disables repeated stop requests while the worker exits", () => {
+    const on_cancel_chapters = vi.fn();
+    const props = {
+      ...create_workspace_props(),
+      on_generate_chapters: vi.fn(),
+      on_cancel_chapters,
+      chapter_generation_message: "正在核对章节",
+    };
+    const { rerender } = render(<VideoWorkspace {...props} />);
+    expect(screen.getByRole("button", { name: "生成中…" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    expect(on_cancel_chapters).toHaveBeenCalledOnce();
+    rerender(<VideoWorkspace {...props} is_cancelling_chapters />);
+    expect(screen.getByRole("button", { name: "正在停止…" })).toBeDisabled();
+  });
+
   it("connects saved playback to the marker player and flushes a played pause", async () => {
     const progress = {
       library_id: "library-watch",

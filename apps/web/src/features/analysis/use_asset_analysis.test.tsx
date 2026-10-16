@@ -7,11 +7,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApplicationQueryProvider } from "@/app/query_cache";
 import { get_analysis } from "@/shared/api";
-import { generate_chapters } from "@/shared/api/analysis";
+import { cancel_analysis, generate_chapters } from "@/shared/api/analysis";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 import type { AnalysisJob } from "@/shared/types";
 import { load_asset_analysis } from "@/shared/load_asset_analysis";
@@ -22,7 +22,10 @@ vi.mock("@/shared/api", () => ({
   get_analysis: vi.fn(),
 }));
 
-vi.mock("@/shared/api/analysis", () => ({ generate_chapters: vi.fn() }));
+vi.mock("@/shared/api/analysis", () => ({
+  generate_chapters: vi.fn(),
+  cancel_analysis: vi.fn(),
+}));
 
 vi.mock("@/shared/load_asset_analysis", () => ({
   load_asset_analysis: vi.fn(),
@@ -60,6 +63,7 @@ describe("use_asset_analysis", () => {
       },
     });
   });
+  afterEach(() => vi.useRealTimers());
 
   it("reuses fresh analysis data when its consumer mounts again", async () => {
     render(
@@ -113,6 +117,115 @@ describe("use_asset_analysis", () => {
     await act(() => result.current.regenerate_chapters());
     expect(result.current.chapter_generation_error).toBe("章节边界存在遗漏");
     expect(result.current.chapter_generation_message).toBeNull();
+    expect(load_asset_analysis).toHaveBeenCalledOnce();
+  });
+
+  it("remembers a stop while chapter submission is pending and keeps existing chapters", async () => {
+    vi.useFakeTimers();
+    let resolve_job!: (job: AnalysisJob) => void;
+    vi.mocked(generate_chapters).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolve_job = resolve;
+        }),
+    );
+    vi.mocked(cancel_analysis).mockResolvedValue({
+      ...CHAPTER_JOB,
+      stage: "cancelling",
+    });
+    vi.mocked(get_analysis).mockResolvedValue({
+      ...CHAPTER_JOB,
+      stage: "cancelled",
+    });
+    const { result } = renderHook(() => use_asset_analysis(ASSET_ID), {
+      wrapper: ApplicationQueryProvider,
+    });
+    let request!: Promise<void>;
+    act(() => {
+      request = result.current.regenerate_chapters();
+    });
+    await act(async () => result.current.cancel_chapter_generation());
+    expect(result.current.is_cancelling_chapters).toBe(true);
+    expect(cancel_analysis).not.toHaveBeenCalled();
+    expect(vi.mocked(generate_chapters).mock.calls[0][1]?.aborted).toBe(false);
+    await act(async () => resolve_job(CHAPTER_JOB));
+    expect(cancel_analysis).toHaveBeenCalledWith(
+      CHAPTER_JOB.job_id,
+      expect.any(AbortSignal),
+    );
+    expect(result.current.is_cancelling_chapters).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      await request;
+    });
+    expect(result.current.chapter_generation_message).toBeNull();
+    expect(result.current.chapter_generation_error).toBeNull();
+    expect(result.current.is_cancelling_chapters).toBe(false);
+    expect(load_asset_analysis).toHaveBeenCalledOnce();
+  });
+
+  it("still sends a requested stop after leaving before chapter submission is accepted", async () => {
+    let resolve_job!: (job: AnalysisJob) => void;
+    vi.mocked(generate_chapters).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolve_job = resolve;
+        }),
+    );
+    vi.mocked(cancel_analysis).mockResolvedValue({
+      ...CHAPTER_JOB,
+      stage: "cancelling",
+    });
+    const { result, rerender } = renderHook(
+      ({ asset_id }) => use_asset_analysis(asset_id),
+      {
+        initialProps: { asset_id: ASSET_ID },
+        wrapper: ApplicationQueryProvider,
+      },
+    );
+    let request!: Promise<void>;
+    act(() => {
+      request = result.current.regenerate_chapters();
+    });
+    await act(async () => result.current.cancel_chapter_generation());
+    const signal = vi.mocked(generate_chapters).mock.calls[0][1];
+    rerender({ asset_id: "asset-0198d12345677890abcdef1234567892" });
+    expect(signal?.aborted).toBe(false);
+    await act(async () => {
+      resolve_job(CHAPTER_JOB);
+      await request;
+    });
+    expect(cancel_analysis).toHaveBeenCalledWith(CHAPTER_JOB.job_id, signal);
+    expect(signal?.aborted).toBe(true);
+    expect(result.current.chapter_generation_message).toBeNull();
+    expect(result.current.chapter_generation_error).toBeNull();
+  });
+
+  it("keeps observing chapters after a failed stop and allows another stop", async () => {
+    vi.useFakeTimers();
+    vi.mocked(generate_chapters).mockResolvedValue(CHAPTER_JOB);
+    vi.mocked(cancel_analysis)
+      .mockRejectedValueOnce(new Error("停止失败"))
+      .mockResolvedValueOnce({ ...CHAPTER_JOB, stage: "cancelled" });
+    const { result } = renderHook(() => use_asset_analysis(ASSET_ID), {
+      wrapper: ApplicationQueryProvider,
+    });
+    let request!: Promise<void>;
+    await act(async () => {
+      request = result.current.regenerate_chapters();
+    });
+    await act(async () => result.current.cancel_chapter_generation());
+    expect(result.current.chapter_generation_error).toBe("停止失败");
+    expect(result.current.chapter_generation_message).not.toBeNull();
+    expect(result.current.is_cancelling_chapters).toBe(false);
+    await act(async () => {
+      await result.current.cancel_chapter_generation();
+      await vi.advanceTimersByTimeAsync(1000);
+      await request;
+    });
+    expect(result.current.chapter_generation_error).toBeNull();
+    expect(result.current.chapter_generation_message).toBeNull();
+    expect(get_analysis).not.toHaveBeenCalled();
     expect(load_asset_analysis).toHaveBeenCalledOnce();
   });
 

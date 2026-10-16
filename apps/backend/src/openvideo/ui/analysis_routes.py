@@ -199,6 +199,13 @@ def register_analysis_routes(
         except AnalysisError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @app.post("/api/analysis/{job_id}/cancel", response_model=AnalysisJob)
+    def cancel_analysis(job_id: str) -> AnalysisJob:
+        try:
+            return analysis_manager().cancel(job_id)
+        except AnalysisError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.post("/api/analysis/{job_id}/reject", response_model=AnalysisJob)
     def reject_analysis(job_id: str) -> AnalysisJob:
         try:

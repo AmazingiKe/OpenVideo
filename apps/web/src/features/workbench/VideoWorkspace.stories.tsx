@@ -5,7 +5,7 @@ import { STORY_ASSETS } from "@/features/library/library_story_fixtures";
 import type { PlayerHandle } from "@/features/player/Player";
 import { mock_playback_requests } from "@/features/player/playback_story_fixtures";
 import { VideoWorkspace } from "./VideoWorkspace";
-import { fn } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 
 const meta = {
   title: "Workbench/VideoWorkspace",
@@ -63,7 +63,17 @@ export const GeneratingChapters: Story = {
   args: {
     ...ChapterGeneration.args,
     chapter_generation_message: "正在核对章节主题与关键画面",
+    on_cancel_chapters: fn(),
   },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "停止生成" }));
+    await expect(args.on_cancel_chapters).toHaveBeenCalledOnce();
+  },
+};
+
+export const StoppingChapters: Story = {
+  args: { ...GeneratingChapters.args, is_cancelling_chapters: true },
 };
 
 export const ChaptersWithoutTranscript: Story = {

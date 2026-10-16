@@ -226,6 +226,19 @@ def test_analysis_requires_transcription(tmp_path: Path):
     assert response.status_code == 409
 
 
+def test_cancel_analysis_is_idempotent_and_reports_unknown_jobs(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        job = client.app.state.analysis_manager.create_initialization(ASSET_ID)
+        response = client.post(f"/api/analysis/{job.job_id}/cancel")
+        repeated = client.post(f"/api/analysis/{job.job_id}/cancel")
+        missing = client.post("/api/analysis/job-missing/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["stage"] == "cancelled"
+    assert repeated.json() == response.json()
+    assert missing.status_code == 404
+
+
 def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         analysis_manager_module,

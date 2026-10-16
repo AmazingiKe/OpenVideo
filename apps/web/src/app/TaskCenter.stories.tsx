@@ -100,3 +100,50 @@ export const DownloadStates: Story = {
     await expect(args.on_delete).toHaveBeenCalledWith(args.tasks[4].task_id);
   },
 };
+
+export const TranscriptionStates: Story = {
+  args: {
+    open: true,
+    tasks: [
+      "transcribing",
+      "cancelling",
+      "cancelled",
+      "interrupted",
+      "failed",
+    ].map((stage, index) => ({
+      ...TASKS[2],
+      task_id: `${TASKS[2].task_id.slice(0, -1)}${index}`,
+      task_type: "transcription",
+      name: `视频课程 ${index + 1}`,
+      stage,
+      message:
+        stage === "cancelling"
+          ? "等待后台安全退出"
+          : stage === "cancelled"
+            ? "转写已停止，保留原字幕"
+            : stage === "interrupted"
+              ? "同步中断，后台仍可能运行"
+              : "正在转写",
+      progress_percent: 35,
+      error_message: stage === "interrupted" ? "网络连接中断" : null,
+      cancel_available: stage === "transcribing" || stage === "interrupted",
+      retry_available:
+        stage === "cancelled" || stage === "failed" || stage === "interrupted",
+    })),
+    on_retry: fn(async () => undefined),
+    on_cancel: fn(async () => undefined),
+  },
+  play: async ({ canvasElement, args }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const running_task = body.getByText("视频课程 1").closest("li")!;
+    await userEvent.click(
+      within(running_task).getByRole("button", { name: "停止转写" }),
+    );
+    await expect(args.on_cancel).toHaveBeenCalledWith(args.tasks[0].task_id);
+    await expect(
+      body.getByRole("button", { name: "正在停止…" }),
+    ).toBeDisabled();
+    await userEvent.click(body.getByRole("button", { name: "重新连接" }));
+    await expect(args.on_retry).toHaveBeenCalledWith(args.tasks[3].task_id);
+  },
+};

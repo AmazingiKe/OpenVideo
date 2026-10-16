@@ -2,6 +2,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from unittest.mock import Mock
 
 import pytest
@@ -515,7 +516,7 @@ async def test_initialization_restore_uses_saved_options_after_default_changes(
         analysis_manager_module, "BailianTranscriber", cloud_transcriber
     )
 
-    def interrupt_cloud_query(*args):
+    def interrupt_cloud_query(*args, **_kwargs):
         args[-1]()
         raise BailianAsrError("查询暂时中断，等待下次恢复")
 
@@ -593,6 +594,7 @@ async def test_cloud_transcription_run_persists_result_source_and_submitted_task
     assert metadata.output_source == "bailian/fun-asr"
     assert metadata.cloud_task_id == "successful-cloud-task"
     assert metadata.cloud_region == BailianRegion.BEIJING
-    assert extraction.call_args.kwargs == {"compressed": True}
+    assert extraction.call_args.kwargs["compressed"] is True
+    assert isinstance(extraction.call_args.kwargs["cancel_event"], Event)
     cloud_transcriber.transcribe.assert_called_once_with(audio_path, ASSET_ID)
     cloud_transcriber.close.assert_called_once()

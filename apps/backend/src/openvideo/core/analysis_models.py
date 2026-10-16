@@ -15,6 +15,8 @@ MARKER_RANGE_STEP_SECONDS = 5
 
 class AnalysisStage(StrEnum):
     PENDING = "pending"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
     PREPARING_TRANSCRIPTION_MODEL = "preparing_transcription_model"
     EXTRACTING_AUDIO = "extracting_audio"
     TRANSCRIBING = "transcribing"
@@ -30,6 +32,7 @@ class AnalysisStage(StrEnum):
 
 
 TERMINAL_ANALYSIS_STAGES = {
+    AnalysisStage.CANCELLED,
     AnalysisStage.COMPLETE,
     AnalysisStage.REJECTED,
     AnalysisStage.FAILED,

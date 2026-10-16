@@ -10,6 +10,7 @@ export type TaskRecord = {
   name: string;
   retry_available?: boolean;
   pause_available?: boolean;
+  cancel_available?: boolean;
   delete_available?: boolean;
   result_available?: boolean;
 };
@@ -64,6 +65,7 @@ export const TASK_STAGE_LABELS: Record<string, string> = {
   waiting_for_input: "等待处理",
   applying: "保存修正",
   cancelled: "已取消",
+  cancelling: "正在停止",
   complete: "已完成",
   failed: "失败",
   running: "运行中",

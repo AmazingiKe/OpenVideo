@@ -29,6 +29,7 @@ def test_marker_event_frames_include_marker_point_and_context(
         _frames_directory,
         _ffmpeg_path,
         _ffmpeg_bin_dir,
+        _cancel_event,
     ):
         captured_time_points.extend(time_points)
         return []

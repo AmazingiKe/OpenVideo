@@ -41,6 +41,16 @@ export function get_analysis(
   });
 }
 
+export function cancel_analysis(
+  job_id: string,
+  signal?: AbortSignal,
+): Promise<AnalysisJob> {
+  return request_json(`/api/analysis/${encodeURIComponent(job_id)}/cancel`, {
+    method: "POST",
+    signal,
+  });
+}
+
 export function get_transcript(
   asset_id: string,
   signal?: AbortSignal,

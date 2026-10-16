@@ -9,6 +9,7 @@ import {
   Play,
   Search,
   Trash2,
+  Square,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -41,6 +42,7 @@ type TaskCenterProps = {
   open?: boolean;
   on_open_change?: (open: boolean) => void;
   on_pause?: (task_id: string) => Promise<void>;
+  on_cancel?: (task_id: string) => Promise<void>;
   on_delete?: (task_id: string) => Promise<void>;
   on_view_result?: (task_id: string) => void;
 };
@@ -59,6 +61,7 @@ export function TaskCenter({
   open,
   on_open_change,
   on_pause,
+  on_cancel,
   on_delete,
   on_view_result,
 }: TaskCenterProps) {
@@ -169,6 +172,11 @@ export function TaskCenter({
                     ? (task_id) => run_task_action(task_id, on_pause)
                     : undefined
                 }
+                on_cancel={
+                  on_cancel
+                    ? (task_id) => run_task_action(task_id, on_cancel)
+                    : undefined
+                }
                 on_delete={
                   on_delete
                     ? (task_id) => run_task_action(task_id, on_delete)
@@ -189,6 +197,7 @@ function TaskCenterItem({
   is_pending,
   on_retry,
   on_pause,
+  on_cancel,
   on_delete,
   on_view_result,
 }: {
@@ -196,6 +205,7 @@ function TaskCenterItem({
   is_pending: boolean;
   on_retry: (run_id: string) => Promise<void>;
   on_pause?: TaskCenterProps["on_pause"];
+  on_cancel?: TaskCenterProps["on_cancel"];
   on_delete?: TaskCenterProps["on_delete"];
   on_view_result?: TaskCenterProps["on_view_result"];
 }) {
@@ -266,6 +276,19 @@ function TaskCenterItem({
               >
                 <Pause aria-hidden="true" />
                 暂停下载
+              </Button>
+            ) : null}
+            {(task.cancel_available || task.stage === "cancelling") &&
+            on_cancel ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                disabled={is_pending || task.stage === "cancelling"}
+                onClick={() => void on_cancel(task.task_id)}
+              >
+                <Square aria-hidden="true" data-icon="inline-start" />
+                {task.stage === "cancelling" ? "正在停止…" : "停止转写"}
               </Button>
             ) : null}
             {task.result_available && on_view_result ? (

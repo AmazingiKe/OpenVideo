@@ -11,6 +11,7 @@ import gc
 import json
 import re
 import subprocess
+from threading import Event
 import sys
 import wave
 from collections.abc import Callable
@@ -38,6 +39,11 @@ from openvideo.transcription_model_manager import (
     transcription_model_directory,
 )
 from openvideo.tools.media import resolve_tool
+from openvideo.tools.cancellation import (
+    AnalysisCancelled,
+    check_analysis_cancellation,
+    run_cancellable_process,
+)
 
 
 AUDIO_SAMPLE_RATE = 16_000
@@ -214,6 +220,7 @@ def extract_audio(
     project_bin_dir: Path | None = None,
     *,
     compressed: bool = False,
+    cancel_event: Event | None = None,
 ) -> AudioExtractionResult:
     """本地识别保留 PCM，云端上传压缩音频以降低带宽和临时存储占用。"""
     if not media_path.is_file():
@@ -242,12 +249,16 @@ def extract_audio(
         *codec_arguments,
         str(audio_path),
     ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=COMMAND_TIMEOUT_SECONDS,
+    result = (
+        run_cancellable_process(command, cancel_event, COMMAND_TIMEOUT_SECONDS)
+        if cancel_event is not None
+        else subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
     )
     if result.returncode != 0 or not audio_path.is_file():
         raise TranscriptionFailure(_command_error(result.stderr, "音频提取失败"))
@@ -257,6 +268,7 @@ def extract_audio(
 def extract_platform_subtitles(
     source_url: str,
     output_directory: Path,
+    cancel_event: Event | None = None,
 ) -> Transcript | None:
     """读取平台字幕并转换为统一 Transcript；没有字幕时返回 None。"""
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -277,12 +289,16 @@ def extract_platform_subtitles(
         str(output_directory / "subtitle.%(ext)s"),
         source_url,
     ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=COMMAND_TIMEOUT_SECONDS,
+    result = (
+        run_cancellable_process(command, cancel_event, COMMAND_TIMEOUT_SECONDS)
+        if cancel_event is not None
+        else subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
     )
     subtitle_files = sorted(output_directory.glob("subtitle*.json3"))
     if result.returncode != 0 or not subtitle_files:
@@ -298,14 +314,18 @@ def transcribe_media(
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None = None,
     transcriber_factory: Callable[[], Transcriber] | None = None,
+    cancel_event: Event | None = None,
 ) -> TranscriptionResult:
     """先复用平台字幕，缺失时才准备 ASR，避免为现成字幕下载或加载模型。"""
     transcriber = None
     try:
+        check_analysis_cancellation(cancel_event)
         subtitle_transcript = extract_platform_subtitles(
             source_url,
             work_directory / "subtitles",
+            cancel_event=cancel_event,
         )
+        check_analysis_cancellation(cancel_event)
         if subtitle_transcript:
             return TranscriptionResult(
                 transcript=subtitle_transcript.model_copy(
@@ -316,18 +336,16 @@ def transcribe_media(
         if transcriber_factory is None:
             raise TranscriptionFailure("视频没有可用字幕；请配置转写模型后重试")
         transcriber = transcriber_factory()
-        extraction_options = (
-            {"compressed": True}
-            if transcriber.engine == TranscriptionEngine.BAILIAN
-            else {}
-        )
+        check_analysis_cancellation(cancel_event)
         audio = extract_audio(
             media_path,
             work_directory / "audio",
             configured_ffmpeg_path,
             project_bin_dir,
-            **extraction_options,
+            compressed=transcriber.engine == TranscriptionEngine.BAILIAN,
+            cancel_event=cancel_event,
         )
+        check_analysis_cancellation(cancel_event)
         return TranscriptionResult(
             transcript=transcriber.transcribe(audio.audio_path, asset_id),
             output_source=transcriber.output_source,
@@ -352,6 +370,7 @@ class FasterWhisperTranscriber:
         compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE,
         progress_reporter: TranscriptionProgressReporter | None = None,
         context: str = "",
+        cancellation_check: Callable[[], None] | None = None,
     ) -> None:
         self.model_size = model_size
         self.model_root_directory = model_root_directory
@@ -360,11 +379,14 @@ class FasterWhisperTranscriber:
         self.compute_type = compute_type
         self.progress_reporter = progress_reporter
         self.context = context
+        self.cancellation_check = cancellation_check
         self._model = None
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
         try:
             return self._transcribe_once(audio_path, asset_id)
+        except AnalysisCancelled:
+            raise
         except Exception as error:
             if self.device != AUTOMATIC_DEVICE:
                 raise _runtime_transcription_failure(
@@ -378,6 +400,8 @@ class FasterWhisperTranscriber:
                 self.compute_type = DEFAULT_WHISPER_COMPUTE_TYPE
             try:
                 return self._transcribe_once(audio_path, asset_id)
+            except AnalysisCancelled:
+                raise
             except Exception as fallback_error:
                 raise _runtime_transcription_failure(
                     FASTER_WHISPER_ENGINE_NAME,
@@ -386,8 +410,12 @@ class FasterWhisperTranscriber:
 
     def _transcribe_once(self, audio_path: Path, asset_id: str) -> Transcript:
         """单次推理与自动设备回退分离，确保失败后会重建 CPU 模型。"""
+        if self.cancellation_check:
+            self.cancellation_check()
         if self._model is None:
             self._model = self._load_model()
+        if self.cancellation_check:
+            self.cancellation_check()
         segments, info = self._model.transcribe(
             str(audio_path),
             language=self.language,
@@ -401,6 +429,8 @@ class FasterWhisperTranscriber:
             self.progress_reporter(TranscriptionProgress(0, total_seconds, 0))
         transcript_segments: list[TranscriptSegment] = []
         for segment in segments:
+            if self.cancellation_check:
+                self.cancellation_check()
             text = segment.text.strip()
             if not text:
                 continue
@@ -462,6 +492,7 @@ class Qwen3AsrTranscriber:
         compute_type: str,
         progress_reporter: TranscriptionProgressReporter | None = None,
         context: str = "",
+        cancellation_check: Callable[[], None] | None = None,
     ) -> None:
         self.model = model
         self.models_root_directory = models_root_directory
@@ -470,11 +501,14 @@ class Qwen3AsrTranscriber:
         self.compute_type = compute_type
         self.progress_reporter = progress_reporter
         self.context = context
+        self.cancellation_check = cancellation_check
         self._model = None
         self._torch = None
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
         try:
+            if self.cancellation_check:
+                self.cancellation_check()
             total_seconds = 0.0
             if self.progress_reporter is not None:
                 total_seconds = _wav_duration_seconds(audio_path)
@@ -516,7 +550,7 @@ class Qwen3AsrTranscriber:
                 language=language,
                 segments=_aggregate_qwen_segments(timed_items, language),
             )
-        except TranscriptionFailure:
+        except (AnalysisCancelled, TranscriptionFailure):
             raise
         except ValueError as error:
             raise TranscriptionFailure(
@@ -573,6 +607,8 @@ class Qwen3AsrTranscriber:
         self,
         chunk: QwenAudioChunk,
     ) -> tuple[list[TimedText], list[str]]:
+        if self.cancellation_check:
+            self.cancellation_check()
         duration_seconds = chunk.end_seconds - chunk.start_seconds
         self._model.max_new_tokens = _qwen_generation_token_budget(duration_seconds)
         results = self._model.transcribe(
@@ -665,23 +701,29 @@ class SenseVoiceTranscriber:
         language: str | None,
         device: str,
         progress_reporter: TranscriptionProgressReporter | None = None,
+        cancellation_check: Callable[[], None] | None = None,
     ) -> None:
         self.model = model
         self.models_root_directory = models_root_directory
         self.language = language or AUTOMATIC_LANGUAGE
         self.device = device
         self.progress_reporter = progress_reporter
+        self.cancellation_check = cancellation_check
         self._model = None
         self._torch = None
 
     def transcribe(self, audio_path: Path, asset_id: str) -> Transcript:
         try:
+            if self.cancellation_check:
+                self.cancellation_check()
             total_seconds = 0.0
             if self.progress_reporter is not None:
                 total_seconds = _wav_duration_seconds(audio_path)
                 self.progress_reporter(TranscriptionProgress(0, total_seconds, 0))
             if self._model is None:
                 self._model = self._load_model()
+            if self.cancellation_check:
+                self.cancellation_check()
             results = self._model.generate(
                 input=str(audio_path),
                 cache={},
@@ -707,7 +749,7 @@ class SenseVoiceTranscriber:
                     )
                 )
             return transcript
-        except TranscriptionFailure:
+        except (AnalysisCancelled, TranscriptionFailure):
             raise
         except Exception as error:
             raise _runtime_transcription_failure("SenseVoice", error) from error
@@ -793,6 +835,7 @@ def create_transcriber(
     automatic_fallback: bool = True,
     progress_reporter: TranscriptionProgressReporter | None = None,
     context: str = "",
+    cancellation_check: Callable[[], None] | None = None,
 ) -> Transcriber:
     """准备本地 ASR；云端识别由业务服务注入凭据和持久化任务状态后创建。"""
     require_transcription_adapter(options)
@@ -810,6 +853,7 @@ def create_transcriber(
             compute_type=compute_type,
             progress_reporter=progress_reporter,
             context=context,
+            cancellation_check=cancellation_check,
         )
     if options.engine == TranscriptionEngine.QWEN3_ASR:
         primary = Qwen3AsrTranscriber(
@@ -820,6 +864,7 @@ def create_transcriber(
             compute_type=options.compute_type.value,
             progress_reporter=progress_reporter,
             context=context,
+            cancellation_check=cancellation_check,
         )
         fallback = (
             _qwen_fallback_transcriber(
@@ -827,6 +872,7 @@ def create_transcriber(
                 options.language,
                 progress_reporter,
                 context,
+                cancellation_check,
             )
             if automatic_fallback
             else None
@@ -841,6 +887,7 @@ def create_transcriber(
             language=options.language,
             device=options.device.value,
             progress_reporter=progress_reporter,
+            cancellation_check=cancellation_check,
         )
     raise TranscriptionFailure(f"不支持的转录引擎：{options.engine.value}")
 
@@ -850,6 +897,7 @@ def _qwen_fallback_transcriber(
     language: str | None,
     progress_reporter: TranscriptionProgressReporter | None,
     context: str,
+    cancellation_check: Callable[[], None] | None = None,
 ) -> Transcriber | None:
     sensevoice_descriptor = find_transcription_model(
         TranscriptionEngine.SENSEVOICE,
@@ -874,6 +922,7 @@ def _qwen_fallback_transcriber(
             language=language,
             device=AUTOMATIC_DEVICE,
             progress_reporter=progress_reporter,
+            cancellation_check=cancellation_check,
         )
 
     whisper_descriptor = find_transcription_model(
@@ -894,6 +943,7 @@ def _qwen_fallback_transcriber(
             compute_type=AUTOMATIC_COMPUTE_TYPE,
             progress_reporter=progress_reporter,
             context=context,
+            cancellation_check=cancellation_check,
         )
     return None
 

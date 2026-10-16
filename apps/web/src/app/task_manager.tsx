@@ -14,6 +14,8 @@ import { use_asset_catalog } from "@/app/asset_catalog";
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
   create_download,
+  cancel_analysis,
+  get_analysis,
   ApiError,
   delete_download,
   get_download,
@@ -26,7 +28,10 @@ import {
   resume_download,
   transcribe_asset,
 } from "@/shared/api";
-import { poll_transcription_job } from "@/shared/poll_transcription_job";
+import {
+  poll_transcription_job,
+  TERMINAL_ANALYSIS_STAGES,
+} from "@/shared/poll_transcription_job";
 import { poll_download } from "@/shared/poll_download";
 import { error_message, is_abort_error } from "@/shared/errors";
 import { uuid7 } from "@/shared/identifiers";
@@ -60,6 +65,7 @@ type TaskManager = {
   view_probe_result: (task_id: string) => void;
   retry_task: (task_id: string) => Promise<void>;
   pause_task: (task_id: string) => Promise<void>;
+  cancel_task: (task_id: string) => Promise<void>;
   delete_task: (task_id: string) => Promise<void>;
   index_status: AgentIndexStatus | null;
   start_downloads: (
@@ -83,6 +89,11 @@ type DownloadSubmission = {
   source_url: string;
   destination?: DownloadDestination;
 };
+type TranscriptionTask = {
+  job: AnalysisJob;
+  options: TranscriptionOptions;
+  controller: AbortController;
+};
 
 const TaskManagerContext = createContext<TaskManager | null>(null);
 
@@ -101,11 +112,13 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     null,
   );
   const [active_transcriptions, set_active_transcriptions] = useState<
-    Set<string>
-  >(new Set());
+    Map<string, AbortController>
+  >(new Map());
   const download_controllers = useRef(new Map<string, AbortController>());
   const download_requests = useRef(new Set<AbortController>());
   const transcription_controllers = useRef(new Map<string, AbortController>());
+  const transcription_tasks = useRef(new Map<string, TranscriptionTask>());
+  const transcription_actions = useRef(new Set<string>());
   const previous_index_status_ref = useRef<AgentIndexStatus | null>(null);
 
   useEffect(() => {
@@ -152,6 +165,22 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
 
   const record_transcription_job = useCallback(
     (job: AnalysisJob) => {
+      const tracked = transcription_tasks.current.get(job.job_id);
+      if (tracked) {
+        const current_stage = tracked.job.stage;
+        if (
+          TERMINAL_ANALYSIS_STAGES.has(current_stage) &&
+          !TERMINAL_ANALYSIS_STAGES.has(job.stage)
+        )
+          return;
+        if (
+          current_stage === "cancelling" &&
+          !TERMINAL_ANALYSIS_STAGES.has(job.stage)
+        )
+          return;
+        tracked.job = job;
+      }
+      if (transcription_actions.current.has(job.job_id)) return;
       record_task({
         task_id: job.job_id,
         task_type: "transcription",
@@ -163,6 +192,13 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         name:
           assets.find((asset) => asset.asset_id === job.asset_id)?.title ??
           "素材转写",
+        retry_available:
+          job.stage === "failed" ||
+          job.stage === "cancelled" ||
+          job.stage === "rejected",
+        cancel_available:
+          !TERMINAL_ANALYSIS_STAGES.has(job.stage) &&
+          job.stage !== "cancelling",
       });
     },
     [assets, record_task],
@@ -528,45 +564,185 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [record_task, task_records],
   );
 
+  const observe_transcription = useCallback(
+    async (job: AnalysisJob, controller: AbortController) => {
+      const asset_id = job.asset_id;
+      record_transcription_job(job);
+      try {
+        const final_job = await poll_transcription_job(
+          job,
+          record_transcription_job,
+          controller.signal,
+        );
+        if (final_job.stage === "failed" || final_job.stage === "rejected") {
+          throw new Error(final_job.error_message ?? final_job.message);
+        }
+        if (final_job.stage === "complete") {
+          await query_client.invalidateQueries({
+            queryKey: RESOURCE_QUERY_KEYS.asset_analysis(asset_id),
+          });
+        }
+        return final_job;
+      } catch (error) {
+        const confirmed_job = transcription_tasks.current.get(job.job_id)?.job;
+        if (controller.signal.aborted && confirmed_job?.stage === "cancelled") {
+          return confirmed_job;
+        }
+        if (
+          !controller.signal.aborted &&
+          !is_abort_error(error) &&
+          confirmed_job &&
+          !TERMINAL_ANALYSIS_STAGES.has(confirmed_job.stage)
+        ) {
+          set_task_records((current) =>
+            current.map((task) =>
+              task.task_id === job.job_id
+                ? {
+                    ...task,
+                    stage: "interrupted",
+                    message: "转写进度同步中断，后台任务仍可能运行",
+                    error_message: error_message(error),
+                    retry_available: true,
+                    cancel_available: confirmed_job.stage !== "cancelling",
+                  }
+                : task,
+            ),
+          );
+        }
+        throw error;
+      } finally {
+        if (transcription_controllers.current.get(asset_id) === controller) {
+          transcription_controllers.current.delete(asset_id);
+        }
+        const confirmed_job = transcription_tasks.current.get(job.job_id)?.job;
+        if (
+          confirmed_job &&
+          TERMINAL_ANALYSIS_STAGES.has(confirmed_job.stage)
+        ) {
+          set_active_transcriptions((current) => {
+            if (current.get(asset_id) !== controller) return current;
+            const next = new Map(current);
+            next.delete(asset_id);
+            return next;
+          });
+        }
+      }
+    },
+    [query_client, record_transcription_job],
+  );
+
   const start_transcription = useCallback(
     async (asset_id: string, options: TranscriptionOptions) => {
-      if (transcription_controllers.current.has(asset_id))
-        throw new Error("该视频已在转写队列中");
+      const unfinished_task = [...transcription_tasks.current.values()].some(
+        (task) =>
+          task.job.asset_id === asset_id &&
+          !TERMINAL_ANALYSIS_STAGES.has(task.job.stage),
+      );
+      if (transcription_controllers.current.has(asset_id) || unfinished_task)
+        throw new Error("该视频已在转写队列中，请在任务中心查看或重新连接");
       const controller = new AbortController();
       transcription_controllers.current.set(asset_id, controller);
-      set_active_transcriptions((current) => new Set(current).add(asset_id));
+      set_active_transcriptions((current) =>
+        new Map(current).set(asset_id, controller),
+      );
+      let accepted = false;
       try {
         const job = await transcribe_asset(
           asset_id,
           options,
           controller.signal,
         );
-        record_transcription_job(job);
-        const final_job =
-          job.stage === "complete"
-            ? job
-            : await poll_transcription_job(
-                job,
-                record_transcription_job,
-                controller.signal,
-              );
-        if (final_job.stage === "failed") {
-          throw new Error(final_job.error_message ?? "转录失败");
-        }
-        await query_client.invalidateQueries({
-          queryKey: RESOURCE_QUERY_KEYS.asset_analysis(asset_id),
+        controller.signal.throwIfAborted();
+        accepted = true;
+        transcription_tasks.current.set(job.job_id, {
+          job,
+          options,
+          controller,
         });
-        return final_job;
+        set_task_center_open(true);
+        return await observe_transcription(job, controller);
       } finally {
-        set_active_transcriptions((current) => {
-          const next = new Set(current);
-          next.delete(asset_id);
-          return next;
-        });
-        transcription_controllers.current.delete(asset_id);
+        if (!accepted) {
+          if (transcription_controllers.current.get(asset_id) === controller)
+            transcription_controllers.current.delete(asset_id);
+          set_active_transcriptions((current) => {
+            if (current.get(asset_id) !== controller) return current;
+            const next = new Map(current);
+            next.delete(asset_id);
+            return next;
+          });
+        }
       }
     },
-    [query_client, record_transcription_job],
+    [observe_transcription],
+  );
+
+  const cancel_task = useCallback(
+    async (task_id: string) => {
+      const tracked = transcription_tasks.current.get(task_id);
+      if (
+        !tracked ||
+        TERMINAL_ANALYSIS_STAGES.has(tracked.job.stage) ||
+        tracked.job.stage === "cancelling" ||
+        transcription_actions.current.has(task_id)
+      )
+        return;
+      transcription_actions.current.add(task_id);
+      set_task_records((current) =>
+        current.map((task) =>
+          task.task_id === task_id
+            ? {
+                ...task,
+                stage: "cancelling",
+                message: "正在请求停止，等待后台安全退出",
+                cancel_available: false,
+                retry_available: false,
+                error_message: null,
+              }
+            : task,
+        ),
+      );
+      try {
+        const job = await cancel_analysis(task_id);
+        transcription_actions.current.delete(task_id);
+        record_transcription_job(job);
+        const controller = tracked.controller;
+        if (tracked.job.stage === "cancelled") {
+          controller.abort();
+          set_active_transcriptions((current) => {
+            if (current.get(job.asset_id) !== controller) return current;
+            const next = new Map(current);
+            next.delete(job.asset_id);
+            return next;
+          });
+        } else if (
+          !transcription_controllers.current.has(job.asset_id) &&
+          !TERMINAL_ANALYSIS_STAGES.has(tracked.job.stage)
+        ) {
+          const observation = new AbortController();
+          tracked.controller = observation;
+          transcription_controllers.current.set(job.asset_id, observation);
+          set_active_transcriptions((current) =>
+            new Map(current).set(job.asset_id, observation),
+          );
+          void observe_transcription(tracked.job, observation).catch(
+            () => undefined,
+          );
+        }
+      } catch (error) {
+        transcription_actions.current.delete(task_id);
+        record_transcription_job(tracked.job);
+        set_task_records((current) =>
+          current.map((task) =>
+            task.task_id === task_id
+              ? { ...task, error_message: error_message(error) }
+              : task,
+          ),
+        );
+        throw error;
+      }
+    },
+    [observe_transcription, record_transcription_job],
   );
 
   const retry_task = useCallback(
@@ -574,6 +750,47 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       const probe = probe_tasks.current.get(task_id);
       if (probe) {
         await run_probe(task_id, probe.source_url);
+        return;
+      }
+      const transcription = transcription_tasks.current.get(task_id);
+      if (transcription) {
+        if (
+          transcription.job.stage === "cancelled" ||
+          transcription.job.stage === "failed" ||
+          transcription.job.stage === "rejected"
+        ) {
+          await start_transcription(
+            transcription.job.asset_id,
+            transcription.options,
+          );
+        } else if (
+          !transcription_controllers.current.has(transcription.job.asset_id)
+        ) {
+          const controller = new AbortController();
+          transcription_controllers.current.set(
+            transcription.job.asset_id,
+            controller,
+          );
+          transcription.controller = controller;
+          set_active_transcriptions((current) =>
+            new Map(current).set(transcription.job.asset_id, controller),
+          );
+          try {
+            const job = await get_analysis(task_id, controller.signal);
+            controller.signal.throwIfAborted();
+            void observe_transcription(job, controller).catch(() => undefined);
+          } catch (error) {
+            if (
+              transcription_controllers.current.get(
+                transcription.job.asset_id,
+              ) === controller
+            )
+              transcription_controllers.current.delete(
+                transcription.job.asset_id,
+              );
+            throw error;
+          }
+        }
         return;
       }
       const submission = download_submissions.current.get(task_id);
@@ -630,6 +847,8 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [
       record_agent_tasks,
       record_task,
+      observe_transcription,
+      start_transcription,
       run_probe,
       submit_downloads,
       task_records,
@@ -647,6 +866,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       start_probe,
       view_probe_result,
       pause_task,
+      cancel_task,
       delete_task,
       index_status,
       start_downloads,
@@ -668,6 +888,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       start_probe,
       view_probe_result,
       pause_task,
+      cancel_task,
       delete_task,
       start_transcription,
       task_records,

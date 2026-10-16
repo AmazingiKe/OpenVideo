@@ -56,8 +56,8 @@ export function LibraryPage() {
     const results = await Promise.all(
       selected_assets.map(async (asset) => {
         try {
-          await start_transcription(asset.asset_id, options);
-          return true;
+          const job = await start_transcription(asset.asset_id, options);
+          return job.stage === "complete";
         } catch (error) {
           const failure = `${asset.title ?? "未命名视频"}：${error_message(error)}`;
           set_transcription_error((current) =>

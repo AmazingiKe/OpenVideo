@@ -93,6 +93,8 @@ export function MarkersPage() {
     reload_analysis,
     save_transcript_segment,
     regenerate_chapters,
+    cancel_chapter_generation,
+    is_cancelling_chapters,
     chapter_generation_message,
     chapter_generation_error,
   } = use_asset_analysis(selected_asset_id);
@@ -434,8 +436,9 @@ export function MarkersPage() {
     if (!selected_asset_id) return;
     set_page_error(null);
     try {
-      await start_transcription(selected_asset_id, options);
-      if (mounted_ref.current) await reload_analysis();
+      const job = await start_transcription(selected_asset_id, options);
+      if (mounted_ref.current && job.stage === "complete")
+        await reload_analysis();
     } catch (error) {
       if (mounted_ref.current && !is_abort_error(error))
         set_page_error(error_message(error));
@@ -501,6 +504,8 @@ export function MarkersPage() {
       markers={markers}
       chapters={segments}
       on_generate_chapters={() => void regenerate_chapters()}
+      on_cancel_chapters={() => void cancel_chapter_generation()}
+      is_cancelling_chapters={is_cancelling_chapters}
       chapter_generation_message={chapter_generation_message}
       transcript={transcript}
       evidence_range={evidence_range}

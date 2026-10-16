@@ -4,7 +4,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 
 from openvideo.bailian_credentials import BailianCredentialError, BailianCredentialStore
 from openvideo.core.bailian_models import BailianAsrConfiguration, BailianRegion
@@ -41,6 +41,7 @@ from openvideo.transcription_model_manager import (
     require_transcription_model_installed,
 )
 from openvideo.tools.analysis_pipeline import FormulaReader, OcrReader, build_segments
+from openvideo.tools.cancellation import AnalysisCancelled, check_analysis_cancellation
 from openvideo.tools.ocr import LocalOcrReader
 from openvideo.tools.transcribe import (
     Transcriber,
@@ -166,6 +167,8 @@ class AnalysisManager:
         self._lock = RLock()
         self._analysis_lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._cancel_events: dict[str, Event] = {}
+        self._running_job_ids: set[str] = set()
         self._model_installer = model_installer or download_transcription_model
         local_ocr_reader = LocalOcrReader(
             models_root_directory=settings.models_root_directory
@@ -268,7 +271,8 @@ class AnalysisManager:
         if (
             options.engine == TranscriptionEngine.BAILIAN
             and previous_metadata is not None
-            and previous_metadata.status == TranscriptionStatus.FAILED
+            and previous_metadata.status
+            in {TranscriptionStatus.FAILED, TranscriptionStatus.CANCELLED}
             and previous_metadata.options == options
             and previous_metadata.cloud_region == self.settings.bailian_asr.region
         ):
@@ -424,9 +428,13 @@ class AnalysisManager:
 
     def start(self, job_id: str) -> None:
         with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.stage in INACTIVE_ANALYSIS_STAGES:
+                return
             current = self._tasks.get(job_id)
             if current and not current.done():
                 return
+            self._cancel_events.setdefault(job_id, Event())
             task = asyncio.create_task(self._run(job_id))
             self._tasks[job_id] = task
             task.add_done_callback(lambda _: self._discard_task(job_id))
@@ -435,6 +443,11 @@ class AnalysisManager:
         """服务重启后恢复未完成任务，复用已经落盘的转写与事件产物。"""
         for saved_job in self.library.load_analysis_jobs():
             job = saved_job.model_copy(deep=True)
+            if job.stage == AnalysisStage.CANCELLING:
+                with self._lock:
+                    self._jobs[job.job_id] = job
+                self._finish_cancelled(job.job_id)
+                continue
             if job.stage not in INACTIVE_ANALYSIS_STAGES:
                 job.stage = AnalysisStage.PENDING
                 job.message = "等待恢复分析"
@@ -464,6 +477,28 @@ class AnalysisManager:
                 job.stage not in INACTIVE_ANALYSIS_STAGES for job in self._jobs.values()
             )
 
+    def cancel(self, job_id: str) -> AnalysisJob:
+        """排队任务立即退出，运行任务等同步工具安全返回后才释放执行名额。"""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise AnalysisError("分析任务不存在")
+            if job.stage in INACTIVE_ANALYSIS_STAGES:
+                return job.model_copy(deep=True)
+            self._cancel_events.setdefault(job_id, Event()).set()
+            if job_id not in self._running_job_ids:
+                task = self._tasks.get(job_id)
+                if task is not None:
+                    task.get_loop().call_soon_threadsafe(task.cancel)
+                self._finish_cancelled(job_id)
+            else:
+                job.stage = AnalysisStage.CANCELLING
+                job.message = "正在停止，等待当前步骤安全结束"
+                job.error_message = None
+                job.updated_at = datetime.now(UTC)
+                self.library.save_analysis_job(job)
+            return job.model_copy(deep=True)
+
     async def cancel_assets(self, asset_ids: set[str]) -> bool:
         with self._lock:
             jobs = [
@@ -479,9 +514,7 @@ class AnalysisManager:
             # 转录与画面分析运行在线程中，底层工具返回前删除目录会产生写回竞争。
             return False
         for job in jobs:
-            self._fail(job.job_id, "素材已请求删除，分析任务已取消")
-        for task in tasks:
-            task.cancel()
+            self.cancel(job.job_id)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         return all(task.done() for task in tasks)
@@ -489,6 +522,39 @@ class AnalysisManager:
     def _discard_task(self, job_id: str) -> None:
         with self._lock:
             self._tasks.pop(job_id, None)
+            self._cancel_events.pop(job_id, None)
+
+    def _check_cancellation(self, job_id: str) -> None:
+        check_analysis_cancellation(self._cancel_events.get(job_id))
+
+    def _finish_cancelled(self, job_id: str) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.stage in TERMINAL_ANALYSIS_STAGES:
+                return
+            job.stage = AnalysisStage.CANCELLED
+            job.message = "分析已停止"
+            job.error_message = None
+            job.updated_at = datetime.now(UTC)
+            self.library.save_analysis_job(job)
+            metadata = self.library.load_transcription_metadata(job.asset_id)
+            if (
+                metadata is not None
+                and metadata.job_id == job_id
+                and metadata.status
+                in {TranscriptionStatus.PENDING, TranscriptionStatus.RUNNING}
+            ):
+                self.library.save_transcription_metadata(
+                    metadata.model_copy(
+                        update={
+                            "status": TranscriptionStatus.CANCELLED,
+                            "completed_at": datetime.now(UTC),
+                            "error_message": None,
+                        }
+                    )
+                )
+            if self._active_job_id_by_asset_id.get(job.asset_id) == job_id:
+                self._active_job_id_by_asset_id.pop(job.asset_id, None)
 
     def transcript(self, asset_id: str) -> Transcript | None:
         return self.library.load_transcript(asset_id)
@@ -543,7 +609,7 @@ class AnalysisManager:
 
     async def _run(self, job_id: str) -> None:
         job = self.get(job_id)
-        if not job:
+        if not job or job.stage in INACTIVE_ANALYSIS_STAGES:
             return
         asset = self.library.get(job.asset_id)
         if not asset:
@@ -551,6 +617,11 @@ class AnalysisManager:
             return
 
         async with self._analysis_lock:
+            with self._lock:
+                if self._jobs[job_id].stage in INACTIVE_ANALYSIS_STAGES:
+                    return
+                self._cancel_events.setdefault(job_id, Event())
+                self._running_job_ids.add(job_id)
             transcription_started_at: datetime | None = None
             transcription_completed = False
             transcription_options = self._transcription_options_by_job_id.get(
@@ -565,6 +636,7 @@ class AnalysisManager:
             )
             should_transcribe = False
             try:
+                self._check_cancellation(job_id)
                 playback = self.library.resolve_asset_file(asset, asset.playback_path)
                 if not playback:
                     raise AnalysisError("视频文件不存在")
@@ -621,7 +693,9 @@ class AnalysisManager:
                         lambda: self._prepare_transcriber(
                             job, transcription_options, asset
                         ),
+                        cancel_event=self._cancel_events[job_id],
                     )
+                    self._check_cancellation(job_id)
                     transcript = _bound_transcript_to_media(
                         transcription_result.transcript,
                         asset.duration_seconds,
@@ -632,7 +706,9 @@ class AnalysisManager:
                         TRANSCRIPTION_SAVE_PROGRESS_PERCENT,
                         "正在保存完整转录",
                     )
-                    self.library.save_transcript(transcript)
+                    with self._lock:
+                        self._check_cancellation(job_id)
+                        self.library.save_transcript(transcript)
                     self._on_evidence_ready()
                     completed_at = datetime.now(UTC)
                     cloud_metadata = self.library.load_transcription_metadata(
@@ -702,7 +778,9 @@ class AnalysisManager:
                     ),
                     self._ocr_reader,
                     self._formula_reader,
+                    self._cancel_events.get(job_id),
                 )
+                self._check_cancellation(job_id)
                 for segment in segments:
                     segment.key_frame_paths = [
                         f"artifacts/{relative_path}"
@@ -742,7 +820,8 @@ class AnalysisManager:
                 ):
                     self._add_capability(job_id, AnalysisCapability.VISUAL)
                 if job.operation == AnalysisOperation.CHAPTERS:
-                    with self.library._lock:
+                    with self._lock, self.library._lock:
+                        self._check_cancellation(job_id)
                         if (
                             _chapter_source_digest(
                                 self.library.load_segments(job.asset_id),
@@ -763,7 +842,9 @@ class AnalysisManager:
                     )
                     return
                 if job.operation == AnalysisOperation.INITIALIZATION:
-                    self.library.save_segments(job.asset_id, proposed_segments)
+                    with self._lock:
+                        self._check_cancellation(job_id)
+                        self.library.save_segments(job.asset_id, proposed_segments)
                     self._on_evidence_ready()
                     if not has_key_frames:
                         raise AnalysisError(
@@ -797,7 +878,12 @@ class AnalysisManager:
                     proposed_segments,
                     message,
                 )
+            except AnalysisCancelled:
+                self._finish_cancelled(job_id)
             except Exception as error:
+                if self._cancel_events[job_id].is_set():
+                    self._finish_cancelled(job_id)
+                    return
                 if (
                     job.operation
                     in {
@@ -841,7 +927,9 @@ class AnalysisManager:
                 self._fail(job_id, str(error) or "分析失败")
             finally:
                 with self._lock:
-                    self._active_job_id_by_asset_id.pop(job.asset_id, None)
+                    self._running_job_ids.discard(job_id)
+                    if self._active_job_id_by_asset_id.get(job.asset_id) == job_id:
+                        self._active_job_id_by_asset_id.pop(job.asset_id, None)
 
     def _describer(self, ai_model_id: str | None) -> LiteLlmVision | None:
         if ai_model_id is None:
@@ -877,6 +965,7 @@ class AnalysisManager:
                 options,
                 self._require_bailian_credentials(options, region),
                 BailianAsrConfiguration(region=region).base_url,
+                cancellation_check=lambda: self._check_cancellation(job.job_id),
                 task_id=metadata.cloud_task_id if metadata else None,
                 on_task_submitted=lambda task_id: self._save_cloud_task_id(
                     asset.asset_id, job.job_id, task_id
@@ -915,6 +1004,7 @@ class AnalysisManager:
                 job.job_id, progress
             ),
             context=self._transcription_context(asset),
+            cancellation_check=lambda: self._check_cancellation(job.job_id),
         )
 
     def _require_bailian_credentials(
@@ -990,6 +1080,7 @@ class AnalysisManager:
 
     def _add_capability(self, job_id: str, capability: AnalysisCapability) -> None:
         with self._lock:
+            self._check_cancellation(job_id)
             job = self._jobs.get(job_id)
             if job and capability not in job.capabilities:
                 job.capabilities.append(capability)
@@ -1003,6 +1094,7 @@ class AnalysisManager:
         message: str,
     ) -> None:
         with self._lock:
+            self._check_cancellation(job_id)
             job = self._jobs.get(job_id)
             if job is None or job.stage in TERMINAL_ANALYSIS_STAGES:
                 return
@@ -1043,6 +1135,7 @@ class AnalysisManager:
             job = self._jobs.get(job_id)
             if not job or job.stage in TERMINAL_ANALYSIS_STAGES:
                 return
+            self._check_cancellation(job_id)
             job.stage = stage
             job.progress_percent = min(max(progress_percent, job.progress_percent), 100)
             job.message = message

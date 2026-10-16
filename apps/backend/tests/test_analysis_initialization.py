@@ -71,7 +71,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         ],
     )
 
-    def platform_subtitles(*_args):
+    def platform_subtitles(*_args, **_kwargs):
         transcription_steps.append("subtitles")
         return generated_transcript if has_platform_subtitles else None
 
@@ -111,7 +111,9 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     monkeypatch.setattr(
         transcribe_module,
         "extract_audio",
-        lambda *_args: AudioExtractionResult(audio_path=tmp_path / "audio.wav"),
+        lambda *_args, **_kwargs: AudioExtractionResult(
+            audio_path=tmp_path / "audio.wav"
+        ),
     )
     captured_pipeline = {}
 
@@ -129,6 +131,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         chapter_model,
         ocr_reader,
         formula_reader,
+        cancel_event,
     ):
         del (
             transcript,

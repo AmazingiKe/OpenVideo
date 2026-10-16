@@ -34,6 +34,7 @@ function DownloadWorkspace() {
           open={manager.task_center_open}
           on_open_change={manager.set_task_center_open}
           on_pause={manager.pause_task}
+          on_cancel={manager.cancel_task}
           on_delete={manager.delete_task}
           on_view_result={manager.view_probe_result}
         />

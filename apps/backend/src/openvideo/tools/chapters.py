@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Event
 from dataclasses import dataclass
 
 from pydantic import (
@@ -16,6 +17,7 @@ from pydantic import (
 from openvideo.core.analysis import SemanticChapter, build_local_chapters
 from openvideo.core.ai_models import AiModelConfiguration
 from openvideo.core.transcription_models import TranscriptSegment
+from openvideo.tools.cancellation import check_analysis_cancellation
 from openvideo.tools.llm import LlmCompletionError, complete_text
 
 
@@ -115,6 +117,7 @@ def build_global_semantic_chapters(
     scene_boundaries: list[float] | None = None,
     visual_evidence: list[ChapterVisualEvidence] | None = None,
     on_progress: Callable[[str], None] | None = None,
+    cancel_event: Event | None = None,
 ) -> list[SemanticChapter]:
     """全文理解完成后才规划章节，长文本只压缩材料，不拼接局部分章。"""
 
@@ -129,7 +132,7 @@ def build_global_semantic_chapters(
         for index, window in enumerate(windows):
             if on_progress:
                 on_progress(f"正在理解全文内容（{index + 1}/{len(windows)}）")
-            understandings.append(_understand_content(model, window))
+            understandings.append(_understand_content(model, window, cancel_event))
         if len(windows) == 1:
             understanding = understandings[0]
             break
@@ -180,6 +183,7 @@ def build_global_semantic_chapters(
             }
         ],
         _parse_chapter_outline,
+        cancel_event,
     )
     if on_progress:
         on_progress(f"已确定 {len(outline.chapters)} 个章节，正在定位原文边界")
@@ -206,6 +210,7 @@ def build_global_semantic_chapters(
             }
         ],
         lambda content: _parse_chapter_boundaries(content, len(segments), outline),
+        cancel_event,
     )
 
 
@@ -256,7 +261,9 @@ def _evidence_windows(evidence: list[ContentEvidence]) -> list[list[ContentEvide
 
 
 def _understand_content(
-    model: AiModelConfiguration, evidence: list[ContentEvidence]
+    model: AiModelConfiguration,
+    evidence: list[ContentEvidence],
+    cancel_event: Event | None = None,
 ) -> VideoUnderstanding:
     """保留全文主旨、内容关系和来源范围，尚不决定导航章节。"""
     minimum_index = evidence[0].start_index
@@ -287,6 +294,7 @@ def _understand_content(
             }
         ],
         lambda content: _parse_understanding(content, minimum_index, maximum_index),
+        cancel_event,
     )
 
 
@@ -309,9 +317,11 @@ def _complete_validated_analysis[Result](
     model: AiModelConfiguration,
     messages: list[dict[str, object]],
     parse: Callable[[str], Result],
+    cancel_event: Event | None = None,
 ) -> Result:
     """结构或索引错误交回模型对照原文修正，禁止靠补边界掩盖遗漏。"""
     for attempt in range(CHAPTER_VALIDATION_ATTEMPTS):
+        check_analysis_cancellation(cancel_event)
         content = complete_text(
             model,
             messages,
@@ -319,6 +329,7 @@ def _complete_validated_analysis[Result](
             max_tokens=CHAPTER_MAX_TOKENS,
             disable_thinking=True,
         )
+        check_analysis_cancellation(cancel_event)
         try:
             return parse(content)
         except LlmCompletionError as error:
@@ -400,6 +411,7 @@ def summarize_chapter(
     ocr_text: str | None,
     visual_description: str | None,
     content_summary: str = "",
+    cancel_event: Event | None = None,
 ) -> str:
     """只总结最终章节范围内的证据，长章逐块压缩，避免丢掉后半段结论。"""
     evidence = f"字幕：\n{transcript}\n画面文字（可能含识别错误）：\n{ocr_text or ''}\n画面观察：\n{visual_description or ''}"
@@ -409,13 +421,18 @@ def summarize_chapter(
             for index in range(0, len(evidence), CHAPTER_SUMMARY_INPUT_CHARACTERS)
         ]
         evidence = "\n".join(
-            _summarize_evidence(model, title, part, content_summary) for part in parts
+            _summarize_evidence(model, title, part, content_summary, cancel_event)
+            for part in parts
         )
-    return _summarize_evidence(model, title, evidence, content_summary)
+    return _summarize_evidence(model, title, evidence, content_summary, cancel_event)
 
 
 def _summarize_evidence(
-    model: AiModelConfiguration, title: str, evidence: str, content_summary: str
+    model: AiModelConfiguration,
+    title: str,
+    evidence: str,
+    content_summary: str,
+    cancel_event: Event | None = None,
 ) -> str:
     prompt = (
         "为全文目录中的这一章撰写简洁中文内容介绍，客观说明整章集中讲了什么、涵盖哪些主要内容，使用二至四句。"
@@ -431,6 +448,7 @@ def _summarize_evidence(
     messages: list[dict[str, object]] = [{"role": "user", "content": prompt}]
     summary = ""
     for verifying in (False, True):
+        check_analysis_cancellation(cancel_event)
         if verifying:
             messages.extend(
                 [
@@ -452,6 +470,7 @@ def _summarize_evidence(
             max_tokens=CHAPTER_SUMMARY_MAX_TOKENS,
             disable_thinking=True,
         )
+        check_analysis_cancellation(cancel_event)
         try:
             summary = ChapterSummary.model_validate_json(_json_content(result)).summary
         except ValidationError as error:

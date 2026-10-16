@@ -106,10 +106,11 @@ def test_deferred_transcriber_is_closed_after_success_or_failure(
     closed = []
     expected_transcript = Transcript(asset_id=TRANSCRIPT_ASSET_ID)
     monkeypatch.setattr(
-        "openvideo.tools.transcribe.extract_platform_subtitles", lambda *_args: None
+        "openvideo.tools.transcribe.extract_platform_subtitles",
+        lambda *_args, **_kwargs: None,
     )
 
-    def audio(*_args):
+    def audio(*_args, **_kwargs):
         if failure_stage == "audio":
             raise TranscriptionFailure("音频提取失败")
         return AudioExtractionResult(audio_path=tmp_path / "audio.wav")

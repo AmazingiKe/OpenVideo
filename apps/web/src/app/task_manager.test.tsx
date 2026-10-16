@@ -21,8 +21,10 @@ import {
   RESOURCE_QUERY_KEYS,
 } from "@/app/query_cache";
 import { TaskManagerProvider, use_task_manager } from "@/app/task_manager";
+import { TaskCenter } from "@/app/TaskCenter";
 import {
   create_download,
+  cancel_analysis,
   get_agent_index_status,
   get_download,
   list_agent_tasks,
@@ -45,6 +47,7 @@ import type {
   AnalysisJob,
   ProbeResponse,
 } from "@/shared/types";
+import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
 
 vi.mock("@/shared/api", async () => ({
   ApiError: (await import("@/shared/api/client")).ApiError,
@@ -61,6 +64,7 @@ vi.mock("@/shared/api", async () => ({
   list_assets: vi.fn(),
   get_analysis: vi.fn(),
   transcribe_asset: vi.fn(),
+  cancel_analysis: vi.fn(),
   create_transcript_correction: vi.fn(),
   get_agent_job: vi.fn(),
   list_asset_agent_jobs: vi.fn(),
@@ -429,6 +433,259 @@ describe("TaskManagerProvider", () => {
     }
   });
 
+  it("reports interrupted transcription observation and reconnects without another paid submission", async () => {
+    vi.useFakeTimers();
+    const options = {
+      engine: "bailian",
+      model: "fun-asr",
+      language: null,
+      device: "auto",
+      compute_type: "auto",
+    } as const;
+    const job = transcription_job("transcribing");
+    vi.mocked(transcribe_asset).mockResolvedValue(job);
+    vi.mocked(get_analysis).mockRejectedValueOnce(new Error("网络中断"));
+    const { result } = render_task_manager();
+    let request!: Promise<AnalysisJob>;
+    act(() => {
+      request = result.current.start_transcription(job.asset_id, options);
+    });
+    const rejection = expect(request).rejects.toThrow("网络中断");
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    await rejection;
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id),
+    ).toMatchObject({
+      stage: "interrupted",
+      retry_available: true,
+      cancel_available: true,
+      error_message: "网络中断",
+    });
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(true);
+    vi.mocked(get_analysis).mockResolvedValueOnce({
+      ...job,
+      stage: "complete",
+    });
+    await act(async () => result.current.retry_task(job.job_id));
+    expect(transcribe_asset).toHaveBeenCalledOnce();
+    expect(get_analysis).toHaveBeenLastCalledWith(
+      job.job_id,
+      expect.any(AbortSignal),
+    );
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+  });
+
+  it("finishes reconnection as soon as observation restarts so stopping remains available", async () => {
+    vi.useFakeTimers();
+    const options = {
+      engine: "bailian",
+      model: "fun-asr",
+      language: null,
+      device: "auto",
+      compute_type: "auto",
+    } as const;
+    const job = transcription_job("transcribing");
+    vi.mocked(transcribe_asset).mockResolvedValue(job);
+    vi.mocked(get_analysis).mockRejectedValueOnce(new Error("网络中断"));
+    const { result } = render_task_manager(new QueryClient(), true);
+    let request!: Promise<AnalysisJob>;
+    act(() => {
+      request = result.current.start_transcription(job.asset_id, options);
+    });
+    const rejection = expect(request).rejects.toThrow("网络中断");
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    await rejection;
+    vi.mocked(get_analysis).mockResolvedValueOnce(job);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
+    });
+    expect(screen.getByRole("button", { name: "停止转写" })).toBeEnabled();
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id),
+    ).toMatchObject({
+      stage: "transcribing",
+      retry_available: false,
+      cancel_available: true,
+    });
+    vi.mocked(cancel_analysis).mockResolvedValueOnce({
+      ...job,
+      stage: "cancelled",
+    });
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "停止转写" })),
+    );
+    expect(cancel_analysis).toHaveBeenCalledOnce();
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+    expect(transcribe_asset).toHaveBeenCalledOnce();
+  });
+
+  it("waits for confirmed cancellation, ignores stale progress, and retries the original options", async () => {
+    vi.useFakeTimers();
+    const options = {
+      engine: "bailian",
+      model: "fun-asr",
+      language: "zh",
+      device: "auto",
+      compute_type: "auto",
+    } as const;
+    const job = transcription_job("transcribing");
+    const stale_poll = deferred<AnalysisJob>();
+    vi.mocked(transcribe_asset).mockResolvedValueOnce(job);
+    vi.mocked(get_analysis)
+      .mockReturnValueOnce(stale_poll.promise)
+      .mockResolvedValueOnce({
+        ...job,
+        stage: "cancelled",
+        message: "转写已停止",
+      });
+    vi.mocked(cancel_analysis).mockResolvedValue({
+      ...job,
+      stage: "cancelling",
+      message: "正在安全退出",
+    });
+    const { result } = render_task_manager();
+    let request!: Promise<AnalysisJob>;
+    act(() => {
+      request = result.current.start_transcription(job.asset_id, options);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    const signal = vi.mocked(transcribe_asset).mock.calls[0][2];
+    await act(async () => result.current.cancel_task(job.job_id));
+    expect(cancel_analysis).toHaveBeenCalledWith(job.job_id);
+    expect(signal?.aborted).toBe(false);
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(true);
+    await act(async () => stale_poll.resolve(job));
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id),
+    ).toMatchObject({
+      stage: "cancelling",
+      cancel_available: false,
+      retry_available: false,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      expect((await request).stage).toBe("cancelled");
+    });
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id),
+    ).toMatchObject({
+      stage: "cancelled",
+      retry_available: true,
+    });
+    vi.mocked(transcribe_asset).mockResolvedValueOnce({
+      ...job,
+      job_id: "job-retried",
+      stage: "complete",
+    });
+    await act(async () => result.current.retry_task(job.job_id));
+    expect(transcribe_asset).toHaveBeenLastCalledWith(
+      job.asset_id,
+      options,
+      expect.any(AbortSignal),
+    );
+    expect(transcribe_asset).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a late stop response cancel a newer transcription for the same asset", async () => {
+    vi.useFakeTimers();
+    const options = {
+      engine: "bailian",
+      model: "fun-asr",
+      language: null,
+      device: "auto",
+      compute_type: "auto",
+    } as const;
+    const job = transcription_job("transcribing");
+    const new_job = { ...job, job_id: "job-newer" };
+    const cancelled = { ...job, stage: "cancelled" } as const;
+    const cancellation_response = deferred<AnalysisJob>();
+    vi.mocked(transcribe_asset)
+      .mockResolvedValueOnce(job)
+      .mockResolvedValueOnce(new_job);
+    vi.mocked(cancel_analysis).mockReturnValueOnce(
+      cancellation_response.promise,
+    );
+    vi.mocked(get_analysis).mockResolvedValueOnce(cancelled);
+    const { result } = render_task_manager();
+    let old_request!: Promise<AnalysisJob>;
+    await act(async () => {
+      old_request = result.current.start_transcription(job.asset_id, options);
+    });
+    let stop_request!: Promise<void>;
+    act(() => {
+      stop_request = result.current.cancel_task(job.job_id);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      await old_request;
+    });
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+    let new_request!: Promise<AnalysisJob>;
+    await act(async () => {
+      new_request = result.current.start_transcription(job.asset_id, options);
+      void new_request.catch(() => undefined);
+    });
+    const new_signal = vi.mocked(transcribe_asset).mock.calls[1][2];
+    expect(new_signal?.aborted).toBe(false);
+    await act(async () => {
+      cancellation_response.resolve(cancelled);
+      await stop_request;
+    });
+    expect(new_signal?.aborted).toBe(false);
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(true);
+    vi.mocked(get_analysis).mockResolvedValueOnce({
+      ...new_job,
+      stage: "complete",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      expect((await new_request).stage).toBe("complete");
+    });
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+  });
+
+  it("keeps observing after a failed stop request and lets the user stop again", async () => {
+    vi.useFakeTimers();
+    const job = transcription_job("transcribing");
+    vi.mocked(transcribe_asset).mockResolvedValue(job);
+    vi.mocked(cancel_analysis)
+      .mockRejectedValueOnce(new Error("停止请求失败"))
+      .mockResolvedValueOnce({ ...job, stage: "cancelled" });
+    const { result } = render_task_manager();
+    let request!: Promise<AnalysisJob>;
+    act(() => {
+      request = result.current.start_transcription(job.asset_id, {
+        engine: "bailian",
+        model: "fun-asr",
+        language: null,
+        device: "auto",
+        compute_type: "auto",
+      });
+    });
+    await act(async () => Promise.resolve());
+    await act(async () => {
+      await expect(result.current.cancel_task(job.job_id)).rejects.toThrow(
+        "停止请求失败",
+      );
+    });
+    expect(vi.mocked(transcribe_asset).mock.calls[0][2]?.aborted).toBe(false);
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(true);
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id),
+    ).toMatchObject({
+      stage: "transcribing",
+      cancel_available: true,
+      error_message: "停止请求失败",
+    });
+    await act(async () => {
+      await result.current.cancel_task(job.job_id);
+      expect((await request).stage).toBe("cancelled");
+    });
+    expect(cancel_analysis).toHaveBeenCalledTimes(2);
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+  });
+
   it("loads global agent tasks and retries an interrupted run", async () => {
     vi.mocked(list_downloads).mockResolvedValue([]);
     vi.mocked(list_agent_tasks).mockResolvedValue([agent_task_snapshot()]);
@@ -532,18 +789,36 @@ describe("TaskManagerProvider", () => {
   });
 });
 
-function render_task_manager(query_client = new QueryClient()) {
+function render_task_manager(
+  query_client = new QueryClient(),
+  show_task_center = false,
+) {
   return renderHook(use_task_manager, {
     wrapper: ({ children }: { children: ReactNode }) => (
       <MemoryRouter>
         <QueryClientProvider client={query_client}>
           <AssetCatalogProvider>
-            <TaskManagerProvider>{children}</TaskManagerProvider>
+            <TaskManagerProvider>
+              {children}
+              {show_task_center ? <ManagedTaskCenter /> : null}
+            </TaskManagerProvider>
           </AssetCatalogProvider>
         </QueryClientProvider>
       </MemoryRouter>
     ),
   });
+}
+
+function ManagedTaskCenter() {
+  const manager = use_task_manager();
+  return (
+    <TaskCenter
+      open
+      tasks={manager.task_records}
+      on_retry={manager.retry_task}
+      on_cancel={manager.cancel_task}
+    />
+  );
 }
 
 function TaskStarter() {
@@ -661,6 +936,26 @@ function agent_index_status(): AgentIndexStatus {
     available_capabilities: ["字幕检索", "关键词检索", "语义检索"],
     error_message: null,
     updated_at: "2025-01-01T00:00:00Z",
+  };
+}
+
+function transcription_job(stage: AnalysisJob["stage"]): AnalysisJob {
+  return {
+    job_id: "job-019c012345677abc8123456789abcdea",
+    asset_id: "asset-019c012345677abc8123456789abcdef",
+    operation: "transcription",
+    mode: "full",
+    ai_model_id: null,
+    strategy: DEFAULT_ANALYSIS_STRATEGY,
+    capabilities: ["transcript"],
+    stage,
+    progress_percent: 20,
+    message: "正在转写",
+    error_message: null,
+    proposal_base_digest: null,
+    proposed_segments: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
   };
 }
 

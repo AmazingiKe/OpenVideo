@@ -96,6 +96,7 @@ export function Topbar() {
             on_open_change={task_manager.set_task_center_open}
             on_retry={task_manager.retry_task}
             on_pause={task_manager.pause_task}
+            on_cancel={task_manager.cancel_task}
             on_delete={task_manager.delete_task}
             on_view_result={(task_id) => {
               task_manager.view_probe_result(task_id);

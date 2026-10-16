@@ -283,6 +283,8 @@ type AnalysisStage =
   | "describing_visuals"
   | "queuing_index"
   | "waiting_for_approval"
+  | "cancelling"
+  | "cancelled"
   | "complete"
   | "rejected"
   | "failed";

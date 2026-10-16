@@ -51,6 +51,8 @@ type VideoWorkspaceProps = {
   transcript: Transcript | null;
   chapters?: MediaSegment[];
   on_generate_chapters?: () => void;
+  on_cancel_chapters?: () => void;
+  is_cancelling_chapters?: boolean;
   chapter_generation_message?: string | null;
   evidence_range?: AgentEvidenceRange | null;
   player_ref: RefObject<PlayerHandle | null>;
@@ -65,6 +67,8 @@ export const VideoWorkspace = memo(function VideoWorkspace({
   transcript,
   chapters = [],
   on_generate_chapters,
+  on_cancel_chapters,
+  is_cancelling_chapters = false,
   chapter_generation_message = null,
   evidence_range = null,
   player_ref,
@@ -260,7 +264,7 @@ export const VideoWorkspace = memo(function VideoWorkspace({
               title={chapter_generation_message ?? undefined}
             >
               {chapter_generation_message ? (
-                <Spinner data-icon="inline-start" />
+                <Spinner aria-hidden="true" data-icon="inline-start" />
               ) : (
                 <ListVideo data-icon="inline-start" />
               )}
@@ -269,6 +273,19 @@ export const VideoWorkspace = memo(function VideoWorkspace({
                 : chapters.length
                   ? "重新生成章节"
                   : "生成章节"}
+            </Button>
+          ) : null}
+          {chapter_generation_message && on_cancel_chapters ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={on_cancel_chapters}
+              disabled={is_cancelling_chapters}
+            >
+              {is_cancelling_chapters ? (
+                <Spinner aria-hidden="true" data-icon="inline-start" />
+              ) : null}
+              {is_cancelling_chapters ? "正在停止…" : "停止生成"}
             </Button>
           ) : null}
           <SubtitleSettingsControl

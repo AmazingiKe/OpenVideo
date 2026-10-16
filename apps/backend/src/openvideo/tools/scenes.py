@@ -6,7 +6,9 @@ import re
 import subprocess
 from math import isfinite
 from pathlib import Path
+from threading import Event
 
+from openvideo.tools.cancellation import run_cancellable_process
 from openvideo.tools.media import resolve_tool
 
 
@@ -28,6 +30,7 @@ def detect_scene_boundaries(
     media_path: Path,
     configured_ffmpeg_path: str | None,
     project_bin_dir: Path | None = None,
+    cancel_event: Event | None = None,
 ) -> list[float]:
     """镜头扫描失败时返回空列表，让音频时间轴仍可独立完成。"""
     scored_points = _scan_scene_scores(
@@ -35,6 +38,7 @@ def detect_scene_boundaries(
         configured_ffmpeg_path,
         project_bin_dir,
         threshold=SCENE_CHANGE_THRESHOLD,
+        cancel_event=cancel_event,
     )
     return [seconds for seconds, _score in scored_points]
 
@@ -97,6 +101,7 @@ def _scan_scene_scores(
     threshold: float,
     start_seconds: float | None = None,
     end_seconds: float | None = None,
+    cancel_event: Event | None = None,
 ) -> list[tuple[float, float]]:
     ffmpeg_path = resolve_tool(configured_ffmpeg_path, "ffmpeg", project_bin_dir)
     if not media_path.is_file() or not ffmpeg_path:
@@ -132,12 +137,16 @@ def _scan_scene_scores(
         ]
     )
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=SCENE_SCAN_TIMEOUT_SECONDS,
+        result = (
+            run_cancellable_process(command, cancel_event, SCENE_SCAN_TIMEOUT_SECONDS)
+            if cancel_event is not None
+            else subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=SCENE_SCAN_TIMEOUT_SECONDS,
+            )
         )
     except (OSError, subprocess.TimeoutExpired):
         return []

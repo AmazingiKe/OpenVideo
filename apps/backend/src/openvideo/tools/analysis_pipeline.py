@@ -8,6 +8,7 @@ from dataclasses import replace
 from itertools import pairwise
 from math import ceil, isfinite
 from pathlib import Path
+from threading import Event
 
 from openvideo.core.analysis import (
     MarkerInfluence,
@@ -21,6 +22,7 @@ from openvideo.core.media_models import MediaMarker, MediaSegment
 from openvideo.core.transcription_models import Transcript
 from openvideo.settings import Settings
 from openvideo.tools.frames import FrameExtractionError, extract_frames
+from openvideo.tools.cancellation import check_analysis_cancellation
 from openvideo.tools.scenes import detect_scene_boundaries
 from openvideo.tools.chapters import (
     ChapterVisualEvidence,
@@ -65,13 +67,17 @@ def build_segments(
     chapter_model: AiModelConfiguration | None = None,
     ocr_reader: OcrReader | None = None,
     formula_reader: FormulaReader | None = None,
+    cancel_event: Event | None = None,
 ) -> list[MediaSegment]:
     """基础音频分析始终产出事件，视觉能力缺失或局部失败不会丢失文本结果。"""
+    check_analysis_cancellation(cancel_event)
     scene_boundaries = detect_scene_boundaries(
         media_path,
         settings.ffmpeg_path,
         settings.ffmpeg_bin_dir,
+        cancel_event,
     )
+    check_analysis_cancellation(cancel_event)
     semantic_chapters = build_global_semantic_chapters(
         transcript.segments,
         chapter_model,
@@ -79,6 +85,7 @@ def build_segments(
         on_progress=lambda message: progress_callback(
             AnalysisStage.BUILDING_TIMELINE, 70, message
         ),
+        cancel_event=cancel_event,
     )
     if chapter_model is not None and semantic_chapters and (describer or ocr_reader):
         progress_callback(
@@ -94,6 +101,7 @@ def build_segments(
             settings,
             describer,
             ocr_reader,
+            cancel_event,
         )
         if visual_evidence:
             semantic_chapters = build_global_semantic_chapters(
@@ -103,6 +111,7 @@ def build_segments(
                 on_progress=lambda message: progress_callback(
                     AnalysisStage.BUILDING_TIMELINE, 72, message
                 ),
+                cancel_event=cancel_event,
             )
     moments = (
         select_timeline_moments(
@@ -132,6 +141,7 @@ def build_segments(
     segments: list[MediaSegment] = []
     progress_span = 20 / max(len(moments), 1)
     for index, moment in enumerate(moments):
+        check_analysis_cancellation(cancel_event)
         event_number = index + 1
         progress_callback(
             AnalysisStage.EXTRACTING_FRAMES,
@@ -161,6 +171,7 @@ def build_segments(
                     f"正在分析第 {event_number}/{len(moments)} 个事件",
                 ),
                 chapter_model,
+                cancel_event,
             )
         )
     return segments
@@ -173,6 +184,7 @@ def _chapter_boundary_evidence(
     settings: Settings,
     describer: VisionDescriber | None,
     ocr_reader: OcrReader | None,
+    cancel_event: Event | None,
 ) -> list[ChapterVisualEvidence]:
     """借鉴 Chapter-Llama 的字幕引导取帧，视觉只为主题判断补充证据。"""
     if len(time_points) > MAX_CHAPTER_BOUNDARY_FRAMES:
@@ -191,17 +203,21 @@ def _chapter_boundary_evidence(
             asset_directory / FRAMES_DIRECTORY_NAME / f"chapters-{uuid7().hex}",
             settings.ffmpeg_path,
             settings.ffmpeg_bin_dir,
+            cancel_event,
         )
     except FrameExtractionError:
+        check_analysis_cancellation(cancel_event)
         return []
     evidence = []
     for seconds, frame in zip(time_points, frames):
+        check_analysis_cancellation(cancel_event)
         observations = []
         if ocr_reader:
             text = ocr_reader([frame])
             if text:
                 observations.append(f"OCR：{text[:CHAPTER_VISUAL_EVIDENCE_CHARACTERS]}")
         if describer:
+            check_analysis_cancellation(cancel_event)
             try:
                 observations.append(
                     describer.describe(
@@ -230,6 +246,7 @@ def _build_segment(
     on_reading_frame_text: Callable[[], None],
     on_describing_visuals: Callable[[], None],
     chapter_model: AiModelConfiguration | None = None,
+    cancel_event: Event | None = None,
 ) -> MediaSegment:
     segment_id = f"segment-{uuid7().hex}"
     frames = (
@@ -239,6 +256,7 @@ def _build_segment(
             asset_directory / FRAMES_DIRECTORY_NAME / segment_id,
             settings,
             scene_boundaries,
+            cancel_event,
         )
         if moment.detailed
         else []
@@ -246,12 +264,14 @@ def _build_segment(
     if ocr_reader is not None and frames:
         on_reading_frame_text()
     ocr_text = ocr_reader(frames) if ocr_reader is not None and frames else None
+    check_analysis_cancellation(cancel_event)
     formula_latex = (
         formula_reader(frames) if formula_reader is not None and frames else []
     )
     if describer is not None and frames:
         on_describing_visuals()
     visual_description = _describe_event(moment, frames, describer, strategy)
+    check_analysis_cancellation(cancel_event)
     transcript_text = moment.transcript_text or None
     title = moment.title or _event_title(moment)
     summary = (
@@ -262,6 +282,7 @@ def _build_segment(
             ocr_text,
             visual_description,
             moment.content_summary,
+            cancel_event,
         )
         if chapter_model is not None
         else visual_description
@@ -290,6 +311,7 @@ def _extract_event_frames(
     frames_directory: Path,
     settings: Settings,
     scene_boundaries: Sequence[float] = (),
+    cancel_event: Event | None = None,
 ) -> list[Path]:
     time_points = _select_event_frame_times(moment, scene_boundaries)
     if not time_points:
@@ -301,8 +323,10 @@ def _extract_event_frames(
             frames_directory,
             settings.ffmpeg_path,
             settings.ffmpeg_bin_dir,
+            cancel_event,
         )
     except FrameExtractionError:
+        check_analysis_cancellation(cancel_event)
         return []
 
 

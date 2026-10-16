@@ -56,6 +56,47 @@ describe("TaskCenter", () => {
     expect(screen.getByText("计算投影")).toBeVisible();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
+
+  it("stops a transcription, disables repeated stops, and shows request failures", async () => {
+    let reject_stop!: (error: Error) => void;
+    const on_cancel = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          reject_stop = reject;
+        }),
+    );
+    const task: TaskRecord = {
+      ...task_record("running", false),
+      task_type: "transcription",
+      stage: "transcribing",
+      cancel_available: true,
+    };
+    const { rerender } = render(
+      <TaskCenter
+        open
+        tasks={[task]}
+        on_retry={vi.fn()}
+        on_cancel={on_cancel}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "停止转写" }));
+    expect(screen.getByRole("button", { name: "停止转写" })).toBeDisabled();
+    expect(on_cancel).toHaveBeenCalledOnce();
+    reject_stop(new Error("停止请求未送达"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "停止请求未送达",
+    );
+    expect(screen.getByRole("button", { name: "停止转写" })).toBeEnabled();
+    rerender(
+      <TaskCenter
+        open
+        tasks={[{ ...task, stage: "cancelling", cancel_available: false }]}
+        on_retry={vi.fn()}
+        on_cancel={on_cancel}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "正在停止…" })).toBeDisabled();
+  });
 });
 
 function task_record(stage: string, retry_available: boolean): TaskRecord {
