@@ -299,6 +299,7 @@ def create_app(
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
         allow_headers=["Content-Type", "Range"],
+        expose_headers=["Content-Disposition"],
     )
 
     @app.exception_handler(HTTPException)

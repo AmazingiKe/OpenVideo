@@ -1,9 +1,16 @@
 import { createRef, forwardRef } from "react";
-import { render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PlayerHandle } from "@/features/player/Player";
 import type { MediaAsset } from "@/shared/types";
+import { download_subtitle_file } from "@/shared/api";
 import { VideoWorkspace } from "./VideoWorkspace";
 
 const player_render = vi.hoisted(() => vi.fn());
@@ -14,6 +21,7 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@/shared/api", () => ({
   create_subtitle_export: vi.fn(),
+  download_subtitle_file: vi.fn(),
   ensure_thumbnail_storyboard: vi.fn(() => new Promise(() => undefined)),
   media_url: (path: string) => path,
   update_subtitle_settings: vi.fn(),
@@ -27,7 +35,10 @@ vi.mock("@/features/player/Player", () => ({
 }));
 
 describe("VideoWorkspace", () => {
-  beforeEach(() => player_render.mockClear());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(download_subtitle_file).mockResolvedValue();
+  });
 
   it("keeps the marker player inside its workspace and forwards timeline state", () => {
     const on_time_change = vi.fn();
@@ -72,7 +83,152 @@ describe("VideoWorkspace", () => {
 
     expect(player_render).toHaveBeenCalledOnce();
   });
+
+  it("downloads the selected subtitle file and confirms the browser download started", async () => {
+    render(<VideoWorkspace {...create_workspace_props()} />);
+    fireEvent.click(screen.getByRole("button", { name: "字幕" }));
+    fireEvent.click(screen.getByRole("radio", { name: "TXT" }));
+    fireEvent.click(screen.getByRole("button", { name: "下载字幕文件" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "已开始下载 TXT 字幕",
+      ),
+    );
+    expect(download_subtitle_file).toHaveBeenCalledWith(
+      create_asset().asset_id,
+      "txt",
+      expect.any(AbortSignal),
+    );
+    expect(screen.getByTestId("marker-player")).toBeInTheDocument();
+  });
+
+  it("shows server download errors and allows retrying", async () => {
+    vi.mocked(download_subtitle_file).mockRejectedValueOnce(
+      new Error("字幕尚未生成"),
+    );
+    render(<VideoWorkspace {...create_workspace_props()} />);
+    fireEvent.click(screen.getByRole("button", { name: "字幕" }));
+    fireEvent.click(screen.getByRole("button", { name: "下载字幕文件" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("字幕尚未生成"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "下载字幕文件" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "已开始下载 SRT 字幕",
+      ),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps a file download and its status when the same video's metadata refreshes", async () => {
+    let finish_request: () => void = () => undefined;
+    vi.mocked(download_subtitle_file).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish_request = resolve;
+        }),
+    );
+    const props = create_workspace_props();
+    const workspace = render(<VideoWorkspace {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "字幕" }));
+    fireEvent.click(screen.getByRole("button", { name: "下载字幕文件" }));
+    const signal = vi.mocked(download_subtitle_file).mock.calls[0][2];
+    const refreshed_asset = {
+      ...props.asset,
+      title: "刷新后的视频标题",
+      subtitle_display: { ...props.asset.subtitle_display! },
+      updated_at: "2026-10-17T01:00:00Z",
+    };
+    workspace.rerender(<VideoWorkspace {...props} asset={refreshed_asset} />);
+    expect(signal?.aborted).toBe(false);
+    expect(screen.getByRole("button", { name: "正在下载字幕" })).toBeDisabled();
+    await act(async () => finish_request());
+    workspace.rerender(
+      <VideoWorkspace
+        {...props}
+        asset={{ ...refreshed_asset, title: "再次刷新" }}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("已开始下载 SRT 字幕");
+  });
+
+  it.each([true, false])(
+    "ignores an old video download after switching assets (success: %s)",
+    async (succeeds) => {
+      let finish_old_request: () => void = () => undefined;
+      let finish_new_request: () => void = () => undefined;
+      vi.mocked(download_subtitle_file)
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              finish_old_request = () =>
+                succeeds ? resolve() : reject(new Error("旧视频下载失败"));
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              finish_new_request = resolve;
+            }),
+        );
+      const props = create_workspace_props();
+      const workspace = render(<VideoWorkspace {...props} />);
+      fireEvent.click(screen.getByRole("button", { name: "字幕" }));
+      fireEvent.click(screen.getByRole("button", { name: "下载字幕文件" }));
+      const old_signal = vi.mocked(download_subtitle_file).mock.calls[0][2];
+
+      workspace.rerender(
+        <VideoWorkspace
+          {...props}
+          asset={{
+            ...props.asset,
+            asset_id: "asset-next",
+            title: "第二个视频",
+          }}
+        />,
+      );
+      expect(old_signal?.aborted).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "下载字幕文件" }));
+      await act(async () => finish_old_request());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "正在下载字幕" }),
+      ).toBeDisabled();
+      await act(async () => finish_new_request());
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "已开始下载 SRT 字幕",
+      );
+    },
+  );
 });
+
+function create_workspace_props() {
+  const asset = create_asset();
+  return {
+    asset,
+    markers: [],
+    transcript: {
+      asset_id: asset.asset_id,
+      language: "zh",
+      created_at: asset.created_at,
+      segments: [
+        {
+          start_seconds: 0,
+          end_seconds: 10,
+          text: "课程字幕",
+          emotion: null,
+          audio_events: [],
+        },
+      ],
+    },
+    player_ref: createRef<PlayerHandle>(),
+    on_time_change: vi.fn(),
+    on_pause_change: vi.fn(),
+    on_playback_rate_change: vi.fn(),
+  };
+}
 
 function create_asset(): MediaAsset {
   return {

@@ -11,10 +11,10 @@ export class ApiError extends Error {
   }
 }
 
-export async function request_json<T>(
+export async function request_response(
   path: string,
   init?: RequestInit,
-): Promise<T> {
+): Promise<Response> {
   const response = await fetch(`${api_base_url}${path}`, init);
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
@@ -30,5 +30,13 @@ export async function request_json<T>(
     }
     throw new ApiError(message, response.status);
   }
+  return response;
+}
+
+export async function request_json<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await request_response(path, init);
   return (await response.json()) as T;
 }

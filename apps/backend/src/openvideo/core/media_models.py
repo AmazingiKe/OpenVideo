@@ -81,6 +81,12 @@ class SubtitleBackground(StrEnum):
     SOLID = "solid"
 
 
+class SubtitleFileFormat(StrEnum):
+    SRT = "srt"
+    VTT = "vtt"
+    TXT = "txt"
+
+
 class SubtitleDisplaySettings(BaseModel):
     """单视频字幕显示状态独立保存，偏移不修改原始转写时间。"""
 

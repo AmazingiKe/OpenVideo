@@ -56,6 +56,19 @@ def test_serves_full_video(tmp_path: Path):
     assert response.headers["content-length"] == "100"
 
 
+def test_cross_origin_downloads_expose_the_attachment_filename(tmp_path: Path):
+    with create_client(tmp_path) as client:
+        response = client.get(
+            f"/api/media/assets/{ASSET_ID}/stream",
+            headers={"Origin": "http://127.0.0.1:5173"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    exposed_headers = response.headers["access-control-expose-headers"].casefold()
+    assert "content-disposition" in exposed_headers
+
+
 def test_serves_single_range_and_head(tmp_path: Path):
     with create_client(tmp_path) as client:
         response = client.get(

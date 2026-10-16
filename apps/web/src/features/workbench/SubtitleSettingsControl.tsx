@@ -1,5 +1,5 @@
 import { Captions, Check, CircleAlert, Download } from "lucide-react";
-import { useId } from "react";
+import { useId, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import type {
   SubtitleBackground,
   SubtitleDisplaySettings,
   SubtitleFontSize,
+  SubtitleFileFormat,
   SubtitlePosition,
 } from "@/shared/types";
 
@@ -34,9 +35,12 @@ type SubtitleSettingsControlProps = {
   settings_pending: boolean;
   export_pending: boolean;
   export_relative_path: string | null;
+  file_export_pending: boolean;
+  file_exported_format: SubtitleFileFormat | null;
   error_message: string | null;
   on_change: (settings: SubtitleDisplaySettings) => void;
   on_export: () => void;
+  on_export_file: (format: SubtitleFileFormat) => void;
 };
 
 const SUBTITLE_OFFSET_STEP_MILLISECONDS = 50;
@@ -48,16 +52,24 @@ export function SubtitleSettingsControl({
   settings_pending,
   export_pending,
   export_relative_path,
+  file_export_pending,
+  file_exported_format,
   error_message,
   on_change,
   on_export,
+  on_export_file,
 }: SubtitleSettingsControlProps) {
   const font_size_label_id = useId();
   const position_label_id = useId();
   const background_label_id = useId();
   const offset_input_id = useId();
+  const file_format_label_id = useId();
+  const video_export_title_id = useId();
+  const file_export_title_id = useId();
+  const settings_title_id = useId();
+  const [file_format, set_file_format] = useState<SubtitleFileFormat>("srt");
   const controls_disabled =
-    !has_subtitles || settings_pending || export_pending;
+    !has_subtitles || settings_pending || export_pending || file_export_pending;
 
   return (
     <Popover>
@@ -69,14 +81,15 @@ export function SubtitleSettingsControl({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="w-80 max-w-[calc(100vw-2rem)] gap-4 p-4"
+        aria-labelledby={settings_title_id}
+        className="max-h-[min(calc(100dvh-2rem),var(--radix-popover-content-available-height))] w-80 max-w-[calc(100vw-2rem)] gap-4 overflow-y-auto p-4"
       >
         <PopoverHeader>
-          <PopoverTitle>画面字幕</PopoverTitle>
+          <PopoverTitle id={settings_title_id}>画面字幕</PopoverTitle>
           <PopoverDescription>
             {has_subtitles
               ? "调整会保存到当前视频，并同步用于带字幕导出。"
-              : "完成字幕转写后即可调整显示并导出视频。"}
+              : "完成字幕转写后即可调整显示、下载字幕或导出视频。"}
           </PopoverDescription>
         </PopoverHeader>
 
@@ -216,7 +229,7 @@ export function SubtitleSettingsControl({
               恢复为零
             </Button>
             <FieldDescription>
-              仅校准播放时字幕显示，不修改标记和原始转写。
+              用于播放和字幕导出，不修改标记和原始转写。
             </FieldDescription>
           </Field>
         </FieldGroup>
@@ -234,10 +247,63 @@ export function SubtitleSettingsControl({
 
         <section
           className="flex flex-col gap-2"
-          aria-labelledby="subtitle-export-title"
+          aria-labelledby={file_export_title_id}
         >
           <div className="flex flex-col gap-0.5">
-            <h3 id="subtitle-export-title" className="text-sm font-medium">
+            <h3 id={file_export_title_id} className="text-sm font-medium">
+              导出字幕文件
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              下载已保存的最新字幕。SRT、VTT 包含时间偏移，TXT 仅含文字。
+            </p>
+          </div>
+          <Field data-disabled={controls_disabled || undefined}>
+            <FieldLabel id={file_format_label_id}>文件格式</FieldLabel>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              value={file_format}
+              disabled={controls_disabled}
+              aria-labelledby={file_format_label_id}
+              onValueChange={(format) => {
+                if (format) set_file_format(format as SubtitleFileFormat);
+              }}
+            >
+              <ToggleGroupItem value="srt">SRT</ToggleGroupItem>
+              <ToggleGroupItem value="vtt">VTT</ToggleGroupItem>
+              <ToggleGroupItem value="txt">TXT</ToggleGroupItem>
+            </ToggleGroup>
+          </Field>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={controls_disabled}
+            onClick={() => on_export_file(file_format)}
+          >
+            {file_export_pending ? (
+              <Spinner data-icon="inline-start" aria-hidden="true" />
+            ) : (
+              <Download data-icon="inline-start" aria-hidden="true" />
+            )}
+            {file_export_pending ? "正在下载字幕" : "下载字幕文件"}
+          </Button>
+          {file_exported_format ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              已开始下载 {file_exported_format.toUpperCase()} 字幕
+            </p>
+          ) : null}
+        </section>
+
+        <Separator />
+
+        <section
+          className="flex flex-col gap-2"
+          aria-labelledby={video_export_title_id}
+        >
+          <div className="flex flex-col gap-0.5">
+            <h3 id={video_export_title_id} className="text-sm font-medium">
               带字幕导出
             </h3>
             <p className="text-sm text-muted-foreground">
@@ -247,7 +313,7 @@ export function SubtitleSettingsControl({
           <Button
             type="button"
             className="w-full"
-            disabled={!has_subtitles || settings_pending || export_pending}
+            disabled={controls_disabled}
             onClick={on_export}
           >
             {export_pending ? (

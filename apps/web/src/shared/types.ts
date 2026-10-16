@@ -424,6 +424,7 @@ export type Transcript = {
 export type SubtitleFontSize = "small" | "medium" | "large";
 export type SubtitlePosition = "bottom" | "raised" | "center";
 export type SubtitleBackground = "none" | "shadow" | "solid";
+export type SubtitleFileFormat = "srt" | "vtt" | "txt";
 export type SubtitleDisplaySettings = {
   font_size: SubtitleFontSize;
   position: SubtitlePosition;

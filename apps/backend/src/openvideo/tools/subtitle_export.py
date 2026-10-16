@@ -1,15 +1,19 @@
-"""把逐视频字幕预设转换为可分发的硬字幕视频。"""
+"""把当前字幕转换为独立字幕文件或带字幕视频。"""
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from dataclasses import dataclass
+from html import escape
+from math import isfinite
 from pathlib import Path
 
 from openvideo.core.media_models import (
     SubtitleBackground,
     SubtitleDisplaySettings,
+    SubtitleFileFormat,
     SubtitleFontSize,
     SubtitlePosition,
 )
@@ -18,6 +22,10 @@ from openvideo.tools.media import resolve_tool
 
 
 SUBTITLE_EXPORT_TIMEOUT_SECONDS = 21_600
+MILLISECONDS_PER_SECOND = 1_000
+MILLISECONDS_PER_MINUTE = 60_000
+MILLISECONDS_PER_HOUR = 3_600_000
+SUBTITLE_TEXT_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 SUBTITLE_PLAY_RESOLUTION_X = 1920
 SUBTITLE_PLAY_RESOLUTION_Y = 1080
 SUBTITLE_FONT_NAME = "Microsoft YaHei"
@@ -75,6 +83,66 @@ class SubtitleExportError(RuntimeError):
 
 class SubtitleExportUnavailableError(SubtitleExportError):
     """缺少媒体工具时允许 API 区分环境问题与视频转换失败。"""
+
+
+def render_subtitle_file(
+    segments: list[TranscriptSegment],
+    file_format: SubtitleFileFormat,
+    *,
+    offset_milliseconds: int = 0,
+    duration_seconds: float | None = None,
+) -> str:
+    """独立文件沿用播放器的字幕偏移，且不能让文本内容成为额外字幕块。"""
+    duration_milliseconds = None
+    if duration_seconds is not None and isfinite(duration_seconds):
+        scaled_duration = max(0, duration_seconds) * MILLISECONDS_PER_SECOND
+        if isfinite(scaled_duration):
+            duration_milliseconds = round(scaled_duration)
+
+    cues: list[tuple[int, int, str]] = []
+    for segment in segments:
+        start = segment.start_seconds * MILLISECONDS_PER_SECOND
+        end = segment.end_seconds * MILLISECONDS_PER_SECOND
+        if not isfinite(start) or not isfinite(end) or end <= start:
+            continue
+        start_milliseconds = max(0, round(start) - offset_milliseconds)
+        end_milliseconds = max(0, round(end) - offset_milliseconds)
+        if duration_milliseconds is not None:
+            end_milliseconds = min(end_milliseconds, duration_milliseconds)
+        if end_milliseconds <= start_milliseconds:
+            continue
+        text = segment.text.replace("\r\n", "\n").replace("\r", "\n")
+        text = SUBTITLE_TEXT_CONTROL_CHARACTERS.sub("", text)
+        text = "\n".join(line for line in text.split("\n") if line.strip()).strip()
+        if text:
+            cues.append((start_milliseconds, end_milliseconds, text))
+    cues.sort(key=lambda cue: (cue[0], cue[1]))
+    if not cues:
+        raise SubtitleExportError("当前视频没有可导出的字幕")
+    if file_format == SubtitleFileFormat.TXT:
+        return "\n\n".join(text for _, _, text in cues) + "\n"
+
+    blocks: list[str] = []
+    separator = "," if file_format == SubtitleFileFormat.SRT else "."
+    for index, (start, end, text) in enumerate(cues, start=1):
+        timing = (
+            f"{subtitle_file_timestamp(start, separator)} --> "
+            f"{subtitle_file_timestamp(end, separator)}"
+        )
+        # 转义箭头和标签，使转写原文只作为字幕内容而不被解释为时码或样式。
+        cue = f"{timing}\n{escape(text, quote=False)}"
+        if file_format == SubtitleFileFormat.SRT:
+            cue = f"{index}\n{cue}"
+        blocks.append(cue)
+    header = "WEBVTT\n\n" if file_format == SubtitleFileFormat.VTT else ""
+    return header + "\n\n".join(blocks) + "\n"
+
+
+def subtitle_file_timestamp(milliseconds: int, separator: str) -> str:
+    hours, remainder = divmod(milliseconds, MILLISECONDS_PER_HOUR)
+    minutes, remainder = divmod(remainder, MILLISECONDS_PER_MINUTE)
+    seconds, fraction = divmod(remainder, MILLISECONDS_PER_SECOND)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}{separator}{fraction:03d}"
 
 
 def export_subtitled_video(

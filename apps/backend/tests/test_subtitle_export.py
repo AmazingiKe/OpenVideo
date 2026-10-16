@@ -5,12 +5,127 @@ from subprocess import CompletedProcess
 
 import pytest
 
-from openvideo.core.media_models import SubtitleDisplaySettings
+from openvideo.core.media_models import SubtitleDisplaySettings, SubtitleFileFormat
 from openvideo.core.transcription_models import TranscriptSegment
 from openvideo.tools import subtitle_export
 
 
 FFMPEG_PATH = shutil.which("ffmpeg")
+
+
+@pytest.mark.parametrize(
+    ("file_format", "expected"),
+    [
+        (
+            SubtitleFileFormat.SRT,
+            "1\n00:00:59,999 --> 00:01:00,000\n中文 &lt;b&gt;原文&lt;/b&gt; &amp; 字幕\n第二行\n",
+        ),
+        (
+            SubtitleFileFormat.VTT,
+            "WEBVTT\n\n00:00:59.999 --> 00:01:00.000\n中文 &lt;b&gt;原文&lt;/b&gt; &amp; 字幕\n第二行\n",
+        ),
+        (
+            SubtitleFileFormat.TXT,
+            "中文 <b>原文</b> & 字幕\n第二行\n",
+        ),
+    ],
+)
+def test_renders_utf8_subtitle_files_and_carries_rounded_milliseconds(
+    file_format: SubtitleFileFormat, expected: str
+):
+    document = subtitle_export.render_subtitle_file(
+        [
+            TranscriptSegment(
+                start_seconds=59.9994,
+                end_seconds=59.9996,
+                text="中文 <b>原文</b> & 字幕\r\n第二行",
+            )
+        ],
+        file_format,
+    )
+
+    assert document == expected
+
+
+def test_orders_cues_and_applies_display_offset_and_video_bounds_without_mutation():
+    segments = [
+        TranscriptSegment(start_seconds=3, end_seconds=7, text="末尾"),
+        TranscriptSegment(start_seconds=0.2, end_seconds=2, text="开头"),
+        TranscriptSegment(start_seconds=0, end_seconds=0.2, text="提前后不可见"),
+        TranscriptSegment(start_seconds=1, end_seconds=2, text=" \t\n"),
+        TranscriptSegment(start_seconds=8, end_seconds=9, text="片外"),
+        TranscriptSegment(start_seconds=2, end_seconds=2, text="零时长"),
+    ]
+    original_segments = [segment.model_dump() for segment in segments]
+
+    document = subtitle_export.render_subtitle_file(
+        segments,
+        SubtitleFileFormat.SRT,
+        offset_milliseconds=500,
+        duration_seconds=5,
+    )
+
+    assert document == (
+        "1\n00:00:00,000 --> 00:00:01,500\n开头\n\n"
+        "2\n00:00:02,500 --> 00:00:05,000\n末尾\n"
+    )
+    assert [segment.model_dump() for segment in segments] == original_segments
+
+
+def test_negative_display_offset_delays_subtitle_files():
+    document = subtitle_export.render_subtitle_file(
+        [TranscriptSegment(start_seconds=0, end_seconds=1, text="延后")],
+        SubtitleFileFormat.VTT,
+        offset_milliseconds=-500,
+    )
+
+    assert "00:00:00.500 --> 00:00:01.500" in document
+
+
+def test_subtitle_text_cannot_inject_cue_boundaries_or_markup():
+    document = subtitle_export.render_subtitle_file(
+        [
+            TranscriptSegment(
+                start_seconds=0,
+                end_seconds=1,
+                text="首行\n \t\n00:00:10.000 --> 00:00:11.000\n<script>文本</script>\x00",
+            )
+        ],
+        SubtitleFileFormat.VTT,
+    )
+
+    assert document.count("\n\n") == 1
+    assert document.count(" --> ") == 1
+    assert "00:00:10.000 --&gt; 00:00:11.000" in document
+    assert "&lt;script&gt;文本&lt;/script&gt;" in document
+    assert "\x00" not in document
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        (float("inf"), float("inf")),
+        (0, float("nan")),
+        (1e308, 1.1e308),
+        (2, 1),
+        (1.0001, 1.0002),
+    ],
+)
+def test_rejects_non_finite_invalid_and_submillisecond_ranges(start: float, end: float):
+    segment = TranscriptSegment.model_construct(
+        start_seconds=start, end_seconds=end, text="不可用"
+    )
+    with pytest.raises(subtitle_export.SubtitleExportError, match="没有可导出的字幕"):
+        subtitle_export.render_subtitle_file([segment], SubtitleFileFormat.SRT)
+
+
+def test_rounds_hour_boundary_and_supports_long_videos():
+    document = subtitle_export.render_subtitle_file(
+        [TranscriptSegment(start_seconds=3599.9996, end_seconds=360001, text="长视频")],
+        SubtitleFileFormat.SRT,
+    )
+
+    assert "01:00:00,000 --> 100:00:01,000" in document
 
 
 def test_builds_ass_document_from_display_settings():

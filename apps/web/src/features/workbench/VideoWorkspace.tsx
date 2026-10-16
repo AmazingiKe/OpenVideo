@@ -18,6 +18,7 @@ import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_se
 import { use_storyboard_preview } from "@/features/player/use_storyboard_preview";
 import {
   create_subtitle_export,
+  download_subtitle_file,
   media_url,
   update_subtitle_settings,
 } from "@/shared/api";
@@ -29,6 +30,7 @@ import type {
   MediaSegment,
   MediaMarker,
   SubtitleDisplaySettings,
+  SubtitleFileFormat,
   Transcript,
 } from "@/shared/types";
 import { SubtitleSettingsControl } from "./SubtitleSettingsControl";
@@ -61,31 +63,62 @@ export const VideoWorkspace = memo(function VideoWorkspace({
   on_playback_rate_change,
 }: VideoWorkspaceProps) {
   const query_client = useQueryClient();
+  const asset_id = asset?.asset_id;
+  const { font_size, position, background, offset_milliseconds } =
+    asset?.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS;
   const [subtitle_settings, set_subtitle_settings] =
     useState<SubtitleDisplaySettings>(
       asset?.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS,
     );
   const [settings_pending, set_settings_pending] = useState(false);
   const [export_pending, set_export_pending] = useState(false);
+  const [file_export_pending, set_file_export_pending] = useState(false);
+  const [file_exported_format, set_file_exported_format] =
+    useState<SubtitleFileFormat | null>(null);
   const [export_relative_path, set_export_relative_path] = useState<
     string | null
   >(null);
   const [subtitle_error, set_subtitle_error] = useState<string | null>(null);
   const settings_request_version_ref = useRef(0);
+  const export_request_ref = useRef<AbortController | null>(null);
   const saved_subtitle_settings_ref = useRef(subtitle_settings);
   const { storyboard, request_storyboard } = use_storyboard_preview(asset);
 
   useEffect(() => {
     settings_request_version_ref.current += 1;
-    const saved_settings =
-      asset?.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS;
+    const saved_settings = {
+      font_size,
+      position,
+      background,
+      offset_milliseconds,
+    };
     saved_subtitle_settings_ref.current = saved_settings;
-    set_subtitle_settings(saved_settings);
+    set_subtitle_settings((current_settings) => {
+      if (
+        current_settings.font_size === font_size &&
+        current_settings.position === position &&
+        current_settings.background === background &&
+        current_settings.offset_milliseconds === offset_milliseconds
+      ) {
+        return current_settings;
+      }
+      return saved_settings;
+    });
     set_settings_pending(false);
+    set_subtitle_error(null);
+  }, [asset_id, font_size, position, background, offset_milliseconds]);
+
+  useEffect(() => {
     set_export_pending(false);
+    set_file_export_pending(false);
+    set_file_exported_format(null);
     set_export_relative_path(null);
     set_subtitle_error(null);
-  }, [asset]);
+    return () => {
+      export_request_ref.current?.abort();
+      export_request_ref.current = null;
+    };
+  }, [asset_id]);
 
   function save_subtitle_settings(settings: SubtitleDisplaySettings) {
     if (!asset) return;
@@ -94,6 +127,7 @@ export const VideoWorkspace = memo(function VideoWorkspace({
     set_subtitle_settings(settings);
     set_settings_pending(true);
     set_export_relative_path(null);
+    set_file_exported_format(null);
     set_subtitle_error(null);
     void update_subtitle_settings(asset.asset_id, settings)
       .then((saved_settings) => {
@@ -120,17 +154,49 @@ export const VideoWorkspace = memo(function VideoWorkspace({
   }
 
   async function export_subtitled_video() {
-    if (!asset || export_pending || settings_pending) return;
+    if (!asset || export_request_ref.current || settings_pending) return;
+    const request = new AbortController();
+    export_request_ref.current = request;
     set_export_pending(true);
     set_export_relative_path(null);
     set_subtitle_error(null);
     try {
-      const result = await create_subtitle_export(asset.asset_id);
+      const result = await create_subtitle_export(
+        asset.asset_id,
+        request.signal,
+      );
+      if (request.signal.aborted) return;
       set_export_relative_path(result.relative_path);
     } catch (error) {
+      if (request.signal.aborted) return;
       set_subtitle_error(error_message(error));
     } finally {
-      set_export_pending(false);
+      if (!request.signal.aborted) {
+        export_request_ref.current = null;
+        set_export_pending(false);
+      }
+    }
+  }
+
+  async function export_subtitle_file(format: SubtitleFileFormat) {
+    if (!asset || export_request_ref.current || settings_pending) return;
+    const request = new AbortController();
+    export_request_ref.current = request;
+    set_file_export_pending(true);
+    set_file_exported_format(null);
+    set_subtitle_error(null);
+    try {
+      await download_subtitle_file(asset.asset_id, format, request.signal);
+      if (request.signal.aborted) return;
+      set_file_exported_format(format);
+    } catch (error) {
+      if (request.signal.aborted) return;
+      set_subtitle_error(error_message(error));
+    } finally {
+      if (!request.signal.aborted) {
+        export_request_ref.current = null;
+        set_file_export_pending(false);
+      }
     }
   }
 
@@ -198,9 +264,12 @@ export const VideoWorkspace = memo(function VideoWorkspace({
             settings_pending={settings_pending}
             export_pending={export_pending}
             export_relative_path={export_relative_path}
+            file_export_pending={file_export_pending}
+            file_exported_format={file_exported_format}
             error_message={subtitle_error}
             on_change={save_subtitle_settings}
             on_export={() => void export_subtitled_video()}
+            on_export_file={(format) => void export_subtitle_file(format)}
           />
           <p className="max-w-48 shrink truncate text-xs text-muted-foreground max-[720px]:hidden">
             {asset.author_name ?? "未知作者"}

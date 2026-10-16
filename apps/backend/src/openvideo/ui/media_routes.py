@@ -1,9 +1,11 @@
 import asyncio
+import re
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 
 from openvideo.core.byte_range import InvalidByteRange, parse_byte_range
@@ -14,6 +16,7 @@ from openvideo.core.media_models import (
     MediaType,
     SubtitleDisplaySettings,
     SubtitleExportResult,
+    SubtitleFileFormat,
     ThumbnailStoryboardResponse,
 )
 from openvideo.settings import Settings
@@ -21,6 +24,7 @@ from openvideo.tools.subtitle_export import (
     SubtitleExportError,
     SubtitleExportUnavailableError,
     export_subtitled_video,
+    render_subtitle_file,
 )
 from openvideo.tools.thumbnails import generate_thumbnail_storyboard
 
@@ -35,6 +39,13 @@ VIDEO_MEDIA_TYPES = {
     ".webm": "video/webm",
 }
 SUBTITLE_EXPORTS_DIRECTORY_NAME = "subtitle-exports"
+SUBTITLE_FILE_MEDIA_TYPES = {
+    SubtitleFileFormat.SRT: "application/x-subrip",
+    SubtitleFileFormat.VTT: "text/vtt",
+    SubtitleFileFormat.TXT: "text/plain",
+}
+SUBTITLE_FILE_NAME_FORBIDDEN_CHARACTERS = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
+SUBTITLE_FILE_NAME_MAXIMUM_CHARACTERS = 120
 
 
 def register_media_routes(
@@ -43,6 +54,53 @@ def register_media_routes(
     settings: Settings,
 ) -> None:
     storyboard_locks: dict[str, asyncio.Lock] = {}
+
+    @app.get("/api/media/assets/{asset_id}/subtitle-file")
+    def download_subtitle_file(
+        asset_id: str,
+        file_format: SubtitleFileFormat = Query(alias="format"),
+    ) -> Response:
+        media_library = library()
+        try:
+            asset = media_library.get(asset_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="媒体资源不存在") from error
+        if asset is None:
+            raise HTTPException(status_code=404, detail="媒体资源不存在")
+        if asset.status != MediaAssetStatus.READY:
+            raise HTTPException(status_code=409, detail="媒体资源尚未就绪")
+        if asset.media_type != MediaType.VIDEO:
+            raise HTTPException(status_code=422, detail="只有视频支持字幕导出")
+        transcript = media_library.load_transcript(asset_id)
+        if transcript is None:
+            raise HTTPException(status_code=409, detail="当前视频没有可导出的字幕")
+        configuration = media_library.load_video_configuration(asset_id)
+        try:
+            document = render_subtitle_file(
+                transcript.segments,
+                file_format,
+                offset_milliseconds=configuration.subtitle_display.offset_milliseconds,
+                duration_seconds=asset.duration_seconds,
+            )
+        except SubtitleExportError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        title = SUBTITLE_FILE_NAME_FORBIDDEN_CHARACTERS.sub("_", asset.title)
+        title = title.strip(" .")[:SUBTITLE_FILE_NAME_MAXIMUM_CHARACTERS]
+        file_name = f"{title or 'subtitles'}.{file_format.value}"
+        content_disposition = (
+            f'attachment; filename="subtitles.{file_format.value}"; '
+            f"filename*=UTF-8''{quote(file_name, safe='')}"
+        )
+        return Response(
+            content=document.encode("utf-8"),
+            media_type=SUBTITLE_FILE_MEDIA_TYPES[file_format],
+            headers={
+                "Content-Disposition": content_disposition,
+                "Content-Type": f"{SUBTITLE_FILE_MEDIA_TYPES[file_format]}; charset=utf-8",
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.patch(
         "/api/media/assets/{asset_id}/subtitle-settings",
