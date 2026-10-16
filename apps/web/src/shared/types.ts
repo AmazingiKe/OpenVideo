@@ -425,6 +425,13 @@ export type SubtitleFontSize = "small" | "medium" | "large";
 export type SubtitlePosition = "bottom" | "raised" | "center";
 export type SubtitleBackground = "none" | "shadow" | "solid";
 export type SubtitleFileFormat = "srt" | "vtt" | "txt";
+export type PlaybackProgress = {
+  position_seconds: number;
+  playback_rate: number;
+  last_watched_at: string | null;
+  observed_at?: string | null;
+};
+export type PlaybackState = PlaybackProgress & { library_id: string };
 export type SubtitleDisplaySettings = {
   font_size: SubtitleFontSize;
   position: SubtitlePosition;
@@ -563,6 +570,7 @@ export type MediaAsset = {
   thumbnail_url: string | null;
   thumbnail_storyboard: ThumbnailStoryboard | null;
   subtitle_display?: SubtitleDisplaySettings;
+  playback?: PlaybackProgress;
   created_at: string;
   updated_at: string;
 };

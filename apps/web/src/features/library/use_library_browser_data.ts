@@ -119,6 +119,9 @@ export function use_library_browser_data(
         queryKey: RESOURCE_QUERY_KEYS.library_folders,
       }),
       query_client.invalidateQueries({ queryKey: RESOURCE_QUERY_KEYS.assets }),
+      query_client.invalidateQueries({
+        queryKey: RESOURCE_QUERY_KEYS.recent_assets,
+      }),
     ]);
   }
 

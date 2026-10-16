@@ -1,4 +1,5 @@
 import type {
+  PlaybackState,
   SubtitleDisplaySettings,
   SubtitleExportResult,
   SubtitleFileFormat,
@@ -7,6 +8,32 @@ import type {
 import { api_base_url, request_json, request_response } from "./client";
 
 const DOWNLOAD_URL_RELEASE_DELAY_MILLISECONDS = 1_000;
+
+export function get_asset_playback(
+  asset_id: string,
+  signal?: AbortSignal,
+): Promise<PlaybackState> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/playback`,
+    { signal },
+  );
+}
+
+export function update_asset_playback(
+  asset_id: string,
+  playback: Omit<PlaybackState, "last_watched_at">,
+  keepalive = false,
+): Promise<PlaybackState> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/playback`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(playback),
+      keepalive,
+    },
+  );
+}
 
 export async function download_subtitle_file(
   asset_id: string,

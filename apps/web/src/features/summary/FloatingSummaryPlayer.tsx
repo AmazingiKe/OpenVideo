@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useContext,
   useLayoutEffect,
   useRef,
   useState,
@@ -22,10 +23,13 @@ import {
   OVERLAY_EXIT_TRANSITION,
 } from "@/motion_tokens";
 import { Button } from "@/components/ui/button";
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 import { Player, type PlayerHandle } from "@/features/player/Player";
+import { PlaybackProgressNotice } from "@/features/player/PlaybackProgressNotice";
 import { record_scrub_preview_metrics } from "@/features/player/scrub_preview_diagnostics";
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_settings";
 import { use_storyboard_preview } from "@/features/player/use_storyboard_preview";
+import { use_playback_progress } from "@/features/player/use_playback_progress";
 import { cn } from "@/lib/utils";
 import { media_url } from "@/shared/api";
 import type {
@@ -127,6 +131,12 @@ export function FloatingSummaryPlayer({
   chapters = [],
 }: FloatingSummaryPlayerProps) {
   const reduce_motion = useReducedMotion();
+  const is_workspace_active = useContext(WorkspaceActiveContext);
+  const playback_active = is_workspace_active && open;
+  const playback = use_playback_progress(
+    asset?.playback_url ? asset.asset_id : null,
+    playback_active,
+  );
   const player_ref = useRef<PlayerHandle>(null);
   const container_ref = useRef<HTMLDivElement>(null);
   const pointer_operation_ref = useRef<PointerOperation | null>(null);
@@ -353,22 +363,29 @@ export function FloatingSummaryPlayer({
             <Minimize2 aria-hidden="true" />
           </Button>
         </header>
+        <PlaybackProgressNotice message={playback.save_error} />
         <div className="min-h-0 flex-1 bg-player-canvas p-2">
-          <Player
-            key={asset.asset_id}
-            ref={player_ref}
-            src={media_url(asset.playback_url)!}
-            subtitles={transcript?.segments ?? []}
-            chapters={chapters}
-            subtitle_display={
-              asset.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS
-            }
-            captions_enabled={captions_enabled}
-            storyboard={storyboard}
-            on_captions_change={set_captions_enabled}
-            on_scrub_preview_metrics={record_scrub_preview_metrics}
-            on_scrub_preview_unavailable={request_storyboard}
-          />
+          <WorkspaceActiveContext.Provider value={playback_active}>
+            <Player
+              key={asset.asset_id}
+              ref={player_ref}
+              src={media_url(asset.playback_url)!}
+              subtitles={transcript?.segments ?? []}
+              chapters={chapters}
+              subtitle_display={
+                asset.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS
+              }
+              captions_enabled={captions_enabled}
+              storyboard={storyboard}
+              initial_playback={playback.initial_playback}
+              playback_restore_key={playback.playback_restore_key}
+              duration_seconds={asset.duration_seconds}
+              on_progress_change={playback.on_progress_change}
+              on_captions_change={set_captions_enabled}
+              on_scrub_preview_metrics={record_scrub_preview_metrics}
+              on_scrub_preview_unavailable={request_storyboard}
+            />
+          </WorkspaceActiveContext.Provider>
         </div>
         {!compact
           ? RESIZE_HANDLES.map((handle) => (

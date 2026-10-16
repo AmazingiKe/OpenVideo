@@ -10,18 +10,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PlayerHandle } from "@/features/player/Player";
 import type { MediaAsset } from "@/shared/types";
-import { download_subtitle_file } from "@/shared/api";
+import {
+  download_subtitle_file,
+  get_asset_playback,
+  update_asset_playback,
+} from "@/shared/api";
 import { VideoWorkspace } from "./VideoWorkspace";
 
 const player_render = vi.hoisted(() => vi.fn());
+const query_client = vi.hoisted(() => ({
+  setQueryData: vi.fn(),
+  getQueryData: vi.fn(),
+  invalidateQueries: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ setQueryData: vi.fn() }),
+  useQueryClient: () => query_client,
 }));
 
 vi.mock("@/shared/api", () => ({
   create_subtitle_export: vi.fn(),
   download_subtitle_file: vi.fn(),
+  get_asset_playback: vi.fn(),
+  update_asset_playback: vi.fn(),
   ensure_thumbnail_storyboard: vi.fn(() => new Promise(() => undefined)),
   media_url: (path: string) => path,
   update_subtitle_settings: vi.fn(),
@@ -38,6 +49,9 @@ describe("VideoWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(download_subtitle_file).mockResolvedValue();
+    vi.mocked(get_asset_playback).mockImplementation(
+      () => new Promise(() => undefined),
+    );
   });
 
   it("keeps the marker player inside its workspace and forwards timeline state", () => {
@@ -78,10 +92,45 @@ describe("VideoWorkspace", () => {
       on_playback_rate_change: vi.fn(),
     };
     const workspace = render(<VideoWorkspace {...props} />);
+    const initial_render_count = player_render.mock.calls.length;
 
     workspace.rerender(<VideoWorkspace {...props} />);
 
-    expect(player_render).toHaveBeenCalledOnce();
+    expect(player_render).toHaveBeenCalledTimes(initial_render_count);
+  });
+
+  it("connects saved playback to the marker player and flushes a played pause", async () => {
+    const progress = {
+      library_id: "library-watch",
+      position_seconds: 24,
+      playback_rate: 1.5,
+      last_watched_at: "2026-10-17T00:00:00Z",
+    };
+    vi.mocked(get_asset_playback).mockResolvedValue(progress);
+    vi.mocked(update_asset_playback).mockResolvedValue(progress);
+    render(<VideoWorkspace {...create_workspace_props()} />);
+    await waitFor(() =>
+      expect(player_render.mock.lastCall?.[0].initial_playback).toEqual(
+        progress,
+      ),
+    );
+    expect(player_render.mock.lastCall?.[0].duration_seconds).toBe(60);
+    await act(async () =>
+      player_render.mock.lastCall?.[0].on_progress_change(
+        { ...progress, position_seconds: 30 },
+        true,
+      ),
+    );
+    expect(update_asset_playback).toHaveBeenCalledWith(
+      create_asset().asset_id,
+      {
+        library_id: "library-watch",
+        position_seconds: 30,
+        playback_rate: 1.5,
+        observed_at: expect.any(String),
+      },
+      false,
+    );
   });
 
   it("downloads the selected subtitle file and confirms the browser download started", async () => {

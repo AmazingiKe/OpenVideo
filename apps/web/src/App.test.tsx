@@ -30,6 +30,7 @@ import {
   get_transcript,
   get_visual_index_status,
   list_assets,
+  list_recent_assets,
   list_folders,
   list_ai_models,
   list_agent_tasks,
@@ -65,6 +66,13 @@ vi.mock("./shared/api", () => ({
   delete_asset: vi.fn(),
   delete_folder: vi.fn(),
   get_health: vi.fn(),
+  get_asset_playback: vi.fn(async () => ({
+    library_id: "library-0123456789abcdef0123456789abcdef",
+    position_seconds: 0,
+    playback_rate: 1,
+    last_watched_at: null,
+  })),
+  update_asset_playback: vi.fn(),
   get_formula_model: vi.fn(),
   get_formula_model_download: vi.fn(),
   get_download_accounts: vi.fn(),
@@ -82,6 +90,7 @@ vi.mock("./shared/api", () => ({
   get_transcript: vi.fn(),
   get_visual_index_status: vi.fn(),
   list_assets: vi.fn(),
+  list_recent_assets: vi.fn(),
   list_folders: vi.fn(),
   list_ai_models: vi.fn(),
   list_agent_tasks: vi.fn(),
@@ -210,6 +219,7 @@ describe("App", () => {
     vi.mocked(list_transcription_models).mockResolvedValue([]);
     vi.mocked(probe_backend).mockResolvedValue({ status: "ready" });
     vi.mocked(list_assets).mockResolvedValue([]);
+    vi.mocked(list_recent_assets).mockResolvedValue([]);
     vi.mocked(list_folders).mockResolvedValue([]);
     vi.mocked(update_markers_page_settings).mockImplementation(
       async (settings) => settings,

@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { STORY_ASSETS } from "@/features/library/library_story_fixtures";
 import type { PlayerHandle } from "@/features/player/Player";
+import { mock_playback_requests } from "@/features/player/playback_story_fixtures";
 import { VideoWorkspace } from "./VideoWorkspace";
 import { fn } from "storybook/test";
 
@@ -10,6 +11,7 @@ const meta = {
   title: "Workbench/VideoWorkspace",
   component: VideoWorkspace,
   parameters: { layout: "fullscreen" },
+  beforeEach: mock_playback_requests,
   args: {
     asset: STORY_ASSETS[0],
     markers: [],

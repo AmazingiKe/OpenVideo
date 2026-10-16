@@ -76,6 +76,12 @@ export function use_library_state(): LibraryContextValue {
   return value;
 }
 
+/** 观看会话绑定已打开的资料库；独立播放器预览没有资料库时返回空值。 */
+export function use_library_identity(): string | null {
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  return useContext(LibraryContext)?.library?.library_id ?? null;
+}
+
 export function use_library(): LibraryContextValue & {
   library: LibraryDescription;
 } {

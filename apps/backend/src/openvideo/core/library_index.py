@@ -21,6 +21,7 @@ from openvideo.core.library_files import (
     load_asset_bundle,
 )
 from openvideo.core.folder_models import Folder, FolderManifest
+from openvideo.core.media_models import PlaybackProgress
 from openvideo.core.summary_files import summary_document_depths
 
 
@@ -46,6 +47,15 @@ LEGACY_AGENT_TABLES = {
     "marker_agent_sessions",
     "marker_agent_proposals",
 }
+_PLAYBACK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS playback_progress (
+    asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+    position_seconds REAL NOT NULL, playback_rate REAL NOT NULL,
+    last_watched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS playback_progress_recent_index
+ON playback_progress(last_watched_at DESC, asset_id);
+"""
 
 
 def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connection:
@@ -53,6 +63,7 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     if not _database_matches_schema(database_path):
         _rebuild_database(database_path, library_path / "temp", assets_path)
     connection = open_index_connection(database_path)
+    connection.executescript(_PLAYBACK_SCHEMA)
     ensure_agent_evidence_schema(connection)
     _ensure_visual_index_schema(connection)
     _ensure_agent_permission_grant_schema(connection)
@@ -138,6 +149,10 @@ def synchronize_index(connection: sqlite3.Connection, assets_path: Path) -> None
                             message=str(error),
                         ),
                     )
+                    continue
+            synchronize_playback_progress(
+                connection, asset_id, bundle.video_configuration.playback
+            )
         for asset_id in indexed_ids - scanned_ids:
             remove_asset_projection(connection, asset_id)
 
@@ -159,6 +174,9 @@ def synchronize_asset(
     try:
         with connection:
             replace_asset_projection(connection, bundle)
+            synchronize_playback_progress(
+                connection, asset_id, bundle.video_configuration.playback
+            )
             connection.execute(
                 "DELETE FROM index_issues WHERE asset_id = ?", (asset_id,)
             )
@@ -343,6 +361,30 @@ def replace_asset_projection(
         bundle.transcript,
         bundle.segments,
         bundle.digest,
+    )
+
+
+def synchronize_playback_progress(
+    connection: sqlite3.Connection, asset_id: str, progress: PlaybackProgress
+) -> None:
+    """观看排序投影独立更新，避免播放心跳触发字幕与证据索引重建。"""
+    if progress.last_watched_at is None:
+        connection.execute(
+            "DELETE FROM playback_progress WHERE asset_id = ?", (asset_id,)
+        )
+        return
+    connection.execute(
+        "INSERT INTO playback_progress "
+        "(asset_id, position_seconds, playback_rate, last_watched_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(asset_id) DO UPDATE SET "
+        "position_seconds=excluded.position_seconds, "
+        "playback_rate=excluded.playback_rate, last_watched_at=excluded.last_watched_at",
+        (
+            asset_id,
+            progress.position_seconds,
+            progress.playback_rate,
+            progress.last_watched_at.astimezone(UTC).isoformat(),
+        ),
     )
 
 
@@ -612,7 +654,8 @@ def _load_folders(manifest_path: Path) -> list[Folder]:
     return manifest.folders
 
 
-_SCHEMA = """
+_SCHEMA = (
+    """
 CREATE TABLE folders (
     folder_id TEXT PRIMARY KEY, name TEXT NOT NULL,
     parent_id TEXT REFERENCES folders(folder_id) ON DELETE CASCADE,
@@ -789,3 +832,5 @@ CREATE INDEX agent_runs_session_created_index ON agent_runs(session_id, created_
 CREATE INDEX agent_events_session_sequence_index ON agent_events(session_id, sequence);
 CREATE INDEX agent_artifacts_run_created_index ON agent_artifacts(run_id, created_at);
 """
+    + _PLAYBACK_SCHEMA
+)

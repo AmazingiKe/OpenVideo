@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, waitFor } from "storybook/test";
 
 import { STORY_ASSETS } from "@/features/library/library_story_fixtures";
+import { mock_playback_requests } from "@/features/player/playback_story_fixtures";
 import type { SummaryPlayerGeometry } from "@/shared/types";
 import { FloatingSummaryPlayer } from "./FloatingSummaryPlayer";
 
@@ -10,6 +11,7 @@ const meta = {
   title: "Summary/FloatingSummaryPlayer",
   component: FloatingSummaryPlayer,
   parameters: { layout: "fullscreen" },
+  beforeEach: mock_playback_requests,
 } satisfies Meta<typeof FloatingSummaryPlayer>;
 
 export default meta;

@@ -67,6 +67,14 @@ export function list_folders(signal?: AbortSignal): Promise<LibraryFolder[]> {
   return request_json("/api/library/folders", { signal });
 }
 
+export function list_recent_assets(
+  limit: number,
+  signal?: AbortSignal,
+): Promise<MediaAsset[]> {
+  const parameters = new URLSearchParams({ limit: String(limit) });
+  return request_json(`/api/media/recent?${parameters.toString()}`, { signal });
+}
+
 export function import_local_media(
   file: File,
   signal?: AbortSignal,

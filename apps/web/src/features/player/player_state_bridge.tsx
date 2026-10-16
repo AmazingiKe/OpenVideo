@@ -11,6 +11,7 @@ import { WorkspaceActiveContext } from "@/app/workspace_activity";
 
 export type PlayerController = {
   current_time: () => number;
+  duration: () => number;
   seek: (seconds: number) => void;
   play: () => void;
   pause: () => void;
@@ -52,10 +53,11 @@ export function PlayerStateBridge({
   }, [is_workspace_active, player, store.paused]);
 
   useEffect(() => {
-    if (!player) return;
+    if (!player || !store.canPlay) return;
     // remote 的引用会变化，播放器实例才是控制句柄生命周期的稳定边界。
     on_player_ready({
       current_time: () => player.currentTime,
+      duration: () => player.duration,
       seek: (seconds: number) => remote.seek(seconds),
       play: () => void remote.play(),
       pause: () => void remote.pause(),
@@ -79,7 +81,7 @@ export function PlayerStateBridge({
     });
     return () => on_player_ready(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player, provider]);
+  }, [player, provider, store.canPlay]);
 
   useEffect(() => {
     if (!is_workspace_active || !on_time_change) return;

@@ -13,6 +13,7 @@ import {
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -21,6 +22,7 @@ import {
 import type {
   AgentEvidenceRange,
   MediaSegment,
+  PlaybackProgress,
   SubtitleDisplaySettings,
   TranscriptSegment,
 } from "@/shared/types";
@@ -99,6 +101,10 @@ type PlayerProps = {
   evidence_range?: AgentEvidenceRange | null;
   storyboard?: ScrubPreviewStoryboard | null;
   playback_rate?: number;
+  initial_playback?: PlaybackProgress | null;
+  playback_restore_key?: number;
+  duration_seconds?: number | null;
+  on_progress_change?: (progress: PlaybackProgress, flush: boolean) => void;
   volume?: number;
   on_time_change?: (seconds: number) => void;
   on_pause_change?: (paused: boolean) => void;
@@ -120,6 +126,10 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     evidence_range = null,
     storyboard = null,
     playback_rate,
+    initial_playback = null,
+    playback_restore_key = 0,
+    duration_seconds,
+    on_progress_change,
     volume,
     on_time_change,
     on_pause_change,
@@ -158,6 +168,18 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   const active_source_ref = useRef(src);
   const player_shell_ref = useRef<HTMLDivElement>(null);
   const current_time_value_ref = useRef(0);
+  const confirmed_time_ref = useRef(0);
+  const current_rate_ref = useRef(playback_rate ?? 1);
+  const pending_restored_rate_ref = useRef<number | null>(null);
+  const has_played_ref = useRef(false);
+  const playback_ended_ref = useRef(false);
+  const user_interacted_ref = useRef(false);
+  const restoration_applied_ref = useRef(false);
+  const queued_seek_ref = useRef<number | null>(null);
+  const controller_ref = useRef<PlayerController | null>(null);
+  const progress_callback_ref = useRef(on_progress_change);
+  const [internal_playback_rate, set_internal_playback_rate] =
+    useState(playback_rate);
   const scrub_origin_time_ref = useRef(0);
   const pending_seek_ref = useRef(false);
   const on_time_change_ref = useRef(on_time_change);
@@ -173,6 +195,37 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
   useEffect(() => {
     on_time_change_ref.current = on_time_change;
   }, [on_time_change]);
+
+  useEffect(() => {
+    progress_callback_ref.current = on_progress_change;
+  }, [on_progress_change]);
+
+  useEffect(() => {
+    if (playback_rate !== undefined) set_internal_playback_rate(playback_rate);
+  }, [playback_rate]);
+
+  useLayoutEffect(() => {
+    restoration_applied_ref.current = false;
+    has_played_ref.current = false;
+    playback_ended_ref.current = false;
+    user_interacted_ref.current = false;
+    pending_restored_rate_ref.current = null;
+  }, [src, is_workspace_active]);
+
+  const publish_progress = useCallback(
+    (flush: boolean) => {
+      if (!is_workspace_active || !has_played_ref.current) return;
+      progress_callback_ref.current?.(
+        {
+          position_seconds: confirmed_time_ref.current,
+          playback_rate: current_rate_ref.current,
+          last_watched_at: null,
+        },
+        flush,
+      );
+    },
+    [is_workspace_active],
+  );
 
   // 播放头跟随拖动目标，字幕仍由实际呈现的视频帧驱动。
   const publish_current_time = useCallback((seconds: number) => {
@@ -247,6 +300,8 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
 
   const request_scrub_preview = useCallback(
     (seconds: number) => {
+      user_interacted_ref.current = true;
+      playback_ended_ref.current = false;
       const bounds = player_shell_ref.current?.getBoundingClientRect();
       if (bounds) {
         request_scrub_frame(seconds, bounds.width, bounds.height);
@@ -319,7 +374,8 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     (seconds: number) => {
       if (!has_active_preview()) begin_scrub(seconds);
       const bounded_time = prepare_seek_commit(seconds);
-      seek_fn_ref.current?.(bounded_time);
+      if (seek_fn_ref.current) seek_fn_ref.current(bounded_time);
+      else queued_seek_ref.current = bounded_time;
     },
     [begin_scrub, has_active_preview, prepare_seek_commit],
   );
@@ -372,8 +428,11 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     ref,
     () => ({
       seek_to: (seconds: number) => {
+        user_interacted_ref.current = true;
+        playback_ended_ref.current = false;
         const bounded_time = prepare_seek_commit(seconds);
-        seek_fn_ref.current?.(bounded_time);
+        if (seek_fn_ref.current) seek_fn_ref.current(bounded_time);
+        else queued_seek_ref.current = bounded_time;
       },
       begin_scrub,
       update_scrub,
@@ -396,41 +455,87 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     ],
   );
 
-  const on_player_ready = useCallback((instance: PlayerController | null) => {
-    if (instance) {
-      const current_time = instance.current_time();
-      current_time_value_ref.current = current_time;
-      set_presented_time_seconds(current_time);
-    }
-    seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
-    play_fn_ref.current = instance ? () => instance.play() : null;
-    pause_fn_ref.current = instance ? () => instance.pause() : null;
-    hold_controls_visible_fn_ref.current = instance
-      ? () => instance.hold_controls_visible()
-      : null;
-    release_controls_visibility_fn_ref.current = instance
-      ? () => instance.release_controls_visibility()
-      : null;
-    toggle_playback_fn_ref.current = instance
-      ? () => instance.toggle_playback()
-      : null;
-    set_volume_fn_ref.current = instance
-      ? (volume) => instance.set_volume(volume)
-      : null;
-    wait_for_presented_frame_fn_ref.current = instance
-      ? (callback) => instance.wait_for_presented_frame(callback)
-      : null;
-  }, []);
+  const restore_playback = useCallback(() => {
+    const instance = controller_ref.current;
+    if (
+      !instance ||
+      !initial_playback ||
+      !is_workspace_active ||
+      restoration_applied_ref.current
+    )
+      return;
+    restoration_applied_ref.current = true;
+    if (user_interacted_ref.current || has_played_ref.current) return;
+    const completed =
+      duration_seconds != null &&
+      duration_seconds > 0 &&
+      initial_playback.position_seconds >= duration_seconds;
+    const position = completed ? 0 : initial_playback.position_seconds;
+    current_rate_ref.current = initial_playback.playback_rate;
+    pending_restored_rate_ref.current = initial_playback.playback_rate;
+    set_internal_playback_rate(initial_playback.playback_rate);
+    confirmed_time_ref.current = position;
+    prepare_seek_commit(position);
+    instance.seek(position);
+  }, [
+    duration_seconds,
+    initial_playback,
+    is_workspace_active,
+    prepare_seek_commit,
+  ]);
+
+  useEffect(() => restore_playback(), [restore_playback, playback_restore_key]);
+
+  const on_player_ready = useCallback(
+    (instance: PlayerController | null) => {
+      controller_ref.current = instance;
+      if (instance) {
+        const current_time = instance.current_time();
+        current_time_value_ref.current = current_time;
+        confirmed_time_ref.current = current_time;
+        set_presented_time_seconds(current_time);
+      }
+      seek_fn_ref.current = instance ? (s) => instance.seek(s) : null;
+      play_fn_ref.current = instance ? () => instance.play() : null;
+      pause_fn_ref.current = instance ? () => instance.pause() : null;
+      hold_controls_visible_fn_ref.current = instance
+        ? () => instance.hold_controls_visible()
+        : null;
+      release_controls_visibility_fn_ref.current = instance
+        ? () => instance.release_controls_visibility()
+        : null;
+      toggle_playback_fn_ref.current = instance
+        ? () => instance.toggle_playback()
+        : null;
+      set_volume_fn_ref.current = instance
+        ? (volume) => instance.set_volume(volume)
+        : null;
+      wait_for_presented_frame_fn_ref.current = instance
+        ? (callback) => instance.wait_for_presented_frame(callback)
+        : null;
+      if (instance && queued_seek_ref.current !== null) {
+        const target = queued_seek_ref.current;
+        queued_seek_ref.current = null;
+        prepare_seek_commit(target);
+        instance.seek(target);
+      }
+      restore_playback();
+    },
+    [prepare_seek_commit, restore_playback],
+  );
 
   const on_player_time_change = useCallback(
     (seconds: number) => {
+      if (playback_ended_ref.current) return;
       if (!pending_seek_ref.current && has_active_preview()) return;
       if (pending_seek_ref.current) return;
       current_time_value_ref.current = seconds;
+      confirmed_time_ref.current = seconds;
       set_presented_time_seconds(seconds);
       on_time_change_ref.current?.(seconds);
+      publish_progress(false);
     },
-    [has_active_preview],
+    [has_active_preview, publish_progress],
   );
 
   const confirm_presented_seek = useCallback(() => {
@@ -440,8 +545,10 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       presented_frame_cancel_ref.current = null;
       pending_seek_ref.current = false;
       current_time_value_ref.current = media_time;
+      confirmed_time_ref.current = media_time;
       set_presented_time_seconds(media_time);
       on_time_change_ref.current?.(media_time);
+      publish_progress(true);
       confirm_seek_preview();
       clear_scrub_preview();
       if (resume_after_seek_ref.current) play_fn_ref.current?.();
@@ -451,7 +558,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       wait_for_presented_frame_fn_ref.current?.(finish) ?? null;
     if (!presented_frame_cancel_ref.current)
       finish(current_time_value_ref.current);
-  }, [clear_scrub_preview, confirm_seek_preview]);
+  }, [clear_scrub_preview, confirm_seek_preview, publish_progress]);
 
   useEffect(() => () => presented_frame_cancel_ref.current?.(), []);
 
@@ -460,6 +567,8 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     active_source_ref.current = src;
     resume_after_seek_ref.current = false;
     pending_seek_ref.current = false;
+    queued_seek_ref.current = null;
+    confirmed_time_ref.current = 0;
     cancel_seek_preview();
     set_presented_time_seconds(null);
     clear_scrub_preview();
@@ -469,8 +578,25 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
     (paused: boolean) => {
       current_paused_ref.current = paused;
       on_pause_change?.(paused);
+      if (paused) publish_progress(true);
     },
-    [on_pause_change],
+    [on_pause_change, publish_progress],
+  );
+
+  const on_player_rate_change = useCallback(
+    (rate: number) => {
+      const restored_rate = pending_restored_rate_ref.current;
+      if (restored_rate !== null && rate !== restored_rate) return;
+      if (restored_rate === null && current_rate_ref.current !== rate) {
+        user_interacted_ref.current = true;
+      }
+      pending_restored_rate_ref.current = null;
+      current_rate_ref.current = rate;
+      set_internal_playback_rate(rate);
+      on_playback_rate_change?.(rate);
+      publish_progress(false);
+    },
+    [on_playback_rate_change, publish_progress],
   );
 
   const plyr_markers = markers.map((marker) => ({
@@ -493,13 +619,34 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
       <MediaPlayer
         className="openvideo_player"
         src={{ src, type: "video/mp4" }}
-        playbackRate={playback_rate}
+        playbackRate={internal_playback_rate}
         volume={volume}
         ariaLabel="OpenVideo 播放器"
         data-scrubbing={is_scrubbing || undefined}
         onMediaSeekingRequest={begin_scrub}
-        onMediaSeekRequest={prepare_seek_commit}
+        onMediaSeekRequest={(seconds) => {
+          user_interacted_ref.current = true;
+          playback_ended_ref.current = false;
+          prepare_seek_commit(seconds);
+        }}
         onSeeked={confirm_presented_seek}
+        onPlaying={() => {
+          if (!is_workspace_active) return;
+          has_played_ref.current = true;
+          playback_ended_ref.current = false;
+          user_interacted_ref.current = true;
+          publish_progress(false);
+        }}
+        onEnded={() => {
+          const ended_duration =
+            duration_seconds ?? controller_ref.current?.duration();
+          playback_ended_ref.current = true;
+          if (ended_duration != null && ended_duration > 0) {
+            confirmed_time_ref.current = ended_duration;
+            publish_current_time(ended_duration);
+          }
+          publish_progress(true);
+        }}
       >
         <MediaProvider />
         <canvas
@@ -528,7 +675,7 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(
           on_player_ready={on_player_ready}
           on_time_change={on_player_time_change}
           on_pause_change={on_player_pause_change}
-          on_playback_rate_change={on_playback_rate_change}
+          on_playback_rate_change={on_player_rate_change}
           on_volume_change={on_volume_change}
         />
       </MediaPlayer>

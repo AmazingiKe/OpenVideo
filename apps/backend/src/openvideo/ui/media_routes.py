@@ -13,7 +13,10 @@ from openvideo.core.identifiers import uuid7
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import (
     MediaAssetStatus,
+    MediaAssetResponse,
     MediaType,
+    PlaybackState,
+    PlaybackUpdateRequest,
     SubtitleDisplaySettings,
     SubtitleExportResult,
     SubtitleFileFormat,
@@ -46,6 +49,8 @@ SUBTITLE_FILE_MEDIA_TYPES = {
 }
 SUBTITLE_FILE_NAME_FORBIDDEN_CHARACTERS = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
 SUBTITLE_FILE_NAME_MAXIMUM_CHARACTERS = 120
+DEFAULT_RECENT_MEDIA_LIMIT = 6
+MAXIMUM_RECENT_MEDIA_LIMIT = 50
 
 
 def register_media_routes(
@@ -54,6 +59,64 @@ def register_media_routes(
     settings: Settings,
 ) -> None:
     storyboard_locks: dict[str, asyncio.Lock] = {}
+
+    @app.get("/api/media/recent", response_model=list[MediaAssetResponse])
+    def recent_media(
+        response: Response,
+        limit: int = Query(
+            default=DEFAULT_RECENT_MEDIA_LIMIT,
+            ge=1,
+            le=MAXIMUM_RECENT_MEDIA_LIMIT,
+        ),
+    ) -> list[MediaAssetResponse]:
+        media_library = library()
+        response.headers["Cache-Control"] = "no-store"
+        return [
+            media_library.response_for(asset)
+            for asset in media_library.recent_media(limit)
+        ]
+
+    @app.get("/api/media/assets/{asset_id}/playback", response_model=PlaybackState)
+    def get_playback(asset_id: str, response: Response) -> PlaybackState:
+        media_library = library()
+        asset = ready_asset(media_library, asset_id)
+        if asset.media_type != MediaType.VIDEO:
+            raise HTTPException(status_code=422, detail="只有视频支持观看进度")
+        if media_library.resolve_asset_file(asset, asset.playback_path) is None:
+            raise HTTPException(status_code=404, detail="视频文件不存在")
+        progress = media_library.load_video_configuration(asset_id).playback
+        response.headers["Cache-Control"] = "no-store"
+        return PlaybackState(
+            **progress.model_dump(), library_id=media_library.manifest.library_id
+        )
+
+    @app.patch("/api/media/assets/{asset_id}/playback", response_model=PlaybackState)
+    def update_playback(
+        asset_id: str, request: PlaybackUpdateRequest, response: Response
+    ) -> PlaybackState:
+        media_library = library()
+        if request.library_id != media_library.manifest.library_id:
+            raise HTTPException(
+                status_code=409, detail="资料库已切换，请重新打开视频后保存观看进度"
+            )
+        asset = ready_asset(media_library, asset_id)
+        if asset.media_type != MediaType.VIDEO:
+            raise HTTPException(status_code=422, detail="只有视频支持观看进度")
+        if media_library.resolve_asset_file(asset, asset.playback_path) is None:
+            raise HTTPException(status_code=404, detail="视频文件不存在")
+        try:
+            progress = media_library.save_playback_progress(
+                asset_id,
+                request.position_seconds,
+                request.playback_rate,
+                request.observed_at,
+            )
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        response.headers["Cache-Control"] = "no-store"
+        return PlaybackState(
+            **progress.model_dump(), library_id=media_library.manifest.library_id
+        )
 
     @app.get("/api/media/assets/{asset_id}/subtitle-file")
     def download_subtitle_file(
@@ -114,12 +177,8 @@ def register_media_routes(
         asset = ready_asset(media_library, asset_id)
         if asset.media_type != MediaType.VIDEO:
             raise HTTPException(status_code=422, detail="只有视频支持字幕设置")
-        configuration = media_library.load_video_configuration(asset_id)
-        updated_configuration = configuration.model_copy(
-            update={"subtitle_display": request}
-        )
         try:
-            media_library.save_video_configuration(updated_configuration)
+            media_library.update_subtitle_display(asset_id, request)
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return request

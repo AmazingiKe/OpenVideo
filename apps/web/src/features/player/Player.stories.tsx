@@ -59,6 +59,30 @@ export const Default: Story = {
   },
 };
 
+export const ResumePlayback: Story = {
+  args: {
+    duration_seconds: 100,
+    initial_playback: {
+      position_seconds: 8,
+      playback_rate: 1.5,
+      last_watched_at: "2026-10-17T00:00:00Z",
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const video = canvasElement.querySelector("video");
+    if (!video) throw new Error("缺少视频元素");
+    await waitFor(
+      () => {
+        expect(video.readyState).toBeGreaterThanOrEqual(2);
+        expect(video.currentTime).toBeCloseTo(8, 1);
+        expect(video.playbackRate).toBe(1.5);
+        expect(video.paused).toBe(true);
+      },
+      { timeout: 15_000 },
+    );
+  },
+};
+
 export const DeferredSeekRefresh: Story = {
   args: {
     subtitles: [

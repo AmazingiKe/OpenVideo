@@ -2,14 +2,17 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from math import isfinite
 from typing import Annotated, Literal
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
     HttpUrl,
     StringConstraints,
+    field_validator,
     model_validator,
 )
 
@@ -20,6 +23,8 @@ MarkerImportance = Literal[0, 1, 2, 3, 4, 5]
 MarkerContent = Annotated[str, StringConstraints(strip_whitespace=True)]
 MINIMUM_MARKER_IMPORTANCE: MarkerImportance = 1
 MAXIMUM_MARKER_IMPORTANCE = 5
+MINIMUM_PLAYBACK_RATE = 0.25
+MAXIMUM_PLAYBACK_RATE = 4
 
 
 def effective_marker_importance(
@@ -98,6 +103,49 @@ class SubtitleDisplaySettings(BaseModel):
     offset_milliseconds: int = Field(default=0, ge=-600_000, le=600_000)
 
 
+class PlaybackProgress(BaseModel):
+    """观看成果随素材保存，时间戳只在用户实际播放或调整进度时更新。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    position_seconds: float = Field(default=0, ge=0, allow_inf_nan=False)
+    playback_rate: float = Field(
+        default=1,
+        ge=MINIMUM_PLAYBACK_RATE,
+        le=MAXIMUM_PLAYBACK_RATE,
+        allow_inf_nan=False,
+    )
+    last_watched_at: datetime | None = None
+    observed_at: AwareDatetime | None = None
+
+
+class PlaybackState(PlaybackProgress):
+    """资料库身份让旧窗口的延迟保存无法污染切换后的资料库。"""
+
+    library_id: str
+
+
+class PlaybackUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    position_seconds: float = Field(ge=0, allow_inf_nan=False)
+    playback_rate: float = Field(
+        ge=MINIMUM_PLAYBACK_RATE,
+        le=MAXIMUM_PLAYBACK_RATE,
+        allow_inf_nan=False,
+    )
+    library_id: str
+    observed_at: AwareDatetime | None = None
+
+    @field_validator("position_seconds", "playback_rate", "observed_at", mode="before")
+    @classmethod
+    def serialize_nonfinite_input(cls, value: object) -> object:
+        """非法 JSON 数字先变为可序列化输入，保证有限值校验能返回 422。"""
+        if isinstance(value, float) and not isfinite(value):
+            return str(value)
+        return value
+
+
 class VideoConfiguration(BaseModel):
     """单素材交互设置需要随视频迁移，不能落入设备级应用配置。"""
 
@@ -108,6 +156,7 @@ class VideoConfiguration(BaseModel):
     subtitle_display: SubtitleDisplaySettings = Field(
         default_factory=SubtitleDisplaySettings
     )
+    playback: PlaybackProgress = Field(default_factory=PlaybackProgress)
 
 
 class MediaAsset(BaseModel):
@@ -174,6 +223,7 @@ class MediaAssetResponse(BaseModel):
     subtitle_display: SubtitleDisplaySettings = Field(
         default_factory=SubtitleDisplaySettings
     )
+    playback: PlaybackProgress = Field(default_factory=PlaybackProgress)
     created_at: datetime
     updated_at: datetime
 

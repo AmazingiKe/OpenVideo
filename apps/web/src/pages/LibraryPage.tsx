@@ -1,25 +1,36 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useContext, useState } from "react";
 import { Library } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { use_task_manager } from "@/app/task_manager";
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { LibraryBrowser } from "@/features/library/LibraryBrowser";
 import { LibraryToolsShelf } from "@/features/library/LibraryToolsShelf";
+import { RecentVideos } from "@/features/library/RecentVideos";
 import { TranscriptionDialog } from "@/features/workbench/TranscriptionDialog";
 import { use_transcription_resources } from "@/features/workbench/use_processing_resources";
 import { load_summary_project } from "@/features/summary/load_summary_project";
 import { error_message } from "@/shared/errors";
+import { list_recent_assets } from "@/shared/api";
 import type { MediaAsset, TranscriptionOptions } from "@/shared/types";
+
+const RECENT_VIDEO_LIMIT = 3;
 
 export function LibraryPage() {
   const navigate = useNavigate();
   const query_client = useQueryClient();
+  const is_workspace_active = useContext(WorkspaceActiveContext);
+  const recent_query = useQuery({
+    queryKey: RESOURCE_QUERY_KEYS.recent_assets,
+    queryFn: ({ signal }) => list_recent_assets(RECENT_VIDEO_LIMIT, signal),
+    enabled: is_workspace_active,
+  });
   const { assets, select_asset } = use_asset_catalog();
   const { start_transcription, is_transcription_running } = use_task_manager();
   const {
@@ -84,6 +95,16 @@ export function LibraryPage() {
         action={<Badge variant="secondary">{assets.length} 个视频</Badge>}
       />
       <LibraryToolsShelf />
+      <RecentVideos
+        assets={recent_query.data ?? []}
+        loading={recent_query.isPending && recent_query.isFetching}
+        error={recent_query.error ? error_message(recent_query.error) : null}
+        on_retry={() => void recent_query.refetch()}
+        on_open={(asset) => {
+          select_asset(asset.asset_id);
+          navigate(`/markers/${encodeURIComponent(asset.asset_id)}`);
+        }}
+      />
       {transcription_error ? (
         <Alert variant="destructive">
           <AlertTitle>无法转写</AlertTitle>

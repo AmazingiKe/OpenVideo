@@ -23,6 +23,7 @@ from openvideo.core.media_models import (
     MediaMarker,
     MediaSegment,
     MediaType,
+    VideoConfiguration,
     VideoMetadata,
 )
 from openvideo.core.summary_files import (
@@ -84,6 +85,7 @@ class MarkersFile(BaseModel):
 @dataclass(frozen=True)
 class AssetFileBundle:
     asset: MediaAsset
+    video_configuration: VideoConfiguration
     transcript: Transcript | None
     segments: list[MediaSegment]
     markers: list[MediaMarker]
@@ -96,6 +98,22 @@ class AssetFileBundle:
 
 def atomic_write_model(path: Path, model: BaseModel) -> None:
     atomic_write_text(path, model.model_dump_json(indent=2))
+
+
+def load_video_configuration(asset_directory: Path) -> VideoConfiguration:
+    """交互状态损坏时回到默认值，不能让可播放素材从资料库中消失。"""
+    asset_id = asset_directory.name
+    path = asset_directory / VIDEO_CONFIGURATION_FILE_NAME
+    if path.is_file() and not path.is_symlink():
+        try:
+            configuration = VideoConfiguration.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            if configuration.asset_id == asset_id:
+                return configuration
+        except (OSError, ValueError):
+            pass
+    return VideoConfiguration(asset_id=asset_id)
 
 
 def metadata_from_asset(
@@ -143,9 +161,7 @@ def metadata_from_asset(
         playback_path=asset.playback_path,
         thumbnail_path=asset.thumbnail_path,
         remote_thumbnail_url=asset.remote_thumbnail_url,
-        thumbnail_storyboard_manifest_path=(
-            asset.thumbnail_storyboard_manifest_path
-        ),
+        thumbnail_storyboard_manifest_path=(asset.thumbnail_storyboard_manifest_path),
         created_at=asset.created_at,
         updated_at=asset.updated_at,
     )
@@ -386,6 +402,7 @@ def load_asset_bundle(assets_root: Path, asset_directory: Path) -> AssetFileBund
     digest = _business_digest(asset_directory, tracked_paths)
     return AssetFileBundle(
         asset=asset,
+        video_configuration=load_video_configuration(asset_directory),
         transcript=transcript,
         segments=segments,
         markers=markers,
@@ -497,7 +514,9 @@ def _load_summary(
                 "unsafe_path",
                 "总结文档路径不符合固定契约",
             )
-        markdown_path = asset_directory / SUMMARY_DIRECTORY_NAME / Path(item.relative_path)
+        markdown_path = (
+            asset_directory / SUMMARY_DIRECTORY_NAME / Path(item.relative_path)
+        )
         tracked_paths.append(markdown_path)
         try:
             markdown = read_markdown(asset_directory, item.relative_path)

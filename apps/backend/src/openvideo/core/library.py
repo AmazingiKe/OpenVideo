@@ -29,6 +29,7 @@ from openvideo.core.library_files import (
     IndexIssue,
     MarkersFile,
     atomic_write_model,
+    load_video_configuration,
     metadata_from_asset,
 )
 from openvideo.core.library_index import (
@@ -37,6 +38,7 @@ from openvideo.core.library_index import (
     remove_asset_projection,
     synchronize_asset,
     synchronize_folders,
+    synchronize_playback_progress,
 )
 from openvideo.core.library_analysis_storage import LibraryAnalysisStorageMixin
 from openvideo.core.library_generated_storage import LibraryGeneratedStorageMixin
@@ -45,7 +47,10 @@ from openvideo.core.media_models import (
     MediaAssetResponse,
     MediaAssetStatus,
     MediaMarker,
+    MediaType,
+    PlaybackProgress,
     SourcePlatform,
+    SubtitleDisplaySettings,
     ThumbnailStoryboardPageResponse,
     ThumbnailStoryboardResponse,
     VideoConfiguration,
@@ -318,6 +323,38 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
         )
         return [FolderResponse.model_validate(dict(row)) for row in rows]
 
+    def recent_media(self, limit: int) -> list[MediaAsset]:
+        """只从观看索引取可播放素材，查询不会扫描未观看素材或资料库目录。"""
+        with self._lock:
+            # 固定观看索引作为外层，避免 SQLite 重排连接后扫描素材并全量排序。
+            cursor = self._db().execute(
+                "SELECT asset.* FROM playback_progress progress "
+                "INDEXED BY playback_progress_recent_index CROSS JOIN assets asset "
+                "WHERE asset.asset_id = progress.asset_id "
+                "AND asset.status = ? AND asset.media_type = ? "
+                "AND asset.playback_path IS NOT NULL "
+                "ORDER BY progress.last_watched_at DESC, progress.asset_id ASC",
+                (MediaAssetStatus.READY.value, MediaType.VIDEO.value),
+            )
+            assets: list[MediaAsset] = []
+            try:
+                for row in cursor:
+                    asset = MediaAsset.model_validate(dict(row))
+                    try:
+                        playable_file = self.resolve_asset_file(
+                            asset, asset.playback_path
+                        )
+                    except (OSError, ValueError):
+                        continue
+                    if playable_file is None:
+                        continue
+                    assets.append(asset)
+                    if len(assets) >= limit:
+                        break
+            finally:
+                cursor.close()
+            return assets
+
     def get_folder(self, folder_id: str) -> FolderResponse:
         self._require_folder(folder_id)
         return self._folder_response(folder_id)
@@ -571,6 +608,7 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
             "remote_thumbnail_url",
             "thumbnail_storyboard_manifest_path",
         }
+        configuration = self.load_video_configuration(asset.asset_id)
         return MediaAssetResponse(
             **asset.model_dump(exclude=excluded_fields),
             playback_url=(
@@ -584,33 +622,74 @@ class MediaLibrary(LibraryAnalysisStorageMixin, LibraryGeneratedStorageMixin):
                 else None
             ),
             thumbnail_storyboard=self._storyboard_for(asset),
-            subtitle_display=self.load_video_configuration(
-                asset.asset_id
-            ).subtitle_display,
+            subtitle_display=configuration.subtitle_display,
+            playback=configuration.playback,
         )
 
     def load_video_configuration(self, asset_id: str) -> VideoConfiguration:
-        self._validate_asset_id(asset_id)
-        configuration_path = (
-            self.asset_directory(asset_id) / VIDEO_CONFIGURATION_FILE_NAME
-        )
-        configuration = self._load_optional_model(
-            configuration_path, VideoConfiguration, asset_id
-        )
-        return configuration or VideoConfiguration(asset_id=asset_id)
+        """素材路径校验和资料库锁保护交互状态的完整读取。"""
+        with self._lock:
+            return load_video_configuration(self.asset_directory(asset_id))
 
     def save_video_configuration(
         self, configuration: VideoConfiguration
     ) -> VideoConfiguration:
-        self._validate_asset_id(configuration.asset_id)
-        if self.get(configuration.asset_id) is None:
-            raise ValueError("视频配置对应的素材不存在")
-        output_path = (
-            self.asset_directory(configuration.asset_id) / VIDEO_CONFIGURATION_FILE_NAME
-        )
         with self._lock:
+            if self.get(configuration.asset_id) is None:
+                raise ValueError("视频配置对应的素材不存在")
+            output_path = (
+                self.asset_directory(configuration.asset_id)
+                / VIDEO_CONFIGURATION_FILE_NAME
+            )
             atomic_write_model(output_path, configuration)
+            with self._db():
+                synchronize_playback_progress(
+                    self._db(), configuration.asset_id, configuration.playback
+                )
         return configuration
+
+    def update_subtitle_display(
+        self, asset_id: str, settings: SubtitleDisplaySettings
+    ) -> None:
+        """字幕设置与播放心跳共享文件，锁内合并避免覆盖另一项用户状态。"""
+        with self._lock:
+            configuration = self.load_video_configuration(asset_id)
+            configuration.subtitle_display = settings
+            self.save_video_configuration(configuration)
+
+    def save_playback_progress(
+        self,
+        asset_id: str,
+        position_seconds: float,
+        playback_rate: float,
+        observed_at: datetime | None = None,
+    ) -> PlaybackProgress:
+        """采样顺序拒绝迟到心跳，页面关闭的最终进度不会被旧请求覆盖。"""
+        with self._lock:
+            asset = self.get(asset_id)
+            if asset is None:
+                raise ValueError("媒体资源不存在")
+            now = datetime.now(UTC)
+            progress = PlaybackProgress(
+                position_seconds=position_seconds,
+                playback_rate=playback_rate,
+                last_watched_at=now,
+                observed_at=observed_at or now,
+            )
+            configuration = self.load_video_configuration(asset_id)
+            previous_observed_at = configuration.playback.observed_at
+            if (
+                previous_observed_at is not None
+                and progress.observed_at <= previous_observed_at
+            ):
+                return configuration.playback
+            if asset.duration_seconds is not None and asset.duration_seconds >= 0:
+                progress.position_seconds = min(
+                    progress.position_seconds, asset.duration_seconds
+                )
+            configuration.playback = progress
+            self.save_video_configuration(configuration)
+            return progress
 
     def _write_asset_metadata(self, asset: MediaAsset) -> None:
         asset_directory = self.asset_directory(asset.asset_id)

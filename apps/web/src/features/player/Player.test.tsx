@@ -1,14 +1,30 @@
-import { act, createRef, type PropsWithChildren } from "react";
+import {
+  act,
+  createRef,
+  useEffect,
+  useRef,
+  type PropsWithChildren,
+} from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Player, type PlayerHandle } from "./Player";
 import { WorkspaceActiveContext } from "@/app/workspace_activity";
+import { use_playback_progress } from "./use_playback_progress";
+import { get_asset_playback } from "@/shared/api";
+import type { PlaybackState } from "@/shared/types";
+
+vi.mock("@/shared/api", () => ({
+  get_asset_playback: vi.fn(),
+  update_asset_playback: vi.fn(),
+}));
 
 const media = vi.hoisted(() => ({
   player: {
     pause: vi.fn(),
     currentTime: 12,
+    duration: 60,
     paused: true,
     controls: {
       pause: vi.fn(),
@@ -24,6 +40,7 @@ const media = vi.hoisted(() => ({
     toggleCaptions: vi.fn(),
   },
   store: {
+    canPlay: true,
     currentTime: 12,
     paused: true,
     playbackRate: 1,
@@ -33,6 +50,9 @@ const media = vi.hoisted(() => ({
     seeking_request: null as ((seconds: number) => void) | null,
     seek_request: null as ((seconds: number) => void) | null,
     seeked: null as (() => void) | null,
+    playing: null as (() => void) | null,
+    ended: null as (() => void) | null,
+    playback_rate: undefined as number | undefined,
   },
 }));
 
@@ -44,16 +64,25 @@ vi.mock("@vidstack/react", () => ({
     onMediaSeekingRequest,
     onMediaSeekRequest,
     onSeeked,
+    onPlaying,
+    onEnded,
+    playbackRate,
   }: PropsWithChildren<{
     ariaLabel: string;
     "data-scrubbing"?: true;
     onMediaSeekingRequest?: (seconds: number) => void;
     onMediaSeekRequest?: (seconds: number) => void;
     onSeeked?: () => void;
+    onPlaying?: () => void;
+    onEnded?: () => void;
+    playbackRate?: number;
   }>) => {
     media.events.seeking_request = onMediaSeekingRequest ?? null;
     media.events.seek_request = onMediaSeekRequest ?? null;
     media.events.seeked = onSeeked ?? null;
+    media.events.playing = onPlaying ?? null;
+    media.events.ended = onEnded ?? null;
+    media.events.playback_rate = playbackRate;
     return (
       <section
         aria-label={ariaLabel}
@@ -98,15 +127,241 @@ beforeEach(() => {
   media.player.currentTime = 12;
   media.player.paused = true;
   media.store.currentTime = 12;
+  media.store.canPlay = true;
   media.store.paused = true;
   media.store.playbackRate = 1;
   media.store.volume = 1;
   media.events.seeking_request = null;
   media.events.seek_request = null;
   media.events.seeked = null;
+  media.events.playing = null;
+  media.events.ended = null;
 });
 
 describe("Player", () => {
+  it("keeps a parent evidence seek after reactivation while the progress GET is delayed", async () => {
+    let finish_read: (state: PlaybackState) => void = () => undefined;
+    vi.mocked(get_asset_playback).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish_read = resolve;
+        }),
+    );
+    function EvidenceWorkspace({ active }: { active: boolean }) {
+      const playback = use_playback_progress(
+        "asset-evidence-reactivation",
+        active,
+      );
+      const player_ref = useRef<PlayerHandle>(null);
+      useEffect(() => {
+        if (active) player_ref.current?.seek_to(8);
+      }, [active]);
+      return (
+        <WorkspaceActiveContext.Provider value={active}>
+          <Player
+            ref={player_ref}
+            src="/evidence.mp4"
+            initial_playback={playback.initial_playback}
+            playback_restore_key={playback.playback_restore_key}
+            on_progress_change={playback.on_progress_change}
+          />
+        </WorkspaceActiveContext.Provider>
+      );
+    }
+    const query_client = new QueryClient();
+    const workspace = render(
+      <QueryClientProvider client={query_client}>
+        <EvidenceWorkspace active={false} />
+      </QueryClientProvider>,
+    );
+    await act(async () => undefined);
+    workspace.rerender(
+      <QueryClientProvider client={query_client}>
+        <EvidenceWorkspace active />
+      </QueryClientProvider>,
+    );
+    await act(async () => undefined);
+    expect(media.remote.seek).toHaveBeenCalledExactlyOnceWith(8);
+    await act(async () =>
+      finish_read({
+        library_id: "library-watch",
+        position_seconds: 32,
+        playback_rate: 2,
+        last_watched_at: null,
+      }),
+    );
+    expect(media.remote.seek).toHaveBeenCalledExactlyOnceWith(8);
+  });
+
+  it("flushes the exact duration at natural completion rather than the last video frame", () => {
+    media.store.currentTime = 59.96;
+    const on_progress_change = vi.fn();
+    const player = render(
+      <Player
+        src="/ending.mp4"
+        duration_seconds={60}
+        on_progress_change={on_progress_change}
+      />,
+    );
+    act(() => media.events.playing?.());
+    act(() => media.events.ended?.());
+    expect(on_progress_change).toHaveBeenLastCalledWith(
+      { position_seconds: 60, playback_rate: 1, last_watched_at: null },
+      true,
+    );
+    media.store.currentTime = 59.98;
+    player.rerender(
+      <Player
+        src="/ending.mp4"
+        duration_seconds={60}
+        on_progress_change={on_progress_change}
+      />,
+    );
+    expect(on_progress_change).toHaveBeenLastCalledWith(
+      { position_seconds: 60, playback_rate: 1, last_watched_at: null },
+      true,
+    );
+  });
+
+  it("preserves an evidence seek while the first playback session is being initialized", () => {
+    media.store.canPlay = false;
+    const player_ref = createRef<PlayerHandle>();
+    const player = render(
+      <Player ref={player_ref} src="/evidence.mp4" playback_restore_key={0} />,
+    );
+    act(() => player_ref.current?.seek_to(8));
+    media.store.canPlay = true;
+    player.rerender(
+      <Player
+        ref={player_ref}
+        src="/evidence.mp4"
+        playback_restore_key={1}
+        initial_playback={{
+          position_seconds: 32,
+          playback_rate: 2,
+          last_watched_at: null,
+        }}
+      />,
+    );
+    expect(media.remote.seek).toHaveBeenCalledExactlyOnceWith(8);
+  });
+
+  it("restores time and playback rate once while remaining paused", () => {
+    const initial_playback = {
+      position_seconds: 32,
+      playback_rate: 2,
+      last_watched_at: "2026-10-17T00:00:00Z",
+    };
+    const player = render(
+      <Player
+        src="/video.mp4"
+        initial_playback={initial_playback}
+        duration_seconds={60}
+      />,
+    );
+    expect(media.remote.seek).toHaveBeenCalledExactlyOnceWith(32);
+    expect(media.events.playback_rate).toBe(2);
+    expect(media.remote.play).not.toHaveBeenCalled();
+    player.rerender(
+      <Player
+        src="/video.mp4"
+        initial_playback={{ ...initial_playback, position_seconds: 50 }}
+        duration_seconds={60}
+      />,
+    );
+    expect(media.remote.seek).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a fully watched video at the start without automatically playing", () => {
+    render(
+      <Player
+        src="/complete.mp4"
+        duration_seconds={60}
+        initial_playback={{
+          position_seconds: 60,
+          playback_rate: 1.5,
+          last_watched_at: "2026-10-17T00:00:00Z",
+        }}
+      />,
+    );
+    expect(media.remote.seek).toHaveBeenCalledExactlyOnceWith(0);
+    expect(media.remote.play).not.toHaveBeenCalled();
+  });
+
+  it("keeps an explicit evidence seek queued before media readiness and gives it priority", () => {
+    media.store.canPlay = false;
+    const player_ref = createRef<PlayerHandle>();
+    const initial_playback = {
+      position_seconds: 32,
+      playback_rate: 2,
+      last_watched_at: null,
+    };
+    const player = render(
+      <Player
+        ref={player_ref}
+        src="/evidence.mp4"
+        initial_playback={initial_playback}
+      />,
+    );
+    act(() => player_ref.current?.seek_to(8));
+    expect(media.remote.seek).not.toHaveBeenCalled();
+    media.store.canPlay = true;
+    player.rerender(
+      <Player
+        ref={player_ref}
+        src="/evidence.mp4"
+        initial_playback={initial_playback}
+      />,
+    );
+    expect(media.remote.seek).toHaveBeenCalledExactlyOnceWith(8);
+  });
+
+  it("does not apply a late resume snapshot after the user has already played", () => {
+    const player = render(<Player src="/video.mp4" />);
+    act(() => media.events.playing?.());
+    player.rerender(
+      <Player
+        src="/video.mp4"
+        initial_playback={{
+          position_seconds: 32,
+          playback_rate: 2,
+          last_watched_at: null,
+        }}
+      />,
+    );
+    expect(media.remote.seek).not.toHaveBeenCalled();
+  });
+
+  it("reports confirmed played progress while excluding drag previews and initial paused state", () => {
+    const player_ref = createRef<PlayerHandle>();
+    const on_progress_change = vi.fn();
+    render(
+      <Player
+        ref={player_ref}
+        src="/video.mp4"
+        on_progress_change={on_progress_change}
+      />,
+    );
+    expect(on_progress_change).not.toHaveBeenCalled();
+    act(() => media.events.playing?.());
+    expect(on_progress_change).toHaveBeenLastCalledWith(
+      { position_seconds: 12, playback_rate: 1, last_watched_at: null },
+      false,
+    );
+    on_progress_change.mockClear();
+    act(() => player_ref.current?.begin_scrub(40));
+    act(() => player_ref.current?.update_scrub(45));
+    expect(on_progress_change).not.toHaveBeenCalled();
+    act(() => player_ref.current?.commit_scrub(45));
+    expect(on_progress_change).not.toHaveBeenCalled();
+    media.player.currentTime = 45;
+    act(() => media.events.seeked?.());
+    expect(on_progress_change).toHaveBeenCalledExactlyOnceWith(
+      { position_seconds: 45, playback_rate: 1, last_watched_at: null },
+      true,
+    );
+  });
+
   it("publishes native progress previews immediately and restores the clock on cancellation", () => {
     const player_ref = createRef<PlayerHandle>();
     const on_time_change = vi.fn();

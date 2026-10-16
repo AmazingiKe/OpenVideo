@@ -5,8 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LibraryPage } from "@/pages/LibraryPage";
 import {
+  delete_asset,
   initialize_summary_document,
   list_assets,
+  list_recent_assets,
   list_folders,
   list_summary_documents,
 } from "@/shared/api";
@@ -78,6 +80,7 @@ vi.mock("@/shared/api", () => ({
   delete_asset: vi.fn(),
   delete_folder: vi.fn(),
   list_assets: vi.fn(),
+  list_recent_assets: vi.fn(),
   list_folders: vi.fn(),
   list_summary_documents: vi.fn(),
   initialize_summary_document: vi.fn(),
@@ -92,6 +95,56 @@ describe("LibraryPage", () => {
     vi.clearAllMocks();
     vi.mocked(list_folders).mockResolvedValue([]);
     vi.mocked(list_assets).mockResolvedValue([ASSET]);
+    vi.mocked(list_recent_assets).mockResolvedValue([]);
+  });
+
+  it("continues a recent video in the player without loading a summary", async () => {
+    vi.mocked(list_recent_assets).mockResolvedValue([
+      {
+        ...ASSET,
+        playback: {
+          position_seconds: 45,
+          playback_rate: 1.5,
+          last_watched_at: "2026-10-17T00:00:00Z",
+        },
+      },
+    ]);
+    render_page();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "继续观看：镜头语言入门" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location")).toHaveTextContent(
+        `/markers/${ASSET_ID}`,
+      ),
+    );
+    expect(select_asset).toHaveBeenCalledWith(ASSET_ID);
+    expect(list_summary_documents).not.toHaveBeenCalled();
+    expect(initialize_summary_document).not.toHaveBeenCalled();
+  });
+
+  it("removes a deleted video from recent watching after the library refreshes", async () => {
+    vi.mocked(list_recent_assets)
+      .mockResolvedValueOnce([ASSET])
+      .mockResolvedValue([]);
+    vi.mocked(delete_asset).mockResolvedValue(undefined);
+    render_page();
+    await screen.findByRole("button", { name: "继续观看：镜头语言入门" });
+    const video = await screen.findByRole("button", { name: /^镜头语言入门/ });
+    fireEvent.click(video);
+    fireEvent.contextMenu(video);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "删除所选" }));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
+
+    await waitFor(() => expect(delete_asset).toHaveBeenCalledWith(ASSET_ID));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "继续观看：镜头语言入门" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("尚无观看记录")).toBeInTheDocument();
   });
 
   it("opens the summary workspace when the cached project has documents", async () => {

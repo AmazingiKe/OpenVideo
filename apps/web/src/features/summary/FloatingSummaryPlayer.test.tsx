@@ -1,20 +1,34 @@
 import { forwardRef, useImperativeHandle } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PlayerHandle } from "@/features/player/Player";
 import type { MediaAsset } from "@/shared/types";
+import { get_asset_playback, update_asset_playback } from "@/shared/api";
 import { FloatingSummaryPlayer } from "./FloatingSummaryPlayer";
 
 const player_render = vi.hoisted(() => vi.fn());
+const query_client = vi.hoisted(() => ({
+  setQueryData: vi.fn(),
+  getQueryData: vi.fn(),
+  invalidateQueries: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ setQueryData: vi.fn() }),
+  useQueryClient: () => query_client,
 }));
 
 vi.mock("@/shared/api", () => ({
   ensure_thumbnail_storyboard: vi.fn(() => new Promise(() => undefined)),
   media_url: (path: string) => path,
+  get_asset_playback: vi.fn(),
+  update_asset_playback: vi.fn(),
 }));
 
 vi.mock("@/features/player/Player", () => ({
@@ -42,6 +56,10 @@ vi.mock("@/features/player/Player", () => ({
 describe("FloatingSummaryPlayer", () => {
   beforeEach(() => {
     player_render.mockClear();
+    vi.mocked(get_asset_playback)
+      .mockReset()
+      .mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(update_asset_playback).mockReset();
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -65,6 +83,57 @@ describe("FloatingSummaryPlayer", () => {
     fireEvent.click(screen.getByRole("button", { name: "参考视频" }));
 
     expect(on_open_change).toHaveBeenCalledWith(true);
+    expect(get_asset_playback).not.toHaveBeenCalled();
+  });
+
+  it("restores the open reference player and flushes on minimization without writing hidden updates", async () => {
+    const progress = {
+      library_id: "library-watch",
+      position_seconds: 24,
+      playback_rate: 1.5,
+      last_watched_at: "2026-10-17T00:00:00Z",
+    };
+    vi.mocked(get_asset_playback).mockResolvedValue(progress);
+    vi.mocked(update_asset_playback).mockResolvedValue(progress);
+    const props = {
+      asset: create_asset(),
+      geometry: null,
+      open: true,
+      on_geometry_change: vi.fn(),
+      on_open_change: vi.fn(),
+      transcript: null,
+    };
+    const workspace = render(<FloatingSummaryPlayer {...props} />);
+    await waitFor(() =>
+      expect(player_render.mock.lastCall?.[0].initial_playback).toEqual(
+        progress,
+      ),
+    );
+    act(() =>
+      player_render.mock.lastCall?.[0].on_progress_change(
+        { ...progress, position_seconds: 30 },
+        false,
+      ),
+    );
+    workspace.rerender(<FloatingSummaryPlayer {...props} open={false} />);
+    await act(async () => undefined);
+    expect(update_asset_playback).toHaveBeenCalledExactlyOnceWith(
+      props.asset.asset_id,
+      {
+        library_id: "library-watch",
+        position_seconds: 30,
+        playback_rate: 1.5,
+        observed_at: expect.any(String),
+      },
+      true,
+    );
+    act(() =>
+      player_render.mock.lastCall?.[0].on_progress_change(
+        { ...progress, position_seconds: 0 },
+        true,
+      ),
+    );
+    expect(update_asset_playback).toHaveBeenCalledTimes(1);
   });
 
   it("keeps playback controls out of the floating header", () => {

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "./client";
-import { download_subtitle_file } from "./media";
+import {
+  download_subtitle_file,
+  get_asset_playback,
+  update_asset_playback,
+} from "./media";
 
 const create_object_url = vi.fn(() => "blob:subtitle-download");
 const revoke_object_url = vi.fn();
@@ -122,5 +126,57 @@ describe("subtitle file downloads", () => {
     expect(document.querySelector("a[download]")).toBeNull();
     vi.runAllTimers();
     expect(revoke_object_url).toHaveBeenCalledWith("blob:subtitle-download");
+  });
+});
+
+describe("playback API", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("reads playback state and sends the owning library with a keepalive update", async () => {
+    const progress = {
+      library_id: "library-watch",
+      position_seconds: 24,
+      playback_rate: 1.5,
+      last_watched_at: "2026-10-17T00:00:00Z",
+    };
+    const fetch_mock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json(progress));
+    const request = new AbortController();
+    await expect(
+      get_asset_playback("asset/test", request.signal),
+    ).resolves.toEqual(progress);
+    expect(fetch_mock).toHaveBeenCalledWith(
+      "/api/media/assets/asset%2Ftest/playback",
+      { signal: request.signal },
+    );
+    const update = {
+      library_id: progress.library_id,
+      position_seconds: 30,
+      playback_rate: 2,
+    };
+    await update_asset_playback("asset/test", update, true);
+    expect(fetch_mock).toHaveBeenLastCalledWith(
+      "/api/media/assets/asset%2Ftest/playback",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(update),
+        keepalive: true,
+      },
+    );
+  });
+
+  it("reports a library mismatch as an API error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ detail: "资料库已切换" }, { status: 409 }),
+    );
+    await expect(
+      update_asset_playback("asset-watch", {
+        library_id: "library-old",
+        position_seconds: 24,
+        playback_rate: 1,
+      }),
+    ).rejects.toEqual(new ApiError("资料库已切换", 409));
   });
 });

@@ -1,10 +1,18 @@
-import { memo, type RefObject, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  type RefObject,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { ListVideo, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
+import { WorkspaceActiveContext } from "@/app/workspace_activity";
 import {
   Empty,
   EmptyDescription,
@@ -13,9 +21,11 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Player, type PlayerHandle } from "@/features/player/Player";
+import { PlaybackProgressNotice } from "@/features/player/PlaybackProgressNotice";
 import { record_scrub_preview_metrics } from "@/features/player/scrub_preview_diagnostics";
 import { DEFAULT_SUBTITLE_DISPLAY_SETTINGS } from "@/features/player/subtitle_settings";
 import { use_storyboard_preview } from "@/features/player/use_storyboard_preview";
+import { use_playback_progress } from "@/features/player/use_playback_progress";
 import {
   create_subtitle_export,
   download_subtitle_file,
@@ -63,6 +73,11 @@ export const VideoWorkspace = memo(function VideoWorkspace({
   on_playback_rate_change,
 }: VideoWorkspaceProps) {
   const query_client = useQueryClient();
+  const is_workspace_active = useContext(WorkspaceActiveContext);
+  const playback = use_playback_progress(
+    asset?.playback_url ? asset.asset_id : null,
+    is_workspace_active,
+  );
   const asset_id = asset?.asset_id;
   const { font_size, position, background, offset_milliseconds } =
     asset?.subtitle_display ?? DEFAULT_SUBTITLE_DISPLAY_SETTINGS;
@@ -276,6 +291,7 @@ export const VideoWorkspace = memo(function VideoWorkspace({
           </p>
         </div>
       </header>
+      <PlaybackProgressNotice message={playback.save_error} />
       <div className="workspace_stage flex min-h-0 flex-1">
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-player-canvas">
           <div className="min-h-0 flex-1 bg-player-canvas p-4 max-[600px]:p-2">
@@ -286,6 +302,10 @@ export const VideoWorkspace = memo(function VideoWorkspace({
               subtitles={transcript?.segments ?? []}
               chapters={chapters}
               subtitle_display={subtitle_settings}
+              initial_playback={playback.initial_playback}
+              playback_restore_key={playback.playback_restore_key}
+              duration_seconds={asset.duration_seconds}
+              on_progress_change={playback.on_progress_change}
               evidence_range={evidence_range}
               markers={markers.map((marker) => ({
                 start_seconds: marker.start_seconds,
