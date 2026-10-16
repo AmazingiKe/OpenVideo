@@ -35,6 +35,7 @@ from openvideo.tools.llm import LlmCompletionError, complete_text
 
 EVENT_ANALYSIS_TIMEOUT_SECONDS = 120
 EVENT_ANALYSIS_MAX_TOKENS = 8_000
+EVENT_ANALYSIS_STOP_GRACE_SECONDS = 0.1
 
 
 class EventAnalysisError(RuntimeError):
@@ -60,6 +61,7 @@ class EventAnalysisManager:
             job.job_id: job for job in self.library.load_event_analysis_jobs()
         }
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._stop_requests: set[str] = set()
         self._lock = RLock()
 
     def create(
@@ -123,6 +125,9 @@ class EventAnalysisManager:
 
     def start(self, job_id: str) -> None:
         with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.stage in TERMINAL_EVENT_ANALYSIS_JOB_STAGES:
+                return
             task = self._tasks.get(job_id)
             if task is not None and not task.done():
                 return
@@ -154,16 +159,47 @@ class EventAnalysisManager:
 
     async def close(self) -> None:
         tasks = list(self._tasks.values())
-        for task in tasks:
-            task.cancel()
+        await self.cancel_assets({job.asset_id for job in self._jobs.values()})
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def cancel_assets(self, asset_ids: set[str]) -> bool:
+        """同步模型请求退出前保留素材，防止删除后迟到结果重建业务目录。"""
+        with self._lock:
+            jobs = [
+                job.model_copy(deep=True)
+                for job in self._jobs.values()
+                if job.asset_id in asset_ids
+                and job.stage not in TERMINAL_EVENT_ANALYSIS_JOB_STAGES
+            ]
+            self._stop_requests.update(job.job_id for job in jobs)
+            tasks = [
+                self._tasks[job.job_id] for job in jobs if job.job_id in self._tasks
+            ]
+        for job in jobs:
+            if job.job_id not in self._tasks:
+                self._finish_cancelled(job.job_id)
+            else:
+                self._save_job(
+                    job.model_copy(
+                        update={
+                            "message": "正在停止事件分析，等待当前请求安全结束",
+                            "updated_at": datetime.now(UTC),
+                        }
+                    )
+                )
+        if tasks:
+            await asyncio.wait(tasks, timeout=EVENT_ANALYSIS_STOP_GRACE_SECONDS)
+        return all(task.done() for task in tasks)
 
     async def _run(self, job_id: str) -> None:
         job = self.get(job_id)
         if job is None:
             return
         try:
+            if self._stop_requested(job_id):
+                self._finish_cancelled(job_id)
+                return
             self._save_job(
                 job.model_copy(
                     update={
@@ -176,6 +212,9 @@ class EventAnalysisManager:
             results: list[EventAnalysis] = []
             for position, target in enumerate(job.targets):
                 result = await asyncio.to_thread(self._analyze_target, job, target)
+                if self._stop_requested(job_id):
+                    self._finish_cancelled(job_id)
+                    return
                 self.library.append_event_analyses(job.asset_id, [result])
                 results.append(result)
                 current = self.get(job_id) or job
@@ -203,6 +242,9 @@ class EventAnalysisManager:
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            if self._stop_requested(job_id):
+                self._finish_cancelled(job_id)
+                return
             current = self.get(job_id) or job
             self._save_job(
                 current.model_copy(
@@ -282,6 +324,25 @@ class EventAnalysisManager:
     def _discard_task(self, job_id: str) -> None:
         with self._lock:
             self._tasks.pop(job_id, None)
+            self._stop_requests.discard(job_id)
+
+    def _stop_requested(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._stop_requests
+
+    def _finish_cancelled(self, job_id: str) -> None:
+        current = self.get(job_id)
+        if current is not None:
+            self._save_job(
+                current.model_copy(
+                    update={
+                        "stage": EventAnalysisJobStage.CANCELLED,
+                        "message": "事件分析已停止",
+                        "error_message": None,
+                        "updated_at": datetime.now(UTC),
+                    }
+                )
+            )
 
 
 def _event_analysis_messages(

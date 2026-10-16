@@ -624,6 +624,7 @@ def create_app(
         lambda: manager,
         lambda: analysis_manager,
         lambda: agent_service,
+        lambda: event_analysis_manager,
         resolved_settings,
     )
 

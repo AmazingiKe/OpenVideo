@@ -15,6 +15,7 @@ from openvideo.core.library import (
 )
 from openvideo.core.media_models import MediaAssetResponse
 from openvideo.download_manager import DownloadManager
+from openvideo.event_analysis_manager import EventAnalysisManager
 from openvideo.local_media_import import (
     LocalMediaImportError,
     import_video_directory,
@@ -62,6 +63,7 @@ def register_library_routes(
     download_manager: Callable[[], DownloadManager | None],
     analysis_manager: Callable[[], AnalysisManager | None],
     agent_service: Callable[[], AgentService | None],
+    event_analysis_manager: Callable[[], EventAnalysisManager | None],
     settings: Settings,
 ) -> None:
     @app.get("/api/library/folders", response_model=list[FolderResponse])
@@ -219,6 +221,7 @@ def register_library_routes(
             download_manager(),
             analysis_manager(),
             agent_service(),
+            event_analysis_manager(),
         )
         try:
             media_library.delete_asset(asset_id)
@@ -264,6 +267,7 @@ def register_library_routes(
             download_manager(),
             analysis_manager(),
             agent_service(),
+            event_analysis_manager(),
         )
         try:
             for asset_id in asset_ids:
@@ -314,13 +318,19 @@ async def stop_asset_tasks(
     download_manager: DownloadManager | None,
     analysis_manager: AnalysisManager | None,
     agent_service: AgentService | None,
+    event_analysis_manager: EventAnalysisManager | None,
 ) -> None:
     """永久删除只能在所有关联执行器确认停止后继续，避免后台写回已删除目录。"""
     if not asset_ids:
         return
     cancellers = [
         candidate.cancel_assets(asset_ids)
-        for candidate in (download_manager, analysis_manager, agent_service)
+        for candidate in (
+            download_manager,
+            analysis_manager,
+            agent_service,
+            event_analysis_manager,
+        )
         if candidate is not None
     ]
     try:

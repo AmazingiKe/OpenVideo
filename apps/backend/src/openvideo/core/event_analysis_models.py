@@ -145,11 +145,13 @@ class EventAnalysisJobStage(StrEnum):
     RUNNING = "running"
     COMPLETE = "complete"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 TERMINAL_EVENT_ANALYSIS_JOB_STAGES = {
     EventAnalysisJobStage.COMPLETE,
     EventAnalysisJobStage.FAILED,
+    EventAnalysisJobStage.CANCELLED,
 }
 
 

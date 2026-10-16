@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
+from threading import Event
 from time import monotonic, sleep
 
+import pytest
 from fastapi.testclient import TestClient
 
 from openvideo.core.ai_models import AiModelConfiguration
@@ -59,7 +61,7 @@ def wait_for_job(client: TestClient, job_id: str) -> dict[str, object]:
     deadline = monotonic() + 3
     while monotonic() < deadline:
         job = client.get(f"/api/event-analysis-jobs/{job_id}").json()
-        if job["stage"] in {"complete", "failed"}:
+        if job["stage"] in {"complete", "failed", "cancelled"}:
             return job
         sleep(0.01)
     raise AssertionError("事件分析任务未在测试时限内结束")
@@ -288,3 +290,172 @@ def test_event_analysis_rejects_markdown_output(tmp_path: Path, monkeypatch):
 
     assert failed["stage"] == "failed"
     assert failed["result_ids"] == []
+
+
+@pytest.mark.parametrize("delete_folder", [False, True])
+@pytest.mark.parametrize("worker_fails", [False, True])
+def test_delete_waits_for_event_analysis_to_stop_before_removing_files(
+    tmp_path: Path,
+    monkeypatch,
+    delete_folder: bool,
+    worker_fails: bool,
+):
+    started = Event()
+    release = Event()
+
+    def complete_after_release(*_args, **_kwargs):
+        started.set()
+        assert release.wait(5)
+        if worker_fails:
+            raise RuntimeError("停止期间模型请求失败")
+        return json.dumps(
+            {
+                "title": "迟到结果",
+                "conclusion": "不应保存",
+                "key_points": [],
+                "evidence": [],
+            }
+        )
+
+    monkeypatch.setattr(
+        "openvideo.event_analysis_manager.complete_text", complete_after_release
+    )
+    with create_client(tmp_path) as client:
+        delete_path = f"/api/media/assets/{ASSET_ID}"
+        delete_arguments = {}
+        if delete_folder:
+            folder = client.post("/api/library/folders", json={"name": "待删除"}).json()
+            client.post(
+                "/api/media/assets/move",
+                json={"asset_ids": [ASSET_ID], "folder_id": folder["folder_id"]},
+            ).raise_for_status()
+            delete_path = f"/api/library/folders/{folder['folder_id']}"
+            delete_arguments = {"json": {"confirmation_name": "待删除"}}
+        client.patch(
+            f"/api/media/assets/{ASSET_ID}/focus-selection",
+            json={"in_seconds": 10, "out_seconds": 20},
+        ).raise_for_status()
+        created = client.post(
+            f"/api/media/assets/{ASSET_ID}/event-analysis-jobs",
+            json={
+                "use_focus_selection": True,
+                "preset_id": "course_notes",
+                "ai_model_id": MODEL_ID,
+            },
+        ).json()
+        job_id = created["job_id"]
+        asset_directory = tmp_path / "assets" / ASSET_ID
+        try:
+            assert started.wait(3)
+            blocked_delete = client.request("DELETE", delete_path, **delete_arguments)
+            assert blocked_delete.status_code == 409
+            assert asset_directory.is_dir()
+            assert (asset_directory / "meta.json").is_file()
+            assert client.get(f"/api/media/assets/{ASSET_ID}").status_code == 200
+            assert client.app.state.event_analysis_manager.has_active_jobs()
+            stopping = client.get(f"/api/event-analysis-jobs/{job_id}").json()
+            assert stopping["stage"] == "running"
+            assert "正在停止" in stopping["message"]
+        finally:
+            release.set()
+        stopped = wait_for_job(client, job_id)
+        assert stopped["stage"] == "cancelled"
+        assert stopped["error_message"] is None
+        assert stopped["result_ids"] == []
+        assert not client.app.state.event_analysis_manager.has_active_jobs()
+        assert client.get(f"/api/media/assets/{ASSET_ID}/event-analyses").json() == []
+
+        deleted = client.request("DELETE", delete_path, **delete_arguments)
+
+        assert deleted.status_code == 204
+        assert client.get(f"/api/media/assets/{ASSET_ID}").status_code == 404
+        assert not asset_directory.exists()
+        assert not client.app.state.event_analysis_manager.has_active_jobs()
+
+
+def test_stopping_an_event_batch_preserves_previously_completed_targets(
+    tmp_path: Path,
+    monkeypatch,
+):
+    second_started = Event()
+    release = Event()
+    call_count = 0
+
+    def complete_batch(*_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            second_started.set()
+            assert release.wait(5)
+        return json.dumps(
+            {
+                "title": "已完成事件",
+                "conclusion": "已有成果",
+                "key_points": [],
+                "evidence": [],
+            }
+        )
+
+    monkeypatch.setattr(
+        "openvideo.event_analysis_manager.complete_text", complete_batch
+    )
+    with create_client(tmp_path) as client:
+        markers = [
+            client.post(
+                f"/api/media/assets/{ASSET_ID}/markers",
+                json={"start_seconds": start, "end_seconds": start + 10},
+            ).json()
+            for start in [10, 30]
+        ]
+        created = client.post(
+            f"/api/media/assets/{ASSET_ID}/event-analysis-jobs",
+            json={
+                "marker_ids": [marker["marker_id"] for marker in markers],
+                "preset_id": "course_notes",
+                "ai_model_id": MODEL_ID,
+            },
+        ).json()
+        try:
+            assert second_started.wait(3)
+            completed = client.get(
+                f"/api/media/assets/{ASSET_ID}/event-analyses"
+            ).json()
+            assert len(completed) == 1
+            assert client.delete(f"/api/media/assets/{ASSET_ID}").status_code == 409
+        finally:
+            release.set()
+        stopped = wait_for_job(client, created["job_id"])
+        assert stopped["stage"] == "cancelled"
+        assert stopped["result_ids"] == [completed[0]["event_analysis_id"]]
+        assert stopped["progress_percent"] == 50
+        assert (
+            client.get(f"/api/media/assets/{ASSET_ID}/event-analyses").json()
+            == completed
+        )
+
+
+def test_delete_cancels_event_jobs_that_have_not_started(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "openvideo.event_analysis_manager.EventAnalysisManager.start", lambda *_: None
+    )
+    with create_client(tmp_path) as client:
+        client.patch(
+            f"/api/media/assets/{ASSET_ID}/focus-selection",
+            json={"in_seconds": 10, "out_seconds": 20},
+        ).raise_for_status()
+        created = client.post(
+            f"/api/media/assets/{ASSET_ID}/event-analysis-jobs",
+            json={
+                "use_focus_selection": True,
+                "preset_id": "course_notes",
+                "ai_model_id": MODEL_ID,
+            },
+        ).json()
+        deleted = client.delete(f"/api/media/assets/{ASSET_ID}")
+
+        assert deleted.status_code == 204
+        assert (
+            client.get(f"/api/event-analysis-jobs/{created['job_id']}").json()["stage"]
+            == "cancelled"
+        )
+        assert not (tmp_path / "assets" / ASSET_ID).exists()
