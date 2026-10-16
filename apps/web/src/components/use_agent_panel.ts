@@ -113,6 +113,8 @@ export function use_agent_panel({
     null,
   );
   const connection_ref = useRef<AbortController | null>(null);
+  // 停止请求可能晚于用户切换对话，旧响应只能修改发起操作时的面板。
+  const panel_version_ref = useRef(0);
   const submission_ref = useRef(false);
   const run_sequence_ref = useRef(new Map<string, number>());
   const restore_panel_event = useEffectEvent(restore_panel);
@@ -135,6 +137,7 @@ export function use_agent_panel({
   }, [compatible_models]);
 
   useEffect(() => {
+    panel_version_ref.current += 1;
     const controller = new AbortController();
     connection_ref.current?.abort();
     set_sessions([]);
@@ -156,6 +159,7 @@ export function use_agent_panel({
     }
     void restore_panel_event(asset_id, controller.signal);
     return () => {
+      panel_version_ref.current += 1;
       controller.abort();
       connection_ref.current?.abort();
     };
@@ -208,11 +212,13 @@ export function use_agent_panel({
   }
 
   async function select_session(session_id: string) {
+    const panel_version = ++panel_version_ref.current;
     connection_ref.current?.abort();
     set_submission(null);
     submission_ref.current = false;
     try {
       const selected = await get_agent_session(session_id);
+      if (panel_version !== panel_version_ref.current) return;
       set_state(selected);
       set_active_run(null);
       set_stream_text("");
@@ -226,11 +232,13 @@ export function use_agent_panel({
         void follow_run(running, selected.events);
       }
     } catch (caught) {
-      set_error(error_message(caught));
+      if (panel_version === panel_version_ref.current)
+        set_error(error_message(caught));
     }
   }
 
   function start_new_conversation() {
+    panel_version_ref.current += 1;
     connection_ref.current?.abort();
     run_sequence_ref.current.clear();
     set_state(null);
@@ -268,6 +276,7 @@ export function use_agent_panel({
       set_error(command_resolution.error);
       return false;
     }
+    panel_version_ref.current += 1;
     submission_ref.current = true;
     set_error(null);
     set_connection_message(null);
@@ -416,17 +425,25 @@ export function use_agent_panel({
   }
 
   async function cancel_run(run_id: string) {
+    const panel_version = panel_version_ref.current;
+    const session_id = state?.session.session_id;
+    const connection = connection_ref.current;
     try {
       const cancelled = await cancel_agent_run(run_id);
+      if (panel_version !== panel_version_ref.current) return;
       set_active_run(cancelled);
       set_stream_text("");
       set_stream_complete(false);
       set_submission(null);
       submission_ref.current = false;
-      connection_ref.current?.abort();
-      if (state) set_state(await get_agent_session(state.session.session_id));
+      connection?.abort();
+      if (session_id) {
+        const refreshed = await get_agent_session(session_id);
+        if (panel_version === panel_version_ref.current) set_state(refreshed);
+      }
     } catch (caught) {
-      set_error(error_message(caught));
+      if (panel_version === panel_version_ref.current)
+        set_error(error_message(caught));
     }
   }
 

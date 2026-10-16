@@ -263,4 +263,286 @@ describe("use_agent_panel", () => {
     await waitFor(() => expect(result.current.state).toEqual(FINAL_STATE));
     expect(result.current.compacting_context).toBe(false);
   });
+
+  it("keeps a new video's conversation and stream when an older cancel response arrives", async () => {
+    const next_asset_id = "asset-0198f10e3f9871239c79000000000002";
+    const next_session = {
+      ...SESSION,
+      asset_id: next_asset_id,
+      session_id: "session-0198f10e3f9871239c79000000000002",
+    };
+    const next_run = {
+      ...RUN,
+      session_id: next_session.session_id,
+      run_id: "run-0198f10e3f9871239c79000000000002",
+    };
+    const first_state = { ...INITIAL_STATE, runs: [RUN] };
+    const next_state = {
+      ...INITIAL_STATE,
+      session: next_session,
+      runs: [next_run],
+    };
+    let finish_cancel: (run: AgentRun) => void = () => undefined;
+    const next_signal = { current: null as AbortSignal | null };
+    api.cancel_agent_run.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish_cancel = resolve;
+        }),
+    );
+    api.list_agent_sessions.mockImplementation(async ({ asset_id }) =>
+      asset_id === ASSET_ID ? [SESSION] : [next_session],
+    );
+    api.get_agent_session
+      .mockReset()
+      .mockImplementation(async (session_id) =>
+        session_id === SESSION.session_id ? first_state : next_state,
+      );
+    api.stream_unified_agent_run.mockImplementation(
+      (run_id, _on_event, signal) => {
+        if (run_id === next_run.run_id) next_signal.current = signal;
+        return new Promise((_resolve, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("已取消", "AbortError")),
+            { once: true },
+          ),
+        );
+      },
+    );
+    const { wrapper } = create_query_wrapper();
+    const hook = renderHook(
+      ({ asset_id }) =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id,
+          context: {},
+          models: [MODEL],
+          task_input: {},
+          default_thinking_mode: "auto",
+        }),
+      { wrapper, initialProps: { asset_id: ASSET_ID } },
+    );
+    await waitFor(() =>
+      expect(hook.result.current.active_run?.run_id).toBe(RUN.run_id),
+    );
+    let cancelling: Promise<void> = Promise.resolve();
+    act(() => {
+      cancelling = hook.result.current.cancel_run(RUN.run_id);
+    });
+    hook.rerender({ asset_id: next_asset_id });
+    await waitFor(() =>
+      expect(hook.result.current.active_run?.run_id).toBe(next_run.run_id),
+    );
+    await act(async () => {
+      finish_cancel({ ...RUN, stage: "cancelled" });
+      await cancelling;
+    });
+
+    expect(hook.result.current.state?.session.session_id).toBe(
+      next_session.session_id,
+    );
+    expect(hook.result.current.active_run?.run_id).toBe(next_run.run_id);
+    expect(next_signal.current?.aborted).toBe(false);
+  });
+
+  it("cancels the current run and refreshes its conversation", async () => {
+    const cancelled_run: AgentRun = { ...RUN, stage: "cancelled" };
+    const cancelled_state = { ...INITIAL_STATE, runs: [cancelled_run] };
+    api.list_agent_sessions.mockResolvedValue([SESSION]);
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValueOnce({ ...INITIAL_STATE, runs: [RUN] })
+      .mockResolvedValueOnce(cancelled_state);
+    api.cancel_agent_run.mockResolvedValue(cancelled_run);
+    api.stream_unified_agent_run.mockImplementation(
+      (_run_id, _on_event, signal) =>
+        new Promise((_resolve, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("已取消", "AbortError")),
+            { once: true },
+          ),
+        ),
+    );
+    const { wrapper } = create_query_wrapper();
+    const { result } = renderHook(
+      () =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          context: {},
+          models: [MODEL],
+          task_input: {},
+          default_thinking_mode: "auto",
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    await act(async () => result.current.cancel_run(RUN.run_id));
+    expect(result.current.active_run).toEqual(cancelled_run);
+    expect(result.current.state).toEqual(cancelled_state);
+    expect(result.current.pending).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("keeps the last selected conversation when an earlier selection responds late", async () => {
+    let finish_earlier: (state: AgentSessionState) => void = () => undefined;
+    const earlier_state = {
+      ...INITIAL_STATE,
+      session: {
+        ...SESSION,
+        session_id: "session-0198f10e3f9871239c79000000000002",
+      },
+    };
+    const latest_state = {
+      ...INITIAL_STATE,
+      session: {
+        ...SESSION,
+        session_id: "session-0198f10e3f9871239c79000000000003",
+      },
+    };
+    api.list_agent_sessions.mockResolvedValue([SESSION]);
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValueOnce(INITIAL_STATE)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish_earlier = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(latest_state);
+    const { wrapper } = create_query_wrapper();
+    const { result } = renderHook(
+      () =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          context: {},
+          models: [MODEL],
+          task_input: {},
+          default_thinking_mode: "auto",
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.state).toEqual(INITIAL_STATE));
+    let earlier_selection: Promise<void> = Promise.resolve();
+    act(() => {
+      earlier_selection = result.current.select_session(
+        earlier_state.session.session_id,
+      );
+    });
+    await act(async () =>
+      result.current.select_session(latest_state.session.session_id),
+    );
+    await act(async () => {
+      finish_earlier(earlier_state);
+      await earlier_selection;
+    });
+    expect(result.current.state).toEqual(latest_state);
+  });
+
+  it("ignores an old cancelled conversation refresh after starting a new conversation", async () => {
+    const first_state = { ...INITIAL_STATE, runs: [RUN] };
+    let finish_refresh: (state: AgentSessionState) => void = () => undefined;
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValueOnce(first_state)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish_refresh = resolve;
+          }),
+      );
+    api.cancel_agent_run.mockResolvedValue({ ...RUN, stage: "cancelled" });
+    api.stream_unified_agent_run.mockImplementation(
+      (_run_id, _on_event, signal) =>
+        new Promise((_resolve, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("已取消", "AbortError")),
+            { once: true },
+          ),
+        ),
+    );
+    const { wrapper } = create_query_wrapper();
+    const { result } = renderHook(
+      () =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          context: {},
+          models: [MODEL],
+          task_input: {},
+          default_thinking_mode: "auto",
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    let cancelling: Promise<void> = Promise.resolve();
+    act(() => {
+      cancelling = result.current.cancel_run(RUN.run_id);
+    });
+    await waitFor(() => expect(api.get_agent_session).toHaveBeenCalledTimes(2));
+    act(() => {
+      result.current.start_new_conversation();
+      result.current.set_draft("新的问题");
+    });
+    await act(async () => {
+      finish_refresh(first_state);
+      await cancelling;
+    });
+
+    expect(result.current.state).toBeNull();
+    expect(result.current.active_run).toBeNull();
+    expect(result.current.draft).toBe("新的问题");
+  });
+
+  it("ignores an old cancellation error after starting a new conversation", async () => {
+    let fail_cancel: (error: Error) => void = () => undefined;
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValue({ ...INITIAL_STATE, runs: [RUN] });
+    api.cancel_agent_run.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail_cancel = reject;
+        }),
+    );
+    api.stream_unified_agent_run.mockImplementation(
+      (_run_id, _on_event, signal) =>
+        new Promise((_resolve, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("已取消", "AbortError")),
+            { once: true },
+          ),
+        ),
+    );
+    const { wrapper } = create_query_wrapper();
+    const { result } = renderHook(
+      () =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          context: {},
+          models: [MODEL],
+          task_input: {},
+          default_thinking_mode: "auto",
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    let cancelling: Promise<void> = Promise.resolve();
+    act(() => {
+      cancelling = result.current.cancel_run(RUN.run_id);
+    });
+    act(() => result.current.start_new_conversation());
+    await act(async () => {
+      fail_cancel(new Error("旧任务停止失败"));
+      await cancelling;
+    });
+    expect(result.current.error).toBeNull();
+  });
 });
