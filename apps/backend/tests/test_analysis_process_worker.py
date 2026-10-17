@@ -224,6 +224,13 @@ async def test_hard_stop_during_cloud_submission_blocks_repost_and_preserves_old
         assert metadata.status == TranscriptionStatus.CANCELLED
         assert metadata.cloud_submission_uncertain is True
         assert metadata.cloud_task_id is None
+        with pytest.raises(AnalysisPrerequisiteError, match="资料库正在关闭"):
+            manager.create_transcription(ASSET_ID, options, True)
+        manager = AnalysisManager(
+            library, settings,
+            bailian_credential_store=SimpleNamespace(require_api_key=lambda _: "test-key"),
+        )
+        manager.restore()
         for _ in range(2):
             with pytest.raises(AnalysisPrerequisiteError, match="云端提交结果未确认"):
                 manager.create_transcription(ASSET_ID, options, True)
