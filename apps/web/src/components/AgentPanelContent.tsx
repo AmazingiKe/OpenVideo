@@ -75,6 +75,7 @@ export function AgentRunBadge({ stage }: { stage: AgentRun["stage"] }) {
   const label: Record<AgentRun["stage"], string> = {
     pending: "等待运行",
     running: "运行中",
+    cancelling: "正在停止",
     waiting_for_approval: "等待确认",
     complete: "已完成",
     failed: "失败",

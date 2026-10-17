@@ -134,6 +134,7 @@ export const RunStates: Story = {
   render: () => (
     <div className="flex flex-wrap gap-2">
       <AgentRunBadge stage="running" />
+      <AgentRunBadge stage="cancelling" />
       <AgentRunBadge stage="waiting_for_approval" />
       <AgentRunBadge stage="failed" />
       <AgentRunBadge stage="cancelled" />

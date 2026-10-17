@@ -346,6 +346,50 @@ describe("use_agent_panel", () => {
     expect(next_signal.current?.aborted).toBe(false);
   });
 
+  it("keeps the event stream and task lock while a stop is accepted but the worker is still exiting", async () => {
+    let finish_stream!: () => void;
+    let stream_signal!: AbortSignal;
+    const cancelling_run: AgentRun = { ...RUN, stage: "cancelling" };
+    const cancelled_run: AgentRun = { ...RUN, stage: "cancelled" };
+    api.list_agent_sessions.mockResolvedValue([SESSION]);
+    api.get_agent_session
+      .mockReset()
+      .mockResolvedValueOnce({ ...INITIAL_STATE, runs: [RUN] })
+      .mockResolvedValueOnce({ ...INITIAL_STATE, runs: [cancelled_run] });
+    api.get_agent_run.mockResolvedValue(cancelled_run);
+    api.cancel_agent_run.mockResolvedValue(cancelling_run);
+    api.stream_unified_agent_run.mockImplementation(
+      (_run_id, _on_event, signal) => {
+        stream_signal = signal;
+        return new Promise<void>((resolve) => {
+          finish_stream = resolve;
+        });
+      },
+    );
+    const { wrapper } = create_query_wrapper();
+    const { result } = renderHook(
+      () =>
+        use_agent_panel({
+          agent_id: "marker",
+          asset_id: ASSET_ID,
+          context: {},
+          models: [MODEL],
+          task_input: {},
+          default_thinking_mode: "auto",
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.pending).toBe(true));
+    await act(async () => result.current.cancel_run(RUN.run_id));
+    expect(stream_signal.aborted).toBe(false);
+    expect(result.current.active_run?.stage).toBe("cancelling");
+    expect(result.current.pending).toBe(true);
+    expect(result.current.submit("新问题")).toBe(false);
+    await act(async () => finish_stream());
+    expect(result.current.active_run?.stage).toBe("cancelled");
+    expect(result.current.pending).toBe(false);
+  });
+
   it("cancels the current run and refreshes its conversation", async () => {
     const cancelled_run: AgentRun = { ...RUN, stage: "cancelled" };
     const cancelled_state = { ...INITIAL_STATE, runs: [cancelled_run] };

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import re
+from time import monotonic, sleep
 from pathlib import Path
 from threading import Event as ThreadEvent
 from types import SimpleNamespace
@@ -35,6 +36,7 @@ from openvideo.core.agent_runtime_models import (
     AgentFocusContext,
     AgentMode,
     AgentRunCreate,
+    AgentRunCheckpoint,
     AgentRunStage,
     AgentSession,
     AgentSessionCreate,
@@ -206,7 +208,9 @@ def test_marker_tool_reads_latest_content_without_persisting_fallback(tmp_path: 
         )
         marker = service.library.create_marker(
             MediaMarker(
-                marker_id=f"marker-{uuid7().hex}", asset_id=ASSET_ID, start_seconds=10,
+                marker_id=f"marker-{uuid7().hex}",
+                asset_id=ASSET_ID,
+                start_seconds=10,
             )
         )
         assert service._read_markers(context)["markers"][0]["importance"] == 1
@@ -2416,3 +2420,206 @@ def test_abnormal_task_completion_is_terminal_and_allows_next_request(
                 }
 
         client.portal.call(scenario)
+
+
+def test_cancellation_returns_while_sdk_cleanup_remains_active(tmp_path, monkeypatch):
+    started = ThreadEvent()
+    cleaning = ThreadEvent()
+    release = asyncio.Event()
+
+    async def execute_until_cancelled(*_args, **_kwargs):
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cleaning.set()
+            _args[-1](
+                LlmAgentEvent(
+                    event_type=LlmAgentEventType.REASONING_DELTA,
+                    content="停止后的迟到事件",
+                )
+            )
+            await asyncio.wait_for(release.wait(), timeout=3)
+
+    monkeypatch.setattr(AgnoAgentExecutor, "run", execute_until_cancelled)
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        service.settings.agent = service.settings.agent.model_copy(
+            update={"max_concurrent_runs": 1}
+        )
+        session = client.post(
+            "/api/agent-sessions", json={"agent_id": "marker", "asset_id": ASSET_ID}
+        ).json()
+        request = {
+            "request_key": f"request-{uuid7().hex}",
+            "ai_model_id": MODEL_ID,
+            "content": "解释当前视频",
+        }
+        run = client.post(
+            f"/api/agent-sessions/{session['session_id']}/runs", json=request
+        ).json()
+        run_id = run["run_id"]
+        try:
+            assert started.wait(2)
+            requested_at = monotonic()
+            response = client.post(f"/api/agent-runs/{run_id}/cancel")
+            assert monotonic() - requested_at < 0.5
+            assert response.status_code == 202
+            assert response.json()["stage"] == "cancelling"
+            assert cleaning.wait(1)
+            assert service.has_active_jobs()
+            checkpoint = service.library.load_agent_run_checkpoint(run_id)
+            assert checkpoint.stage == AgentRunStage.CANCELLING
+            assert checkpoint.retry_allowed is False
+            stopped_sequence = response.json()["latest_event_sequence"]
+            repeated = client.post(f"/api/agent-runs/{run_id}/cancel")
+            assert repeated.status_code == 202
+            assert repeated.json()["latest_event_sequence"] == stopped_sequence
+            assert not service._tasks[run_id].done()
+            assert client.get("/api/agent-definitions").status_code == 200
+            assert client.delete(f"/api/media/assets/{ASSET_ID}").status_code == 409
+            assert (
+                client.post(
+                    f"/api/agent-sessions/{session['session_id']}/runs",
+                    json={**request, "request_key": f"request-{uuid7().hex}"},
+                ).status_code
+                == 409
+            )
+        finally:
+            client.portal.call(release.set)
+        deadline = monotonic() + 2
+        while monotonic() < deadline:
+            final = client.get(f"/api/agent-runs/{run_id}").json()
+            if final["stage"] == "cancelled":
+                break
+            sleep(0.01)
+        assert final["stage"] == "cancelled"
+        assert final["completed_at"] is not None
+        assert service.library.load_agent_run_checkpoint(run_id).retry_allowed is True
+        assert not service.has_active_jobs()
+        repeated = client.post(f"/api/agent-runs/{run_id}/cancel")
+        assert repeated.status_code == 200
+        assert repeated.json() == final
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        AgentRunStage.COMPLETE,
+        AgentRunStage.FAILED,
+        AgentRunStage.CANCELLED,
+        AgentRunStage.INTERRUPTED,
+        AgentRunStage.WAITING_FOR_APPROVAL,
+    ],
+)
+def test_cancellation_preserves_existing_terminal_runs(tmp_path, stage):
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        run = new_agent_run(session.session_id, f"request-{uuid7().hex}", MODEL_ID)
+        terminal = run.model_copy(update={"stage": stage})
+        service.library.save_agent_run(terminal)
+
+        response = client.post(f"/api/agent-runs/{run.run_id}/cancel")
+
+        assert response.status_code == 200
+        assert response.json() == terminal.model_dump(mode="json")
+        assert service.run_events(run.run_id) == []
+
+
+def test_queued_cancellation_does_not_start_the_sdk_or_regress_to_running(
+    tmp_path, monkeypatch
+):
+    from openvideo.agent_runtime import AgentRuntime
+
+    release = asyncio.Event()
+    run_runtime = AgentRuntime.run
+
+    async def start_after_release(runtime, *args, **kwargs):
+        await asyncio.wait_for(release.wait(), timeout=3)
+        return await run_runtime(runtime, *args, **kwargs)
+
+    async def unexpected_sdk(*_args, **_kwargs):
+        pytest.fail("排队时已取消的任务不应调用模型")
+
+    monkeypatch.setattr(AgentRuntime, "run", start_after_release)
+    monkeypatch.setattr(AgnoAgentExecutor, "run", unexpected_sdk)
+    with create_client(tmp_path) as client:
+        session = client.post(
+            "/api/agent-sessions", json={"agent_id": "marker", "asset_id": ASSET_ID}
+        ).json()
+        run = client.post(
+            f"/api/agent-sessions/{session['session_id']}/runs",
+            json={
+                "request_key": f"request-{uuid7().hex}",
+                "ai_model_id": MODEL_ID,
+                "content": "解释当前视频",
+            },
+        ).json()
+        run_id = run["run_id"]
+        try:
+            assert client.post(f"/api/agent-runs/{run_id}/cancel").status_code == 202
+            assert client.post(f"/api/agent-runs/{run_id}/cancel").status_code == 202
+            assert (
+                client.get(f"/api/agent-runs/{run_id}").json()["stage"] == "cancelling"
+            )
+        finally:
+            client.portal.call(release.set)
+        deadline = monotonic() + 2
+        while monotonic() < deadline:
+            final = client.get(f"/api/agent-runs/{run_id}").json()
+            if final["stage"] == "cancelled":
+                break
+            sleep(0.01)
+        assert final["stage"] == "cancelled"
+        statuses = [
+            event.payload["stage"]
+            for event in client.app.state.agent_service.run_events(run_id)
+            if event.event_type == AgentEventType.RUN_STATUS
+        ]
+        assert statuses == ["cancelling"]
+
+
+def test_restart_preserves_unfinished_cancellation_as_an_interruption(
+    tmp_path, monkeypatch
+):
+    async def unexpected_sdk(*_args, **_kwargs):
+        pytest.fail("重启不能自动执行正在停止的任务")
+
+    monkeypatch.setattr(AgnoAgentExecutor, "run", unexpected_sdk)
+    with create_client(tmp_path) as client:
+        service = client.app.state.agent_service
+        settings = service.settings
+        session = service.create_session(
+            AgentSessionCreate(agent_id="marker", asset_id=ASSET_ID)
+        )
+        request = AgentRunCreate(
+            request_key=f"request-{uuid7().hex}",
+            ai_model_id=MODEL_ID,
+            content="解释当前视频",
+        )
+        run = new_agent_run(
+            session.session_id, request.request_key, MODEL_ID
+        ).model_copy(update={"stage": AgentRunStage.CANCELLING})
+        service.library.save_agent_run(run)
+        service.library.save_agent_run_checkpoint(
+            AgentRunCheckpoint(
+                run_id=run.run_id,
+                session_id=session.session_id,
+                request=request,
+                stage=AgentRunStage.CANCELLING,
+            )
+        )
+    with TestClient(create_app(settings)) as client:
+        service = client.app.state.agent_service
+        restored = client.get(f"/api/agent-runs/{run.run_id}").json()
+        assert restored["stage"] == "interrupted"
+        assert restored["error_code"] == "cancel_interrupted"
+        assert "正在停止" in restored["error_message"]
+        checkpoint = service.library.load_agent_run_checkpoint(run.run_id)
+        assert checkpoint.stage == AgentRunStage.INTERRUPTED
+        assert checkpoint.retry_allowed is True
+        assert not service.has_active_jobs()
+        assert client.post(f"/api/agent-runs/{run.run_id}/cancel").json() == restored

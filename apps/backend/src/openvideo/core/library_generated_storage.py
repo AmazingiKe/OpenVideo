@@ -504,7 +504,11 @@ class LibraryGeneratedStorageMixin:
 
     def interrupt_agent_run_checkpoints(self) -> None:
         for checkpoint in self.load_agent_run_checkpoints():
-            if checkpoint.stage in {AgentRunStage.PENDING, AgentRunStage.RUNNING}:
+            if checkpoint.stage in {
+                AgentRunStage.PENDING,
+                AgentRunStage.RUNNING,
+                AgentRunStage.CANCELLING,
+            }:
                 self.update_agent_run_checkpoint(
                     checkpoint.run_id,
                     AgentRunStage.INTERRUPTED,
@@ -645,17 +649,30 @@ class LibraryGeneratedStorageMixin:
 
     def interrupt_agent_runs(self) -> None:
         now = datetime.now(UTC)
-        active_stages = (AgentRunStage.PENDING.value, AgentRunStage.RUNNING.value)
+        active_stages = (
+            AgentRunStage.PENDING.value,
+            AgentRunStage.RUNNING.value,
+            AgentRunStage.CANCELLING.value,
+        )
         rows = (
             self._db()
-            .execute("SELECT * FROM agent_runs WHERE stage IN (?, ?)", active_stages)
+            .execute("SELECT * FROM agent_runs WHERE stage IN (?, ?, ?)", active_stages)
             .fetchall()
         )
         for row in rows:
-            run = self._agent_run_from_row(row).model_copy(
+            previous = self._agent_run_from_row(row)
+            cancel_requested = previous.stage == AgentRunStage.CANCELLING
+            error_code = "cancel_interrupted" if cancel_requested else "run_interrupted"
+            error_message = (
+                "应用重启中断了正在停止的 Agent 运行，未自动重跑"
+                if cancel_requested
+                else "应用重启中断了 Agent 运行"
+            )
+            run = previous.model_copy(
                 update={
                     "stage": AgentRunStage.INTERRUPTED,
-                    "error_message": "应用重启中断了 Agent 运行",
+                    "error_code": error_code,
+                    "error_message": error_message,
                     "updated_at": now,
                 }
             )
@@ -664,7 +681,11 @@ class LibraryGeneratedStorageMixin:
                 run.session_id,
                 run.run_id,
                 AgentEventType.RUN_FAILED,
-                {"stage": AgentRunStage.INTERRUPTED.value},
+                {
+                    "stage": AgentRunStage.INTERRUPTED.value,
+                    "error_code": error_code,
+                    "error_message": error_message,
+                },
             )
 
     @staticmethod

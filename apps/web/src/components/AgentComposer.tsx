@@ -129,6 +129,7 @@ export function AgentComposer({
   on_cancel,
   disabled = false,
   pending = false,
+  is_cancelling = false,
   submitting = false,
   placeholder = "描述希望如何处理当前内容…",
   models,
@@ -159,6 +160,7 @@ export function AgentComposer({
   on_cancel?: () => void;
   disabled?: boolean;
   pending?: boolean;
+  is_cancelling?: boolean;
   submitting?: boolean;
   placeholder?: string;
   models: AiModelSummary[];
@@ -528,10 +530,17 @@ export function AgentComposer({
                     disabled={
                       disabled ||
                       submitting ||
+                      is_cancelling ||
                       command_instruction_missing ||
                       (pending ? !on_cancel : !value.trim())
                     }
-                    aria-label={pending && on_cancel ? "停止助手" : "发送指令"}
+                    aria-label={
+                      is_cancelling
+                        ? "正在停止助手"
+                        : pending && on_cancel
+                          ? "停止助手"
+                          : "发送指令"
+                    }
                     onClick={pending && on_cancel ? on_cancel : undefined}
                   >
                     {pending && on_cancel ? (

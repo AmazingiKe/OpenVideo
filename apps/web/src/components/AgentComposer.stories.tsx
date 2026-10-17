@@ -285,6 +285,15 @@ export const Streaming: Story = {
   },
 };
 
+export const Stopping: Story = {
+  args: { ...Streaming.args, is_cancelling: true },
+  play: async ({ canvasElement }) => {
+    await expect(
+      within(canvasElement).getByRole("button", { name: "正在停止助手" }),
+    ).toBeDisabled();
+  },
+};
+
 export const FullAccessStatus: Story = {
   args: {
     permission_mode: "full_access",

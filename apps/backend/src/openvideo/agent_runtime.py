@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ValidationError
 
 from openvideo.core.agent_runtime_models import (
+    TERMINAL_AGENT_RUN_STAGES,
     AgentArtifact,
     AgentArtifactStatus,
     AgentDefinition,
@@ -349,8 +350,11 @@ class AgentRuntime:
         self._metric_trackers: dict[str, AgentRunMetricTracker] = {}
 
     def cancel(self, run_id: str) -> None:
+        cancel_event = self._cancel_events.setdefault(run_id, asyncio.Event())
+        if cancel_event.is_set():
+            return
         self.cancellation.cancel()
-        self._cancel_events.setdefault(run_id, asyncio.Event()).set()
+        cancel_event.set()
         if task := self._active_tasks.get(run_id):
             task.cancel()
 
@@ -370,6 +374,17 @@ class AgentRuntime:
         display_content: str | None = None,
         input_metadata: dict[str, Any] | None = None,
     ) -> AgentRun:
+        current = self.store.repository.load_agent_run(run.run_id) or run
+        if current.stage in TERMINAL_AGENT_RUN_STAGES:
+            return current
+        cancel_event = self._cancel_events.get(run.run_id)
+        if current.stage == AgentRunStage.CANCELLING or (
+            cancel_event is not None and cancel_event.is_set()
+        ):
+            self._cancel_events.pop(run.run_id, None)
+            return self.finish(
+                current, AgentRunStage.CANCELLED, "cancelled", "用户已取消 Agent 运行"
+            )
         self.registry.validate(definition.allowed_tools)
         if (
             definition.allowed_tools
@@ -560,6 +575,8 @@ class AgentRuntime:
         return self.finish(run, stage)
 
     def _append_executor_event(self, run: AgentRun, event: LlmAgentEvent) -> None:
+        if self.cancellation.thread_event.is_set():
+            return
         tracker = self._metric_trackers[run.run_id]
         tracker.record(event)
         if event.event_type == LlmAgentEventType.TEXT_DELTA:
@@ -620,6 +637,13 @@ class AgentRuntime:
     ) -> AgentRun:
         """统一落盘结束事件与指标，也供任务回调修复异常退出的运行。"""
 
+        current = self.store.repository.load_agent_run(run.run_id)
+        if current is not None and current.stage in TERMINAL_AGENT_RUN_STAGES:
+            return current
+        if current is not None and current.stage == AgentRunStage.CANCELLING:
+            stage = AgentRunStage.CANCELLED
+            error_code = "cancelled"
+            error_message = "用户已取消 Agent 运行"
         completed_at = datetime.now(UTC)
         tracker = self._metric_trackers.get(run.run_id)
         metrics = (

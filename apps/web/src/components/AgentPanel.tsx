@@ -660,8 +660,9 @@ export function AgentPanel({
                 type="button"
                 variant="outline"
                 onClick={() => void cancel_run(active_run.run_id)}
+                disabled={active_run.stage === "cancelling"}
               >
-                取消任务
+                {active_run.stage === "cancelling" ? "正在停止…" : "取消任务"}
               </Button>
             ) : null}
             <Button
@@ -683,6 +684,7 @@ export function AgentPanel({
               active_run ? () => void cancel_run(active_run.run_id) : undefined
             }
             pending={pending}
+            is_cancelling={active_run?.stage === "cancelling"}
             submitting={submitting}
             disabled={!definition?.available || !model_id}
             placeholder={placeholder ?? "输入消息；运行时仍可编辑下一条草稿"}

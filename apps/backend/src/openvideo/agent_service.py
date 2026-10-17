@@ -728,13 +728,34 @@ class AgentService:
             loop.call_soon_threadsafe(signal.set)
 
     async def cancel(self, run_id: str) -> AgentRun:
+        """停止意图先落盘，SDK 清理仍占用执行名额，取消请求不等待清理完成。"""
         run = self.run(run_id)
         if run.stage in TERMINAL_AGENT_RUN_STAGES:
             return run
-        if runtime := self._runtimes.get(run_id):
-            runtime.cancel(run_id)
-        if task := self._tasks.get(run_id):
-            await asyncio.gather(task, return_exceptions=True)
+        try:
+            if run.stage != AgentRunStage.CANCELLING:
+                cancelling = run.model_copy(
+                    update={
+                        "stage": AgentRunStage.CANCELLING,
+                        "updated_at": datetime.now(UTC),
+                    }
+                )
+                self.library.save_agent_run(cancelling)
+                self.library.update_agent_run_checkpoint(
+                    run_id, AgentRunStage.CANCELLING, retry_allowed=False
+                )
+                self.store.append(
+                    run.session_id,
+                    run_id,
+                    AgentEventType.RUN_STATUS,
+                    {
+                        "stage": AgentRunStage.CANCELLING.value,
+                        "message": "正在停止助手",
+                    },
+                )
+        finally:
+            if runtime := self._runtimes.get(run_id):
+                runtime.cancel(run_id)
         return self.run(run_id)
 
     async def close(self) -> None:
@@ -746,8 +767,8 @@ class AgentService:
         for signal in self._run_event_signals.values():
             signal.set()
         self._run_event_signals.clear()
-        for runtime_id, runtime in list(self._runtimes.items()):
-            runtime.cancel(runtime_id)
+        for runtime_id in list(self._runtimes):
+            await self.cancel(runtime_id)
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         if self._semantic_index_task is not None:

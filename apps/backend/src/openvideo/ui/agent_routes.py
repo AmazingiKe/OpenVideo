@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from openvideo.agent_registry import (
@@ -18,6 +18,7 @@ from openvideo.core.agent_runtime_models import (
     AgentIndexStatus,
     AgentRun,
     AgentRunCreate,
+    AgentRunStage,
     AgentSession,
     AgentSessionCreate,
     AgentSessionState,
@@ -151,9 +152,12 @@ def register_agent_routes(
         )
 
     @app.post("/api/agent-runs/{run_id}/cancel", response_model=AgentRun)
-    async def cancel_agent_run(run_id: str) -> AgentRun:
+    async def cancel_agent_run(run_id: str, response: Response) -> AgentRun:
         try:
-            return await agent_service().cancel(run_id)
+            run = await agent_service().cancel(run_id)
+            if run.stage == AgentRunStage.CANCELLING:
+                response.status_code = status.HTTP_202_ACCEPTED
+            return run
         except AgentServiceError as error:
             raise agent_http_error(error) from error
 

@@ -52,6 +52,7 @@ class AgentEventType(StrEnum):
 class AgentRunStage(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
+    CANCELLING = "cancelling"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
     COMPLETE = "complete"
     FAILED = "failed"

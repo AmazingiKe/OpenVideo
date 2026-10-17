@@ -761,6 +761,7 @@ export type AgentRun = {
   stage:
     | "pending"
     | "running"
+    | "cancelling"
     | "waiting_for_approval"
     | "complete"
     | "failed"

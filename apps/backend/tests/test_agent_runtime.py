@@ -23,6 +23,7 @@ from openvideo.core.agent_runtime_models import (
     AgentEventType,
     AgentMode,
     AgentRun,
+    AgentRunStage,
     AgentSession,
     AgentToolCall,
     AgentToolDescriptor,
@@ -393,6 +394,19 @@ async def test_cancelled_run_does_not_call_provider():
     assert (
         repository.events[run.session_id][-1].event_type == AgentEventType.RUN_CANCELLED
     )
+
+
+def test_late_runtime_finish_preserves_a_confirmed_terminal_result():
+    repository, _, _, runtime, run, _, _, _ = setup_runtime(
+        AgentExecutionResult(content="已有完成结果")
+    )
+    completed = run.model_copy(update={"stage": AgentRunStage.COMPLETE})
+    repository.save_agent_run(completed)
+
+    finished = runtime.finish(run, AgentRunStage.CANCELLED)
+
+    assert finished == completed
+    assert repository.events[run.session_id] == []
 
 
 @pytest.mark.asyncio

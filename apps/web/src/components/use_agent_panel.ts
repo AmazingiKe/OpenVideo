@@ -117,6 +117,7 @@ export function use_agent_panel({
   const panel_version_ref = useRef(0);
   const submission_ref = useRef(false);
   const run_sequence_ref = useRef(new Map<string, number>());
+  const cancellation_requests_ref = useRef(new Set<string>());
   const restore_panel_event = useEffectEvent(restore_panel);
   const restoring = Boolean(asset_id) && restored_scope_key !== scope_key;
   const pending =
@@ -351,6 +352,14 @@ export function use_agent_panel({
         ({ event, data }) => {
           last_sequence = Math.max(last_sequence, data.sequence);
           run_sequence_ref.current.set(run.run_id, last_sequence);
+          if (event === "run.status" && data.stage === "cancelling") {
+            set_active_run((current) =>
+              current?.run_id === run.run_id &&
+              !TERMINAL_RUN_STAGES.has(current.stage)
+                ? { ...current, stage: "cancelling" }
+                : current,
+            );
+          }
           if (event === "message.delta") {
             set_stream_text((current) => current + String(data.content ?? ""));
           }
@@ -425,13 +434,29 @@ export function use_agent_panel({
   }
 
   async function cancel_run(run_id: string) {
+    if (cancellation_requests_ref.current.has(run_id)) return;
+    cancellation_requests_ref.current.add(run_id);
     const panel_version = panel_version_ref.current;
     const session_id = state?.session.session_id;
     const connection = connection_ref.current;
     try {
       const cancelled = await cancel_agent_run(run_id);
-      if (panel_version !== panel_version_ref.current) return;
-      set_active_run(cancelled);
+      if (
+        panel_version !== panel_version_ref.current ||
+        connection_ref.current !== connection
+      )
+        return;
+      set_active_run((current) => {
+        if (
+          current &&
+          (current.run_id !== run_id ||
+            (TERMINAL_RUN_STAGES.has(current.stage) &&
+              !TERMINAL_RUN_STAGES.has(cancelled.stage)))
+        )
+          return current;
+        return cancelled;
+      });
+      if (!TERMINAL_RUN_STAGES.has(cancelled.stage)) return;
       set_stream_text("");
       set_stream_complete(false);
       set_submission(null);
@@ -444,6 +469,8 @@ export function use_agent_panel({
     } catch (caught) {
       if (panel_version === panel_version_ref.current)
         set_error(error_message(caught));
+    } finally {
+      cancellation_requests_ref.current.delete(run_id);
     }
   }
 

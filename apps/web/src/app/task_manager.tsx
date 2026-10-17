@@ -930,6 +930,7 @@ function agent_task_message(stage: AgentTaskSnapshot["run"]["stage"]): string {
   return {
     pending: "等待助手开始",
     running: "助手正在处理",
+    cancelling: "正在停止助手，等待后台退出",
     waiting_for_approval: "等待用户批准变更",
     complete: "助手任务已完成",
     failed: "助手任务失败",
@@ -942,6 +943,7 @@ function agent_task_progress(stage: AgentTaskSnapshot["run"]["stage"]): number {
   return {
     pending: 0,
     running: 50,
+    cancelling: 50,
     waiting_for_approval: 90,
     complete: 100,
     failed: 100,
