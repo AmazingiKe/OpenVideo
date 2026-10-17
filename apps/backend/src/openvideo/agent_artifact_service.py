@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from openvideo.core.transcription_models import TranscriptChangeReason
 from openvideo.agent_permission_policy import PermissionPolicy
 from openvideo.agent_registry import (
     MARKER_AGENT_ID,
@@ -560,7 +561,7 @@ class AgentArtifactService:
             applied_change_indices.append(position - 1)
         updated = transcript.model_copy(update={"segments": segments})
         if applied_change_count:
-            self.library.save_transcript(updated)
+            self.library.save_transcript(updated, reason=TranscriptChangeReason.EDIT)
         return agent_application_result(
             rebased=current_digest != base_digest,
             applied_change_count=applied_change_count,
@@ -704,7 +705,8 @@ class AgentArtifactService:
                 update={"text": change["before"]}
             )
         self.library.save_transcript(
-            transcript.model_copy(update={"segments": segments})
+            transcript.model_copy(update={"segments": segments}),
+            reason=TranscriptChangeReason.EDIT,
         )
 
     def _undo_summary_change(

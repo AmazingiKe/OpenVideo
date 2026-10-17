@@ -121,7 +121,9 @@ describe("TranscriptionDialog", () => {
 
     expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
     expect(
-      screen.getByText("重新转写会在成功后替换当前文字；失败时保留现有结果。"),
+      screen.getByText(
+        "重新转写成功前会备份当前字幕，可在字幕历史中恢复；失败时保留现有结果。",
+      ),
     ).toBeInTheDocument();
   });
 

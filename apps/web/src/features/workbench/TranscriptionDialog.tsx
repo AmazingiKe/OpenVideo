@@ -37,6 +37,7 @@ import {
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
 } from "@/shared/types";
+import { TranscriptHistory } from "./TranscriptHistory";
 import { use_transcription_preflight } from "./use_transcription_preflight";
 import { use_transcription_tool_state } from "./use_transcription_tool_state";
 
@@ -48,6 +49,7 @@ type TranscriptionDialogProps = {
   asset_ids?: string[];
   error?: string | null;
   has_transcript: boolean;
+  on_transcript_restored?: () => void;
   is_transcribing: boolean;
   on_start_transcription: (options: TranscriptionOptions) => void;
   transcription_models: TranscriptionModelDescriptor[];
@@ -63,6 +65,7 @@ export function TranscriptionDialog({
   asset_ids,
   error = null,
   has_transcript,
+  on_transcript_restored,
   is_transcribing,
   on_start_transcription,
   transcription_models,
@@ -367,9 +370,17 @@ export function TranscriptionDialog({
         )}
         <FieldDescription>
           {has_transcript
-            ? "重新转写会在成功后替换当前文字；失败时保留现有结果。"
-            : "已有转写会在成功后替换，失败时保留原结果；完成后可继续修正文字。"}
+            ? "重新转写成功前会备份当前字幕，可在字幕历史中恢复；失败时保留现有结果。"
+            : "已有字幕替换前会自动备份；失败时保留原结果，完成后可继续修正文字。"}
         </FieldDescription>
+        {open && asset && asset_count === 1 && has_transcript ? (
+          <TranscriptHistory
+            key={asset.asset_id}
+            asset_id={asset.asset_id}
+            disabled={is_transcribing}
+            on_restored={on_transcript_restored}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   );

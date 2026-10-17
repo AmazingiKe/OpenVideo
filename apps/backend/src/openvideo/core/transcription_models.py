@@ -324,3 +324,26 @@ class Transcript(BaseModel):
     language: str | None = None
     segments: list[TranscriptSegment] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class TranscriptChangeReason(StrEnum):
+    REPLACEMENT = "replacement"
+    EDIT = "edit"
+    RESTORE = "restore"
+
+
+class TranscriptVersion(BaseModel):
+    """替换前的完整字幕快照，独立于模型任务状态保存人工修订。"""
+
+    version_id: str
+    asset_id: str
+    saved_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    reason: TranscriptChangeReason
+    transcript: Transcript
+
+
+class TranscriptVersionSummary(BaseModel):
+    version_id: str
+    saved_at: datetime
+    reason: TranscriptChangeReason
+    segment_count: int

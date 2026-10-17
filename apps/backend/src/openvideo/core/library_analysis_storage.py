@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
+from pathlib import Path
 
 from openvideo.core.analysis_models import AnalysisJob
 from openvideo.core.event_analysis_models import (
@@ -28,22 +29,104 @@ from openvideo.core.library_files import (
 )
 from openvideo.core.library_index import synchronize_asset
 from openvideo.core.media_models import MediaMarker, MediaSegment
-from openvideo.core.transcription_models import Transcript, TranscriptionMetadata
+from openvideo.core.transcription_models import (
+    Transcript,
+    TranscriptionMetadata,
+    TranscriptVersion,
+    TranscriptChangeReason,
+)
+from openvideo.core.identifiers import uuid7, is_prefixed_uuid7
+
+TRANSCRIPT_HISTORY_DIRECTORY = "transcript-history"
+TRANSCRIPT_VERSION_PREFIX = "transcript-version-"
+TRANSCRIPT_HISTORY_LIMIT = 50
 
 
 class LibraryAnalysisStorageMixin:
     """让转录、时间轴与标记的业务文件和可重建索引保持同步。"""
 
-    def save_transcript(self, transcript: Transcript) -> None:
+    def save_transcript(
+        self,
+        transcript: Transcript,
+        *,
+        reason: TranscriptChangeReason = TranscriptChangeReason.REPLACEMENT,
+    ) -> None:
+        """先持久化被替换的内容，备份失败时不覆盖当前字幕。"""
         self._validate_asset_id(transcript.asset_id)
         asset = self.get(transcript.asset_id)
         if asset is None:
             raise ValueError("转录对应的素材不存在")
         with self._lock:
+            current = self.load_transcript(transcript.asset_id)
+            if current is None and self._transcript_path(transcript.asset_id).exists():
+                raise ValueError("当前字幕无法读取，已停止覆盖以保护原文件")
+            if current is not None and current != transcript:
+                version = TranscriptVersion(
+                    version_id=f"{TRANSCRIPT_VERSION_PREFIX}{uuid7().hex}",
+                    asset_id=transcript.asset_id,
+                    reason=reason,
+                    transcript=current,
+                )
+                directory = self._transcript_history_directory(transcript.asset_id)
+                directory.mkdir(parents=True, exist_ok=True)
+                atomic_write_model(directory / f"{version.version_id}.json", version)
             atomic_write_model(self._transcript_path(transcript.asset_id), transcript)
             self._mark_event_analyses_stale(transcript.asset_id)
             self._write_asset_metadata(asset)
             synchronize_asset(self._db(), self.assets_path, transcript.asset_id)
+
+    def _transcript_history_directory(self, asset_id: str) -> Path:
+        asset_directory = self.asset_directory(asset_id)
+        directory = (
+            asset_directory / ARTIFACTS_DIRECTORY_NAME / TRANSCRIPT_HISTORY_DIRECTORY
+        )
+        if directory.is_symlink() or not directory.resolve().is_relative_to(
+            asset_directory
+        ):
+            raise ValueError("字幕历史目录无效")
+        return directory
+
+    def load_transcript_version(
+        self, asset_id: str, version_id: str
+    ) -> TranscriptVersion:
+        if not is_prefixed_uuid7(version_id, TRANSCRIPT_VERSION_PREFIX):
+            raise ValueError("字幕版本标识无效")
+        directory = self._transcript_history_directory(asset_id)
+        path = directory / f"{version_id}.json"
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("字幕版本不存在")
+        version = TranscriptVersion.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+        if (
+            version.asset_id != asset_id
+            or version.transcript.asset_id != asset_id
+            or version.version_id != version_id
+        ):
+            raise ValueError("字幕版本不属于当前素材")
+        return version
+
+    def list_transcript_versions(self, asset_id: str) -> list[TranscriptVersion]:
+        directory = self._transcript_history_directory(asset_id)
+        versions = []
+        for path in sorted(
+            directory.glob(f"{TRANSCRIPT_VERSION_PREFIX}*.json"), reverse=True
+        ):
+            if not is_prefixed_uuid7(path.stem, TRANSCRIPT_VERSION_PREFIX):
+                continue
+            versions.append(self.load_transcript_version(asset_id, path.stem))
+            if len(versions) == TRANSCRIPT_HISTORY_LIMIT:
+                break
+        return versions
+
+    def restore_transcript_version(self, asset_id: str, version_id: str) -> Transcript:
+        """恢复前同样备份当前内容，因此恢复操作本身也可以撤回。"""
+        with self._lock:
+            version = self.load_transcript_version(asset_id, version_id)
+            self.save_transcript(
+                version.transcript, reason=TranscriptChangeReason.RESTORE
+            )
+            return version.transcript
 
     def save_transcription_metadata(self, metadata: TranscriptionMetadata) -> None:
         """任务详情需要独立于运行进程保存，便于失败诊断和结果追溯。"""

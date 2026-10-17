@@ -27,6 +27,7 @@ from openvideo.core.media_models import (
 )
 from openvideo.core.transcription_models import (
     Transcript,
+    TranscriptVersionSummary,
     TranscriptionComputeType,
     TranscriptionDevice,
     TranscriptionEngine,
@@ -338,6 +339,53 @@ def register_analysis_routes(
         if not transcript:
             raise HTTPException(status_code=404, detail="该视频还没有转写结果")
         return transcript
+
+    @app.get(
+        "/api/media/assets/{asset_id}/transcript/versions",
+        response_model=list[TranscriptVersionSummary],
+    )
+    def list_transcript_versions(asset_id: str) -> list[TranscriptVersionSummary]:
+        ready_asset(library(), asset_id)
+        try:
+            return [
+                TranscriptVersionSummary(
+                    version_id=version.version_id,
+                    saved_at=version.saved_at,
+                    reason=version.reason,
+                    segment_count=len(version.transcript.segments),
+                )
+                for version in library().list_transcript_versions(asset_id)
+            ]
+        except (OSError, ValueError) as error:
+            raise HTTPException(
+                status_code=409, detail="字幕历史无法读取，请检查资料库文件"
+            ) from error
+
+    @app.get(
+        "/api/media/assets/{asset_id}/transcript/versions/{version_id}",
+        response_model=Transcript,
+    )
+    def get_transcript_version(asset_id: str, version_id: str) -> Transcript:
+        ready_asset(library(), asset_id)
+        try:
+            return library().load_transcript_version(asset_id, version_id).transcript
+        except (OSError, ValueError) as error:
+            raise HTTPException(
+                status_code=404, detail="字幕版本不存在或无法读取"
+            ) from error
+
+    @app.post(
+        "/api/media/assets/{asset_id}/transcript/versions/{version_id}/restore",
+        response_model=Transcript,
+    )
+    def restore_transcript_version(asset_id: str, version_id: str) -> Transcript:
+        ready_asset(library(), asset_id)
+        try:
+            return analysis_manager().restore_transcript_version(asset_id, version_id)
+        except AnalysisPrerequisiteError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except AnalysisError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.patch(
         "/api/media/assets/{asset_id}/transcript/segments/{segment_index}",

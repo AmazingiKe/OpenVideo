@@ -30,6 +30,7 @@ from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaSegme
 from openvideo.core.transcription_models import (
     BAILIAN_PARAFORMER_MODEL,
     Transcript,
+    TranscriptChangeReason,
     TranscriptionDevice,
     TranscriptionPreflight,
     TranscriptionEngine,
@@ -766,21 +767,40 @@ class AnalysisManager:
         segment_index: int,
         text: str,
     ) -> Transcript:
-        transcript = self.library.load_transcript(asset_id)
-        if transcript is None:
-            raise AnalysisError("该视频还没有转写结果")
-        if segment_index < 0 or segment_index >= len(transcript.segments):
-            raise AnalysisError("转写片段不存在")
-        updated_segments = list(transcript.segments)
-        updated_segments[segment_index] = updated_segments[segment_index].model_copy(
-            update={"text": text}
-        )
-        updated_transcript = transcript.model_copy(
-            update={"segments": updated_segments}
-        )
-        self.library.save_transcript(updated_transcript)
+        with self._lock:
+            transcript = self.library.load_transcript(asset_id)
+            if transcript is None:
+                raise AnalysisError("该视频还没有转写结果")
+            if segment_index < 0 or segment_index >= len(transcript.segments):
+                raise AnalysisError("转写片段不存在")
+            updated_segments = list(transcript.segments)
+            updated_segments[segment_index] = updated_segments[
+                segment_index
+            ].model_copy(update={"text": text})
+            updated_transcript = transcript.model_copy(
+                update={"segments": updated_segments}
+            )
+            self.library.save_transcript(
+                updated_transcript, reason=TranscriptChangeReason.EDIT
+            )
         self._on_evidence_ready()
         return updated_transcript
+
+    def restore_transcript_version(self, asset_id: str, version_id: str) -> Transcript:
+        """运行中的分析可能继续写入字幕，恢复前必须先完成或停止它。"""
+        with self._lock:
+            if self._active_job_for(asset_id) is not None:
+                raise AnalysisPrerequisiteError(
+                    "请先停止当前分析或转录任务，再恢复字幕"
+                )
+            try:
+                transcript = self.library.restore_transcript_version(
+                    asset_id, version_id
+                )
+            except (OSError, ValueError) as error:
+                raise AnalysisError("字幕版本无法读取，请检查资料库文件") from error
+        self._on_evidence_ready()
+        return transcript
 
     def segments(self, asset_id: str) -> list[MediaSegment]:
         return self.library.load_segments(asset_id)

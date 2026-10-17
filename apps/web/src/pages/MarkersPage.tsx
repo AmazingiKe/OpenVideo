@@ -589,6 +589,7 @@ export function MarkersPage() {
         on_open_change={set_transcription_dialog_open}
         asset={selected_asset}
         has_transcript={transcript !== null}
+        on_transcript_restored={() => void reload_analysis()}
         is_transcribing={is_transcribing}
         on_start_transcription={(options) => void run_transcription(options)}
         transcription_models={transcription_models}
