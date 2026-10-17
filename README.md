@@ -112,6 +112,12 @@ Windows 也可以双击或执行：
 .\run.bat
 ```
 
+macOS 可以在 Finder 中双击项目根目录的 `run.command`，自动启动前后端并打开浏览器。请先安装上面的环境依赖并执行 `pnpm install`；首次启动时 `uv` 会准备后端环境。保留终端窗口，按 `Ctrl+C` 或关闭该窗口可停止服务。也可以在终端执行：
+
+```sh
+./run.command
+```
+
 启动后访问：
 
 - Web：<http://127.0.0.1:5173>
@@ -119,7 +125,7 @@ Windows 也可以双击或执行：
 - OpenAPI 文档：<http://127.0.0.1:38471/docs>
 - 健康检查：<http://127.0.0.1:38471/api/health>
 
-Vite 会把 `/api` 和媒体播放请求代理到 FastAPI。开发日志写入 `runtime/logs/dev/`，每次启动覆盖上一次日志；按 `Ctrl+C` 会同时停止前后端。
+Vite 会把 `/api` 和媒体播放请求代理到 FastAPI。开发日志写入系统临时目录下的 `OpenVideo/logs/dev/`，启动时会输出完整路径，每次启动覆盖上一次日志；按 `Ctrl+C` 会同时停止前后端。
 
 ### 4. 完成首次设置
 

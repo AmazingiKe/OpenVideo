@@ -8,6 +8,7 @@ const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(SCRIPT_DIRECTORY, "..");
 const LOG_DIRECTORY = join(tmpdir(), "OpenVideo", "logs", "dev");
 const IS_WINDOWS = process.platform === "win32";
+const OPEN_BROWSER = process.argv.includes("--open");
 const BACKEND_HOST = "127.0.0.1";
 const BACKEND_PORT = "38471";
 const FRONTEND_COMMAND = IS_WINDOWS
@@ -16,6 +17,9 @@ const FRONTEND_COMMAND = IS_WINDOWS
 const FRONTEND_ARGUMENTS = IS_WINDOWS
   ? []
   : ["--filter", "@openvideo/web", "dev"];
+if (OPEN_BROWSER) {
+  FRONTEND_ARGUMENTS.push("--open", "--strictPort");
+}
 
 const SERVICE_DEFINITIONS = [
   {
@@ -117,6 +121,7 @@ function startService(definition) {
 
 process.on("SIGINT", stopServices);
 process.on("SIGTERM", stopServices);
+process.on("SIGHUP", stopServices);
 
 for (const definition of SERVICE_DEFINITIONS) {
   startService(definition);
