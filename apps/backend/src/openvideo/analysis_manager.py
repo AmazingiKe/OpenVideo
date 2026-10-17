@@ -535,6 +535,21 @@ class AnalysisManager:
             job = self._jobs.get(job_id)
             return job.model_copy(deep=True) if job else None
 
+    def list_jobs(self, history_limit: int) -> list[AnalysisJob]:
+        """任务中心必须保留全部可操作任务，历史条数只限制已经结束的记录。"""
+        with self._lock:
+            jobs = sorted(
+                self._jobs.values(), key=lambda job: job.updated_at, reverse=True
+            )
+            active_jobs = [
+                job for job in jobs if job.stage not in TERMINAL_ANALYSIS_STAGES
+            ]
+            history = [job for job in jobs if job.stage in TERMINAL_ANALYSIS_STAGES]
+            return [
+                job.model_copy(deep=True)
+                for job in [*active_jobs, *history[:history_limit]]
+            ]
+
     def has_active_jobs(self) -> bool:
         with self._lock:
             return any(

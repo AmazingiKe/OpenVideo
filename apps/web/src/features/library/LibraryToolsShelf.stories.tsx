@@ -36,7 +36,7 @@ function DownloadWorkspace() {
           on_pause={manager.pause_task}
           on_cancel={manager.cancel_task}
           on_delete={manager.delete_task}
-          on_view_result={manager.view_probe_result}
+          on_view_result={manager.view_task_result}
         />
       </div>
       <LibraryToolsShelf />
@@ -103,6 +103,7 @@ const meta = {
           "/api/library/folders",
           "/api/download-accounts",
           "/api/agent/tasks",
+          "/api/analysis",
         ].includes(path)
       )
         return Response.json([]);

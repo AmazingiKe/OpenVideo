@@ -6,7 +6,13 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import {
+  Link,
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import {
   QueryClient,
   QueryClientProvider,
@@ -28,6 +34,9 @@ import {
   get_agent_index_status,
   get_download,
   list_agent_tasks,
+  list_analysis_tasks,
+  analyze_asset,
+  generate_chapters,
   list_assets,
   list_downloads,
   transcribe_asset,
@@ -45,6 +54,8 @@ import type {
   AgentTaskSnapshot,
   DownloadJob,
   AnalysisJob,
+  AnalysisTaskSnapshot,
+  MediaAsset,
   ProbeResponse,
 } from "@/shared/types";
 import { DEFAULT_ANALYSIS_STRATEGY } from "@/shared/analysis";
@@ -59,6 +70,9 @@ vi.mock("@/shared/api", async () => ({
   get_download: vi.fn(),
   get_agent_index_status: vi.fn(),
   list_agent_tasks: vi.fn(),
+  list_analysis_tasks: vi.fn(),
+  analyze_asset: vi.fn(),
+  generate_chapters: vi.fn(),
   list_downloads: vi.fn(),
   retry_agent_run: vi.fn(),
   list_assets: vi.fn(),
@@ -77,6 +91,7 @@ describe("TaskManagerProvider", () => {
   beforeEach(() => {
     vi.mocked(list_downloads).mockResolvedValue([]);
     vi.mocked(list_agent_tasks).mockResolvedValue([]);
+    vi.mocked(list_analysis_tasks).mockReset().mockResolvedValue([]);
     vi.mocked(get_agent_index_status).mockResolvedValue(agent_index_status());
     load_analysis_resource.mockClear();
   });
@@ -84,6 +99,274 @@ describe("TaskManagerProvider", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  it("restores queued and running analysis by reading history without submitting work", async () => {
+    vi.useFakeTimers();
+    const initialization = {
+      ...transcription_job("transcribing"),
+      operation: "initialization",
+    } as const;
+    const chapters = {
+      ...transcription_job("pending"),
+      operation: "chapters",
+      asset_id: "asset-second",
+      job_id: "job-second",
+    } as const;
+    const approval = {
+      ...transcription_job("waiting_for_approval"),
+      operation: "analysis",
+      asset_id: "asset-third",
+      job_id: "job-third",
+    } as const;
+    vi.mocked(list_analysis_tasks).mockResolvedValue(
+      [initialization, chapters, approval].map((job) => ({
+        job,
+        transcription_options: null,
+      })),
+    );
+    const { result } = render_task_manager();
+    await act(async () => Promise.resolve());
+    expect(
+      result.current.task_records.filter(
+        (task) => task.task_type === "analysis",
+      ),
+    ).toHaveLength(3);
+    expect(
+      result.current.is_transcription_running(initialization.asset_id),
+    ).toBe(true);
+    expect(
+      result.current.task_records.find(
+        (task) => task.task_id === initialization.job_id,
+      ),
+    ).toMatchObject({ cancel_available: true });
+    expect(
+      result.current.task_records.find(
+        (task) => task.task_id === approval.job_id,
+      ),
+    ).toMatchObject({ cancel_available: false, result_available: true });
+    await act(async () => result.current.cancel_task(approval.job_id));
+    expect(cancel_analysis).not.toHaveBeenCalled();
+    expect(transcribe_asset).not.toHaveBeenCalled();
+    expect(analyze_asset).not.toHaveBeenCalled();
+    expect(generate_chapters).not.toHaveBeenCalled();
+    expect(get_analysis).not.toHaveBeenCalled();
+    expect(list_analysis_tasks).toHaveBeenCalledWith(
+      50,
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("keeps task-history refresh single-flight and ignores an abandoned response", async () => {
+    vi.useFakeTimers();
+    const response = deferred<AnalysisTaskSnapshot[]>();
+    vi.mocked(list_analysis_tasks).mockReturnValue(response.promise);
+    const query_client = new QueryClient();
+    const refresh = vi.spyOn(query_client, "invalidateQueries");
+    const { result, unmount } = render_task_manager(query_client);
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(list_analysis_tasks).toHaveBeenCalledOnce();
+    const signal = vi.mocked(list_analysis_tasks).mock.calls[0][1];
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () =>
+      response.resolve([
+        { job: transcription_job("complete"), transcription_options: null },
+      ]),
+    );
+    expect(
+      result.current.task_records.some(
+        (task) =>
+          task.task_type === "analysis" || task.task_type === "transcription",
+      ),
+    ).toBe(false);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("refreshes completed restored results without starting a per-task submission or poll", async () => {
+    vi.useFakeTimers();
+    const job = transcription_job("transcribing");
+    vi.mocked(list_analysis_tasks)
+      .mockResolvedValueOnce([{ job, transcription_options: null }])
+      .mockResolvedValue([
+        { job: { ...job, stage: "complete" }, transcription_options: null },
+      ]);
+    const query_client = new QueryClient();
+    const refresh = vi.spyOn(query_client, "invalidateQueries");
+    const { result } = render_task_manager(query_client);
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id)
+        ?.stage,
+    ).toBe("complete");
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+    expect(refresh).toHaveBeenCalledWith({
+      queryKey: RESOURCE_QUERY_KEYS.asset_analysis(job.asset_id),
+    });
+    expect(transcribe_asset).not.toHaveBeenCalled();
+    expect(get_analysis).not.toHaveBeenCalled();
+  });
+
+  it("retries a restored transcription only when its original options are available", async () => {
+    const job = transcription_job("failed");
+    const options = {
+      engine: "bailian",
+      model: "paraformer-v2",
+      language: "zh",
+      device: "auto",
+      compute_type: "auto",
+    } as const;
+    const missing_options = {
+      ...job,
+      job_id: "job-no-options",
+      asset_id: "asset-no-options",
+    };
+    vi.mocked(list_analysis_tasks).mockResolvedValue([
+      { job, transcription_options: options },
+      { job: missing_options, transcription_options: null },
+    ]);
+    vi.mocked(transcribe_asset).mockResolvedValue({
+      ...job,
+      job_id: "job-retry",
+      stage: "complete",
+    });
+    const { result } = render_task_manager();
+    await act(async () => Promise.resolve());
+    expect(
+      result.current.task_records.find(
+        (task) => task.task_id === missing_options.job_id,
+      ),
+    ).toMatchObject({
+      retry_available: false,
+      message: expect.stringContaining("请回视频页面选择模型"),
+    });
+    await expect(
+      result.current.retry_task(missing_options.job_id),
+    ).rejects.toThrow("缺少安全重试所需信息");
+    expect(transcribe_asset).not.toHaveBeenCalled();
+    await act(async () => result.current.retry_task(job.job_id));
+    expect(transcribe_asset).toHaveBeenCalledWith(
+      job.asset_id,
+      options,
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("uses the restored chapter operation or analysis strategy only after an explicit retry", async () => {
+    const chapter = {
+      ...transcription_job("cancelled"),
+      operation: "chapters",
+    } as const;
+    const analysis = {
+      ...transcription_job("failed"),
+      job_id: "job-analysis",
+      asset_id: "asset-analysis",
+      operation: "analysis",
+      ai_model_id: "model-original",
+    } as const;
+    vi.mocked(list_analysis_tasks).mockResolvedValue([
+      { job: chapter, transcription_options: null },
+      { job: analysis, transcription_options: null },
+    ]);
+    vi.mocked(generate_chapters).mockResolvedValue({
+      ...chapter,
+      job_id: "job-chapter-retry",
+      stage: "complete",
+    });
+    vi.mocked(analyze_asset).mockResolvedValue({
+      ...analysis,
+      job_id: "job-analysis-retry",
+      stage: "complete",
+    });
+    const { result } = render_task_manager();
+    await act(async () => Promise.resolve());
+    expect(generate_chapters).not.toHaveBeenCalled();
+    expect(analyze_asset).not.toHaveBeenCalled();
+    await act(async () => result.current.retry_task(chapter.job_id));
+    expect(generate_chapters).toHaveBeenCalledWith(
+      chapter.asset_id,
+      expect.any(AbortSignal),
+    );
+    await act(async () => result.current.retry_task(analysis.job_id));
+    expect(analyze_asset).toHaveBeenCalledWith(
+      analysis.asset_id,
+      {
+        mode: analysis.mode,
+        ai_model_id: analysis.ai_model_id,
+        strategy: analysis.strategy,
+      },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("retries an incomplete worker stop from task history and only releases it after cancellation is confirmed", async () => {
+    vi.useFakeTimers();
+    const job = {
+      ...transcription_job("cancelling"),
+      operation: "initialization",
+      error_message: "进程尚未退出",
+    } as const;
+    vi.mocked(list_analysis_tasks).mockResolvedValue([
+      { job, transcription_options: null },
+    ]);
+    vi.mocked(cancel_analysis).mockResolvedValue({
+      ...job,
+      error_message: null,
+    });
+    vi.mocked(get_analysis).mockResolvedValue({
+      ...job,
+      stage: "cancelled",
+      error_message: null,
+    });
+    const { result } = render_task_manager(new QueryClient(), true);
+    await act(async () => Promise.resolve());
+    expect(screen.getByRole("button", { name: "重试停止" })).toBeEnabled();
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "重试停止" })),
+    );
+    expect(cancel_analysis).toHaveBeenCalledWith(job.job_id);
+    expect(screen.getByRole("button", { name: "正在停止…" })).toBeDisabled();
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(true);
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(result.current.is_transcription_running(job.asset_id)).toBe(false);
+  });
+
+  it("shows task synchronization failures and clears them after reconnecting", async () => {
+    vi.useFakeTimers();
+    vi.mocked(list_analysis_tasks)
+      .mockRejectedValueOnce(new Error("连接断开"))
+      .mockResolvedValue([]);
+    const { result } = render_task_manager();
+    await act(async () => Promise.resolve());
+    expect(result.current.task_sync_error).toContain("连接断开");
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(result.current.task_sync_error).toBeNull();
+  });
+
+  it("opens the source video for a restored proposal without cancelling or re-running it", async () => {
+    const job = {
+      ...transcription_job("waiting_for_approval"),
+      operation: "analysis",
+    } as const;
+    vi.mocked(list_analysis_tasks).mockResolvedValue([
+      { job, transcription_options: null },
+    ]);
+    vi.mocked(list_assets).mockResolvedValue([
+      {
+        asset_id: job.asset_id,
+        title: "原视频",
+        status: "ready",
+      } as MediaAsset,
+    ]);
+    render_task_manager(new QueryClient(), true);
+    fireEvent.click(await screen.findByRole("button", { name: "查看视频" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("当前位置")).toHaveTextContent(
+        `/markers/${job.asset_id}`,
+      ),
+    );
+    expect(cancel_analysis).not.toHaveBeenCalled();
+    expect(analyze_asset).not.toHaveBeenCalled();
   });
 
   it("keeps polling a download after the initiating page unmounts", async () => {
@@ -331,7 +614,7 @@ describe("TaskManagerProvider", () => {
     };
     vi.mocked(probe_source).mockResolvedValueOnce(probe);
     await act(async () => result.current.retry_task(task.task_id));
-    act(() => result.current.view_probe_result(task.task_id));
+    act(() => result.current.view_task_result(task.task_id));
     expect(result.current.selected_probe?.result).toEqual(probe);
     expect(result.current.task_center_open).toBe(false);
     await act(async () => result.current.delete_task(task.task_id));
@@ -865,12 +1148,17 @@ function render_task_manager(
 function ManagedTaskCenter() {
   const manager = use_task_manager();
   return (
-    <TaskCenter
-      open
-      tasks={manager.task_records}
-      on_retry={manager.retry_task}
-      on_cancel={manager.cancel_task}
-    />
+    <>
+      <TaskCenter
+        open
+        tasks={manager.task_records}
+        on_retry={manager.retry_task}
+        on_cancel={manager.cancel_task}
+        sync_error={manager.task_sync_error}
+        on_view_result={manager.view_task_result}
+      />
+      <output aria-label="当前位置">{useLocation().pathname}</output>
+    </>
   );
 }
 

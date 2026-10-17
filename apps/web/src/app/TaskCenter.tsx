@@ -15,6 +15,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { TASK_CENTER_TRIGGER_ID } from "@/components/TaskSubmissionFeedback";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,15 +27,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
-import { TASK_STAGE_LABELS, type TaskRecord } from "@/features/workbench/tasks";
-
-const TERMINAL_TASK_STAGES = new Set([
-  "complete",
-  "failed",
-  "cancelled",
-  "interrupted",
-  "paused",
-]);
+import {
+  TASK_STAGE_LABELS,
+  TERMINAL_TASK_STAGES,
+  type TaskRecord,
+} from "@/features/workbench/tasks";
 export const TASK_CENTER_CONTENT_ID = "task_center_content";
 
 type TaskCenterProps = {
@@ -46,6 +43,7 @@ type TaskCenterProps = {
   on_cancel?: (task_id: string) => Promise<void>;
   on_delete?: (task_id: string) => Promise<void>;
   on_view_result?: (task_id: string) => void;
+  sync_error?: string | null;
 };
 
 const TASK_TYPES = {
@@ -55,6 +53,7 @@ const TASK_TYPES = {
   agent: { label: "助手", icon: Bot },
   index: { label: "索引", icon: Database },
   import: { label: "导入", icon: FileUp },
+  analysis: { label: "分析", icon: Database },
 } as const;
 
 export function TaskCenter({
@@ -66,6 +65,7 @@ export function TaskCenter({
   on_cancel,
   on_delete,
   on_view_result,
+  sync_error = null,
 }: TaskCenterProps) {
   const [pending_task_ids, set_pending_task_ids] = useState(new Set<string>());
   const [action_error, set_action_error] = useState<string | null>(null);
@@ -143,16 +143,13 @@ export function TaskCenter({
         <PopoverHeader className="shrink-0 px-1">
           <PopoverTitle>任务中心</PopoverTitle>
           <PopoverDescription>
-            导入、下载、转录与助手任务会在切换页面后继续运行。
+            导入、下载、分析与助手任务会在切换页面后继续运行。
           </PopoverDescription>
         </PopoverHeader>
-        {action_error ? (
-          <p
-            className="rounded-lg bg-error-surface px-2 py-1.5 text-xs text-destructive"
-            role="alert"
-          >
-            {action_error}
-          </p>
+        {action_error || sync_error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{action_error ?? sync_error}</AlertDescription>
+          </Alert>
         ) : null}
         {visible_tasks.length === 0 ? (
           <p className="rounded-lg bg-surface-subtle px-3 py-6 text-center text-sm text-muted-foreground">
@@ -286,15 +283,22 @@ function TaskCenterItem({
                 type="button"
                 variant="outline"
                 size="xs"
-                disabled={is_pending || task.stage === "cancelling"}
+                disabled={
+                  is_pending ||
+                  (task.stage === "cancelling" && !task.cancel_available)
+                }
                 onClick={() => void on_cancel(task.task_id)}
               >
                 <Square aria-hidden="true" data-icon="inline-start" />
-                {task.stage === "cancelling"
-                  ? "正在停止…"
-                  : task.task_type === "import"
-                    ? "停止导入"
-                    : "停止转写"}
+                {task.stage === "cancelling" && task.cancel_available
+                  ? "重试停止"
+                  : task.stage === "cancelling"
+                    ? "正在停止…"
+                    : task.task_type === "import"
+                      ? "停止导入"
+                      : task.task_type === "analysis"
+                        ? "停止分析"
+                        : "停止转写"}
               </Button>
             ) : null}
             {task.result_available && on_view_result ? (
@@ -304,8 +308,12 @@ function TaskCenterItem({
                 size="xs"
                 onClick={() => on_view_result(task.task_id)}
               >
-                <Download aria-hidden="true" />
-                选择视频
+                {task.task_type === "probe" ? (
+                  <Download aria-hidden="true" />
+                ) : (
+                  <Play aria-hidden="true" />
+                )}
+                {task.task_type === "probe" ? "选择视频" : "查看视频"}
               </Button>
             ) : null}
             {task.delete_available && on_delete ? (

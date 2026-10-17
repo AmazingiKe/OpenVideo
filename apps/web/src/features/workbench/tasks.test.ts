@@ -52,19 +52,39 @@ describe("merge_task_record", () => {
     ]);
   });
 
-  it("keeps only the newest 100 tasks", () => {
+  it("keeps only the newest 100 finished tasks", () => {
     let tasks: TaskRecord[] = [];
     for (let index = 0; index < 105; index += 1) {
       const created_at = new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString();
-      tasks = merge_task_record(
-        tasks,
-        task_record(`job-${index.toString().padStart(3, "0")}`, created_at),
-      );
+      tasks = merge_task_record(tasks, {
+        ...task_record(`job-${index.toString().padStart(3, "0")}`, created_at),
+        stage: "complete",
+      });
     }
 
     expect(tasks).toHaveLength(100);
     expect(tasks[0]?.task_id).toBe("job-104");
     expect(tasks.at(-1)?.task_id).toBe("job-005");
+  });
+
+  it("keeps all queued tasks and interrupted tasks that still allow stopping", () => {
+    let tasks: TaskRecord[] = [];
+    for (let index = 0; index < 105; index += 1) {
+      tasks = merge_task_record(
+        tasks,
+        task_record(
+          `job-${index}`,
+          new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+        ),
+      );
+    }
+    tasks = merge_task_record(tasks, {
+      ...task_record("job-interrupted", "2025-01-01T00:00:00Z"),
+      stage: "interrupted",
+      cancel_available: true,
+    });
+    expect(tasks).toHaveLength(106);
+    expect(tasks.at(-1)?.task_id).toBe("job-interrupted");
   });
 });
 

@@ -9,9 +9,11 @@ import {
   useState,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
+import { marker_asset_path } from "@/app/workspace_routes";
 import {
   use_media_import_tasks,
   type MediaImportSubmission,
@@ -31,6 +33,9 @@ import {
   probe_source,
   resume_download,
   transcribe_asset,
+  list_analysis_tasks,
+  analyze_asset,
+  generate_chapters,
 } from "@/shared/api";
 import {
   poll_transcription_job,
@@ -52,7 +57,19 @@ import { merge_task_record, type TaskRecord } from "@/features/workbench/tasks";
 
 const INACTIVE_DOWNLOAD_STAGES = new Set(["complete", "failed", "paused"]);
 const INITIAL_DOWNLOAD_TASK_LIMIT = 50;
+const INITIAL_ANALYSIS_TASK_LIMIT = 50;
 const AGENT_TASK_REFRESH_INTERVAL_MS = 2_000;
+const RETRYABLE_ANALYSIS_STAGES = new Set<AnalysisJob["stage"]>([
+  "failed",
+  "cancelled",
+  "rejected",
+]);
+const ANALYSIS_OPERATION_LABELS: Record<AnalysisJob["operation"], string> = {
+  transcription: "转写",
+  analysis: "视频分析",
+  initialization: "后台初始化",
+  chapters: "章节生成",
+};
 const TRANSCRIPTION_STAGES = new Set<AgentIndexStatus["stage"]>([
   "preparing_transcription_model",
   "extracting_audio",
@@ -62,11 +79,12 @@ const TRANSCRIPTION_STAGES = new Set<AgentIndexStatus["stage"]>([
 type TaskManager = {
   task_records: TaskRecord[];
   task_center_open: boolean;
+  task_sync_error: string | null;
   set_task_center_open: (open: boolean) => void;
   selected_probe: ProbeResult | null;
   clear_selected_probe: () => void;
   start_probe: (source_url: string) => void;
-  view_probe_result: (task_id: string) => void;
+  view_task_result: (task_id: string) => void;
   retry_task: (task_id: string) => Promise<void>;
   pause_task: (task_id: string) => Promise<void>;
   cancel_task: (task_id: string) => Promise<void>;
@@ -94,19 +112,21 @@ type DownloadSubmission = {
   source_url: string;
   destination?: DownloadDestination;
 };
-type TranscriptionTask = {
+type AnalysisTask = {
   job: AnalysisJob;
-  options: TranscriptionOptions;
-  controller: AbortController;
+  options: TranscriptionOptions | null;
+  controller: AbortController | null;
 };
 
 const TaskManagerContext = createContext<TaskManager | null>(null);
 
 export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const query_client = useQueryClient();
-  const { assets, selected_asset_id } = use_asset_catalog();
+  const navigate = useNavigate();
+  const { assets, selected_asset_id, select_asset } = use_asset_catalog();
   const [task_records, set_task_records] = useState<TaskRecord[]>([]);
   const [task_center_open, set_task_center_open] = useState(false);
+  const [task_sync_error, set_task_sync_error] = useState<string | null>(null);
   const [selected_probe, set_selected_probe] = useState<ProbeResult | null>(
     null,
   );
@@ -116,28 +136,28 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const [index_status, set_index_status] = useState<AgentIndexStatus | null>(
     null,
   );
-  const [active_transcriptions, set_active_transcriptions] = useState<
+  const [active_analysis_requests, set_active_analysis_requests] = useState<
     Map<string, AbortController>
   >(new Map());
   const download_controllers = useRef(new Map<string, AbortController>());
   const download_requests = useRef(new Set<AbortController>());
-  const transcription_controllers = useRef(new Map<string, AbortController>());
-  const transcription_tasks = useRef(new Map<string, TranscriptionTask>());
-  const transcription_actions = useRef(new Set<string>());
+  const analysis_controllers = useRef(new Map<string, AbortController>());
+  const analysis_tasks = useRef(new Map<string, AnalysisTask>());
+  const analysis_actions = useRef(new Set<string>());
   const previous_index_status_ref = useRef<AgentIndexStatus | null>(null);
 
   useEffect(() => {
     const downloads = download_controllers.current;
     const requests = download_requests.current;
-    const transcriptions = transcription_controllers.current;
+    const analysis_requests = analysis_controllers.current;
     const probes = probe_tasks.current;
     return () => {
       downloads.forEach((controller) => controller.abort());
       requests.forEach((controller) => controller.abort());
-      transcriptions.forEach((controller) => controller.abort());
+      analysis_requests.forEach((controller) => controller.abort());
       downloads.clear();
       requests.clear();
-      transcriptions.clear();
+      analysis_requests.clear();
       probes.forEach((task) => task.controller.abort());
       probes.clear();
     };
@@ -176,46 +196,133 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [record_task],
   );
 
-  const record_transcription_job = useCallback(
+  const record_analysis_job = useCallback(
     (job: AnalysisJob) => {
-      const tracked = transcription_tasks.current.get(job.job_id);
-      if (tracked) {
-        const current_stage = tracked.job.stage;
-        if (
-          TERMINAL_ANALYSIS_STAGES.has(current_stage) &&
-          !TERMINAL_ANALYSIS_STAGES.has(job.stage)
-        )
-          return;
-        if (
-          current_stage === "cancelling" &&
-          !TERMINAL_ANALYSIS_STAGES.has(job.stage)
-        )
-          return;
-        tracked.job = job;
-      }
-      if (transcription_actions.current.has(job.job_id)) return;
+      const tracked = analysis_tasks.current.get(job.job_id);
+      if (!tracked) return;
+      const current_job = tracked.job;
+      if (Date.parse(current_job.updated_at) > Date.parse(job.updated_at))
+        return;
+      if (
+        TERMINAL_ANALYSIS_STAGES.has(current_job.stage) &&
+        !TERMINAL_ANALYSIS_STAGES.has(job.stage)
+      )
+        return;
+      if (
+        current_job.stage === "cancelling" &&
+        job.stage !== "cancelling" &&
+        !TERMINAL_ANALYSIS_STAGES.has(job.stage)
+      )
+        return;
+      tracked.job = job;
+      if (
+        analysis_actions.current.has(job.job_id) &&
+        !TERMINAL_ANALYSIS_STAGES.has(job.stage)
+      )
+        return;
+      const needs_transcription_options =
+        RETRYABLE_ANALYSIS_STAGES.has(job.stage) &&
+        job.operation === "transcription" &&
+        !tracked.options;
+      const cannot_retry_initialization =
+        RETRYABLE_ANALYSIS_STAGES.has(job.stage) &&
+        job.operation === "initialization";
+      const message = needs_transcription_options
+        ? `${job.message}；请回视频页面选择模型重新转写。`
+        : cannot_retry_initialization
+          ? `${job.message}；可回视频页面按需重新转写或生成章节。`
+          : job.message;
       record_task({
         task_id: job.job_id,
-        task_type: "transcription",
+        asset_id: job.asset_id,
+        task_type:
+          job.operation === "transcription" ? "transcription" : "analysis",
         stage: job.stage,
-        message: job.message,
+        message,
         progress_percent: job.progress_percent,
+        progress_known: job.stage !== "cancelling",
         error_message: job.error_message,
         created_at: job.created_at,
-        name:
-          assets.find((asset) => asset.asset_id === job.asset_id)?.title ??
-          "素材转写",
-        retry_available:
-          job.stage === "failed" ||
-          job.stage === "cancelled" ||
-          job.stage === "rejected",
+        name: `${assets.find((asset) => asset.asset_id === job.asset_id)?.title ?? "视频"} · ${ANALYSIS_OPERATION_LABELS[job.operation]}`,
+        retry_available: analysis_retry_available(tracked),
         cancel_available:
           !TERMINAL_ANALYSIS_STAGES.has(job.stage) &&
-          job.stage !== "cancelling",
+          (job.stage !== "cancelling" || Boolean(job.error_message)),
+        result_available: TERMINAL_ANALYSIS_STAGES.has(job.stage),
       });
     },
     [assets, record_task],
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let refreshing = false;
+    async function refresh_analysis_tasks() {
+      if (refreshing || controller.signal.aborted) return;
+      refreshing = true;
+      try {
+        const snapshots = await list_analysis_tasks(
+          INITIAL_ANALYSIS_TASK_LIMIT,
+          controller.signal,
+        );
+        controller.signal.throwIfAborted();
+        set_task_sync_error(null);
+        for (const snapshot of snapshots) {
+          const { job } = snapshot;
+          let tracked = analysis_tasks.current.get(job.job_id);
+          const previous_stage = tracked?.job.stage;
+          if (!tracked) {
+            tracked = {
+              job,
+              options: snapshot.transcription_options,
+              controller: null,
+            };
+            analysis_tasks.current.set(job.job_id, tracked);
+          } else if (!tracked.options && snapshot.transcription_options) {
+            tracked.options = snapshot.transcription_options;
+          }
+          record_analysis_job(job);
+          if (TERMINAL_ANALYSIS_STAGES.has(tracked.job.stage)) {
+            tracked.controller?.abort();
+            if (
+              tracked.job.stage === "complete" &&
+              previous_stage &&
+              previous_stage !== "complete"
+            ) {
+              void query_client.invalidateQueries({
+                queryKey: RESOURCE_QUERY_KEYS.asset_analysis(job.asset_id),
+              });
+            }
+          } else {
+            set_task_records((current) =>
+              current.filter(
+                (task) =>
+                  task.task_type !== "index" ||
+                  task.index_state !== "initializing" ||
+                  task.asset_id !== job.asset_id,
+              ),
+            );
+          }
+        }
+      } catch (error) {
+        if (!controller.signal.aborted && !is_abort_error(error))
+          set_task_sync_error(
+            `分析任务同步中断，后台任务仍可能运行。${error_message(error)}`,
+          );
+      } finally {
+        refreshing = false;
+      }
+    }
+    void refresh_analysis_tasks();
+    const interval = window.setInterval(
+      () => void refresh_analysis_tasks(),
+      AGENT_TASK_REFRESH_INTERVAL_MS,
+    );
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [query_client, record_analysis_job]);
 
   const record_agent_tasks = useCallback((snapshots: AgentTaskSnapshot[]) => {
     set_task_records((current) =>
@@ -260,7 +367,13 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
             const previous_status = previous_index_status_ref.current;
             previous_index_status_ref.current = status;
             set_index_status(status);
-            record_task(index_task_record(status));
+            const has_analysis_task = [...analysis_tasks.current.values()].some(
+              (task) =>
+                task.job.asset_id === status.asset_id &&
+                !TERMINAL_ANALYSIS_STAGES.has(task.job.stage),
+            );
+            if (status.state !== "initializing" || !has_analysis_task)
+              record_task(index_task_record(status));
             if (
               previous_status?.asset_id &&
               previous_status.asset_id === status.asset_id &&
@@ -488,12 +601,23 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [run_probe],
   );
 
-  const view_probe_result = useCallback((task_id: string) => {
-    const task = probe_tasks.current.get(task_id);
-    if (!task?.result) return;
-    set_task_center_open(false);
-    set_selected_probe({ source_url: task.source_url, result: task.result });
-  }, []);
+  const view_task_result = useCallback(
+    (task_id: string) => {
+      const analysis = analysis_tasks.current.get(task_id);
+      if (analysis) {
+        select_asset(analysis.job.asset_id);
+        set_task_center_open(false);
+        void navigate(marker_asset_path(analysis.job.asset_id));
+        return;
+      }
+      const task = probe_tasks.current.get(task_id);
+      if (!task?.result) return;
+      set_task_center_open(false);
+      set_selected_probe({ source_url: task.source_url, result: task.result });
+      void navigate("/library");
+    },
+    [navigate, select_asset],
+  );
   const clear_selected_probe = useCallback(() => set_selected_probe(null), []);
 
   const pause_task = useCallback(
@@ -583,14 +707,14 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [delete_media_import, record_task, task_records],
   );
 
-  const observe_transcription = useCallback(
+  const observe_analysis = useCallback(
     async (job: AnalysisJob, controller: AbortController) => {
       const asset_id = job.asset_id;
-      record_transcription_job(job);
+      record_analysis_job(job);
       try {
         const final_job = await poll_transcription_job(
           job,
-          record_transcription_job,
+          record_analysis_job,
           controller.signal,
         );
         if (final_job.stage === "failed" || final_job.stage === "rejected") {
@@ -603,8 +727,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         }
         return final_job;
       } catch (error) {
-        const confirmed_job = transcription_tasks.current.get(job.job_id)?.job;
-        if (controller.signal.aborted && confirmed_job?.stage === "cancelled") {
+        const confirmed_job = analysis_tasks.current.get(job.job_id)?.job;
+        if (
+          controller.signal.aborted &&
+          confirmed_job &&
+          TERMINAL_ANALYSIS_STAGES.has(confirmed_job.stage)
+        ) {
           return confirmed_job;
         }
         if (
@@ -619,10 +747,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
                 ? {
                     ...task,
                     stage: "interrupted",
-                    message: "转写进度同步中断，后台任务仍可能运行",
+                    message: `${ANALYSIS_OPERATION_LABELS[job.operation]}进度同步中断，后台任务仍可能运行`,
                     error_message: error_message(error),
                     retry_available: true,
-                    cancel_available: confirmed_job.stage !== "cancelling",
+                    cancel_available:
+                      confirmed_job.stage !== "cancelling" ||
+                      Boolean(confirmed_job.error_message),
                   }
                 : task,
             ),
@@ -630,15 +760,15 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         }
         throw error;
       } finally {
-        if (transcription_controllers.current.get(asset_id) === controller) {
-          transcription_controllers.current.delete(asset_id);
+        if (analysis_controllers.current.get(asset_id) === controller) {
+          analysis_controllers.current.delete(asset_id);
         }
-        const confirmed_job = transcription_tasks.current.get(job.job_id)?.job;
+        const confirmed_job = analysis_tasks.current.get(job.job_id)?.job;
         if (
           confirmed_job &&
           TERMINAL_ANALYSIS_STAGES.has(confirmed_job.stage)
         ) {
-          set_active_transcriptions((current) => {
+          set_active_analysis_requests((current) => {
             if (current.get(asset_id) !== controller) return current;
             const next = new Map(current);
             next.delete(asset_id);
@@ -647,21 +777,21 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [query_client, record_transcription_job],
+    [query_client, record_analysis_job],
   );
 
   const start_transcription = useCallback(
     async (asset_id: string, options: TranscriptionOptions) => {
-      const unfinished_task = [...transcription_tasks.current.values()].some(
+      const unfinished_task = [...analysis_tasks.current.values()].some(
         (task) =>
           task.job.asset_id === asset_id &&
           !TERMINAL_ANALYSIS_STAGES.has(task.job.stage),
       );
-      if (transcription_controllers.current.has(asset_id) || unfinished_task)
+      if (analysis_controllers.current.has(asset_id) || unfinished_task)
         throw new Error("该视频已在转写队列中，请在任务中心查看或重新连接");
       const controller = new AbortController();
-      transcription_controllers.current.set(asset_id, controller);
-      set_active_transcriptions((current) =>
+      analysis_controllers.current.set(asset_id, controller);
+      set_active_analysis_requests((current) =>
         new Map(current).set(asset_id, controller),
       );
       let accepted = false;
@@ -673,18 +803,18 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         );
         controller.signal.throwIfAborted();
         accepted = true;
-        transcription_tasks.current.set(job.job_id, {
+        analysis_tasks.current.set(job.job_id, {
           job,
           options,
           controller,
         });
         set_task_center_open(true);
-        return await observe_transcription(job, controller);
+        return await observe_analysis(job, controller);
       } finally {
         if (!accepted) {
-          if (transcription_controllers.current.get(asset_id) === controller)
-            transcription_controllers.current.delete(asset_id);
-          set_active_transcriptions((current) => {
+          if (analysis_controllers.current.get(asset_id) === controller)
+            analysis_controllers.current.delete(asset_id);
+          set_active_analysis_requests((current) => {
             if (current.get(asset_id) !== controller) return current;
             const next = new Map(current);
             next.delete(asset_id);
@@ -693,21 +823,21 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [observe_transcription],
+    [observe_analysis],
   );
 
   const cancel_task = useCallback(
     async (task_id: string) => {
       if (cancel_media_import(task_id)) return;
-      const tracked = transcription_tasks.current.get(task_id);
+      const tracked = analysis_tasks.current.get(task_id);
       if (
         !tracked ||
         TERMINAL_ANALYSIS_STAGES.has(tracked.job.stage) ||
-        tracked.job.stage === "cancelling" ||
-        transcription_actions.current.has(task_id)
+        (tracked.job.stage === "cancelling" && !tracked.job.error_message) ||
+        analysis_actions.current.has(task_id)
       )
         return;
-      transcription_actions.current.add(task_id);
+      analysis_actions.current.add(task_id);
       set_task_records((current) =>
         current.map((task) =>
           task.task_id === task_id
@@ -724,34 +854,34 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       );
       try {
         const job = await cancel_analysis(task_id);
-        transcription_actions.current.delete(task_id);
-        record_transcription_job(job);
+        analysis_actions.current.delete(task_id);
+        record_analysis_job(job);
         const controller = tracked.controller;
         if (tracked.job.stage === "cancelled") {
-          controller.abort();
-          set_active_transcriptions((current) => {
+          controller?.abort();
+          set_active_analysis_requests((current) => {
             if (current.get(job.asset_id) !== controller) return current;
             const next = new Map(current);
             next.delete(job.asset_id);
             return next;
           });
         } else if (
-          !transcription_controllers.current.has(job.asset_id) &&
+          !analysis_controllers.current.has(job.asset_id) &&
           !TERMINAL_ANALYSIS_STAGES.has(tracked.job.stage)
         ) {
           const observation = new AbortController();
           tracked.controller = observation;
-          transcription_controllers.current.set(job.asset_id, observation);
-          set_active_transcriptions((current) =>
+          analysis_controllers.current.set(job.asset_id, observation);
+          set_active_analysis_requests((current) =>
             new Map(current).set(job.asset_id, observation),
           );
-          void observe_transcription(tracked.job, observation).catch(
+          void observe_analysis(tracked.job, observation).catch(
             () => undefined,
           );
         }
       } catch (error) {
-        transcription_actions.current.delete(task_id);
-        record_transcription_job(tracked.job);
+        analysis_actions.current.delete(task_id);
+        record_analysis_job(tracked.job);
         set_task_records((current) =>
           current.map((task) =>
             task.task_id === task_id
@@ -762,7 +892,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     },
-    [cancel_media_import, observe_transcription, record_transcription_job],
+    [cancel_media_import, observe_analysis, record_analysis_job],
   );
 
   const retry_task = useCallback(
@@ -773,42 +903,85 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         await run_probe(task_id, probe.source_url);
         return;
       }
-      const transcription = transcription_tasks.current.get(task_id);
-      if (transcription) {
-        if (
-          transcription.job.stage === "cancelled" ||
-          transcription.job.stage === "failed" ||
-          transcription.job.stage === "rejected"
-        ) {
-          await start_transcription(
-            transcription.job.asset_id,
-            transcription.options,
-          );
+      const analysis = analysis_tasks.current.get(task_id);
+      if (analysis) {
+        if (RETRYABLE_ANALYSIS_STAGES.has(analysis.job.stage)) {
+          if (!analysis_retry_available(analysis))
+            throw new Error(
+              "请回视频页面选择转写模型或生成章节，当前任务缺少安全重试所需信息",
+            );
+          if (analysis.job.operation === "transcription" && analysis.options) {
+            await start_transcription(analysis.job.asset_id, analysis.options);
+          } else {
+            const previous_job = analysis.job;
+            const asset_id = previous_job.asset_id;
+            const has_active_job = [...analysis_tasks.current.values()].some(
+              (task) =>
+                task.job.asset_id === asset_id &&
+                !TERMINAL_ANALYSIS_STAGES.has(task.job.stage),
+            );
+            if (analysis_controllers.current.has(asset_id) || has_active_job)
+              throw new Error("该视频已有分析任务，请先查看或停止现有任务");
+            const controller = new AbortController();
+            analysis_controllers.current.set(asset_id, controller);
+            set_active_analysis_requests((current) =>
+              new Map(current).set(asset_id, controller),
+            );
+            let accepted = false;
+            try {
+              const job =
+                previous_job.operation === "chapters"
+                  ? await generate_chapters(asset_id, controller.signal)
+                  : await analyze_asset(
+                      asset_id,
+                      {
+                        mode: previous_job.mode,
+                        ai_model_id: previous_job.ai_model_id,
+                        strategy: previous_job.strategy,
+                      },
+                      controller.signal,
+                    );
+              controller.signal.throwIfAborted();
+              analysis_tasks.current.set(job.job_id, {
+                job,
+                options: null,
+                controller,
+              });
+              accepted = true;
+              void observe_analysis(job, controller).catch(() => undefined);
+            } finally {
+              if (!accepted) {
+                if (analysis_controllers.current.get(asset_id) === controller)
+                  analysis_controllers.current.delete(asset_id);
+                set_active_analysis_requests((current) => {
+                  if (current.get(asset_id) !== controller) return current;
+                  const next = new Map(current);
+                  next.delete(asset_id);
+                  return next;
+                });
+              }
+            }
+          }
         } else if (
-          !transcription_controllers.current.has(transcription.job.asset_id)
+          !TERMINAL_ANALYSIS_STAGES.has(analysis.job.stage) &&
+          !analysis_controllers.current.has(analysis.job.asset_id)
         ) {
           const controller = new AbortController();
-          transcription_controllers.current.set(
-            transcription.job.asset_id,
-            controller,
-          );
-          transcription.controller = controller;
-          set_active_transcriptions((current) =>
-            new Map(current).set(transcription.job.asset_id, controller),
+          analysis_controllers.current.set(analysis.job.asset_id, controller);
+          analysis.controller = controller;
+          set_active_analysis_requests((current) =>
+            new Map(current).set(analysis.job.asset_id, controller),
           );
           try {
             const job = await get_analysis(task_id, controller.signal);
             controller.signal.throwIfAborted();
-            void observe_transcription(job, controller).catch(() => undefined);
+            void observe_analysis(job, controller).catch(() => undefined);
           } catch (error) {
             if (
-              transcription_controllers.current.get(
-                transcription.job.asset_id,
-              ) === controller
+              analysis_controllers.current.get(analysis.job.asset_id) ===
+              controller
             )
-              transcription_controllers.current.delete(
-                transcription.job.asset_id,
-              );
+              analysis_controllers.current.delete(analysis.job.asset_id);
             throw error;
           }
         }
@@ -869,7 +1042,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       record_agent_tasks,
       record_task,
       retry_media_import,
-      observe_transcription,
+      observe_analysis,
       start_transcription,
       run_probe,
       submit_downloads,
@@ -882,11 +1055,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     () => ({
       task_records,
       task_center_open,
+      task_sync_error,
       set_task_center_open,
       selected_probe,
       clear_selected_probe,
       start_probe,
-      view_probe_result,
+      view_task_result,
       pause_task,
       cancel_task,
       delete_task,
@@ -895,22 +1069,30 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       retry_task,
       start_transcription,
       is_transcription_running: (asset_id) =>
-        active_transcriptions.has(asset_id) ||
+        active_analysis_requests.has(asset_id) ||
+        task_records.some(
+          (task) =>
+            task.asset_id === asset_id &&
+            (task.task_type === "transcription" ||
+              task.task_type === "analysis") &&
+            !TERMINAL_ANALYSIS_STAGES.has(task.stage as AnalysisJob["stage"]),
+        ) ||
         (index_status?.asset_id === asset_id &&
           TRANSCRIPTION_STAGES.has(index_status.stage)),
       enqueue_media_imports,
     }),
     [
-      active_transcriptions,
+      active_analysis_requests,
       enqueue_media_imports,
       index_status,
       start_downloads,
       retry_task,
       task_center_open,
+      task_sync_error,
       selected_probe,
       clear_selected_probe,
       start_probe,
-      view_probe_result,
+      view_task_result,
       pause_task,
       cancel_task,
       delete_task,
@@ -924,6 +1106,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
       {children}
     </TaskManagerContext.Provider>
   );
+}
+
+function analysis_retry_available(task: AnalysisTask): boolean {
+  if (!RETRYABLE_ANALYSIS_STAGES.has(task.job.stage)) return false;
+  if (task.job.operation === "initialization") return false;
+  return task.job.operation !== "transcription" || task.options !== null;
 }
 
 function agent_task_message(stage: AgentTaskSnapshot["run"]["stage"]): string {
@@ -978,6 +1166,8 @@ function index_task_record(status: AgentIndexStatus): TaskRecord {
   return {
     task_id: status.index_task_id,
     task_type: "index",
+    asset_id: status.asset_id ?? undefined,
+    index_state: status.state,
     stage:
       status.state === "ready"
         ? "complete"

@@ -34,6 +34,7 @@ import {
   list_folders,
   list_ai_models,
   list_agent_tasks,
+  list_analysis_tasks,
   list_downloads,
   list_event_analyses,
   list_transcription_models,
@@ -94,6 +95,7 @@ vi.mock("./shared/api", () => ({
   list_folders: vi.fn(),
   list_ai_models: vi.fn(),
   list_agent_tasks: vi.fn(),
+  list_analysis_tasks: vi.fn(),
   list_downloads: vi.fn(),
   list_event_analyses: vi.fn(),
   list_summary_documents: vi.fn(),
@@ -187,6 +189,7 @@ describe("App", () => {
     });
     vi.mocked(list_ai_models).mockResolvedValue([]);
     vi.mocked(list_agent_tasks).mockResolvedValue([]);
+    vi.mocked(list_analysis_tasks).mockResolvedValue([]);
     vi.mocked(list_downloads).mockResolvedValue([]);
     vi.mocked(get_agent_index_status).mockResolvedValue({
       index_task_id: "index-task-019c012345677abc8123456789abcdef",

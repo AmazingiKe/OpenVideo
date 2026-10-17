@@ -196,3 +196,77 @@ export const ImportStates: Story = {
     await expect(args.on_retry).toHaveBeenCalledWith(args.tasks[3].task_id);
   },
 };
+
+export const RestoredAnalysisStates: Story = {
+  args: {
+    open: true,
+    tasks: [
+      {
+        ...TASKS[0],
+        task_id: "job-restored-initialization",
+        task_type: "analysis",
+        name: "视频课程 · 后台初始化",
+        stage: "transcribing",
+        message: "正在恢复已有分析进度",
+        cancel_available: true,
+      },
+      {
+        ...TASKS[0],
+        task_id: "job-restored-stop",
+        task_type: "analysis",
+        name: "视频课程 · 章节生成",
+        stage: "cancelling",
+        message: "等待后台安全退出",
+        error_message: "进程尚未退出，可以重试停止",
+        cancel_available: true,
+        progress_known: false,
+      },
+      {
+        ...TASKS[0],
+        task_id: "job-restored-approval",
+        task_type: "analysis",
+        name: "视频课程 · 视频分析",
+        stage: "waiting_for_approval",
+        message: "分析完成，等待查看建议",
+        cancel_available: false,
+        result_available: true,
+      },
+      {
+        ...TASKS[0],
+        task_id: "job-restored-no-options",
+        task_type: "transcription",
+        name: "旧视频 · 转写",
+        stage: "failed",
+        message: "请回视频页面选择模型重新转写",
+        retry_available: false,
+        result_available: true,
+      },
+    ],
+    on_retry: fn(async () => undefined),
+    on_cancel: fn(async () => undefined),
+    on_view_result: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    await userEvent.click(body.getByRole("button", { name: "重试停止" }));
+    await expect(args.on_cancel).toHaveBeenCalledWith(args.tasks[1].task_id);
+    const approval = body.getByText(args.tasks[2].name).closest("li")!;
+    await expect(
+      within(approval).queryByRole("button", { name: "停止分析" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      within(approval).getByRole("button", { name: "查看视频" }),
+    );
+    await expect(args.on_view_result).toHaveBeenCalledWith(
+      args.tasks[2].task_id,
+    );
+  },
+};
+
+export const SynchronizationError: Story = {
+  args: {
+    open: true,
+    tasks: [],
+    sync_error: "分析任务同步中断，后台任务仍可能运行，请检查连接。",
+  },
+};

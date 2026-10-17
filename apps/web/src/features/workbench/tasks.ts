@@ -1,7 +1,15 @@
+import type { AgentIndexStatus } from "@/shared/types";
+
 export type TaskRecord = {
   task_id: string;
   task_type:
-    "probe" | "download" | "transcription" | "agent" | "index" | "import";
+    | "probe"
+    | "download"
+    | "transcription"
+    | "agent"
+    | "index"
+    | "import"
+    | "analysis";
   stage: string;
   message: string;
   progress_percent: number;
@@ -9,6 +17,8 @@ export type TaskRecord = {
   error_message: string | null;
   created_at: string;
   name: string;
+  asset_id?: string;
+  index_state?: AgentIndexStatus["state"];
   retry_available?: boolean;
   pause_available?: boolean;
   cancel_available?: boolean;
@@ -16,7 +26,15 @@ export type TaskRecord = {
   result_available?: boolean;
 };
 
-const MAX_TASK_RECORDS = 100;
+const MAX_TASK_HISTORY_RECORDS = 100;
+export const TERMINAL_TASK_STAGES = new Set([
+  "complete",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "paused",
+  "rejected",
+]);
 
 export function merge_task_record(
   current_tasks: TaskRecord[],
@@ -33,7 +51,17 @@ export function merge_task_record(
     next_tasks[existing_task_index] = updated_task;
   }
 
-  return next_tasks.sort(compare_task_records).slice(0, MAX_TASK_RECORDS);
+  let history_count = 0;
+  return next_tasks.sort(compare_task_records).filter((task) => {
+    if (
+      !TERMINAL_TASK_STAGES.has(task.stage) ||
+      task.cancel_available ||
+      task.pause_available
+    )
+      return true;
+    history_count += 1;
+    return history_count <= MAX_TASK_HISTORY_RECORDS;
+  });
 }
 
 function compare_task_records(left: TaskRecord, right: TaskRecord): number {
@@ -70,6 +98,7 @@ export const TASK_STAGE_LABELS: Record<string, string> = {
   cancelling: "正在停止",
   complete: "已完成",
   failed: "失败",
+  rejected: "已拒绝",
   running: "运行中",
   waiting_for_approval: "等待批准",
   interrupted: "已中断",

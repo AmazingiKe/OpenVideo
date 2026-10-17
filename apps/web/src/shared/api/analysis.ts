@@ -1,10 +1,34 @@
 import type {
   AnalysisJob,
+  AnalysisTaskSnapshot,
   MediaSegment,
   Transcript,
   TranscriptionOptions,
 } from "../types";
 import { request_json } from "./client";
+
+export function list_analysis_tasks(
+  limit: number,
+  signal?: AbortSignal,
+): Promise<AnalysisTaskSnapshot[]> {
+  return request_json(`/api/analysis?limit=${limit}`, { signal });
+}
+
+export function analyze_asset(
+  asset_id: string,
+  options: Pick<AnalysisJob, "mode" | "ai_model_id" | "strategy">,
+  signal?: AbortSignal,
+): Promise<AnalysisJob> {
+  return request_json(
+    `/api/media/assets/${encodeURIComponent(asset_id)}/analyze`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: true, ...options }),
+      signal,
+    },
+  );
+}
 
 export function generate_chapters(
   asset_id: string,

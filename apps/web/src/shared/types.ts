@@ -387,6 +387,11 @@ export type AnalysisJob = {
   updated_at: string;
 };
 
+export type AnalysisTaskSnapshot = {
+  job: AnalysisJob;
+  transcription_options: TranscriptionOptions | null;
+};
+
 export type TranscriptSegment = {
   start_seconds: number;
   end_seconds: number;

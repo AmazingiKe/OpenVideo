@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from openvideo.analysis_manager import (
@@ -12,6 +12,7 @@ from openvideo.core.analysis_models import (
     ANALYSIS_STRATEGY_PRESETS,
     AnalysisJob,
     AnalysisMode,
+    AnalysisOperation,
     AnalysisStage,
     AnalysisStrategy,
     AnalysisStrategyPresetDescriptor,
@@ -85,6 +86,13 @@ class AnalysisCreateRequest(BaseModel):
     strategy: AnalysisStrategy = Field(default_factory=AnalysisStrategy)
 
 
+class AnalysisTaskSnapshot(BaseModel):
+    """列表只传控制所需状态，较大的章节预览通过单任务端点读取。"""
+
+    job: AnalysisJob
+    transcription_options: TranscriptionOptions | None = None
+
+
 class CloudSubmissionStatus(BaseModel):
     job_id: str
     uncertain: bool
@@ -106,6 +114,10 @@ class CloudSubmissionResolution(BaseModel):
         if bool(self.cloud_task_id) == self.confirm_not_submitted:
             raise ValueError("请填写已有任务号，或确认未生成云端任务")
         return self
+
+
+DEFAULT_ANALYSIS_HISTORY_LIMIT = 50
+MAXIMUM_ANALYSIS_HISTORY_LIMIT = 200
 
 
 def register_analysis_routes(
@@ -154,6 +166,30 @@ def register_analysis_routes(
             cloud_task_id=metadata.cloud_task_id,
             options=metadata.options,
         )
+
+    @app.get("/api/analysis", response_model=list[AnalysisTaskSnapshot])
+    def list_analysis_tasks(
+        limit: int = Query(
+            default=DEFAULT_ANALYSIS_HISTORY_LIMIT,
+            ge=1,
+            le=MAXIMUM_ANALYSIS_HISTORY_LIMIT,
+        ),
+    ) -> list[AnalysisTaskSnapshot]:
+        media_library = library()
+        snapshots: list[AnalysisTaskSnapshot] = []
+        for job in analysis_manager().list_jobs(limit):
+            options = None
+            if job.operation == AnalysisOperation.TRANSCRIPTION:
+                metadata = media_library.load_transcription_metadata(job.asset_id)
+                if metadata is not None and metadata.job_id == job.job_id:
+                    options = metadata.options
+            snapshots.append(
+                AnalysisTaskSnapshot(
+                    job=job.model_copy(update={"proposed_segments": []}),
+                    transcription_options=options,
+                )
+            )
+        return snapshots
 
     @app.post(
         "/api/media/assets/{asset_id}/chapters",
