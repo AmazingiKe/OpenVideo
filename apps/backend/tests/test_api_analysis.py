@@ -1,5 +1,7 @@
 import pytest
+import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
@@ -26,6 +28,7 @@ from openvideo.core.media_models import (
     SourcePlatform,
 )
 from openvideo.settings import Settings
+from openvideo.preferences import PreferenceStore
 from openvideo.tools.transcribe import TranscriptionProgress, TranscriptionResult
 from openvideo.ui.api import create_app
 
@@ -49,7 +52,9 @@ def ai_model(
     )
 
 
-def create_client(tmp_path: Path) -> TestClient:
+def create_client(
+    tmp_path: Path, preference_store: PreferenceStore | None = None
+) -> TestClient:
     library = MediaLibrary.initialize_directory(tmp_path)
     asset_directory = library.asset_directory(ASSET_ID)
     asset_directory.mkdir(parents=True, exist_ok=True)
@@ -72,7 +77,8 @@ def create_client(tmp_path: Path) -> TestClient:
             Settings(
                 library_path=tmp_path,
                 models_directory=str(tmp_path / "models"),
-            )
+            ),
+            preference_store=preference_store,
         )
     )
 
@@ -83,6 +89,71 @@ def test_analyze_returns_404_for_missing_asset(tmp_path: Path):
             "/api/media/assets/01890f4c-7a2b-7cc2-98c4-dc0c0c073990/analyze"
         )
     assert response.status_code == 404
+
+
+def test_library_switch_rejects_analysis_while_the_old_worker_is_closing(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.delenv("OPENVIDEO_LIBRARY_PATH", raising=False)
+
+    class ClosingWorker:
+        def __init__(self):
+            self.close_entered = Event()
+            self.allow_close = Event()
+            self.execute_calls = 0
+
+        async def execute(self, *_args):
+            self.execute_calls += 1
+            return []
+
+        async def close(self):
+            self.close_entered.set()
+            async with asyncio.timeout(5):
+                while not self.allow_close.is_set():
+                    await asyncio.sleep(0.01)
+
+    library_path = tmp_path / "first_library"
+    library_path.mkdir()
+    target_path = tmp_path / "next_library"
+    target_path.mkdir()
+    worker = ClosingWorker()
+    with create_client(
+        library_path, PreferenceStore(tmp_path / "preferences.json")
+    ) as client:
+        previous_library = client.app.state.library
+        previous_manager = client.app.state.analysis_manager
+        previous_manager._worker = worker
+        transcript = Transcript(
+            asset_id=ASSET_ID,
+            segments=[
+                TranscriptSegment(start_seconds=0, end_seconds=1, text="保留字幕")
+            ],
+        )
+        previous_library.save_transcript(transcript)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            switching = executor.submit(
+                client.post,
+                "/api/library/activate",
+                json={"path": str(target_path)},
+            )
+            try:
+                assert worker.close_entered.wait(timeout=2)
+                for operation in ("analyze", "transcribe", "chapters"):
+                    response = client.post(f"/api/media/assets/{ASSET_ID}/{operation}")
+                    assert response.status_code == 409
+                    assert "资料库正在关闭" in response.json()["detail"]
+                assert previous_manager.list_jobs(50) == []
+                assert previous_library.load_transcript(ASSET_ID) == transcript
+                assert previous_library.is_open
+                assert worker.execute_calls == 0
+            finally:
+                worker.allow_close.set()
+                switched = switching.result(timeout=2)
+        assert switched.status_code == 200
+        assert client.app.state.library.library_path == target_path.resolve()
+        assert not previous_library.is_open
+        assert not previous_manager.has_active_jobs()
+        assert not previous_manager._tasks
 
 
 def test_transcript_returns_404_when_missing(tmp_path: Path):

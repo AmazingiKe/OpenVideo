@@ -199,12 +199,12 @@ def register_analysis_routes(
     async def generate_chapters(asset_id: str) -> AnalysisJob:
         try:
             job = analysis_manager().create_chapters(asset_id)
+            if job.stage == AnalysisStage.PENDING:
+                analysis_manager().start(job.job_id)
         except AnalysisPrerequisiteError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        if job.stage == AnalysisStage.PENDING:
-            analysis_manager().start(job.job_id)
         return job
 
     @app.post(
@@ -224,12 +224,12 @@ def register_analysis_routes(
                 request.strategy,
                 request.force,
             )
+            if job.stage.value == "pending":
+                analysis_manager().start(job.job_id)
         except AnalysisPrerequisiteError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        if job.stage.value == "pending":
-            analysis_manager().start(job.job_id)
         return job
 
     @app.get(
@@ -267,6 +267,8 @@ def register_analysis_routes(
                 options,
                 request.force,
             )
+            if job.stage.value != "complete":
+                analysis_manager().start(job.job_id)
         except ValidationError as error:
             message = (
                 error.errors()[0]
@@ -281,8 +283,6 @@ def register_analysis_routes(
             raise HTTPException(status_code=409, detail=str(error)) from error
         except AnalysisError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        if job.stage.value != "complete":
-            analysis_manager().start(job.job_id)
         return job
 
     @app.get("/api/analysis/{job_id}", response_model=AnalysisJob)

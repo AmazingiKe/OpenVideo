@@ -178,6 +178,12 @@ class AnalysisManager:
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._worker = worker or AnalysisProcessWorker()
         self._on_evidence_ready = on_evidence_ready or (lambda: None)
+        self._closing = False
+
+    def _check_accepting_jobs(self) -> None:
+        """回收进程期间旧资料库仍可访问，但不能再接收新的分析计算。"""
+        if self._closing:
+            raise AnalysisPrerequisiteError("资料库正在关闭，无法创建或启动分析任务")
 
     def create_analysis(
         self,
@@ -187,6 +193,7 @@ class AnalysisManager:
         strategy: AnalysisStrategy,
         force: bool,
     ) -> AnalysisJob:
+        self._check_accepting_jobs()
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法分析")
@@ -228,6 +235,7 @@ class AnalysisManager:
         options: TranscriptionOptions,
         force: bool,
     ) -> AnalysisJob:
+        self._check_accepting_jobs()
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法转录")
@@ -351,6 +359,7 @@ class AnalysisManager:
     def create_initialization(self, asset_id: str) -> AnalysisJob:
         """为就绪素材创建无需用户决策的本地渐进分析任务。"""
 
+        self._check_accepting_jobs()
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法初始化")
@@ -421,6 +430,7 @@ class AnalysisManager:
 
     def create_chapters(self, asset_id: str) -> AnalysisJob:
         """用户主动重建章节时复用现有字幕，并在整批结果有效后替换旧章节。"""
+        self._check_accepting_jobs()
         asset = self.library.get(asset_id)
         if not asset or asset.status != MediaAssetStatus.READY:
             raise AnalysisError("视频尚未就绪，无法生成章节")
@@ -475,6 +485,7 @@ class AnalysisManager:
 
     def start(self, job_id: str) -> None:
         with self._lock:
+            self._check_accepting_jobs()
             job = self._jobs.get(job_id)
             if (
                 job is None
@@ -516,6 +527,7 @@ class AnalysisManager:
 
     async def close(self) -> None:
         with self._lock:
+            self._closing = True
             job_ids = [
                 job.job_id
                 for job in self._jobs.values()

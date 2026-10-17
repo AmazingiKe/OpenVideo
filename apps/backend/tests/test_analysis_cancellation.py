@@ -7,7 +7,11 @@ from threading import Event, Timer
 import pytest
 
 from openvideo import analysis_worker as analysis_worker_module
-from openvideo.analysis_manager import AnalysisError, AnalysisManager
+from openvideo.analysis_manager import (
+    AnalysisError,
+    AnalysisManager,
+    AnalysisPrerequisiteError,
+)
 from openvideo.analysis_worker import AnalysisWorkerNotStopped
 from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, AnalysisStrategy
 from openvideo.core.library import MediaLibrary
@@ -88,6 +92,65 @@ def test_cancel_unknown_job_is_rejected(manager):
 
 
 @pytest.mark.asyncio
+async def test_closing_rejects_new_jobs_before_worker_cleanup_finishes(manager):
+    class ClosingWorker:
+        def __init__(self):
+            self.close_entered = asyncio.Event()
+            self.allow_close = asyncio.Event()
+            self.execute_calls = 0
+
+        async def execute(self, *_args):
+            self.execute_calls += 1
+            return []
+
+        async def close(self):
+            self.close_entered.set()
+            await self.allow_close.wait()
+
+    transcript = Transcript(
+        asset_id=ASSET_ID,
+        segments=[TranscriptSegment(start_seconds=0, end_seconds=1, text="保留字幕")],
+    )
+    manager.library.save_transcript(transcript)
+    worker = ClosingWorker()
+    closing_manager = AnalysisManager(manager.library, manager.settings, worker=worker)
+    queued = closing_manager.create_analysis(
+        ASSET_ID, AnalysisMode.FULL, None, AnalysisStrategy(), True
+    )
+    closing = asyncio.create_task(closing_manager.close())
+    try:
+        await asyncio.wait_for(worker.close_entered.wait(), timeout=1)
+        operations = [
+            lambda: closing_manager.create_analysis(
+                ASSET_ID, AnalysisMode.FULL, None, AnalysisStrategy(), True
+            ),
+            lambda: closing_manager.create_transcription(
+                ASSET_ID, TranscriptionOptions(), True
+            ),
+            lambda: closing_manager.create_initialization(ASSET_ID),
+            lambda: closing_manager.initialize_asset(ASSET_ID),
+            lambda: closing_manager.create_chapters(ASSET_ID),
+            lambda: closing_manager.start(queued.job_id),
+        ]
+        for operation in operations:
+            with pytest.raises(AnalysisPrerequisiteError, match="资料库正在关闭"):
+                operation()
+        assert len(manager.library.load_analysis_jobs()) == 1
+        assert manager.library.load_transcript(ASSET_ID) == transcript
+        assert not closing_manager.has_active_jobs()
+        assert not closing_manager._tasks
+        assert worker.execute_calls == 0
+        worker.allow_close.set()
+        await asyncio.wait_for(closing, timeout=1)
+        for operation in operations:
+            with pytest.raises(AnalysisPrerequisiteError, match="资料库正在关闭"):
+                operation()
+    finally:
+        worker.allow_close.set()
+        await asyncio.wait_for(closing, timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_unconfirmed_process_exit_keeps_the_asset_and_stopping_state(manager):
     class UnconfirmedWorker:
         async def execute(self, *_args):
@@ -149,7 +212,9 @@ async def test_repeated_stop_reaps_late_exit_without_restarting_old_analysis(
         async def execute(self, request, *_args):
             self.execute_calls += 1
             if self.allow_exit:
-                return TranscriptionResult(Transcript(asset_id=request.asset_id), "test")
+                return TranscriptionResult(
+                    Transcript(asset_id=request.asset_id), "test"
+                )
             raise AnalysisWorkerNotStopped("退出未确认")
 
         async def close(self):
@@ -270,7 +335,7 @@ async def test_running_cancel_waits_for_worker_and_does_not_publish_old_results(
         assert calls == [ASSET_ID]
     finally:
         finish.set()
-        await manager.close()
+        await asyncio.gather(*list(manager._tasks.values()), return_exceptions=True)
     assert manager.get(job.job_id).stage == AnalysisStage.CANCELLED
     assert library.load_segments(ASSET_ID) == [original]
     assert library.load_transcript(ASSET_ID) == transcript
@@ -279,6 +344,7 @@ async def test_running_cancel_waits_for_worker_and_does_not_publish_old_results(
         ASSET_ID, AnalysisMode.FULL, None, AnalysisStrategy(), True
     )
     assert retry.job_id != job.job_id
+    await manager.close()
 
 
 def test_restart_finishes_requested_cancellation_without_restarting_worker(manager):
@@ -371,7 +437,9 @@ async def test_cancelled_cloud_transcription_preserves_task_for_retry(
         assert cloud_manager.cancel(job.job_id).stage == AnalysisStage.CANCELLING
     finally:
         finish.set()
-        await cloud_manager.close()
+        await asyncio.gather(
+            *list(cloud_manager._tasks.values()), return_exceptions=True
+        )
     metadata = manager.library.load_transcription_metadata(ASSET_ID)
     assert metadata.status == TranscriptionStatus.CANCELLED
     assert metadata.cloud_task_id == "cloud-task-to-resume"
@@ -382,6 +450,7 @@ async def test_cancelled_cloud_transcription_preserves_task_for_retry(
         manager.library.load_transcription_metadata(ASSET_ID).cloud_task_id
         == "cloud-task-to-resume"
     )
+    await cloud_manager.close()
 
 
 def test_cancelled_chapter_summary_does_not_start_followup_request(monkeypatch):
