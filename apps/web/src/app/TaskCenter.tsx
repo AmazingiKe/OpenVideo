@@ -12,7 +12,7 @@ import {
   Square,
   FileUp,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,6 +26,8 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Spinner } from "@/components/ui/spinner";
+import { format_time } from "@/shared/format";
 import { Progress } from "@/components/ui/progress";
 import {
   TASK_STAGE_LABELS,
@@ -45,6 +47,8 @@ type TaskCenterProps = {
   on_view_result?: (task_id: string) => void;
   sync_error?: string | null;
 };
+
+const ELAPSED_REFRESH_MS = 1000;
 
 const TASK_TYPES = {
   probe: { label: "解析", icon: Search },
@@ -67,6 +71,20 @@ export function TaskCenter({
   on_view_result,
   sync_error = null,
 }: TaskCenterProps) {
+  const [uncontrolled_open, set_uncontrolled_open] = useState(false);
+  const is_open = open ?? uncontrolled_open;
+  const [now, set_now] = useState(Date.now);
+  const has_timed_tasks = tasks.some(
+    (task) => is_analysis_task(task) && !is_processing_finished(task),
+  );
+  useEffect(() => {
+    if (!is_open || !has_timed_tasks) return;
+    const timer = window.setInterval(
+      () => set_now(Date.now()),
+      ELAPSED_REFRESH_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [is_open, has_timed_tasks]);
   const [pending_task_ids, set_pending_task_ids] = useState(new Set<string>());
   const [action_error, set_action_error] = useState<string | null>(null);
   const visible_tasks = useMemo(
@@ -104,7 +122,14 @@ export function TaskCenter({
   }
 
   return (
-    <Popover open={open} onOpenChange={on_open_change}>
+    <Popover
+      open={is_open}
+      onOpenChange={(next_open) => {
+        set_uncontrolled_open(next_open);
+        set_now(Date.now());
+        on_open_change?.(next_open);
+      }}
+    >
       <PopoverTrigger asChild>
         <Button
           id={TASK_CENTER_TRIGGER_ID}
@@ -164,6 +189,7 @@ export function TaskCenter({
               <TaskCenterItem
                 key={task.task_id}
                 task={task}
+                now={now}
                 is_pending={pending_task_ids.has(task.task_id)}
                 on_retry={(task_id) => run_task_action(task_id, on_retry)}
                 on_pause={
@@ -193,6 +219,7 @@ export function TaskCenter({
 
 function TaskCenterItem({
   task,
+  now,
   is_pending,
   on_retry,
   on_pause,
@@ -201,6 +228,7 @@ function TaskCenterItem({
   on_view_result,
 }: {
   task: TaskRecord;
+  now: number;
   is_pending: boolean;
   on_retry: (run_id: string) => Promise<void>;
   on_pause?: TaskCenterProps["on_pause"];
@@ -210,7 +238,16 @@ function TaskCenterItem({
 }) {
   const task_type = TASK_TYPES[task.task_type];
   const TaskIcon = task_type.icon;
-  const is_terminal = TERMINAL_TASK_STAGES.has(task.stage);
+  const is_terminal = is_processing_finished(task);
+  const is_timed = is_analysis_task(task);
+  const progress_known = is_timed
+    ? task.progress_known === true
+    : task.progress_known !== false;
+  const elapsed_from = task.started_at ?? task.created_at;
+  const elapsed_until = is_terminal
+    ? Date.parse(task.updated_at ?? task.created_at)
+    : now;
+  const elapsed_seconds = (elapsed_until - Date.parse(elapsed_from)) / 1000;
   const stage_label = TASK_STAGE_LABELS[task.stage] ?? task.stage;
 
   return (
@@ -231,11 +268,26 @@ function TaskCenterItem({
               {stage_label}
             </Badge>
           </div>
-          {!is_terminal && task.progress_known !== false ? (
+          {!is_terminal && progress_known ? (
             <Progress
               value={task.progress_percent}
               aria-label={`${task.name}进度`}
             />
+          ) : null}
+          {!is_terminal && is_timed && !progress_known ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Spinner
+                aria-hidden="true"
+                className="size-3 motion-reduce:animate-none"
+              />
+              当前阶段暂不提供百分比
+            </p>
+          ) : null}
+          {is_timed ? (
+            <p className="text-xs text-muted-foreground" aria-live="off">
+              {task.started_at ? "已运行" : "已等待"}{" "}
+              {format_time(elapsed_seconds)}
+            </p>
           ) : null}
           {task.error_message ? (
             <p className="text-xs text-destructive">{task.error_message}</p>
@@ -343,4 +395,15 @@ function stage_badge_variant(
   if (stage === "cancelled" || stage === "interrupted" || stage === "paused")
     return "outline";
   return "default";
+}
+
+function is_analysis_task(task: TaskRecord): boolean {
+  return task.task_type === "analysis" || task.task_type === "transcription";
+}
+
+function is_processing_finished(task: TaskRecord): boolean {
+  return (
+    TERMINAL_TASK_STAGES.has(task.stage) ||
+    task.stage === "waiting_for_approval"
+  );
 }

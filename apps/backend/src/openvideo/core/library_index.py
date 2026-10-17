@@ -68,11 +68,26 @@ def open_index_database(library_path: Path, assets_path: Path) -> sqlite3.Connec
     _ensure_visual_index_schema(connection)
     _ensure_agent_permission_grant_schema(connection)
     _ensure_download_quality_schema(connection)
+    _ensure_analysis_progress_schema(connection)
     _ensure_marker_annotation_schema(connection)
     _migrate_transcript_agent_sessions(connection)
     synchronize_folders(connection, library_path / "folders.json")
     synchronize_index(connection, assets_path)
     return connection
+
+
+def _ensure_analysis_progress_schema(connection: sqlite3.Connection) -> None:
+    """增量增加进度信息，保留旧资料库中尚未结束的任务与历史记录。"""
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(analysis_jobs)")
+    }
+    with connection:
+        if "progress_known" not in columns:
+            connection.execute(
+                "ALTER TABLE analysis_jobs ADD COLUMN progress_known INTEGER NOT NULL DEFAULT 0"
+            )
+        if "started_at" not in columns:
+            connection.execute("ALTER TABLE analysis_jobs ADD COLUMN started_at TEXT")
 
 
 def synchronize_folders(connection: sqlite3.Connection, manifest_path: Path) -> None:
@@ -684,7 +699,8 @@ CREATE TABLE download_jobs (
 CREATE TABLE analysis_jobs (
     job_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
     operation TEXT NOT NULL, mode TEXT NOT NULL, ai_model_id TEXT, strategy TEXT NOT NULL,
-    stage TEXT NOT NULL, progress_percent REAL NOT NULL, message TEXT NOT NULL,
+    stage TEXT NOT NULL, progress_percent REAL NOT NULL, progress_known INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL, started_at TEXT,
     error_message TEXT, proposal_base_digest TEXT, proposed_segments TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );

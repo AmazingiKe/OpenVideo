@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { TaskCenter } from "@/app/TaskCenter";
@@ -55,6 +61,55 @@ describe("TaskCenter", () => {
     );
     expect(screen.getByText("计算投影")).toBeVisible();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("separates queue time from running time and freezes completed duration", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-29T10:02:00Z"));
+    const task: TaskRecord = {
+      ...task_record("running", false),
+      task_type: "transcription",
+      progress_known: false,
+      stage: "transcribing",
+    };
+    try {
+      const { rerender, unmount } = render(
+        <TaskCenter open tasks={[task]} on_retry={vi.fn()} />,
+      );
+      expect(screen.getByText("已等待 02:00")).toBeVisible();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+      expect(screen.getByText("当前阶段暂不提供百分比")).toBeVisible();
+      const started = { ...task, started_at: "2026-08-29T10:01:00Z" };
+      rerender(<TaskCenter open tasks={[started]} on_retry={vi.fn()} />);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByText("已运行 01:01")).toBeVisible();
+      rerender(
+        <TaskCenter
+          open
+          tasks={[{ ...started, progress_known: true }]}
+          on_retry={vi.fn()}
+        />,
+      );
+      expect(screen.getByRole("progressbar")).toBeVisible();
+      rerender(
+        <TaskCenter
+          open
+          tasks={[
+            {
+              ...started,
+              stage: "complete",
+              updated_at: "2026-08-29T10:02:01Z",
+            },
+          ]}
+          on_retry={vi.fn()}
+        />,
+      );
+      act(() => vi.advanceTimersByTime(5000));
+      expect(screen.getByText("已运行 01:01")).toBeVisible();
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("offers retrying a failed stop without allowing download resumption or deletion", async () => {

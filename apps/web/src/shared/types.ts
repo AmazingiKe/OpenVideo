@@ -379,6 +379,8 @@ export type AnalysisJob = {
   capabilities: AnalysisCapability[];
   stage: AnalysisStage;
   progress_percent: number;
+  progress_known?: boolean;
+  started_at?: string | null;
   message: string;
   error_message: string | null;
   proposal_base_digest: string | null;

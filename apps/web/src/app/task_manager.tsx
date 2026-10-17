@@ -245,9 +245,11 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         stage: job.stage,
         message,
         progress_percent: job.progress_percent,
-        progress_known: job.stage !== "cancelling",
+        progress_known: job.stage !== "cancelling" && job.progress_known === true,
         error_message: job.error_message,
         created_at: job.created_at,
+        started_at: job.started_at,
+        updated_at: job.updated_at,
         name: `${assets.find((asset) => asset.asset_id === job.asset_id)?.title ?? "视频"} · ${ANALYSIS_OPERATION_LABELS[job.operation]}`,
         retry_available: analysis_retry_available(tracked),
         cancel_available:

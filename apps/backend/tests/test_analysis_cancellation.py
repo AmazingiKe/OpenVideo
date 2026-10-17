@@ -476,3 +476,19 @@ def inject_analysis_worker(monkeypatch):
     from analysis_worker_test_support import InlineAnalysisWorker
 
     monkeypatch.setattr(analysis_manager, "AnalysisProcessWorker", InlineAnalysisWorker)
+
+
+def test_progress_precision_is_reset_between_measured_and_cloud_stages(manager):
+    job = manager.create_initialization(ASSET_ID)
+    assert job.started_at is None
+    manager._update_job(
+        job.job_id, AnalysisStage.TRANSCRIBING, 20, "本地转写", progress_known=True
+    )
+    assert manager.get(job.job_id).progress_known
+    manager._update_job(job.job_id, AnalysisStage.TRANSCRIBING, 20, "百炼排队中")
+    assert not manager.get(job.job_id).progress_known
+    restored = manager.library.load_analysis_jobs()
+    assert not next(
+        item for item in restored if item.job_id == job.job_id
+    ).progress_known
+    manager.cancel(job.job_id)

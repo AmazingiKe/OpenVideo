@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import { TaskCenter } from "@/app/TaskCenter";
 import type { TaskRecord } from "@/features/workbench/tasks";
@@ -268,5 +268,34 @@ export const SynchronizationError: Story = {
     open: true,
     tasks: [],
     sync_error: "分析任务同步中断，后台任务仍可能运行，请检查连接。",
+  },
+};
+
+export const CloudWaiting: Story = {
+  args: {
+    open: true,
+    tasks: [
+      {
+        ...TASKS[0],
+        task_type: "transcription",
+        stage: "transcribing",
+        name: "课程录音",
+        message: "百炼正在识别音频",
+        progress_known: false,
+        created_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        cancel_available: true,
+      },
+    ],
+    on_cancel: fn(async () => undefined),
+  },
+  play: async ({ canvasElement, args }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    await expect(body.queryByRole("progressbar")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(body.getByText("当前阶段暂不提供百分比")).toBeVisible(),
+    );
+    await userEvent.click(body.getByRole("button", { name: "停止转写" }));
+    await expect(args.on_cancel).toHaveBeenCalledWith(args.tasks[0].task_id);
   },
 };

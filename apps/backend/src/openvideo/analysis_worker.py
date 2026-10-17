@@ -93,6 +93,7 @@ class StageProgress:
     stage: AnalysisStage
     percent: float
     message: str
+    progress_known: bool = False
 
 
 @dataclass(frozen=True)

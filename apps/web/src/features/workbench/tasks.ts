@@ -16,6 +16,8 @@ export type TaskRecord = {
   progress_known?: boolean;
   error_message: string | null;
   created_at: string;
+  started_at?: string | null;
+  updated_at?: string;
   name: string;
   asset_id?: string;
   index_state?: AgentIndexStatus["state"];

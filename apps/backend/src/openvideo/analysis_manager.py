@@ -765,6 +765,8 @@ class AnalysisManager:
                     return
                 self._cancel_events.setdefault(job_id, Event())
                 self._running_job_ids.add(job_id)
+                self._jobs[job_id].started_at = datetime.now(UTC)
+                self.library.save_analysis_job(self._jobs[job_id])
             transcription_started_at: datetime | None = None
             transcription_completed = False
             transcription_options = self._transcription_options_by_job_id.get(
@@ -1159,7 +1161,11 @@ class AnalysisManager:
                 )
         elif isinstance(progress, StageProgress):
             self._update_job(
-                job.job_id, progress.stage, progress.percent, progress.message
+                job.job_id,
+                progress.stage,
+                progress.percent,
+                progress.message,
+                progress_known=progress.progress_known,
             )
         elif isinstance(progress, ModelProgress):
             self._report_model_progress(
@@ -1345,6 +1351,8 @@ class AnalysisManager:
         progress_percent: float,
         message: str,
         error_message: str | None = None,
+        *,
+        progress_known: bool = False,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -1353,6 +1361,7 @@ class AnalysisManager:
             self._check_cancellation(job_id)
             job.stage = stage
             job.progress_percent = min(max(progress_percent, job.progress_percent), 100)
+            job.progress_known = progress_known or stage == AnalysisStage.COMPLETE
             job.message = message
             job.error_message = error_message
             job.updated_at = datetime.now(UTC)
@@ -1405,6 +1414,7 @@ class AnalysisManager:
             AnalysisStage.PREPARING_TRANSCRIPTION_MODEL,
             1 + ratio * 3,
             f"正在准备本地转录模型：{model_name}",
+            progress_known=total_bytes > 0,
         )
 
     def _report_transcription_progress(
@@ -1439,6 +1449,7 @@ class AnalysisManager:
             AnalysisStage.TRANSCRIBING,
             progress_percent,
             message,
+            progress_known=total_seconds > 0 and completed_seconds > 0,
         )
 
     @staticmethod

@@ -197,9 +197,11 @@ class AnalysisJob(BaseModel):
     capabilities: list[AnalysisCapability] = Field(default_factory=list)
     stage: AnalysisStage = AnalysisStage.PENDING
     progress_percent: float = 0
+    progress_known: bool = False
     message: str = "等待开始"
     error_message: str | None = None
     proposal_base_digest: str | None = None
     proposed_segments: list[MediaSegment] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    started_at: datetime | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
