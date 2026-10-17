@@ -1,9 +1,10 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from openvideo import analysis_manager as analysis_manager_module
+from openvideo import analysis_worker as analysis_worker_module
 from openvideo.analysis_manager import AnalysisManager
 from openvideo.core.analysis_models import (
     AnalysisCapability,
@@ -90,6 +91,9 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         (model_directory / "model.bin").write_bytes(b"model")
         report_progress(100, 100)
 
+    monkeypatch.setattr(
+        analysis_worker_module, "download_transcription_model", install_model
+    )
     transcription_contexts: list[str] = []
 
     def create_test_transcriber(options, models_root_directory, **kwargs):
@@ -104,7 +108,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         )
 
     monkeypatch.setattr(
-        analysis_manager_module,
+        analysis_worker_module,
         "create_transcriber",
         create_test_transcriber,
     )
@@ -163,7 +167,7 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
         ]
 
     monkeypatch.setattr(
-        analysis_manager_module,
+        analysis_worker_module,
         "build_segments",
         build_local_segments,
     )
@@ -171,12 +175,11 @@ async def test_ready_asset_initializes_all_local_evidence_without_online_model(
     manager = AnalysisManager(
         library,
         settings,
-        model_installer=install_model,
-        ocr_reader=lambda frames: "画面文字",
         on_evidence_ready=lambda: evidence_updates.append(True),
     )
 
     created = manager.initialize_asset(ASSET_ID)
+    await asyncio.gather(*list(manager._tasks.values()))
     await manager.close()
     completed = manager.get(created.job_id)
     transcript = library.load_transcript(ASSET_ID)
@@ -247,7 +250,7 @@ async def test_initialization_preserves_partial_evidence_when_keyframes_fail(
     )
     library.save_transcript(transcript)
     monkeypatch.setattr(
-        analysis_manager_module,
+        analysis_worker_module,
         "build_segments",
         lambda *args: [
             MediaSegment(
@@ -271,6 +274,7 @@ async def test_initialization_preserves_partial_evidence_when_keyframes_fail(
     )
 
     created = manager.initialize_asset(ASSET_ID)
+    await asyncio.gather(*list(manager._tasks.values()))
     await manager.close()
     failed = manager.get(created.job_id)
 
@@ -410,3 +414,11 @@ def test_initialization_keeps_completed_generated_analysis(tmp_path: Path):
     assert created.stage == AnalysisStage.COMPLETE
     assert created.message == "该视频的本地分析产物已就绪"
     library.close()
+
+
+@pytest.fixture(autouse=True)
+def inject_analysis_worker(monkeypatch):
+    from openvideo import analysis_manager
+    from analysis_worker_test_support import InlineAnalysisWorker
+
+    monkeypatch.setattr(analysis_manager, "AnalysisProcessWorker", InlineAnalysisWorker)

@@ -286,6 +286,7 @@ class TranscriptionMetadata(BaseModel):
     engine: TranscriptionEngine = TranscriptionEngine.FASTER_WHISPER
     output_source: str | None = None
     cloud_task_id: str | None = Field(default=None, max_length=200)
+    cloud_submission_uncertain: bool = False
     cloud_region: BailianRegion | None = None
     options: TranscriptionOptions
     started_at: datetime | None = None

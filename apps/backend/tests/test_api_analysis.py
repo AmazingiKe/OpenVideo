@@ -1,3 +1,4 @@
+import pytest
 import json
 from pathlib import Path
 from threading import Event
@@ -28,7 +29,7 @@ from openvideo.settings import Settings
 from openvideo.tools.transcribe import TranscriptionProgress, TranscriptionResult
 from openvideo.ui.api import create_app
 
-import openvideo.analysis_manager as analysis_manager_module
+import openvideo.analysis_worker as analysis_worker_module
 
 
 ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f"
@@ -241,7 +242,7 @@ def test_cancel_analysis_is_idempotent_and_reports_unknown_jobs(tmp_path: Path):
 
 def test_transcription_creates_independent_job(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
-        analysis_manager_module,
+        analysis_worker_module,
         "transcribe_media",
         lambda *args, **kwargs: TranscriptionResult(
             transcript=Transcript(asset_id=ASSET_ID),
@@ -264,7 +265,7 @@ def test_transcription_defaults_to_automatic_language_detection(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        analysis_manager_module,
+        analysis_worker_module,
         "transcribe_media",
         lambda *args, **kwargs: TranscriptionResult(
             transcript=Transcript(asset_id=ASSET_ID, language="en"),
@@ -286,7 +287,7 @@ def test_transcription_defaults_to_automatic_language_detection(
 
 def test_transcription_clamps_segments_to_media_duration(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
-        analysis_manager_module,
+        analysis_worker_module,
         "transcribe_media",
         lambda *args, **kwargs: TranscriptionResult(
             transcript=Transcript(
@@ -362,7 +363,7 @@ def test_transcription_reports_real_audio_progress_and_latest_text(
         )
 
     monkeypatch.setattr(
-        analysis_manager_module,
+        analysis_worker_module,
         "transcribe_media",
         transcribe_with_progress,
     )
@@ -404,7 +405,7 @@ def test_transcription_can_replace_existing_result_multiple_times(
             output_source="faster-whisper",
         )
 
-    monkeypatch.setattr(analysis_manager_module, "transcribe_media", transcribe_again)
+    monkeypatch.setattr(analysis_worker_module, "transcribe_media", transcribe_again)
     with create_client(tmp_path) as client:
         model_directory = tmp_path / "models" / "faster-whisper" / "small"
         model_directory.mkdir(parents=True)
@@ -449,7 +450,7 @@ def test_failed_retranscription_preserves_existing_result(tmp_path: Path, monkey
     def fail_transcription(*args, **kwargs):
         raise RuntimeError("模型损坏")
 
-    monkeypatch.setattr(analysis_manager_module, "transcribe_media", fail_transcription)
+    monkeypatch.setattr(analysis_worker_module, "transcribe_media", fail_transcription)
     with create_client(tmp_path) as client:
         model_directory = tmp_path / "models" / "faster-whisper" / "small"
         model_directory.mkdir(parents=True)
@@ -572,3 +573,11 @@ def wait_for_analysis_job(client: TestClient, job_id: str) -> dict[str, object]:
             return job
         sleep(0.01)
     raise AssertionError("分析任务未在测试时限内结束")
+
+
+@pytest.fixture(autouse=True)
+def inject_analysis_worker(monkeypatch):
+    from openvideo import analysis_manager
+    from analysis_worker_test_support import InlineAnalysisWorker
+
+    monkeypatch.setattr(analysis_manager, "AnalysisProcessWorker", InlineAnalysisWorker)

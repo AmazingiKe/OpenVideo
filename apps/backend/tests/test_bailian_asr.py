@@ -16,6 +16,7 @@ from openvideo.core.transcription_models import (
 )
 from openvideo.tools import bailian_asr
 from openvideo.tools.bailian_asr import BailianAsrError, BailianTranscriber
+from openvideo.tools.cancellation import AnalysisCancelled
 
 
 API_KEY = "sk-secret-test-value"
@@ -346,6 +347,61 @@ def test_does_not_retry_ambiguous_paid_submission(audio_path: Path, mock_http):
     assert sum(request.url.path.endswith("/transcription") for request in requests) == 1
     assert submitted == []
     assert API_KEY not in str(error.value)
+
+
+@pytest.mark.parametrize("outcome", ["cancel_before_post", "timeout", "rejected"])
+def test_submission_marker_distinguishes_unsent_rejected_and_unknown_requests(
+    outcome, mock_http
+):
+    states = []
+    cancel = False
+
+    def check_cancel():
+        if cancel:
+            raise AnalysisCancelled("分析已停止")
+
+    def started():
+        nonlocal cancel
+        states.append(True)
+        cancel = outcome == "cancel_before_post"
+
+    def handle(request):
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("submission uncertain", request=request)
+        return httpx.Response(401, json={"code": "InvalidApiKey"})
+
+    requests = mock_http(handle)
+    transcriber = BailianTranscriber(
+        cloud_options(),
+        API_KEY,
+        cancellation_check=check_cancel,
+        on_submission_started=started,
+        on_submission_rejected=lambda: states.append(False),
+    )
+    try:
+        with pytest.raises(
+            AnalysisCancelled if outcome == "cancel_before_post" else BailianAsrError
+        ):
+            transcriber._submit_task("oss://test-audio")
+    finally:
+        transcriber.close()
+    assert states == ([True] if outcome == "timeout" else [True, False])
+    assert len(requests) == (0 if outcome == "cancel_before_post" else 1)
+
+
+def test_failure_before_submission_does_not_mark_a_paid_request(audio_path, mock_http):
+    requests = mock_http(lambda _: httpx.Response(500, json={"code": "ServerError"}))
+    states = []
+    transcriber = BailianTranscriber(
+        cloud_options(), API_KEY, on_submission_started=lambda: states.append(True)
+    )
+    try:
+        with pytest.raises(BailianAsrError):
+            transcriber.transcribe(audio_path, "asset-test")
+    finally:
+        transcriber.close()
+    assert not states
+    assert not any(request.url.path.endswith("/transcription") for request in requests)
 
 
 def test_rejects_failed_subtask_even_when_parent_task_succeeded(

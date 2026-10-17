@@ -2,12 +2,13 @@ import asyncio
 from collections.abc import Callable
 import hashlib
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, RLock
 
 from openvideo.bailian_credentials import BailianCredentialError, BailianCredentialStore
-from openvideo.core.bailian_models import BailianAsrConfiguration, BailianRegion
+from openvideo.core.bailian_models import BailianRegion
 from openvideo.core.ai_models import IMAGE_INPUT_MODALITY
 from openvideo.core.analysis import build_local_chapters
 from openvideo.core.analysis_models import (
@@ -29,42 +30,45 @@ from openvideo.core.transcription_models import (
     Transcript,
     TranscriptionEngine,
     TranscriptionMetadata,
-    TranscriptionModelDescriptor,
     TranscriptionOptions,
     TranscriptionStatus,
 )
 from openvideo.settings import Settings
 from openvideo.transcription_model_manager import (
     TranscriptionModelDownloadError,
-    download_transcription_model,
-    is_transcription_model_installed,
     require_transcription_model_installed,
 )
-from openvideo.tools.analysis_pipeline import FormulaReader, OcrReader, build_segments
+from openvideo.analysis_worker import (
+    AnalysisProcessWorker,
+    AnalysisWorker,
+    AnalysisWorkerNotStopped,
+    CloudTaskSubmitted,
+    CloudSubmissionState,
+    ModelProgress,
+    StageProgress,
+    TimelineRequest,
+    TranscriptionRequest,
+    WorkerProgress,
+)
 from openvideo.tools.cancellation import AnalysisCancelled, check_analysis_cancellation
-from openvideo.tools.ocr import LocalOcrReader
 from openvideo.tools.transcribe import (
-    Transcriber,
     TranscriptionFailure,
     TranscriptionProgress,
-    create_transcriber,
+    TranscriptionResult,
     require_transcription_adapter,
-    transcribe_media,
 )
-from openvideo.tools.vision import LiteLlmVision
-from openvideo.tools.bailian_asr import BailianAsrError, BailianTranscriber
+from openvideo.tools.bailian_asr import BailianAsrError
 
 
-TranscriptionModelInstaller = Callable[
-    [TranscriptionModelDescriptor, Path, Callable[[int, int], None]],
-    None,
-]
 TRANSCRIPTION_PROGRESS_START_PERCENT = 10
 TRANSCRIPTION_PROGRESS_END_PERCENT = 65
 TRANSCRIPTION_SAVE_PROGRESS_PERCENT = 66
 TRANSCRIPTION_LATEST_TEXT_MAX_CHARACTERS = 56
 TRANSCRIPTION_CONTEXT_MAX_CHARACTERS = 400
 SECONDS_PER_MINUTE = 60
+CLOUD_SUBMISSION_UNCERTAIN_MESSAGE = "云端提交结果未确认，请在转写窗口核实并恢复任务"
+WORKER_REAP_ATTEMPTS = 2
+WORKER_REAP_RETRY_SECONDS = 0.1
 
 
 def _segments_overlap(first: MediaSegment, second: MediaSegment) -> bool:
@@ -152,9 +156,7 @@ class AnalysisManager:
         library: MediaLibrary,
         settings: Settings,
         *,
-        model_installer: TranscriptionModelInstaller | None = None,
-        ocr_reader: OcrReader | None = None,
-        formula_reader: FormulaReader | None = None,
+        worker: AnalysisWorker | None = None,
         on_evidence_ready: Callable[[], None] | None = None,
         bailian_credential_store: BailianCredentialStore | None = None,
     ) -> None:
@@ -169,12 +171,12 @@ class AnalysisManager:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancel_events: dict[str, Event] = {}
         self._running_job_ids: set[str] = set()
-        self._model_installer = model_installer or download_transcription_model
-        local_ocr_reader = LocalOcrReader(
-            models_root_directory=settings.models_root_directory
-        )
-        self._ocr_reader = ocr_reader or local_ocr_reader.read_frames
-        self._formula_reader = formula_reader or local_ocr_reader.read_formulas
+        self._unreaped_work_directories: dict[str, Path | None] = {}
+        self._worker_available = asyncio.Event()
+        self._worker_available.set()
+        self._worker_reap_lock = asyncio.Lock()
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._worker = worker or AnalysisProcessWorker()
         self._on_evidence_ready = on_evidence_ready or (lambda: None)
 
     def create_analysis(
@@ -267,6 +269,8 @@ class AnalysisManager:
                 message="该视频已有转录结果",
             )
         previous_metadata = self.library.load_transcription_metadata(asset_id)
+        if previous_metadata and previous_metadata.cloud_submission_uncertain:
+            raise AnalysisPrerequisiteError(CLOUD_SUBMISSION_UNCERTAIN_MESSAGE)
         cloud_task_id = None
         if (
             options.engine == TranscriptionEngine.BAILIAN
@@ -308,6 +312,42 @@ class AnalysisManager:
         )
         return job.model_copy(deep=True)
 
+    def resolve_cloud_submission(
+        self,
+        asset_id: str,
+        job_id: str,
+        cloud_task_id: str | None,
+        confirm_not_submitted: bool,
+    ) -> TranscriptionMetadata:
+        """只有用户核实供应商任务后才解除不确定状态，恢复本身不提交收费请求。"""
+        with self._lock:
+            if self._active_job_for(asset_id) is not None:
+                raise AnalysisPrerequisiteError("请先等待当前分析任务停止")
+            metadata = self.library.load_transcription_metadata(asset_id)
+            if metadata is None or metadata.job_id != job_id:
+                raise AnalysisPrerequisiteError("转写记录已更新，请重新打开转写窗口")
+            if not metadata.cloud_submission_uncertain:
+                raise AnalysisPrerequisiteError("云端提交状态已经确认，请重新读取任务")
+            if bool(cloud_task_id) == confirm_not_submitted:
+                raise AnalysisPrerequisiteError(
+                    "请填写已有任务号，或确认未生成云端任务"
+                )
+            if (
+                cloud_task_id
+                and metadata.cloud_region != self.settings.bailian_asr.region
+            ):
+                raise AnalysisPrerequisiteError(
+                    "请先将百炼服务地域切回原任务地域，再关联任务号"
+                )
+            resolved = metadata.model_copy(
+                update={
+                    "cloud_task_id": cloud_task_id,
+                    "cloud_submission_uncertain": False,
+                }
+            )
+            self.library.save_transcription_metadata(resolved)
+            return resolved
+
     def create_initialization(self, asset_id: str) -> AnalysisJob:
         """为就绪素材创建无需用户决策的本地渐进分析任务。"""
 
@@ -318,6 +358,13 @@ class AnalysisManager:
         if active_job:
             return active_job
         transcript = self.library.load_transcript(asset_id)
+        previous_metadata = self.library.load_transcription_metadata(asset_id)
+        if (
+            transcript is None
+            and previous_metadata
+            and previous_metadata.cloud_submission_uncertain
+        ):
+            raise AnalysisPrerequisiteError(CLOUD_SUBMISSION_UNCERTAIN_MESSAGE)
         segments = self.library.load_segments(asset_id)
         capabilities = self._existing_capabilities(transcript, segments)
         if (
@@ -429,15 +476,20 @@ class AnalysisManager:
     def start(self, job_id: str) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.stage in INACTIVE_ANALYSIS_STAGES:
+            if (
+                job is None
+                or job.stage in INACTIVE_ANALYSIS_STAGES
+                or job.stage == AnalysisStage.CANCELLING
+            ):
                 return
             current = self._tasks.get(job_id)
             if current and not current.done():
                 return
             self._cancel_events.setdefault(job_id, Event())
+            self._event_loop = asyncio.get_running_loop()
             task = asyncio.create_task(self._run(job_id))
             self._tasks[job_id] = task
-            task.add_done_callback(lambda _: self._discard_task(job_id))
+            task.add_done_callback(lambda done: self._discard_task(job_id, done))
 
     def restore(self) -> None:
         """服务重启后恢复未完成任务，复用已经落盘的转写与事件产物。"""
@@ -463,8 +515,20 @@ class AnalysisManager:
                 self.start(job.job_id)
 
     async def close(self) -> None:
+        with self._lock:
+            job_ids = [
+                job.job_id
+                for job in self._jobs.values()
+                if job.stage not in INACTIVE_ANALYSIS_STAGES
+            ]
+        for job_id in job_ids:
+            self.cancel(job_id)
         if self._tasks:
-            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+            await asyncio.gather(*list(self._tasks.values()), return_exceptions=True)
+        async with self._worker_reap_lock:
+            await self._worker.close()
+            for job_id in list(self._unreaped_work_directories):
+                await self._release_reaped_job(job_id)
 
     def get(self, job_id: str) -> AnalysisJob | None:
         with self._lock:
@@ -478,7 +542,7 @@ class AnalysisManager:
             )
 
     def cancel(self, job_id: str) -> AnalysisJob:
-        """排队任务立即退出，运行任务等同步工具安全返回后才释放执行名额。"""
+        """排队任务立即退出，运行任务确认进程树退出后才释放执行名额。"""
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -497,6 +561,9 @@ class AnalysisManager:
                 job.error_message = None
                 job.updated_at = datetime.now(UTC)
                 self.library.save_analysis_job(job)
+                task = self._tasks.get(job_id)
+                if (task is None or task.done()) and self._event_loop is not None:
+                    self._event_loop.call_soon_threadsafe(self._start_reaper, job_id)
             return job.model_copy(deep=True)
 
     async def cancel_assets(self, asset_ids: set[str]) -> bool:
@@ -511,7 +578,7 @@ class AnalysisManager:
                 self._tasks[job.job_id] for job in jobs if job.job_id in self._tasks
             ]
         if any(job.stage != AnalysisStage.PENDING for job in jobs):
-            # 转录与画面分析运行在线程中，底层工具返回前删除目录会产生写回竞争。
+            # 分析进程退出前仍可能读取素材，必须先完成停止再删除目录。
             return False
         for job in jobs:
             self.cancel(job.job_id)
@@ -519,10 +586,57 @@ class AnalysisManager:
             await asyncio.gather(*tasks, return_exceptions=True)
         return all(task.done() for task in tasks)
 
-    def _discard_task(self, job_id: str) -> None:
+    def _discard_task(self, job_id: str, task: asyncio.Task) -> None:
         with self._lock:
+            if self._tasks.get(job_id) is not task:
+                return
             self._tasks.pop(job_id, None)
+            if job_id not in self._running_job_ids:
+                self._cancel_events.pop(job_id, None)
+
+    def _start_reaper(self, job_id: str) -> None:
+        with self._lock:
+            current = self._tasks.get(job_id)
+            if job_id not in self._unreaped_work_directories or (
+                current is not None and not current.done()
+            ):
+                return
+            task = asyncio.create_task(self._reap_worker(job_id))
+            self._tasks[job_id] = task
+            task.add_done_callback(lambda done: self._discard_task(job_id, done))
+
+    async def _reap_worker(self, job_id: str) -> bool:
+        """系统回收暂时失败时保留所有权，后续停止请求可重试同一回收流程。"""
+        for attempt in range(WORKER_REAP_ATTEMPTS):
+            try:
+                async with self._worker_reap_lock:
+                    if job_id not in self._unreaped_work_directories:
+                        return True
+                    await self._worker.close()
+                    await self._release_reaped_job(job_id)
+            except AnalysisWorkerNotStopped as error:
+                with self._lock:
+                    job = self._jobs[job_id]
+                    job.error_message = str(error)
+                    job.updated_at = datetime.now(UTC)
+                    self.library.save_analysis_job(job)
+                if attempt + 1 < WORKER_REAP_ATTEMPTS:
+                    await asyncio.sleep(WORKER_REAP_RETRY_SECONDS)
+            else:
+                return True
+        return False
+
+    async def _release_reaped_job(self, job_id: str) -> None:
+        work_directory = self._unreaped_work_directories.get(job_id)
+        if work_directory is not None:
+            await asyncio.to_thread(shutil.rmtree, work_directory, True)
+        with self._lock:
+            self._finish_cancelled(job_id)
+            self._running_job_ids.discard(job_id)
             self._cancel_events.pop(job_id, None)
+            self._unreaped_work_directories.pop(job_id, None)
+            if not self._unreaped_work_directories:
+                self._worker_available.set()
 
     def _check_cancellation(self, job_id: str) -> None:
         check_analysis_cancellation(self._cancel_events.get(job_id))
@@ -608,6 +722,7 @@ class AnalysisManager:
         return self.get(job_id) or job
 
     async def _run(self, job_id: str) -> None:
+        self._event_loop = asyncio.get_running_loop()
         job = self.get(job_id)
         if not job or job.stage in INACTIVE_ANALYSIS_STAGES:
             return
@@ -617,6 +732,7 @@ class AnalysisManager:
             return
 
         async with self._analysis_lock:
+            await self._worker_available.wait()
             with self._lock:
                 if self._jobs[job_id].stage in INACTIVE_ANALYSIS_STAGES:
                     return
@@ -635,8 +751,11 @@ class AnalysisManager:
                 else 1
             )
             should_transcribe = False
+            worker_not_stopped = False
+            work_directory = None
             try:
                 self._check_cancellation(job_id)
+                work_directory = self.library.temporary_directory(job_id)
                 playback = self.library.resolve_asset_file(asset, asset.playback_path)
                 if not playback:
                     raise AnalysisError("视频文件不存在")
@@ -674,6 +793,9 @@ class AnalysisManager:
                             engine=transcription_options.engine,
                             options=transcription_options,
                             cloud_task_id=cloud_task_id,
+                            cloud_submission_uncertain=saved_metadata.cloud_submission_uncertain
+                            if saved_metadata
+                            else False,
                             cloud_region=cloud_region,
                             started_at=transcription_started_at,
                         )
@@ -681,20 +803,15 @@ class AnalysisManager:
                     self._update_job(
                         job_id, AnalysisStage.EXTRACTING_AUDIO, 0, "正在读取平台字幕"
                     )
-                    work_directory = self.library.temporary_directory(job_id)
-                    transcription_result = await asyncio.to_thread(
-                        transcribe_media,
-                        playback,
-                        asset.asset_id,
-                        asset.source_url,
-                        work_directory,
-                        self.settings.ffmpeg_path,
-                        self.settings.ffmpeg_bin_dir,
-                        lambda: self._prepare_transcriber(
-                            job, transcription_options, asset
+                    transcription_result = await self._worker.execute(
+                        self._transcription_request(
+                            job, transcription_options, asset, playback, work_directory
                         ),
-                        cancel_event=self._cancel_events[job_id],
+                        self._cancel_events[job_id],
+                        lambda progress: self._worker_progress(job, progress),
                     )
+                    if not isinstance(transcription_result, TranscriptionResult):
+                        raise AnalysisError("分析进程未返回有效转录")
                     self._check_cancellation(job_id)
                     transcript = _bound_transcript_to_media(
                         transcription_result.transcript,
@@ -723,6 +840,9 @@ class AnalysisManager:
                             engine=transcription_options.engine,
                             output_source=transcription_result.output_source,
                             options=transcription_options,
+                            cloud_submission_uncertain=cloud_metadata.cloud_submission_uncertain
+                            if cloud_metadata
+                            else False,
                             cloud_task_id=cloud_metadata.cloud_task_id
                             if cloud_metadata
                             else None,
@@ -743,43 +863,45 @@ class AnalysisManager:
                     self._update_job(job_id, AnalysisStage.COMPLETE, 100, "转录完成")
                     return
 
-                describer = (
+                model = (
                     None
                     if job.operation == AnalysisOperation.INITIALIZATION
-                    else self._describer(job.ai_model_id)
+                    else self.settings.ai_model(job.ai_model_id)
+                    if job.ai_model_id
+                    else None
                 )
+                if (
+                    job.ai_model_id
+                    and job.operation != AnalysisOperation.INITIALIZATION
+                    and model is None
+                ):
+                    raise AnalysisPrerequisiteError("分析任务使用的 AI 模型已被删除")
                 self._update_job(
                     job_id, AnalysisStage.BUILDING_TIMELINE, 70, "正在构建时间轴事件"
                 )
                 markers = self.library.load_markers(job.asset_id)
-                asset_directory = self.library.artifacts_directory(asset.asset_id)
-                segments = await asyncio.to_thread(
-                    build_segments,
-                    transcript,
-                    playback,
-                    asset.asset_id,
-                    asset_directory,
-                    asset.duration_seconds,
-                    self.settings,
-                    describer,
-                    markers,
-                    job.strategy,
-                    lambda stage, progress, message: self._update_job(
-                        job_id,
-                        stage,
-                        progress,
-                        message,
+                staged_artifacts = work_directory / "artifacts"
+                if staged_artifacts.is_symlink():
+                    raise AnalysisError("分析暂存目录不能是符号链接")
+                segments = await self._worker.execute(
+                    TimelineRequest(
+                        transcript=transcript,
+                        media_path=playback,
+                        asset_id=asset.asset_id,
+                        artifacts_directory=staged_artifacts,
+                        duration_seconds=asset.duration_seconds,
+                        settings=self.settings.model_copy(deep=True),
+                        markers=markers,
+                        strategy=job.strategy,
+                        model=model,
                     ),
-                    (
-                        self.settings.ai_model(job.ai_model_id)
-                        if job.ai_model_id
-                        and job.operation != AnalysisOperation.INITIALIZATION
-                        else None
-                    ),
-                    self._ocr_reader,
-                    self._formula_reader,
-                    self._cancel_events.get(job_id),
+                    self._cancel_events[job_id],
+                    lambda progress: self._worker_progress(job, progress),
                 )
+                if not isinstance(segments, list) or any(
+                    not isinstance(segment, MediaSegment) for segment in segments
+                ):
+                    raise AnalysisError("分析进程未返回有效章节")
                 self._check_cancellation(job_id)
                 for segment in segments:
                     segment.key_frame_paths = [
@@ -788,7 +910,7 @@ class AnalysisManager:
                     ]
                 completed_stage = (
                     AnalysisStage.DESCRIBING_VISUALS
-                    if describer is not None
+                    if model is not None
                     else AnalysisStage.EXTRACTING_FRAMES
                 )
                 self._update_job(
@@ -815,7 +937,7 @@ class AnalysisManager:
                 )
                 if has_ocr_text:
                     self._add_capability(job_id, AnalysisCapability.OCR)
-                if describer is not None and any(
+                if model is not None and any(
                     segment.visual_description for segment in proposed_segments
                 ):
                     self._add_capability(job_id, AnalysisCapability.VISUAL)
@@ -832,6 +954,7 @@ class AnalysisManager:
                             raise AnalysisError(
                                 "生成期间字幕或章节已被更新，请重新生成"
                             )
+                        self._publish_frames(job, staged_artifacts, proposed_segments)
                         self.library.save_segments(job.asset_id, proposed_segments)
                     self._on_evidence_ready()
                     self._update_job(
@@ -844,6 +967,7 @@ class AnalysisManager:
                 if job.operation == AnalysisOperation.INITIALIZATION:
                     with self._lock:
                         self._check_cancellation(job_id)
+                        self._publish_frames(job, staged_artifacts, proposed_segments)
                         self.library.save_segments(job.asset_id, proposed_segments)
                     self._on_evidence_ready()
                     if not has_key_frames:
@@ -869,15 +993,30 @@ class AnalysisManager:
                     return
                 message = (
                     "分析预览已生成，等待确认"
-                    if describer is not None
+                    if model is not None
                     else "音频时间轴预览已生成，等待确认（未配置视觉模型）"
                 )
-                self._set_analysis_proposal(
-                    job_id,
-                    _segment_digest(self.library.load_segments(asset.asset_id)),
-                    proposed_segments,
-                    message,
-                )
+                with self._lock:
+                    self._check_cancellation(job_id)
+                    self._publish_frames(job, staged_artifacts, proposed_segments)
+                    self._set_analysis_proposal(
+                        job_id,
+                        _segment_digest(self.library.load_segments(asset.asset_id)),
+                        proposed_segments,
+                        message,
+                    )
+            except AnalysisWorkerNotStopped as error:
+                worker_not_stopped = True
+                with self._lock:
+                    self._unreaped_work_directories[job_id] = work_directory
+                    self._worker_available.clear()
+                    current = self._jobs[job_id]
+                    current.stage = AnalysisStage.CANCELLING
+                    current.message = "等待分析进程退出，暂时无法重试"
+                    current.error_message = str(error)
+                    current.updated_at = datetime.now(UTC)
+                    self.library.save_analysis_job(current)
+                worker_not_stopped = not await self._reap_worker(job_id)
             except AnalysisCancelled:
                 self._finish_cancelled(job_id)
             except Exception as error:
@@ -907,6 +1046,9 @@ class AnalysisManager:
                             job_id=job_id,
                             asset_id=asset.asset_id,
                             status=TranscriptionStatus.FAILED,
+                            cloud_submission_uncertain=cloud_metadata.cloud_submission_uncertain
+                            if cloud_metadata
+                            else False,
                             attempt_count=attempt_count,
                             engine=transcription_options.engine,
                             options=transcription_options,
@@ -926,86 +1068,127 @@ class AnalysisManager:
                     )
                 self._fail(job_id, str(error) or "分析失败")
             finally:
-                with self._lock:
-                    self._running_job_ids.discard(job_id)
-                    if self._active_job_id_by_asset_id.get(job.asset_id) == job_id:
-                        self._active_job_id_by_asset_id.pop(job.asset_id, None)
+                if not worker_not_stopped:
+                    if work_directory is not None:
+                        await asyncio.to_thread(shutil.rmtree, work_directory, True)
+                    with self._lock:
+                        self._running_job_ids.discard(job_id)
+                        if self._active_job_id_by_asset_id.get(job.asset_id) == job_id:
+                            self._active_job_id_by_asset_id.pop(job.asset_id, None)
 
-    def _describer(self, ai_model_id: str | None) -> LiteLlmVision | None:
-        if ai_model_id is None:
-            return None
-        model = self.settings.ai_model(ai_model_id)
-        if model is None:
-            raise AnalysisPrerequisiteError("分析任务使用的 AI 模型已被删除")
-        if IMAGE_INPUT_MODALITY not in model.input_modalities:
-            return None
-        return LiteLlmVision(model)
-
-    def _prepare_transcriber(
+    def _transcription_request(
         self,
         job: AnalysisJob,
         options: TranscriptionOptions,
         asset: MediaAsset,
-    ) -> Transcriber:
-        """平台字幕缺失后才准备识别，云端任务复用落盘任务号以避免重复收费。"""
+        playback: Path,
+        work_directory: Path,
+    ) -> TranscriptionRequest:
+        metadata = self.library.load_transcription_metadata(asset.asset_id)
+        region = None
+        api_key = None
+        credential_error = None
         if options.engine == TranscriptionEngine.BAILIAN:
-            metadata = self.library.load_transcription_metadata(asset.asset_id)
+            if metadata and metadata.cloud_submission_uncertain:
+                raise AnalysisPrerequisiteError(CLOUD_SUBMISSION_UNCERTAIN_MESSAGE)
             region = (
                 metadata.cloud_region
                 if metadata and metadata.cloud_region is not None
                 else self.settings.bailian_asr.region
             )
-            self._update_job(
-                job.job_id,
-                AnalysisStage.TRANSCRIBING,
-                TRANSCRIPTION_PROGRESS_START_PERCENT,
-                "正在准备百炼云端转写",
-            )
-            return BailianTranscriber(
-                options,
-                self._require_bailian_credentials(options, region),
-                BailianAsrConfiguration(region=region).base_url,
-                cancellation_check=lambda: self._check_cancellation(job.job_id),
-                task_id=metadata.cloud_task_id if metadata else None,
-                on_task_submitted=lambda task_id: self._save_cloud_task_id(
-                    asset.asset_id, job.job_id, task_id
-                ),
-                on_status=lambda message: self._update_job(
-                    job.job_id,
-                    AnalysisStage.TRANSCRIBING,
-                    TRANSCRIPTION_PROGRESS_START_PERCENT,
-                    message,
-                ),
-                duration_seconds=asset.duration_seconds,
-            )
-        if job.operation == AnalysisOperation.INITIALIZATION:
-            descriptor = require_transcription_adapter(options)
-            if not is_transcription_model_installed(
-                descriptor, self.settings.models_root_directory
-            ):
-                self._update_job(
-                    job.job_id,
-                    AnalysisStage.PREPARING_TRANSCRIPTION_MODEL,
-                    1,
-                    f"正在准备本地转录模型：{descriptor.name}",
-                )
-                self._model_installer(
-                    descriptor,
-                    self.settings.models_root_directory,
-                    lambda downloaded, total: self._report_model_progress(
-                        job.job_id, descriptor.name, downloaded, total
-                    ),
-                )
-        self._update_job(job.job_id, AnalysisStage.EXTRACTING_AUDIO, 5, "正在提取音频")
-        return create_transcriber(
-            options,
-            self.settings.models_root_directory,
-            progress_reporter=lambda progress: self._report_transcription_progress(
-                job.job_id, progress
-            ),
+            try:
+                api_key = self._require_bailian_credentials(options, region)
+            except BailianCredentialError as error:
+                # 自动初始化仍可读取平台字幕，缺少密钥只应阻止实际 ASR。
+                credential_error = str(error)
+        return TranscriptionRequest(
+            asset_id=asset.asset_id,
+            media_path=playback,
+            source_url=asset.source_url,
+            work_directory=work_directory,
+            settings=self.settings.model_copy(deep=True),
+            options=options,
             context=self._transcription_context(asset),
-            cancellation_check=lambda: self._check_cancellation(job.job_id),
+            prepare_model=job.operation == AnalysisOperation.INITIALIZATION,
+            duration_seconds=asset.duration_seconds,
+            cloud_api_key=api_key,
+            cloud_task_id=metadata.cloud_task_id if metadata else None,
+            cloud_region=region,
+            cloud_credential_error=credential_error,
         )
+
+    def _worker_progress(self, job: AnalysisJob, progress: WorkerProgress) -> None:
+        if isinstance(progress, CloudTaskSubmitted):
+            self._save_cloud_task_id(job.asset_id, job.job_id, progress.task_id)
+        elif isinstance(progress, CloudSubmissionState):
+            with self._lock:
+                metadata = self.library.load_transcription_metadata(job.asset_id)
+                if metadata is None or metadata.job_id != job.job_id:
+                    raise AnalysisError("云端转写任务状态已变更，已停止处理")
+                self.library.save_transcription_metadata(
+                    metadata.model_copy(
+                        update={"cloud_submission_uncertain": progress.uncertain}
+                    )
+                )
+        elif isinstance(progress, StageProgress):
+            self._update_job(
+                job.job_id, progress.stage, progress.percent, progress.message
+            )
+        elif isinstance(progress, ModelProgress):
+            self._report_model_progress(
+                job.job_id,
+                progress.name,
+                progress.downloaded_bytes,
+                progress.total_bytes,
+            )
+        else:
+            self._report_transcription_progress(job.job_id, progress)
+
+    def _publish_frames(
+        self, job: AnalysisJob, staging: Path, segments: list[MediaSegment]
+    ) -> None:
+        """计算结果先隔离，只有仍有效的当前任务可以把关键帧发布到素材。"""
+        self._check_cancellation(job.job_id)
+        if (
+            self._active_job_id_by_asset_id.get(job.asset_id) != job.job_id
+            or self.library.get(job.asset_id) is None
+        ):
+            raise AnalysisError("分析任务对应的素材状态已变更")
+        target_directory = self.library.artifacts_directory(job.asset_id)
+        if (
+            target_directory.is_symlink()
+            or not target_directory.resolve().is_relative_to(
+                self.library.asset_directory(job.asset_id).resolve()
+            )
+        ):
+            raise AnalysisError("分析产物目录不能超出素材")
+        files_to_publish = []
+        for relative_path in dict.fromkeys(
+            path for segment in segments for path in segment.key_frame_paths
+        ):
+            path = Path(relative_path)
+            if (
+                path.is_absolute()
+                or ".." in path.parts
+                or not path.parts
+                or path.parts[0] != "artifacts"
+            ):
+                raise AnalysisError("分析进程返回了无效关键帧路径")
+            local_path = path.relative_to("artifacts")
+            source = staging / local_path
+            target = target_directory / local_path
+            if (
+                not source.is_file()
+                or source.is_symlink()
+                or not source.resolve().is_relative_to(staging.resolve())
+                or target.exists()
+                or not target.resolve().is_relative_to(target_directory.resolve())
+            ):
+                raise AnalysisError("分析关键帧缺失或目标路径冲突")
+            files_to_publish.append((source, target))
+        for source, target in files_to_publish:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(target)
 
     def _require_bailian_credentials(
         self, options: TranscriptionOptions, region: BailianRegion | None = None
@@ -1026,7 +1209,12 @@ class AnalysisManager:
             if metadata is None or metadata.job_id != job_id:
                 raise AnalysisError("云端转写任务状态已变更，已停止处理")
             self.library.save_transcription_metadata(
-                metadata.model_copy(update={"cloud_task_id": task_id})
+                metadata.model_copy(
+                    update={
+                        "cloud_task_id": task_id,
+                        "cloud_submission_uncertain": False,
+                    }
+                )
             )
 
     def _transcription_context(self, asset: MediaAsset) -> str:

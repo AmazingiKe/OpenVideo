@@ -6,8 +6,9 @@ from threading import Event, Timer
 
 import pytest
 
-from openvideo import analysis_manager as analysis_manager_module
+from openvideo import analysis_worker as analysis_worker_module
 from openvideo.analysis_manager import AnalysisError, AnalysisManager
+from openvideo.analysis_worker import AnalysisWorkerNotStopped
 from openvideo.core.analysis_models import AnalysisMode, AnalysisStage, AnalysisStrategy
 from openvideo.core.library import MediaLibrary
 from openvideo.core.media_models import (
@@ -86,6 +87,128 @@ def test_cancel_unknown_job_is_rejected(manager):
         manager.cancel("job-missing")
 
 
+@pytest.mark.asyncio
+async def test_unconfirmed_process_exit_keeps_the_asset_and_stopping_state(manager):
+    class UnconfirmedWorker:
+        async def execute(self, *_args):
+            raise AnalysisWorkerNotStopped("系统未确认退出")
+
+        async def close(self):
+            raise AnalysisWorkerNotStopped("系统未确认退出")
+
+    blocked = AnalysisManager(
+        manager.library, manager.settings, worker=UnconfirmedWorker()
+    )
+    job = blocked.create_initialization(ASSET_ID)
+    await blocked._run(job.job_id)
+
+    current = blocked.get(job.job_id)
+    assert current.stage == AnalysisStage.CANCELLING
+    assert current.error_message == "系统未确认退出"
+    assert blocked.has_active_jobs()
+    assert blocked.create_initialization(ASSET_ID).job_id == job.job_id
+    assert job.job_id in blocked._running_job_ids
+
+
+@pytest.mark.asyncio
+async def test_process_exit_is_rechecked_and_releases_the_old_job_automatically(
+    manager,
+):
+    class RecoveringWorker:
+        close_calls = 0
+
+        async def execute(self, *_args):
+            raise AnalysisWorkerNotStopped("首次退出未确认")
+
+        async def close(self):
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise AnalysisWorkerNotStopped("退出仍未确认")
+
+    worker = RecoveringWorker()
+    blocked = AnalysisManager(manager.library, manager.settings, worker=worker)
+    job = blocked.create_initialization(ASSET_ID)
+    await blocked._run(job.job_id)
+
+    assert worker.close_calls == 2
+    assert blocked.get(job.job_id).stage == AnalysisStage.CANCELLED
+    assert job.job_id not in blocked._running_job_ids
+    assert job.job_id not in blocked._cancel_events
+    assert not blocked.has_active_jobs()
+    assert blocked.create_initialization(ASSET_ID).job_id != job.job_id
+
+
+@pytest.mark.asyncio
+async def test_repeated_stop_reaps_late_exit_without_restarting_old_analysis(
+    manager, monkeypatch
+):
+    class LateExitWorker:
+        allow_exit = False
+        execute_calls = 0
+
+        async def execute(self, request, *_args):
+            self.execute_calls += 1
+            if self.allow_exit:
+                return TranscriptionResult(Transcript(asset_id=request.asset_id), "test")
+            raise AnalysisWorkerNotStopped("退出未确认")
+
+        async def close(self):
+            if not self.allow_exit:
+                raise AnalysisWorkerNotStopped("退出未确认")
+
+    monkeypatch.setattr(
+        "openvideo.analysis_manager.require_transcription_model_installed",
+        lambda *_: None,
+    )
+    worker = LateExitWorker()
+    blocked = AnalysisManager(manager.library, manager.settings, worker=worker)
+    manager.library.save_transcript(Transcript(asset_id=ASSET_ID))
+    options = TranscriptionOptions()
+    job = blocked.create_transcription(ASSET_ID, options, True)
+    blocked.start(job.job_id)
+    await asyncio.gather(*list(blocked._tasks.values()))
+    await asyncio.sleep(0)
+    assert job.job_id not in blocked._tasks
+    assert job.job_id in blocked._cancel_events
+    assert blocked.get(job.job_id).stage == AnalysisStage.CANCELLING
+
+    returned = [
+        blocked.create_initialization(ASSET_ID),
+        blocked.create_analysis(
+            ASSET_ID, AnalysisMode.FULL, None, AnalysisStrategy(), True
+        ),
+        blocked.create_transcription(ASSET_ID, options, True),
+    ]
+    for existing in returned:
+        assert existing.job_id == job.job_id
+        blocked.start(existing.job_id)
+    await asyncio.sleep(0)
+    assert worker.execute_calls == 1
+    assert not blocked._worker_available.is_set()
+
+    queued = blocked.create_transcription(SECOND_ASSET_ID, options, True)
+    blocked.start(queued.job_id)
+    await asyncio.sleep(0)
+    assert worker.execute_calls == 1
+    assert blocked.get(queued.job_id).stage == AnalysisStage.PENDING
+
+    worker.allow_exit = True
+    await asyncio.to_thread(blocked.cancel, job.job_id)
+    async with asyncio.timeout(3):
+        while blocked.get(job.job_id).stage != AnalysisStage.CANCELLED:
+            await asyncio.sleep(0.01)
+    assert job.job_id not in blocked._running_job_ids
+    assert job.job_id not in blocked._cancel_events
+    assert blocked._worker_available.is_set()
+    async with asyncio.timeout(3):
+        while blocked.get(queued.job_id).stage != AnalysisStage.COMPLETE:
+            await asyncio.sleep(0.01)
+    await asyncio.gather(*list(blocked._tasks.values()))
+    assert not blocked.has_active_jobs()
+    assert worker.execute_calls == 2
+    assert blocked.create_transcription(ASSET_ID, options, True).job_id != job.job_id
+
+
 def test_cancel_does_not_change_completed_job(manager):
     job = manager.create_initialization(ASSET_ID)
     manager._update_job(job.job_id, AnalysisStage.COMPLETE, 100, "已完成")
@@ -123,7 +246,7 @@ async def test_running_cancel_waits_for_worker_and_does_not_publish_old_results(
         assert finish.wait(timeout=5)
         return [original.model_copy(update={"title": "不该覆盖的结果"})]
 
-    monkeypatch.setattr(analysis_manager_module, "build_segments", blocked_analysis)
+    monkeypatch.setattr(analysis_worker_module, "build_segments", blocked_analysis)
     job = manager.create_analysis(
         ASSET_ID, AnalysisMode.FULL, None, AnalysisStrategy(), True
     )
@@ -239,10 +362,8 @@ async def test_cancelled_cloud_transcription_preserves_task_for_retry(
         captured["cancellation_check"]()
         return TranscriptionResult(Transcript(asset_id=ASSET_ID), "bailian/fun-asr")
 
-    monkeypatch.setattr(
-        analysis_manager_module, "BailianTranscriber", cloud_transcriber
-    )
-    monkeypatch.setattr(analysis_manager_module, "transcribe_media", cloud_recognition)
+    monkeypatch.setattr(analysis_worker_module, "BailianTranscriber", cloud_transcriber)
+    monkeypatch.setattr(analysis_worker_module, "transcribe_media", cloud_recognition)
     job = cloud_manager.create_transcription(ASSET_ID, options, False)
     cloud_manager.start(job.job_id)
     try:
@@ -278,3 +399,11 @@ def test_cancelled_chapter_summary_does_not_start_followup_request(monkeypatch):
             SimpleNamespace(), "标题", "字幕", None, None, cancel_event=cancel_event
         )
     assert calls == [True]
+
+
+@pytest.fixture(autouse=True)
+def inject_analysis_worker(monkeypatch):
+    from openvideo import analysis_manager
+    from analysis_worker_test_support import InlineAnalysisWorker
+
+    monkeypatch.setattr(analysis_manager, "AnalysisProcessWorker", InlineAnalysisWorker)

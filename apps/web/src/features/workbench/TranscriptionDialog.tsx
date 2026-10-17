@@ -1,7 +1,11 @@
+import { useEffect, useState } from "react";
+
 import { TranscriptionModelDownloadAction } from "@/features/settings/TranscriptionModelDownloadAction";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   Field,
   FieldDescription,
@@ -67,11 +71,23 @@ export function TranscriptionDialog({
     selected_transcription_model,
     set_transcription_options,
     transcription_options,
+    cloud_submission,
+    cloud_submission_error,
+    resolving_cloud_submission,
+    confirm_cloud_submission,
   } = use_transcription_tool_state({
     asset_id: asset?.asset_id ?? null,
     default_transcription,
     transcription_models,
+    inspect_cloud_submission: open && asset_count === 1,
   });
+  const [cloud_task_id, set_cloud_task_id] = useState("");
+  const [confirm_not_submitted, set_confirm_not_submitted] = useState(false);
+  useEffect(() => {
+    set_cloud_task_id("");
+    set_confirm_not_submitted(false);
+  }, [asset?.asset_id, open]);
+  const submission_blocked = Boolean(cloud_submission?.uncertain);
   return (
     <Dialog open={open} onOpenChange={on_open_change}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-sm">
@@ -87,6 +103,80 @@ export function TranscriptionDialog({
           <Alert variant="destructive">
             <AlertTitle>无法读取转写设置</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        {submission_blocked ? (
+          <Alert>
+            <AlertTitle>上次云端提交结果待确认</AlertTitle>
+            <AlertDescription>
+              <p>
+                请先到百炼控制台核实，避免重复提交和计费。恢复操作只保存核实结果，不会提交转写。
+              </p>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="cloud_task_id">
+                    已有百炼任务号
+                  </FieldLabel>
+                  <Input
+                    id="cloud_task_id"
+                    value={cloud_task_id}
+                    onChange={(event) => set_cloud_task_id(event.target.value)}
+                    disabled={resolving_cloud_submission || is_transcribing}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={
+                      !cloud_task_id.trim() ||
+                      resolving_cloud_submission ||
+                      is_transcribing
+                    }
+                    onClick={() =>
+                      void confirm_cloud_submission({
+                        cloud_task_id: cloud_task_id.trim(),
+                      })
+                    }
+                  >
+                    关联已有任务
+                  </Button>
+                </Field>
+                <Field className="flex-row items-start">
+                  <Checkbox
+                    id="confirm_not_submitted"
+                    checked={confirm_not_submitted}
+                    onCheckedChange={(checked) =>
+                      set_confirm_not_submitted(checked === true)
+                    }
+                    disabled={resolving_cloud_submission || is_transcribing}
+                  />
+                  <FieldLabel htmlFor="confirm_not_submitted">
+                    已核实未生成云端任务，允许下次重新提交
+                  </FieldLabel>
+                </Field>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    !confirm_not_submitted ||
+                    resolving_cloud_submission ||
+                    is_transcribing
+                  }
+                  onClick={() =>
+                    void confirm_cloud_submission({
+                      confirm_not_submitted: true,
+                    })
+                  }
+                >
+                  解除提交锁定
+                </Button>
+                <FieldDescription>
+                  解除锁定后，再次选择云端转写可能产生费用。
+                </FieldDescription>
+              </FieldGroup>
+              {cloud_submission_error ? (
+                <p role="alert">{cloud_submission_error}</p>
+              ) : null}
+            </AlertDescription>
           </Alert>
         ) : null}
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -201,7 +291,7 @@ export function TranscriptionDialog({
                 on_start_transcription(transcription_options);
               }
             }}
-            disabled={!asset || is_transcribing}
+            disabled={!asset || is_transcribing || submission_blocked}
           />
         ) : (
           <Button
@@ -212,7 +302,12 @@ export function TranscriptionDialog({
                 on_start_transcription(transcription_options);
               }
             }}
-            disabled={!asset || !transcription_options || is_transcribing}
+            disabled={
+              !asset ||
+              !transcription_options ||
+              is_transcribing ||
+              submission_blocked
+            }
           >
             {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
             {is_transcribing

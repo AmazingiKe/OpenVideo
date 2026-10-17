@@ -85,12 +85,76 @@ class AnalysisCreateRequest(BaseModel):
     strategy: AnalysisStrategy = Field(default_factory=AnalysisStrategy)
 
 
+class CloudSubmissionStatus(BaseModel):
+    job_id: str
+    uncertain: bool
+    cloud_task_id: str | None
+    options: TranscriptionOptions
+
+
+class CloudSubmissionResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=1)
+    cloud_task_id: str | None = Field(
+        default=None, min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    confirm_not_submitted: bool = False
+
+    @model_validator(mode="after")
+    def validate_resolution(self) -> "CloudSubmissionResolution":
+        if bool(self.cloud_task_id) == self.confirm_not_submitted:
+            raise ValueError("请填写已有任务号，或确认未生成云端任务")
+        return self
+
+
 def register_analysis_routes(
     app: FastAPI,
     library: Callable[[], MediaLibrary],
     analysis_manager: Callable[[], AnalysisManager],
     settings: Settings,
 ) -> None:
+    @app.get(
+        "/api/media/assets/{asset_id}/transcription-submission",
+        response_model=CloudSubmissionStatus | None,
+    )
+    def get_cloud_submission_status(asset_id: str) -> CloudSubmissionStatus | None:
+        media_library = library()
+        ready_asset(media_library, asset_id)
+        metadata = media_library.load_transcription_metadata(asset_id)
+        if metadata is None:
+            return None
+        return CloudSubmissionStatus(
+            job_id=metadata.job_id,
+            uncertain=metadata.cloud_submission_uncertain,
+            cloud_task_id=metadata.cloud_task_id,
+            options=metadata.options,
+        )
+
+    @app.post(
+        "/api/media/assets/{asset_id}/transcription-submission",
+        response_model=CloudSubmissionStatus,
+    )
+    def resolve_cloud_submission(
+        asset_id: str, request: CloudSubmissionResolution
+    ) -> CloudSubmissionStatus:
+        ready_asset(library(), asset_id)
+        try:
+            metadata = analysis_manager().resolve_cloud_submission(
+                asset_id,
+                request.job_id,
+                request.cloud_task_id,
+                request.confirm_not_submitted,
+            )
+        except AnalysisError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return CloudSubmissionStatus(
+            job_id=metadata.job_id,
+            uncertain=metadata.cloud_submission_uncertain,
+            cloud_task_id=metadata.cloud_task_id,
+            options=metadata.options,
+        )
+
     @app.post(
         "/api/media/assets/{asset_id}/chapters",
         response_model=AnalysisJob,

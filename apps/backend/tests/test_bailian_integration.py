@@ -1,3 +1,4 @@
+from analysis_worker_test_support import prepare_transcriber
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from keyring.backend import KeyringBackend
 from keyring.errors import KeyringError
 
-from openvideo import analysis_manager as analysis_manager_module
+from openvideo import analysis_worker as analysis_worker_module
 from openvideo.agent_retrieval_models import NeuralRetrievalModels
 from openvideo.analysis_manager import AnalysisError, AnalysisManager
 from openvideo.bailian_credentials import BailianCredentialStore
@@ -274,9 +275,7 @@ def test_unconfigured_cloud_transcription_fails_before_job_or_upload(
     start = Mock()
     monkeypatch.setattr(app.client.app.state.analysis_manager, "start", start)
     cloud_transcriber = Mock()
-    monkeypatch.setattr(
-        analysis_manager_module, "BailianTranscriber", cloud_transcriber
-    )
+    monkeypatch.setattr(analysis_worker_module, "BailianTranscriber", cloud_transcriber)
 
     response = app.client.post(
         f"/api/media/assets/{ASSET_ID}/transcribe",
@@ -378,16 +377,12 @@ def test_recovered_cloud_task_uses_saved_region_and_persists_submission_before_r
     recovered_manager.restore()
     cloud_transcriber = Mock()
     local_transcriber = Mock()
-    monkeypatch.setattr(
-        analysis_manager_module, "BailianTranscriber", cloud_transcriber
-    )
-    monkeypatch.setattr(
-        analysis_manager_module, "create_transcriber", local_transcriber
-    )
+    monkeypatch.setattr(analysis_worker_module, "BailianTranscriber", cloud_transcriber)
+    monkeypatch.setattr(analysis_worker_module, "create_transcriber", local_transcriber)
 
     recovered_job = recovered_manager.get(original_job.job_id)
-    transcriber = recovered_manager._prepare_transcriber(
-        recovered_job, options, library.get(ASSET_ID)
+    transcriber = prepare_transcriber(
+        recovered_manager, recovered_job, options, library.get(ASSET_ID)
     )
 
     start.assert_called_once_with(original_job.job_id)
@@ -445,7 +440,7 @@ async def test_cloud_retry_reuses_interrupted_task_but_not_provider_terminal_tas
         )
     )
     monkeypatch.setattr(
-        analysis_manager_module, "transcribe_media", failed_transcription
+        analysis_worker_module, "transcribe_media", failed_transcription
     )
 
     await manager._run(original_job.job_id)
@@ -460,10 +455,8 @@ async def test_cloud_retry_reuses_interrupted_task_but_not_provider_terminal_tas
     retry_job = manager.create_transcription(ASSET_ID, options, force=False)
     retry_metadata = library.load_transcription_metadata(ASSET_ID)
     cloud_transcriber = Mock()
-    monkeypatch.setattr(
-        analysis_manager_module, "BailianTranscriber", cloud_transcriber
-    )
-    manager._prepare_transcriber(retry_job, options, library.get(ASSET_ID))
+    monkeypatch.setattr(analysis_worker_module, "BailianTranscriber", cloud_transcriber)
+    prepare_transcriber(manager, retry_job, options, library.get(ASSET_ID))
 
     assert retry_job.job_id != original_job.job_id
     assert retry_metadata.attempt_count == 2
@@ -512,16 +505,14 @@ async def test_initialization_restore_uses_saved_options_after_default_changes(
     monkeypatch.setattr(recovered_manager, "start", Mock())
     recovered_manager.restore()
     cloud_transcriber = Mock()
-    monkeypatch.setattr(
-        analysis_manager_module, "BailianTranscriber", cloud_transcriber
-    )
+    monkeypatch.setattr(analysis_worker_module, "BailianTranscriber", cloud_transcriber)
 
     def interrupt_cloud_query(*args, **_kwargs):
         args[-1]()
         raise BailianAsrError("查询暂时中断，等待下次恢复")
 
     monkeypatch.setattr(
-        analysis_manager_module, "transcribe_media", interrupt_cloud_query
+        analysis_worker_module, "transcribe_media", interrupt_cloud_query
     )
 
     await recovered_manager._run(job.job_id)
@@ -582,7 +573,7 @@ async def test_cloud_transcription_run_persists_result_source_and_submitted_task
         return cloud_transcriber
 
     monkeypatch.setattr(
-        analysis_manager_module, "BailianTranscriber", prepare_cloud_transcriber
+        analysis_worker_module, "BailianTranscriber", prepare_cloud_transcriber
     )
 
     await manager._run(job.job_id)
@@ -598,3 +589,11 @@ async def test_cloud_transcription_run_persists_result_source_and_submitted_task
     assert isinstance(extraction.call_args.kwargs["cancel_event"], Event)
     cloud_transcriber.transcribe.assert_called_once_with(audio_path, ASSET_ID)
     cloud_transcriber.close.assert_called_once()
+
+
+@pytest.fixture(autouse=True)
+def inject_analysis_worker(monkeypatch):
+    from openvideo import analysis_manager
+    from analysis_worker_test_support import InlineAnalysisWorker
+
+    monkeypatch.setattr(analysis_manager, "AnalysisProcessWorker", InlineAnalysisWorker)

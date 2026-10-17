@@ -1,5 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  get_cloud_submission_status,
+  resolve_cloud_submission,
+} from "@/shared/api/cloud_submission";
 
 import {
   type MediaAsset,
@@ -7,6 +12,11 @@ import {
   type TranscriptionOptions,
 } from "@/shared/types";
 import { TranscriptionDialog } from "./TranscriptionDialog";
+
+vi.mock("@/shared/api/cloud_submission", () => ({
+  get_cloud_submission_status: vi.fn(),
+  resolve_cloud_submission: vi.fn(),
+}));
 
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
 
@@ -36,6 +46,11 @@ const DEFAULT_TRANSCRIPTION: TranscriptionOptions = {
 };
 
 describe("TranscriptionDialog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(get_cloud_submission_status).mockResolvedValue(null);
+  });
+
   it("shows transcription configuration", () => {
     render_tools();
 
@@ -143,6 +158,91 @@ describe("TranscriptionDialog", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "转写 3 个视频" }));
     expect(start_transcription).toHaveBeenCalledWith(cloud_options);
+  });
+
+  it("requires explicit verification before unlocking an unknown cloud submission", async () => {
+    const status = {
+      job_id: "job-019c0000000070008000000000000000",
+      uncertain: true,
+      cloud_task_id: null,
+      options: DEFAULT_TRANSCRIPTION,
+    };
+    vi.mocked(get_cloud_submission_status).mockResolvedValue(status);
+    vi.mocked(resolve_cloud_submission).mockResolvedValue({
+      ...status,
+      uncertain: false,
+    });
+    const start_transcription = vi.fn();
+    render_tools({ start_transcription, has_transcript: false });
+    await screen.findByText("上次云端提交结果待确认");
+    expect(screen.getByRole("button", { name: "生成转写" })).toBeDisabled();
+    const unlock = screen.getByRole("button", { name: "解除提交锁定" });
+    expect(unlock).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "已核实未生成云端任务，允许下次重新提交",
+      }),
+    );
+    fireEvent.click(unlock);
+    await waitFor(() =>
+      expect(resolve_cloud_submission).toHaveBeenCalledWith(
+        ASSET_ID,
+        status.job_id,
+        { confirm_not_submitted: true },
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "生成转写" })).toBeEnabled(),
+    );
+    expect(start_transcription).not.toHaveBeenCalled();
+  });
+
+  it("can associate an existing provider task and restore its original options", async () => {
+    const options: TranscriptionOptions = {
+      engine: "bailian",
+      model: "paraformer-v2",
+      language: "en",
+      device: "auto",
+      compute_type: "auto",
+    };
+    const status = {
+      job_id: "job-019c0000000070008000000000000000",
+      uncertain: true,
+      cloud_task_id: null,
+      options,
+    };
+    vi.mocked(get_cloud_submission_status).mockResolvedValue(status);
+    vi.mocked(resolve_cloud_submission).mockResolvedValue({
+      ...status,
+      uncertain: false,
+      cloud_task_id: "known-provider-task",
+    });
+    const start_transcription = vi.fn();
+    render_tools({
+      start_transcription,
+      has_transcript: false,
+      transcription_models: [
+        TRANSCRIPTION_MODELS[0],
+        {
+          ...TRANSCRIPTION_MODELS[0],
+          engine: "bailian",
+          model: "paraformer-v2",
+          name: "百炼 Paraformer",
+        },
+      ],
+    });
+    await screen.findByText("上次云端提交结果待确认");
+    fireEvent.change(screen.getByRole("textbox", { name: "已有百炼任务号" }), {
+      target: { value: "known-provider-task" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "关联已有任务" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "生成转写" })).toBeEnabled(),
+    );
+    expect(start_transcription).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
+    expect(start_transcription).toHaveBeenCalledWith(options);
   });
 });
 

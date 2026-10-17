@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from openvideo.core.bailian_models import BAILIAN_API_BASE_URLS, BailianRegion
 from openvideo.core.identifiers import uuid7
+from openvideo.tools.cancellation import AnalysisCancelled
 from openvideo.core.transcription_models import (
     BAILIAN_FUN_ASR_MODEL,
     BAILIAN_PARAFORMER_MODEL,
@@ -160,6 +161,8 @@ class BailianTranscriber:
         cancellation_check: Callable[[], None] | None = None,
         task_id: str | None = None,
         on_task_submitted: Callable[[str], None] | None = None,
+        on_submission_started: Callable[[], None] | None = None,
+        on_submission_rejected: Callable[[], None] | None = None,
         on_status: Callable[[str], None] | None = None,
         duration_seconds: float | None = None,
     ):
@@ -170,6 +173,8 @@ class BailianTranscriber:
         self._headers = _authorization_headers(api_key)
         self._cancellation_check = cancellation_check
         self._on_task_submitted = on_task_submitted
+        self._on_submission_started = on_submission_started
+        self._on_submission_rejected = on_submission_rejected
         self._on_status = on_status
         self._duration_seconds = duration_seconds
         self._task_id = _validate_task_id(task_id) if task_id else None
@@ -255,6 +260,15 @@ class BailianTranscriber:
         }
         # 提交结果不确定时不自动重试，避免重复创建收费任务。
         try:
+            self._check_cancellation()
+            if self._on_submission_started:
+                self._on_submission_started()
+            self._check_cancellation()
+        except AnalysisCancelled:
+            if self._on_submission_rejected:
+                self._on_submission_rejected()
+            raise
+        try:
             response = self._client.post(
                 f"{self._base_url}{TRANSCRIPTION_PATH}",
                 headers=headers,
@@ -268,6 +282,8 @@ class BailianTranscriber:
             raise BailianAsrError(
                 "百炼任务提交结果未确认，请先在百炼控制台核实，避免重复计费"
             ) from None
+        if response.is_client_error and self._on_submission_rejected:
+            self._on_submission_rejected()
         _check_http_response(response, "任务提交")
         output = _parse_response(response, TaskResponse).output
         return _validate_task_id(output.task_id)

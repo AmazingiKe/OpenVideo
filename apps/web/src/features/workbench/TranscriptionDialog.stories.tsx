@@ -53,6 +53,9 @@ function agent_fetch(input: RequestInfo | URL): Promise<Response> {
   if (url.includes("/api/agent-sessions")) {
     return Promise.resolve(Response.json([]));
   }
+  if (url.includes("/transcription-submission")) {
+    return Promise.resolve(Response.json(null));
+  }
   return Promise.resolve(Response.json({}));
 }
 
@@ -106,6 +109,45 @@ export const Batch: Story = { args: { asset_count: 3, has_transcript: false } };
 
 export const Transcribing: Story = {
   args: { is_transcribing: true },
+};
+
+export const UnknownCloudSubmission: Story = {
+  beforeEach() {
+    const original_fetch = window.fetch;
+    window.fetch = (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/transcription-submission")) {
+        return Promise.resolve(
+          Response.json({
+            job_id: "job-019c0000000070008000000000000000",
+            uncertain: true,
+            cloud_task_id: null,
+            options: {
+              engine: "bailian",
+              model: "paraformer-v2",
+              language: "zh",
+              device: "auto",
+              compute_type: "auto",
+            },
+          }),
+        );
+      }
+      return agent_fetch(input);
+    };
+    return () => {
+      window.fetch = original_fetch;
+    };
+  },
+  play: async () => {
+    const body = within(document.body);
+    await body.findByText("上次云端提交结果待确认");
+    await expect(
+      body.getByRole("button", { name: "解除提交锁定" }),
+    ).toBeDisabled();
+    await expect(body.getByRole("button", { name: "重新转写" })).toBeDisabled();
+    const dialog = body.getByRole("dialog");
+    await waitFor(() => expect(getComputedStyle(dialog).opacity).toBe("1"));
+  },
 };
 
 export const CloudBatch: Story = {

@@ -389,7 +389,7 @@ def test_multilevel_understanding_preserves_both_ends_and_source_ranges(monkeypa
     ]
     ranges = []
 
-    def understand(_model, evidence):
+    def understand(_model, evidence, _cancel_event):
         start = evidence[0].start_index
         end = evidence[-1].end_index
         ranges.append((start, end))
@@ -472,7 +472,7 @@ def test_final_segments_preserve_titles_and_cover_the_video_without_gaps(
     )
     summarized = []
 
-    def summarize(_model, title, text, _ocr, _visual, content_summary):
+    def summarize(_model, title, text, _ocr, _visual, content_summary, _cancel_event):
         summarized.append((title, text, content_summary))
         return f"{title}的摘要"
 
@@ -547,6 +547,7 @@ def test_summary_is_checked_against_original_evidence_before_returning(monkeypat
 @pytest.fixture
 def chapter_manager(tmp_path):
     from openvideo.analysis_manager import AnalysisManager
+    from analysis_worker_test_support import InlineAnalysisWorker
     from openvideo.core.ai_models import AiModelConfiguration
     from openvideo.core.library import MediaLibrary
     from openvideo.core.media_models import (
@@ -588,8 +589,7 @@ def chapter_manager(tmp_path):
     manager = AnalysisManager(
         library,
         Settings(ai_models=[model]),
-        ocr_reader=lambda _frames: None,
-        formula_reader=lambda _frames: [],
+        worker=InlineAnalysisWorker(),
     )
     yield manager, asset_id, old
     library.close()
@@ -615,7 +615,7 @@ async def test_chapter_job_accepts_text_model_and_saves_only_complete_results(
             )
         ]
 
-    monkeypatch.setattr("openvideo.analysis_manager.build_segments", generate)
+    monkeypatch.setattr("openvideo.analysis_worker.build_segments", generate)
     job = manager.create_chapters(asset_id)
     assert manager.create_chapters(asset_id).job_id == job.job_id
     await manager._run(job.job_id)
@@ -640,7 +640,7 @@ async def test_failed_or_stale_chapter_generation_preserves_existing_results(
             return [old.model_copy(update={"title": "过期结果"})]
         raise LlmCompletionError("摘要生成失败")
 
-    monkeypatch.setattr("openvideo.analysis_manager.build_segments", generate)
+    monkeypatch.setattr("openvideo.analysis_worker.build_segments", generate)
     job = manager.create_chapters(asset_id)
     await manager._run(job.job_id)
     assert manager.get(job.job_id).stage == AnalysisStage.FAILED
