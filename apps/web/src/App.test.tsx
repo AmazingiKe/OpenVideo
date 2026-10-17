@@ -822,10 +822,32 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expect(import_local_media).toHaveBeenNthCalledWith(1, video_file);
-      expect(import_local_media).toHaveBeenNthCalledWith(2, image_file);
+      const import_options = expect.objectContaining({
+        library_id: "library-0123456789abcdef0123456789abcdef",
+        signal: expect.any(AbortSignal),
+        on_progress: expect.any(Function),
+      });
+      expect(import_local_media).toHaveBeenNthCalledWith(
+        1,
+        video_file,
+        import_options,
+      );
+      expect(import_local_media).toHaveBeenNthCalledWith(
+        2,
+        image_file,
+        import_options,
+      );
     });
-    expect(await screen.findByText("已将 2 个文件加入视频库。")).toBeVisible();
+    expect(
+      await screen.findByText(
+        "已将 2 个文件加入导入队列，可继续使用其他功能。",
+      ),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getAllByText("导入 · 已加入资料库", { exact: true }),
+      ).toHaveLength(2),
+    );
   });
 
   it("connects a Douyin account through the dedicated login window", async () => {

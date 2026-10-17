@@ -100,6 +100,10 @@ type TaskManager = {
   ) => Promise<AnalysisJob>;
   is_transcription_running: (asset_id: string) => boolean;
   enqueue_media_imports: (files: File[]) => MediaImportSubmission;
+  enqueue_directory_import: (
+    path: string,
+    include_subfolders: boolean,
+  ) => boolean;
 };
 
 type ProbeResult = { source_url: string; result: ProbeResponse };
@@ -168,6 +172,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   }, []);
   const {
     enqueue_media_imports,
+    enqueue_directory_import,
     cancel_media_import,
     retry_media_import,
     delete_media_import,
@@ -1080,10 +1085,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         (index_status?.asset_id === asset_id &&
           TRANSCRIPTION_STAGES.has(index_status.stage)),
       enqueue_media_imports,
+      enqueue_directory_import,
     }),
     [
       active_analysis_requests,
       enqueue_media_imports,
+      enqueue_directory_import,
       index_status,
       start_downloads,
       retry_task,

@@ -1,9 +1,7 @@
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CircleAlert, FolderOpen, Import } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CircleAlert, FolderOpen, Import } from "lucide-react";
 
-import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
-import { use_library_identity } from "@/app/library";
+import { use_task_manager } from "@/app/task_manager";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,7 +21,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { import_video_directory, select_directory } from "@/shared/api";
+import { select_directory } from "@/shared/api";
 import { error_message, is_abort_error } from "@/shared/errors";
 
 type FolderImportDialogProps = {
@@ -31,71 +29,69 @@ type FolderImportDialogProps = {
   on_open_change: (open: boolean) => void;
 };
 
-type ImportResult = {
-  imported: number;
-  failed_files: string[];
-};
-
 export function FolderImportDialog({
   open,
   on_open_change,
 }: FolderImportDialogProps) {
-  const query_client = useQueryClient();
-  const library_id = use_library_identity();
+  const { enqueue_directory_import, set_task_center_open } = use_task_manager();
   const [directory_path, set_directory_path] = useState("");
   const [include_subfolders, set_include_subfolders] = useState(false);
-  const [submitting, set_submitting] = useState(false);
+  const [choosing_directory, set_choosing_directory] = useState(false);
   const [operation_error, set_operation_error] = useState<string | null>(null);
-  const [result, set_result] = useState<ImportResult | null>(null);
+  const picker_request_ref = useRef<AbortController | null>(null);
 
-  function change_open(next_open: boolean) {
-    if (!next_open && submitting) return;
-    if (!next_open) {
+  useEffect(() => {
+    if (!open) {
       set_directory_path("");
       set_include_subfolders(false);
+      set_choosing_directory(false);
       set_operation_error(null);
-      set_result(null);
+    }
+    return () => {
+      picker_request_ref.current?.abort();
+      picker_request_ref.current = null;
+    };
+  }, [open]);
+
+  function change_open(next_open: boolean) {
+    if (!next_open) {
+      picker_request_ref.current?.abort();
+      picker_request_ref.current = null;
+      set_choosing_directory(false);
     }
     on_open_change(next_open);
   }
 
   async function choose_directory() {
+    if (picker_request_ref.current) return;
+    const controller = new AbortController();
+    picker_request_ref.current = controller;
+    set_choosing_directory(true);
     set_operation_error(null);
     try {
-      const selected_path = await select_directory();
+      const selected_path = await select_directory(controller.signal);
+      controller.signal.throwIfAborted();
       if (selected_path) set_directory_path(selected_path);
     } catch (error) {
-      if (!is_abort_error(error)) set_operation_error(error_message(error));
+      if (!controller.signal.aborted && !is_abort_error(error))
+        set_operation_error(error_message(error));
+    } finally {
+      if (picker_request_ref.current === controller) {
+        picker_request_ref.current = null;
+        set_choosing_directory(false);
+      }
     }
   }
 
-  async function import_directory() {
-    if (!directory_path || !library_id) return;
-    set_submitting(true);
+  function import_directory() {
+    if (!directory_path || choosing_directory) return;
     set_operation_error(null);
-    set_result(null);
     try {
-      const imported = await import_video_directory(
-        directory_path,
-        include_subfolders,
-        library_id,
-      );
-      await Promise.all([
-        query_client.invalidateQueries({
-          queryKey: RESOURCE_QUERY_KEYS.assets,
-        }),
-        query_client.invalidateQueries({
-          queryKey: RESOURCE_QUERY_KEYS.library_folders,
-        }),
-      ]);
-      set_result({
-        imported: imported.assets.length,
-        failed_files: imported.failed_files,
-      });
+      enqueue_directory_import(directory_path, include_subfolders);
+      set_task_center_open(true);
+      change_open(false);
     } catch (error) {
-      if (!is_abort_error(error)) set_operation_error(error_message(error));
-    } finally {
-      set_submitting(false);
+      set_operation_error(error_message(error));
     }
   }
 
@@ -105,12 +101,12 @@ export function FolderImportDialog({
         <DialogHeader>
           <DialogTitle>从文件夹导入视频</DialogTitle>
           <DialogDescription>
-            所选文件夹会在视频库中创建为顶层文件夹，原始文件不会被修改。
+            加入后台队列后即可继续使用其他功能，进度和停止操作见任务中心。文件夹结构会保留，原始文件不会被修改。
           </DialogDescription>
         </DialogHeader>
 
         <FieldGroup>
-          <Field data-disabled={submitting}>
+          <Field data-disabled={choosing_directory}>
             <FieldLabel htmlFor="video_import_directory">来源文件夹</FieldLabel>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
@@ -119,16 +115,20 @@ export function FolderImportDialog({
                 value={directory_path}
                 placeholder="尚未选择文件夹"
                 readOnly
-                disabled={submitting}
+                disabled={choosing_directory}
               />
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => void choose_directory()}
-                disabled={submitting}
+                disabled={choosing_directory}
               >
-                <FolderOpen data-icon="inline-start" />
-                选择文件夹
+                {choosing_directory ? (
+                  <Spinner aria-hidden="true" data-icon="inline-start" />
+                ) : (
+                  <FolderOpen data-icon="inline-start" />
+                )}
+                {choosing_directory ? "正在选择…" : "选择文件夹"}
               </Button>
             </div>
           </Field>
@@ -140,7 +140,7 @@ export function FolderImportDialog({
               onCheckedChange={(checked) =>
                 set_include_subfolders(checked === true)
               }
-              disabled={submitting}
+              disabled={choosing_directory}
             />
             <div className="flex flex-col gap-1">
               <FieldLabel htmlFor="include_video_subfolders">
@@ -161,44 +161,21 @@ export function FolderImportDialog({
           </Alert>
         ) : null}
 
-        {result ? (
-          <Alert
-            variant={result.failed_files.length > 0 ? "destructive" : "default"}
-          >
-            {result.failed_files.length > 0 ? (
-              <CircleAlert aria-hidden="true" />
-            ) : (
-              <CheckCircle2 aria-hidden="true" />
-            )}
-            <AlertTitle>已导入 {result.imported} 个视频</AlertTitle>
-            <AlertDescription>
-              {result.failed_files.length > 0
-                ? `${result.failed_files.length} 个文件失败：${result.failed_files.join("；")}`
-                : "文件夹结构已同步到视频库。"}
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
         <DialogFooter>
           <Button
             type="button"
             variant="outline"
             onClick={() => change_open(false)}
-            disabled={submitting}
           >
             关闭
           </Button>
           <Button
             type="button"
-            onClick={() => void import_directory()}
-            disabled={!directory_path || submitting}
+            onClick={import_directory}
+            disabled={!directory_path || choosing_directory}
           >
-            {submitting ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <Import data-icon="inline-start" />
-            )}
-            {submitting ? "正在导入" : "开始导入"}
+            <Import data-icon="inline-start" />
+            开始导入
           </Button>
         </DialogFooter>
       </DialogContent>

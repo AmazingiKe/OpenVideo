@@ -6,14 +6,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import { use_media_import_tasks } from "@/app/use_media_import_tasks";
 import type { TaskRecord } from "@/features/workbench/tasks";
-import { import_local_media } from "@/shared/api";
+import {
+  import_local_media,
+  import_video_directory,
+  type DirectoryImportResult,
+} from "@/shared/api";
 import type { MediaAsset } from "@/shared/types";
 
 const library_identity = vi.hoisted(() => ({ value: "library-import" }));
 vi.mock("@/app/library", () => ({
   use_library_identity: () => library_identity.value,
 }));
-vi.mock("@/shared/api", () => ({ import_local_media: vi.fn() }));
+vi.mock("@/shared/api", () => ({
+  import_local_media: vi.fn(),
+  import_video_directory: vi.fn(),
+}));
 
 type PendingImport = {
   file: File;
@@ -22,11 +29,38 @@ type PendingImport = {
   reject: (error: Error) => void;
 };
 let requests: PendingImport[];
+let directory_requests: {
+  path: string;
+  include_subfolders: boolean;
+  library_id: string;
+  signal?: AbortSignal;
+  resolve: (result: DirectoryImportResult) => void;
+  reject: (error: Error) => void;
+}[];
 
 beforeEach(() => {
   vi.clearAllMocks();
   library_identity.value = "library-import";
   requests = [];
+  directory_requests = [];
+  vi.mocked(import_video_directory).mockImplementation(
+    (path, include_subfolders, library_id, signal) =>
+      new Promise((resolve, reject) => {
+        directory_requests.push({
+          path,
+          include_subfolders,
+          library_id,
+          signal,
+          resolve,
+          reject,
+        });
+        signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("已停止", "AbortError")),
+          { once: true },
+        );
+      }),
+  );
   vi.mocked(import_local_media).mockImplementation(
     (file, options) =>
       new Promise((resolve, reject) => {
@@ -150,6 +184,99 @@ describe("use_media_import_tasks", () => {
     await act(async () => Promise.resolve());
     expect(requests).toHaveLength(2);
     expect(records.size).toBe(record_count);
+  });
+
+  it("keeps directory work in the provider while its configuration dialog leaves and rejects duplicate requests", async () => {
+    const { result, records, rerender } = render_imports();
+    let queued = false;
+    act(() => {
+      queued = result.current.enqueue_directory_import("D:\\课程", true);
+    });
+    expect(queued).toBe(true);
+    expect(directory_requests).toHaveLength(1);
+    expect(directory_requests[0]).toMatchObject({
+      path: "D:\\课程",
+      include_subfolders: true,
+      library_id: "library-import",
+    });
+    expect(result.current.enqueue_directory_import("D:\\课程", false)).toBe(
+      false,
+    );
+    rerender();
+    expect(directory_requests[0].signal?.aborted).toBe(false);
+    expect([...records.values()][0]).toMatchObject({
+      stage: "processing",
+      progress_known: false,
+      cancel_available: true,
+    });
+    const task_id = [...records.keys()][0];
+    await act(async () => result.current.cancel_media_import(task_id));
+    expect(directory_requests[0].signal?.aborted).toBe(true);
+    expect(records.get(task_id)).toMatchObject({
+      stage: "cancelled",
+      retry_available: false,
+    });
+    expect(() => result.current.retry_media_import(task_id)).toThrow(
+      "目录导入不支持整批重试",
+    );
+    expect(import_video_directory).toHaveBeenCalledOnce();
+  });
+
+  it("keeps successfully imported videos visible after partial directory failures without duplicating the whole directory on retry", async () => {
+    const { result, records, query_client } = render_imports();
+    act(() => result.current.enqueue_directory_import("/课程", false));
+    const asset = {
+      asset_id: "asset-directory",
+      title: "有效视频",
+    } as MediaAsset;
+    await act(async () =>
+      directory_requests[0].resolve({
+        assets: [asset],
+        failed_files: ["损坏视频.mp4：无法识别视频轨道"],
+      }),
+    );
+    const task = [...records.values()][0];
+    expect(task).toMatchObject({
+      stage: "failed",
+      message: expect.stringContaining("已导入 1 个视频，1 个失败"),
+      error_message: expect.stringContaining("损坏视频.mp4"),
+      retry_available: false,
+      delete_available: true,
+    });
+    expect(query_client.getQueryData(RESOURCE_QUERY_KEYS.assets)).toEqual([
+      asset,
+    ]);
+    expect(() => result.current.retry_media_import(task.task_id)).toThrow(
+      "目录导入不支持整批重试",
+    );
+    expect(import_video_directory).toHaveBeenCalledOnce();
+  });
+
+  it("can stop a queued directory before any request and aborts directory work with its library session", async () => {
+    const { result, records, unmount } = render_imports();
+    act(() => {
+      result.current.enqueue_media_imports([
+        new File([], "一.mp4"),
+        new File([], "二.mp4"),
+      ]);
+      result.current.enqueue_directory_import("/课程", false);
+    });
+    const task = [...records.values()].find((item) =>
+      item.name.includes("文件夹导入"),
+    )!;
+    act(() => result.current.cancel_media_import(task.task_id));
+    expect(import_video_directory).not.toHaveBeenCalled();
+    expect(records.get(task.task_id)).toMatchObject({
+      stage: "cancelled",
+      retry_available: false,
+    });
+    await act(async () =>
+      requests[0].resolve({ asset_id: "asset-first" } as MediaAsset),
+    );
+    act(() => result.current.enqueue_directory_import("/新课程", false));
+    expect(directory_requests).toHaveLength(1);
+    unmount();
+    expect(directory_requests[0].signal?.aborted).toBe(true);
   });
 });
 
