@@ -10,6 +10,7 @@ import {
   Search,
   Trash2,
   Square,
+  FileUp,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -53,6 +54,7 @@ const TASK_TYPES = {
   transcription: { label: "转录", icon: AudioLines },
   agent: { label: "助手", icon: Bot },
   index: { label: "索引", icon: Database },
+  import: { label: "导入", icon: FileUp },
 } as const;
 
 export function TaskCenter({
@@ -141,7 +143,7 @@ export function TaskCenter({
         <PopoverHeader className="shrink-0 px-1">
           <PopoverTitle>任务中心</PopoverTitle>
           <PopoverDescription>
-            下载、转录与助手任务会在离开页面后继续运行。
+            导入、下载、转录与助手任务会在切换页面后继续运行。
           </PopoverDescription>
         </PopoverHeader>
         {action_error ? (
@@ -288,7 +290,11 @@ function TaskCenterItem({
                 onClick={() => void on_cancel(task.task_id)}
               >
                 <Square aria-hidden="true" data-icon="inline-start" />
-                {task.stage === "cancelling" ? "正在停止…" : "停止转写"}
+                {task.stage === "cancelling"
+                  ? "正在停止…"
+                  : task.task_type === "import"
+                    ? "停止导入"
+                    : "停止转写"}
               </Button>
             ) : null}
             {task.result_available && on_view_result ? (

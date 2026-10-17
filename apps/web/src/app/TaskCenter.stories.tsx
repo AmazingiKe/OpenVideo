@@ -147,3 +147,52 @@ export const TranscriptionStates: Story = {
     await expect(args.on_retry).toHaveBeenCalledWith(args.tasks[3].task_id);
   },
 };
+
+export const ImportStates: Story = {
+  args: {
+    open: true,
+    tasks: ["uploading", "processing", "queued", "failed", "cancelled"].map(
+      (stage, index) => ({
+        ...TASKS[2],
+        task_id: `${TASKS[2].task_id.slice(0, -1)}${index}`,
+        task_type: "import",
+        name: `课程 ${index + 1} · 镜头语言与剪辑实操演示.mp4`,
+        stage,
+        message:
+          stage === "uploading"
+            ? "已上传 50.0 / 200.0 MB"
+            : stage === "processing"
+              ? "上传完成，正在校验并加入资料库"
+              : stage === "queued"
+                ? "已加入导入队列"
+                : stage === "cancelled"
+                  ? "导入请求已停止，已入库素材会保留"
+                  : "导入失败，可重试或删除任务",
+        progress_percent: 25,
+        progress_known: stage === "uploading",
+        error_message:
+          stage === "failed" ? "媒体文件损坏，无法读取视频信息" : null,
+        cancel_available:
+          stage === "uploading" || stage === "processing" || stage === "queued",
+        retry_available: stage === "failed" || stage === "cancelled",
+        delete_available: stage === "failed" || stage === "cancelled",
+      }),
+    ),
+    on_retry: fn(async () => undefined),
+    on_cancel: fn(async () => undefined),
+    on_delete: fn(async () => undefined),
+  },
+  play: async ({ canvasElement, args }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const uploading_task = body.getByText(args.tasks[0].name).closest("li")!;
+    await userEvent.click(
+      within(uploading_task).getByRole("button", { name: "停止导入" }),
+    );
+    await expect(args.on_cancel).toHaveBeenCalledWith(args.tasks[0].task_id);
+    const failed_task = body.getByText(args.tasks[3].name).closest("li")!;
+    await userEvent.click(
+      within(failed_task).getByRole("button", { name: "重新开始" }),
+    );
+    await expect(args.on_retry).toHaveBeenCalledWith(args.tasks[3].task_id);
+  },
+};

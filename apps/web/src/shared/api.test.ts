@@ -17,7 +17,6 @@ import {
   get_transcription_model_download,
   get_markers_page_settings,
   import_download_account_from_browser,
-  import_local_media,
   import_video_directory,
   list_downloads,
   list_transcription_models,
@@ -232,32 +231,6 @@ describe("api client", () => {
     });
   });
 
-  it("uploads a dropped local media file as multipart data", async () => {
-    const asset = {
-      asset_id: "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f",
-      title: "产品演示",
-      source_platform: "local",
-    };
-    const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(asset), {
-        status: 201,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    const file = new File(["video"], "产品演示.mp4", { type: "video/mp4" });
-
-    await expect(import_local_media(file)).resolves.toEqual(asset);
-    expect(fetch_mock).toHaveBeenCalledOnce();
-    const [path, request] = fetch_mock.mock.calls[0];
-    expect(path).toBe("/api/media/assets/import");
-    expect(request?.method).toBe("POST");
-    expect(request?.body).toBeInstanceOf(FormData);
-    const uploaded_file = (request?.body as FormData).get("file") as File;
-    expect(uploaded_file.name).toBe(file.name);
-    expect(uploaded_file.size).toBe(file.size);
-    expect(uploaded_file.type).toBe(file.type);
-  });
-
   it("imports a video folder with an explicit recursion choice", async () => {
     const response = { assets: [], failed_files: [] };
     const fetch_mock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -268,7 +241,7 @@ describe("api client", () => {
     );
 
     await expect(
-      import_video_directory("D:\\素材\\课程", true),
+      import_video_directory("D:\\素材\\课程", true, "library-import"),
     ).resolves.toEqual(response);
     expect(fetch_mock).toHaveBeenCalledWith(
       "/api/media/assets/import-directory",
@@ -278,6 +251,7 @@ describe("api client", () => {
         body: JSON.stringify({
           path: "D:\\素材\\课程",
           include_subfolders: true,
+          library_id: "library-import",
         }),
         signal: undefined,
       },

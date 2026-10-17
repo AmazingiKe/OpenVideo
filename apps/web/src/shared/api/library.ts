@@ -1,5 +1,5 @@
 import type { LibraryDescription, LibraryFolder, MediaAsset } from "../types";
-import { api_base_url, ApiError, request_json } from "./client";
+import { api_base_url, ApiError, request_json, response_error } from "./client";
 
 export function get_library(
   signal?: AbortSignal,
@@ -77,14 +77,61 @@ export function list_recent_assets(
 
 export function import_local_media(
   file: File,
-  signal?: AbortSignal,
+  options: {
+    library_id: string;
+    signal?: AbortSignal;
+    on_progress?: (loaded_bytes: number, total_bytes: number) => void;
+  },
 ): Promise<MediaAsset> {
-  const form_data = new FormData();
-  form_data.append("file", file, file.name);
-  return request_json("/api/media/assets/import", {
-    method: "POST",
-    body: form_data,
-    signal,
+  return new Promise((resolve, reject) => {
+    const { signal, on_progress } = options;
+    signal?.throwIfAborted();
+    const request = new XMLHttpRequest();
+    let settled = false;
+    function finish(error?: unknown, asset?: MediaAsset) {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      request.onload = null;
+      request.onerror = null;
+      request.onabort = null;
+      request.upload.onprogress = null;
+      request.upload.onload = null;
+      if (error) reject(error);
+      else resolve(asset!);
+    }
+    function abort() {
+      request.abort();
+      finish(new DOMException("导入请求已停止", "AbortError"));
+    }
+    request.open("POST", `${api_base_url}/api/media/assets/import`);
+    request.upload.onprogress = (event) =>
+      on_progress?.(event.loaded, event.lengthComputable ? event.total : 0);
+    request.upload.onload = () => on_progress?.(file.size, file.size);
+    request.onload = async () => {
+      try {
+        const response = new Response(request.responseText, {
+          status: request.status,
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!response.ok) throw await response_error(response);
+        finish(undefined, (await response.json()) as MediaAsset);
+      } catch (error) {
+        finish(error);
+      }
+    };
+    request.onerror = () => finish(new Error("上传连接中断，请检查网络后重试"));
+    request.onabort = () =>
+      finish(new DOMException("导入请求已停止", "AbortError"));
+    signal?.addEventListener("abort", abort, { once: true });
+    const form_data = new FormData();
+    form_data.append("library_id", options.library_id);
+    form_data.append("file", file, file.name);
+    try {
+      request.send(form_data);
+    } catch (error) {
+      finish(error);
+    }
   });
 }
 
@@ -96,12 +143,13 @@ export type DirectoryImportResult = {
 export function import_video_directory(
   path: string,
   include_subfolders: boolean,
+  library_id: string,
   signal?: AbortSignal,
 ): Promise<DirectoryImportResult> {
   return request_json("/api/media/assets/import-directory", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, include_subfolders }),
+    body: JSON.stringify({ path, include_subfolders, library_id }),
     signal,
   });
 }

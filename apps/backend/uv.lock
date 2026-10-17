@@ -2822,6 +2822,7 @@ source = { editable = "." }
 dependencies = [
     { name = "agno", extra = ["anthropic", "google", "mistral"] },
     { name = "aiosqlite" },
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "funasr" },
@@ -2865,6 +2866,7 @@ dev = [
 requires-dist = [
     { name = "agno", extras = ["anthropic", "google", "mistral"], specifier = ">=2.5,<3" },
     { name = "aiosqlite", specifier = ">=0.20,<1" },
+    { name = "anyio", specifier = ">=4.11,<5" },
     { name = "fastapi", specifier = ">=0.116,<1" },
     { name = "faster-whisper", specifier = ">=1.1,<2" },
     { name = "funasr", specifier = "==1.3.29" },

@@ -25,6 +25,7 @@ from openvideo.agent_service import (
 from openvideo.analysis_manager import AnalysisManager
 from openvideo.download_manager import DownloadManager
 from openvideo.event_analysis_manager import EventAnalysisManager
+from openvideo.local_media_import import LocalMediaImportManager
 from openvideo.summary_manager import SummaryManager
 from openvideo.summary_illustration_manager import SummaryIllustrationManager
 from openvideo.core.ai_models import (
@@ -148,6 +149,7 @@ def create_app(
     manager: DownloadManager | None = None
     analysis_manager: AnalysisManager | None = None
     event_analysis_manager: EventAnalysisManager | None = None
+    local_media_import_manager: LocalMediaImportManager | None = None
     agent_service: AgentService | None = None
     summary_manager: SummaryManager | None = None
     summary_illustration_manager: SummaryIllustrationManager | None = None
@@ -170,6 +172,7 @@ def create_app(
             manager, \
             analysis_manager, \
             event_analysis_manager, \
+            local_media_import_manager, \
             agent_service, \
             summary_manager, \
             summary_illustration_manager, \
@@ -190,6 +193,7 @@ def create_app(
             account_store,
         )
         event_analysis_manager = EventAnalysisManager(opened_library, resolved_settings)
+        local_media_import_manager = LocalMediaImportManager()
         summary_manager = SummaryManager(opened_library, resolved_settings)
         visual_index_service = VisualIndexService(opened_library, resolved_settings)
         summary_illustration_manager = SummaryIllustrationManager(
@@ -220,6 +224,7 @@ def create_app(
         app.state.download_manager = manager
         app.state.analysis_manager = analysis_manager
         app.state.event_analysis_manager = event_analysis_manager
+        app.state.local_media_import_manager = local_media_import_manager
         app.state.agent_service = agent_service
         app.state.summary_manager = summary_manager
         app.state.summary_illustration_manager = summary_illustration_manager
@@ -271,6 +276,8 @@ def create_app(
         finally:
             if manager:
                 await manager.close()
+            if local_media_import_manager:
+                await local_media_import_manager.close()
             await account_login_manager.close()
             await transcription_model_manager.close()
             await formula_model_manager.close()
@@ -288,6 +295,7 @@ def create_app(
     app.state.download_manager = manager
     app.state.analysis_manager = analysis_manager
     app.state.event_analysis_manager = event_analysis_manager
+    app.state.local_media_import_manager = local_media_import_manager
     app.state.agent_service = agent_service
     app.state.summary_manager = summary_manager
     app.state.transcription_model_manager = transcription_model_manager
@@ -363,6 +371,7 @@ def create_app(
             analysis_manager,
             event_analysis_manager,
             agent_service,
+            local_media_import_manager,
         )
         try:
             manifest_path = target / MANIFEST_FILE_NAME
@@ -380,6 +389,8 @@ def create_app(
             _library_error(422, error_code, str(error))
         if manager:
             await manager.close()
+        if local_media_import_manager:
+            await local_media_import_manager.close()
         if analysis_manager:
             await analysis_manager.close()
         if agent_service:
@@ -399,6 +410,7 @@ def create_app(
             manager, \
             analysis_manager, \
             event_analysis_manager, \
+            local_media_import_manager, \
             agent_service, \
             summary_manager, \
             page_settings_store
@@ -411,9 +423,12 @@ def create_app(
             analysis_manager,
             event_analysis_manager,
             agent_service,
+            local_media_import_manager,
         )
         if manager:
             await manager.close()
+        if local_media_import_manager:
+            await local_media_import_manager.close()
         if analysis_manager:
             await analysis_manager.close()
         if agent_service:
@@ -426,6 +441,7 @@ def create_app(
         manager = None
         analysis_manager = None
         event_analysis_manager = None
+        local_media_import_manager = None
         agent_service = None
         summary_manager = None
         page_settings_store = None
@@ -433,6 +449,7 @@ def create_app(
         app.state.download_manager = None
         app.state.analysis_manager = None
         app.state.event_analysis_manager = None
+        app.state.local_media_import_manager = None
         app.state.agent_service = None
         app.state.summary_manager = None
         app.state.page_settings_store = None
@@ -631,6 +648,7 @@ def create_app(
         lambda: analysis_manager,
         lambda: agent_service,
         lambda: event_analysis_manager,
+        lambda: local_media_import_manager,
         resolved_settings,
     )
 
@@ -664,12 +682,14 @@ def _ensure_switch_allowed(
     analysis_manager: AnalysisManager | None,
     event_analysis_manager: EventAnalysisManager | None,
     agent_service: AgentService | None,
+    local_media_import_manager: LocalMediaImportManager | None,
 ) -> None:
     if (
         (manager and manager.has_active_jobs())
         or (analysis_manager and analysis_manager.has_active_jobs())
         or (event_analysis_manager and event_analysis_manager.has_active_jobs())
         or (agent_service and agent_service.has_active_jobs())
+        or (local_media_import_manager and local_media_import_manager.has_active_imports())
     ):
         _library_error(
             409, "library_has_active_tasks", "存在运行中的任务，暂时无法切换资料库"

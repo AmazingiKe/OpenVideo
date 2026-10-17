@@ -1,8 +1,21 @@
 import asyncio
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
+from threading import Event
+from typing import TypeVar
 
-from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
 
 from openvideo.agent_service import AgentService
@@ -18,11 +31,16 @@ from openvideo.download_manager import DownloadManager
 from openvideo.event_analysis_manager import EventAnalysisManager
 from openvideo.local_media_import import (
     LocalMediaImportError,
+    LocalMediaImportCancelled,
+    LocalMediaImportManager,
     import_video_directory,
     persist_local_media,
 )
 from openvideo.settings import Settings
 from openvideo.ui.media_routes import ready_asset
+
+IMPORT_DISCONNECT_POLL_SECONDS = 0.1
+ImportResult = TypeVar("ImportResult")
 
 
 class FolderCreateRequest(BaseModel):
@@ -49,6 +67,7 @@ class AssetMoveRequest(BaseModel):
 
 class DirectoryImportRequest(BaseModel):
     path: str = Field(min_length=1)
+    library_id: str = Field(min_length=1)
     include_subfolders: bool = False
 
 
@@ -64,6 +83,7 @@ def register_library_routes(
     analysis_manager: Callable[[], AnalysisManager | None],
     agent_service: Callable[[], AgentService | None],
     event_analysis_manager: Callable[[], EventAnalysisManager | None],
+    local_media_import_manager: Callable[[], LocalMediaImportManager | None],
     settings: Settings,
 ) -> None:
     @app.get("/api/library/folders", response_model=list[FolderResponse])
@@ -146,17 +166,31 @@ def register_library_routes(
         status_code=status.HTTP_201_CREATED,
     )
     async def import_local_media(
+        request: Request,
         file: UploadFile = File(...),
+        library_id: str = Form(...),
     ) -> MediaAssetResponse:
         media_library = library()
         try:
-            asset = await asyncio.to_thread(
-                persist_local_media,
-                media_library,
-                settings,
-                file.file,
-                file.filename,
+            import_manager = _require_import_library(
+                media_library, library_id, local_media_import_manager()
             )
+            cancel_event = Event()
+            asset = await _run_connected_import(
+                request,
+                import_manager,
+                partial(
+                    persist_local_media,
+                    media_library,
+                    settings,
+                    file.file,
+                    file.filename,
+                    cancel_event=cancel_event,
+                ),
+                cancel_event,
+            )
+        except LocalMediaImportCancelled as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except LocalMediaImportError as error:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -177,17 +211,30 @@ def register_library_routes(
         status_code=status.HTTP_201_CREATED,
     )
     async def import_local_video_directory(
-        request: DirectoryImportRequest,
+        body: DirectoryImportRequest,
+        request: Request,
     ) -> DirectoryImportResponse:
         media_library = library()
         try:
-            assets, failed_files = await asyncio.to_thread(
-                import_video_directory,
-                media_library,
-                settings,
-                Path(request.path),
-                include_subfolders=request.include_subfolders,
+            import_manager = _require_import_library(
+                media_library, body.library_id, local_media_import_manager()
             )
+            cancel_event = Event()
+            assets, failed_files = await _run_connected_import(
+                request,
+                import_manager,
+                partial(
+                    import_video_directory,
+                    media_library,
+                    settings,
+                    Path(body.path),
+                    include_subfolders=body.include_subfolders,
+                    cancel_event=cancel_event,
+                ),
+                cancel_event,
+            )
+        except LocalMediaImportCancelled as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except LocalMediaImportError as error:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -311,6 +358,39 @@ def register_library_routes(
         media_library = library()
         asset = ready_asset(media_library, asset_id)
         return media_library.response_for(asset)
+
+
+def _require_import_library(
+    library: MediaLibrary,
+    library_id: str,
+    manager: LocalMediaImportManager | None,
+) -> LocalMediaImportManager:
+    if library.manifest.library_id != library_id or manager is None:
+        raise HTTPException(status_code=409, detail="资料库已切换，请重新选择导入文件")
+    return manager
+
+
+async def _run_connected_import(
+    request: Request,
+    manager: LocalMediaImportManager,
+    operation: Callable[[], ImportResult],
+    cancel_event: Event,
+) -> ImportResult:
+    """上传结束后的断开也要传给复制线程，完成清理后才释放临时上传文件。"""
+
+    async def watch_disconnect() -> None:
+        while not cancel_event.is_set():
+            if await request.is_disconnected():
+                cancel_event.set()
+                return
+            await asyncio.sleep(IMPORT_DISCONNECT_POLL_SECONDS)
+
+    watcher = asyncio.create_task(watch_disconnect())
+    try:
+        return await manager.run(operation, cancel_event)
+    finally:
+        watcher.cancel()
+        await asyncio.gather(watcher, return_exceptions=True)
 
 
 async def stop_asset_tasks(

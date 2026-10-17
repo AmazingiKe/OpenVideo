@@ -5,6 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FolderImportDialog } from "@/features/library/FolderImportDialog";
 import { import_video_directory, select_directory } from "@/shared/api";
 
+vi.mock("@/app/library", () => ({
+  use_library_identity: () => "library-import",
+}));
+
 vi.mock("@/shared/api", () => ({
   import_video_directory: vi.fn(),
   select_directory: vi.fn(),
@@ -36,6 +40,7 @@ describe("FolderImportDialog", () => {
       expect(import_video_directory).toHaveBeenCalledWith(
         "D:\\素材\\课程",
         false,
+        "library-import",
       ),
     );
     expect(await screen.findByText("已导入 0 个视频")).toBeInTheDocument();
@@ -52,6 +57,7 @@ describe("FolderImportDialog", () => {
       expect(import_video_directory).toHaveBeenCalledWith(
         "D:\\素材\\课程",
         true,
+        "library-import",
       ),
     );
   });

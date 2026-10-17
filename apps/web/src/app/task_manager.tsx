@@ -13,6 +13,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { use_asset_catalog } from "@/app/asset_catalog";
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
 import {
+  use_media_import_tasks,
+  type MediaImportSubmission,
+} from "@/app/use_media_import_tasks";
+import {
   create_download,
   cancel_analysis,
   get_analysis,
@@ -77,6 +81,7 @@ type TaskManager = {
     options: TranscriptionOptions,
   ) => Promise<AnalysisJob>;
   is_transcription_running: (asset_id: string) => boolean;
+  enqueue_media_imports: (files: File[]) => MediaImportSubmission;
 };
 
 type ProbeResult = { source_url: string; result: ProbeResponse };
@@ -141,6 +146,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
   const record_task = useCallback((task: TaskRecord) => {
     set_task_records((current) => merge_task_record(current, task));
   }, []);
+  const {
+    enqueue_media_imports,
+    cancel_media_import,
+    retry_media_import,
+    delete_media_import,
+  } = use_media_import_tasks(record_task);
 
   const record_download_job = useCallback(
     (job: DownloadJob) => {
@@ -156,7 +167,8 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         name: job.name,
         retry_available: job.stage === "failed" || job.stage === "paused",
         pause_available:
-          (!INACTIVE_DOWNLOAD_STAGES.has(job.stage) && job.stage !== "pausing") ||
+          (!INACTIVE_DOWNLOAD_STAGES.has(job.stage) &&
+            job.stage !== "pausing") ||
           (job.stage === "pausing" && Boolean(job.error_message)),
         delete_available: INACTIVE_DOWNLOAD_STAGES.has(job.stage),
       });
@@ -533,6 +545,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         (task) => task.task_id === task_id,
       );
       if (!previous_task) return;
+      if (delete_media_import(task_id)) {
+        set_task_records((current) =>
+          current.filter((task) => task.task_id !== task_id),
+        );
+        return;
+      }
       set_task_records((current) =>
         current.filter((task) => task.task_id !== task_id),
       );
@@ -562,7 +580,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     },
-    [record_task, task_records],
+    [delete_media_import, record_task, task_records],
   );
 
   const observe_transcription = useCallback(
@@ -680,6 +698,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
 
   const cancel_task = useCallback(
     async (task_id: string) => {
+      if (cancel_media_import(task_id)) return;
       const tracked = transcription_tasks.current.get(task_id);
       if (
         !tracked ||
@@ -743,11 +762,12 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     },
-    [observe_transcription, record_transcription_job],
+    [cancel_media_import, observe_transcription, record_transcription_job],
   );
 
   const retry_task = useCallback(
     async (task_id: string) => {
+      if (retry_media_import(task_id)) return;
       const probe = probe_tasks.current.get(task_id);
       if (probe) {
         await run_probe(task_id, probe.source_url);
@@ -848,6 +868,7 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
     [
       record_agent_tasks,
       record_task,
+      retry_media_import,
       observe_transcription,
       start_transcription,
       run_probe,
@@ -877,9 +898,11 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         active_transcriptions.has(asset_id) ||
         (index_status?.asset_id === asset_id &&
           TRANSCRIPTION_STAGES.has(index_status.stage)),
+      enqueue_media_imports,
     }),
     [
       active_transcriptions,
+      enqueue_media_imports,
       index_status,
       start_downloads,
       retry_task,

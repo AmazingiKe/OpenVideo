@@ -215,7 +215,7 @@ def test_dragged_video_is_imported_into_the_library(tmp_path: Path, monkeypatch)
     preference_store = PreferenceStore(tmp_path / "config" / "preferences.json")
     monkeypatch.setattr(
         "openvideo.local_media_import.probe_media",
-        lambda *_: MediaProbe(12.5, 1920, 1080, "h264", "aac"),
+        lambda *_, **__: MediaProbe(12.5, 1920, 1080, "h264", "aac"),
     )
     monkeypatch.setattr("openvideo.local_media_import.resolve_tool", lambda *_: None)
     app = create_app(Settings(), preference_store)
@@ -224,6 +224,7 @@ def test_dragged_video_is_imported_into_the_library(tmp_path: Path, monkeypatch)
         client.post("/api/library/activate", json={"path": str(library_path)})
         response = client.post(
             "/api/media/assets/import",
+            data={"library_id": app.state.library.manifest.library_id},
             files={"file": ("课程片段.mp4", b"video-content", "video/mp4")},
         )
 
@@ -256,7 +257,7 @@ def test_video_directory_import_preserves_selected_folder_structure(
     (nested_directory / "说明.txt").write_text("忽略", encoding="utf-8")
     monkeypatch.setattr(
         "openvideo.local_media_import.probe_media",
-        lambda *_: MediaProbe(12.5, 1920, 1080, "h264", "aac"),
+        lambda *_, **__: MediaProbe(12.5, 1920, 1080, "h264", "aac"),
     )
     monkeypatch.setattr("openvideo.local_media_import.resolve_tool", lambda *_: None)
     app = create_app(
@@ -267,7 +268,11 @@ def test_video_directory_import_preserves_selected_folder_structure(
         client.post("/api/library/activate", json={"path": str(library_path)})
         response = client.post(
             "/api/media/assets/import-directory",
-            json={"path": str(source_directory), "include_subfolders": True},
+            json={
+                "path": str(source_directory),
+                "include_subfolders": True,
+                "library_id": app.state.library.manifest.library_id,
+            },
         )
 
         assert response.status_code == 201
@@ -304,7 +309,7 @@ def test_video_directory_import_does_not_scan_subfolders_by_default(
     (nested_directory / "下层.mp4").write_bytes(b"nested")
     monkeypatch.setattr(
         "openvideo.local_media_import.probe_media",
-        lambda *_: MediaProbe(3.0, 1280, 720, "h264", "aac"),
+        lambda *_, **__: MediaProbe(3.0, 1280, 720, "h264", "aac"),
     )
     monkeypatch.setattr("openvideo.local_media_import.resolve_tool", lambda *_: None)
     app = create_app(
@@ -315,7 +320,10 @@ def test_video_directory_import_does_not_scan_subfolders_by_default(
         client.post("/api/library/activate", json={"path": str(library_path)})
         response = client.post(
             "/api/media/assets/import-directory",
-            json={"path": str(source_directory)},
+            json={
+                "path": str(source_directory),
+                "library_id": app.state.library.manifest.library_id,
+            },
         )
 
         assert response.status_code == 201
@@ -339,6 +347,7 @@ def test_dragged_image_is_imported_into_the_library(tmp_path: Path):
         client.post("/api/library/activate", json={"path": str(library_path)})
         response = client.post(
             "/api/media/assets/import",
+            data={"library_id": app.state.library.manifest.library_id},
             files={"file": ("封面.png", image_content.getvalue(), "image/png")},
         )
 
@@ -363,10 +372,12 @@ def test_local_media_import_rejects_unsupported_and_empty_files(tmp_path: Path):
         client.post("/api/library/activate", json={"path": str(library_path)})
         unsupported = client.post(
             "/api/media/assets/import",
+            data={"library_id": app.state.library.manifest.library_id},
             files={"file": ("说明.txt", b"not-video", "text/plain")},
         )
         empty = client.post(
             "/api/media/assets/import",
+            data={"library_id": app.state.library.manifest.library_id},
             files={"file": ("empty.mp4", b"", "video/mp4")},
         )
 

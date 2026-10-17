@@ -1,6 +1,7 @@
 export type TaskRecord = {
   task_id: string;
-  task_type: "probe" | "download" | "transcription" | "agent" | "index";
+  task_type:
+    "probe" | "download" | "transcription" | "agent" | "index" | "import";
   stage: string;
   message: string;
   progress_percent: number;
@@ -51,6 +52,7 @@ export const TASK_STAGE_LABELS: Record<string, string> = {
   preparing_transcription_model: "准备转录模型",
   reading_metadata: "读取信息",
   downloading: "下载中",
+  uploading: "上传中",
   processing: "处理中",
   extracting_audio: "提取音频",
   transcribing: "转写中",

@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, CircleAlert, FolderOpen, Import } from "lucide-react";
 
 import { RESOURCE_QUERY_KEYS } from "@/app/query_cache";
+import { use_library_identity } from "@/app/library";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,6 +41,7 @@ export function FolderImportDialog({
   on_open_change,
 }: FolderImportDialogProps) {
   const query_client = useQueryClient();
+  const library_id = use_library_identity();
   const [directory_path, set_directory_path] = useState("");
   const [include_subfolders, set_include_subfolders] = useState(false);
   const [submitting, set_submitting] = useState(false);
@@ -68,7 +70,7 @@ export function FolderImportDialog({
   }
 
   async function import_directory() {
-    if (!directory_path) return;
+    if (!directory_path || !library_id) return;
     set_submitting(true);
     set_operation_error(null);
     set_result(null);
@@ -76,6 +78,7 @@ export function FolderImportDialog({
       const imported = await import_video_directory(
         directory_path,
         include_subfolders,
+        library_id,
       );
       await Promise.all([
         query_client.invalidateQueries({

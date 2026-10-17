@@ -3,6 +3,9 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
+
+from openvideo.tools.cancellation import run_cancellable_process
 
 
 PROBE_TIMEOUT_SECONDS = 30
@@ -44,8 +47,10 @@ def media_tool_status(
     project_bin_dir: Path | None = None,
 ) -> MediaToolStatus:
     return MediaToolStatus(
-        ffmpeg_available=resolve_tool(ffmpeg_path, "ffmpeg", project_bin_dir) is not None,
-        ffprobe_available=resolve_tool(ffprobe_path, "ffprobe", project_bin_dir) is not None,
+        ffmpeg_available=resolve_tool(ffmpeg_path, "ffmpeg", project_bin_dir)
+        is not None,
+        ffprobe_available=resolve_tool(ffprobe_path, "ffprobe", project_bin_dir)
+        is not None,
     )
 
 
@@ -53,6 +58,8 @@ def probe_media(
     file_path: Path,
     configured_ffprobe_path: str | None,
     project_bin_dir: Path | None = None,
+    *,
+    cancel_event: Event | None = None,
 ) -> MediaProbe:
     ffprobe_path = resolve_tool(configured_ffprobe_path, "ffprobe", project_bin_dir)
     if not ffprobe_path:
@@ -67,12 +74,16 @@ def probe_media(
         "-show_streams",
         str(file_path),
     ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=PROBE_TIMEOUT_SECONDS,
+    result = (
+        run_cancellable_process(command, cancel_event, PROBE_TIMEOUT_SECONDS)
+        if cancel_event is not None
+        else subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
     )
     if result.returncode != 0:
         return MediaProbe(None, None, None, None, None)
@@ -81,8 +92,12 @@ def probe_media(
     except json.JSONDecodeError:
         return MediaProbe(None, None, None, None, None)
     streams = payload.get("streams", [])
-    video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), {})
-    audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), {})
+    video_stream = next(
+        (stream for stream in streams if stream.get("codec_type") == "video"), {}
+    )
+    audio_stream = next(
+        (stream for stream in streams if stream.get("codec_type") == "audio"), {}
+    )
     duration = payload.get("format", {}).get("duration")
     return MediaProbe(
         duration_seconds=_optional_float(duration),
