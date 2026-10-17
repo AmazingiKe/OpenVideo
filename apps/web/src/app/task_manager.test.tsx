@@ -191,6 +191,59 @@ describe("TaskManagerProvider", () => {
     expect(resume_download).toHaveBeenCalledWith(task.task_id);
   });
 
+  it("keeps polling an accepted pause and allows retrying a worker cleanup failure", async () => {
+    vi.useFakeTimers();
+    const job = download_job("downloading");
+    vi.mocked(list_downloads).mockResolvedValueOnce([job]);
+    vi.mocked(pause_download).mockResolvedValueOnce({
+      ...job,
+      stage: "pausing",
+    });
+    vi.mocked(get_download)
+      .mockResolvedValueOnce({
+        ...job,
+        stage: "pausing",
+        error_message: "进程尚未退出",
+      })
+      .mockResolvedValueOnce({ ...job, stage: "paused" });
+    const { result } = render_task_manager();
+    await act(async () => Promise.resolve());
+    await act(async () => result.current.pause_task(job.job_id));
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id),
+    ).toMatchObject({
+      stage: "pausing",
+      retry_available: false,
+      delete_available: false,
+      pause_available: false,
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id),
+    ).toMatchObject({
+      stage: "pausing",
+      pause_available: true,
+      retry_available: false,
+      delete_available: false,
+    });
+    vi.mocked(pause_download).mockResolvedValueOnce({
+      ...job,
+      stage: "pausing",
+    });
+    await act(async () => result.current.pause_task(job.job_id));
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(
+      result.current.task_records.find((task) => task.task_id === job.job_id),
+    ).toMatchObject({
+      stage: "paused",
+      retry_available: true,
+      delete_available: true,
+    });
+    expect(pause_download).toHaveBeenCalledTimes(2);
+    expect(resume_download).not.toHaveBeenCalled();
+    expect(delete_download).not.toHaveBeenCalled();
+  });
+
   it("pauses optimistically, ignores late polling, resumes, and restores a task when deletion fails", async () => {
     vi.useFakeTimers();
     const job = download_job("downloading");

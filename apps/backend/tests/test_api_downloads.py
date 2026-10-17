@@ -184,7 +184,9 @@ async def test_pausing_running_and_queued_downloads_keeps_partials_and_releases_
         with pytest.raises(ValueError):
             manager.delete(job.job_id)
         paused = await manager.pause(job.job_id)
-        assert paused.stage == DownloadStage.PAUSED
+        assert paused.stage == DownloadStage.PAUSING
+        await asyncio.wait_for(manager._pause_tasks[job.job_id], 3)
+        assert manager.get(job.job_id).stage == DownloadStage.PAUSED
         assert not manager.has_active_jobs()
         assert job.job_id not in manager._tasks
         assert library.get(job.asset_id).error_message is None
@@ -201,10 +203,188 @@ async def test_pausing_running_and_queued_downloads_keeps_partials_and_releases_
     queued = manager.create(source)
     manager._download_slots = asyncio.Semaphore(0)
     manager.start(queued.job_id)
-    assert (await manager.pause(queued.job_id)).stage == DownloadStage.PAUSED
+    assert (await manager.pause(queued.job_id)).stage == DownloadStage.PAUSING
+    await asyncio.wait_for(manager._pause_tasks[queued.job_id], 3)
+    assert manager.get(queued.job_id).stage == DownloadStage.PAUSED
     assert len(attempts) == 2
     assert not manager.has_active_jobs()
     library.close()
+
+
+def test_pause_request_returns_before_a_blocked_download_worker_exits(
+    monkeypatch, tmp_path
+):
+    started = Event()
+    release = Event()
+
+    def blocked_download(*_args, control, staging_directory, **_options):
+        (staging_directory / "download.mp4.part").write_bytes(b"partial")
+        started.set()
+        assert release.wait(5)
+        control.checkpoint()
+
+    monkeypatch.setattr(download_manager, "download_video", blocked_download)
+    with TestClient(api.create_app(Settings(library_path=tmp_path))) as client:
+        created = client.post(
+            "/api/downloads",
+            json={"source_urls": ["https://www.youtube.com/watch?v=BaW_jenozKc"]},
+        ).json()[0]
+        job_id = created["job_id"]
+        try:
+            assert started.wait(3)
+            requested_at = time.monotonic()
+            response = client.post(f"/api/downloads/{job_id}/pause")
+            assert time.monotonic() - requested_at < 0.5
+            assert response.status_code == 202
+            assert response.json()["stage"] == "pausing"
+            assert client.get(f"/api/downloads/{job_id}").json()["stage"] == "pausing"
+            assert client.post(f"/api/downloads/{job_id}/pause").status_code == 202
+            assert client.post(f"/api/downloads/{job_id}/resume").status_code == 409
+            assert client.delete(f"/api/downloads/{job_id}").status_code == 409
+            assert client.app.state.download_manager.has_active_jobs()
+        finally:
+            release.set()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            paused = client.get(f"/api/downloads/{job_id}").json()
+            if paused["stage"] == "paused":
+                break
+            time.sleep(0.01)
+        assert paused["stage"] == "paused"
+        assert paused["error_message"] is None
+        assert not client.app.state.download_manager.has_active_jobs()
+        partial_file = (
+            client.app.state.library.download_temporary_directory(created["asset_id"])
+            / "download.mp4.part"
+        )
+        assert partial_file.read_bytes() == b"partial"
+
+
+@pytest.mark.asyncio
+async def test_pause_timeout_is_retryable_without_releasing_a_live_worker(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(download_manager, "DOWNLOAD_PAUSE_WORKER_TIMEOUT_SECONDS", 0.02)
+    library = MediaLibrary.initialize_directory(tmp_path)
+    manager = DownloadManager(
+        library,
+        Settings(library_path=tmp_path),
+        DownloadAccountStore(tmp_path / "config", MemoryDownloadAccountSecretStore()),
+    )
+    started = Event()
+    release = Event()
+
+    def blocked_download(*_args, control, **_options):
+        started.set()
+        assert release.wait(5)
+        control.checkpoint()
+
+    monkeypatch.setattr(download_manager, "download_video", blocked_download)
+    job = manager.create(
+        SourceMatch(
+            platform=SourcePlatform.YOUTUBE,
+            normalized_url="https://www.youtube.com/watch?v=BaW_jenozKc",
+            source_video_id="BaW_jenozKc",
+            is_playlist=False,
+        )
+    )
+    manager.start(job.job_id)
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        assert (await manager.pause(job.job_id)).stage == DownloadStage.PAUSING
+        await asyncio.wait_for(manager._pause_tasks[job.job_id], 1)
+        stopping = manager.get(job.job_id)
+        assert stopping.stage == DownloadStage.PAUSING
+        assert "尚未退出" in stopping.error_message
+        assert manager.has_active_jobs()
+        with pytest.raises(ValueError):
+            manager.resume(job.job_id)
+        with pytest.raises(ValueError):
+            manager.delete(job.job_id)
+        assert (
+            manager.create(
+                SourceMatch(
+                    platform=SourcePlatform.YOUTUBE,
+                    normalized_url="https://www.youtube.com/watch?v=BaW_jenozKc",
+                    source_video_id="BaW_jenozKc",
+                    is_playlist=False,
+                )
+            ).job_id
+            == job.job_id
+        )
+        await manager.pause(job.job_id)
+        release.set()
+        await asyncio.wait_for(manager._pause_tasks[job.job_id], 1)
+        assert manager.get(job.job_id).stage == DownloadStage.PAUSED
+        assert manager.get(job.job_id).error_message is None
+        assert not manager.has_active_jobs()
+    finally:
+        release.set()
+        await manager.close()
+        library.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shutdown_times_out", [False, True])
+async def test_download_shutdown_waits_for_writeback_worker_and_preserves_resume_state(
+    monkeypatch, tmp_path, shutdown_times_out
+):
+    if shutdown_times_out:
+        monkeypatch.setattr(download_manager, "DOWNLOAD_SHUTDOWN_TIMEOUT_SECONDS", 0.02)
+    library = MediaLibrary.initialize_directory(tmp_path)
+    manager = DownloadManager(
+        library,
+        Settings(library_path=tmp_path),
+        DownloadAccountStore(tmp_path / "config", MemoryDownloadAccountSecretStore()),
+    )
+    started = Event()
+    release = Event()
+
+    def blocked_download(*_args, control, **_options):
+        started.set()
+        assert release.wait(5)
+        control.checkpoint()
+
+    monkeypatch.setattr(download_manager, "download_video", blocked_download)
+    job = manager.create(
+        SourceMatch(
+            platform=SourcePlatform.YOUTUBE,
+            normalized_url="https://www.youtube.com/watch?v=BaW_jenozKc",
+            source_video_id="BaW_jenozKc",
+            is_playlist=False,
+        )
+    )
+    manager.start(job.job_id)
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        closing = asyncio.create_task(manager.close())
+        if shutdown_times_out:
+            with pytest.raises(RuntimeError, match="无法安全关闭资料库"):
+                await asyncio.wait_for(closing, 1)
+            assert manager.has_active_jobs()
+            assert library.get(job.asset_id) is not None
+        else:
+            await asyncio.sleep(0.01)
+            assert not closing.done()
+        assert manager.get(job.job_id).stage == DownloadStage.PAUSING
+        release.set()
+        if shutdown_times_out:
+            await asyncio.wait_for(manager.close(), 1)
+        else:
+            await asyncio.wait_for(closing, 1)
+        assert manager.get(job.job_id).stage == DownloadStage.PAUSED
+        assert not manager.has_active_jobs()
+        with pytest.raises(ValueError, match="正在关闭"):
+            manager.resume(job.job_id)
+    finally:
+        release.set()
+        await manager.close()
+        library.close()
+    reopened = MediaLibrary.open(tmp_path)
+    try:
+        assert reopened.get_download_job(job.job_id).stage == DownloadStage.PAUSED
+    finally:
+        reopened.close()
 
 
 def test_probe_returns_a_normalized_douyin_download_url(monkeypatch, tmp_path):
@@ -517,6 +697,8 @@ def test_interrupted_download_can_be_retried_after_restart(monkeypatch, tmp_path
             json={"source_urls": ["https://www.bilibili.com/video/BV1xx411c7mD"]},
         )
         first_job = first_response.json()[0]
+        # 崩溃恢复需要跳过正常关停，否则任务应先持久化为可续传的暂停状态。
+        app.state.download_manager.close = AsyncMock()
 
     restarted_app = api.create_app(settings)
     with TestClient(restarted_app) as client:

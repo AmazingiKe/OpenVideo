@@ -275,7 +275,7 @@ function TaskCenterItem({
                 onClick={() => void on_pause(task.task_id)}
               >
                 <Pause aria-hidden="true" />
-                暂停下载
+                {task.stage === "pausing" ? "重试停止" : "暂停下载"}
               </Button>
             ) : null}
             {(task.cancel_available || task.stage === "cancelling") &&

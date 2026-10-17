@@ -177,9 +177,12 @@ def register_download_routes(
         return task
 
     @app.post("/api/downloads/{job_id}/pause", response_model=DownloadTask)
-    async def pause_download(job_id: str) -> DownloadTask:
+    async def pause_download(job_id: str, response: Response) -> DownloadTask:
         try:
-            return await require_manager(get_manager()).pause(job_id)
+            task = await require_manager(get_manager()).pause(job_id)
+            if task.stage == DownloadStage.PAUSING:
+                response.status_code = status.HTTP_202_ACCEPTED
+            return task
         except KeyError as error:
             raise HTTPException(status_code=404, detail="下载任务不存在") from error
 

@@ -18,6 +18,8 @@ from openvideo.download_accounts import DownloadAccountExpired, DownloadAccountS
 from openvideo.settings import Settings
 from openvideo.tools.downloader import (
     DOWNLOADING_MEDIA_MESSAGE,
+    PROCESS_KILL_TIMEOUT_SECONDS,
+    PROCESS_STOP_TIMEOUT_SECONDS,
     READING_METADATA_MESSAGE,
     DownloadFailure,
     DownloadMetadata,
@@ -26,12 +28,18 @@ from openvideo.tools.downloader import (
     download_video,
     is_authentication_failure,
 )
-from openvideo.tools.media import probe_media
+from openvideo.tools.media import PROBE_TIMEOUT_SECONDS, probe_media
 from openvideo.tools.sources import SourceMatch
 
 
 LOGGER = logging.getLogger(__name__)
 MAX_CONCURRENT_DOWNLOADS = 2
+DOWNLOAD_PAUSE_WORKER_TIMEOUT_SECONDS = (
+    PROBE_TIMEOUT_SECONDS + PROCESS_STOP_TIMEOUT_SECONDS + PROCESS_KILL_TIMEOUT_SECONDS
+)
+DOWNLOAD_SHUTDOWN_TIMEOUT_SECONDS = DOWNLOAD_PAUSE_WORKER_TIMEOUT_SECONDS + 2 * (
+    PROCESS_STOP_TIMEOUT_SECONDS + PROCESS_KILL_TIMEOUT_SECONDS
+)
 
 
 class DownloadManager:
@@ -57,6 +65,8 @@ class DownloadManager:
         self._download_slots = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._controls: dict[str, DownloadControl] = {}
+        self._pause_tasks: dict[str, asyncio.Task[None]] = {}
+        self._closing = False
 
     def create(
         self,
@@ -66,6 +76,8 @@ class DownloadManager:
         video_quality: DownloadQuality = DownloadQuality.BEST,
         job_id: str | None = None,
     ) -> DownloadJob:
+        if self._closing:
+            raise ValueError("下载管理器正在关闭")
         if job_id is not None:
             if not is_prefixed_uuid7(job_id, "job-"):
                 raise ValueError("下载任务标识无效")
@@ -154,6 +166,11 @@ class DownloadManager:
 
     def start(self, job_id: str) -> None:
         with self._lock:
+            if self._closing:
+                raise ValueError("下载管理器正在关闭")
+            job = self._jobs.get(job_id)
+            if job is None or job.stage != DownloadStage.PENDING:
+                return
             current = self._tasks.get(job_id)
             if current and not current.done():
                 return
@@ -165,10 +182,14 @@ class DownloadManager:
             )
 
     async def pause(self, job_id: str) -> DownloadTask:
+        """先持久化停止意图，进程回收由后台确认，HTTP 不等待同步下载线程。"""
         job = self.get(job_id)
         if job is None:
             raise KeyError(job_id)
         if job.stage in INACTIVE_DOWNLOAD_STAGES:
+            return self._task_for(job)
+        pending_pause = self._pause_tasks.get(job_id)
+        if pending_pause is not None and not pending_pause.done():
             return self._task_for(job)
         self._update_job(
             job_id,
@@ -178,20 +199,59 @@ class DownloadManager:
         )
         control = self._controls.get(job_id)
         task = self._tasks.get(job_id)
+        if control:
+            control.request_stop()
         if task and job.stage == DownloadStage.PENDING:
             task.cancel()
-        if control:
-            await asyncio.to_thread(control.stop)
-        if task:
-            await asyncio.gather(task, return_exceptions=True)
-        if control:
-            # 子进程可能在首次停止检查之后才注册，确认退出后再公布暂停状态。
-            await asyncio.to_thread(control.stop)
+        if task is None and (control is None or not control.has_active_execution):
+            self._finish_paused(job_id)
+        else:
+            pause_task = asyncio.create_task(self._pause(job_id, task, control))
+            self._pause_tasks[job_id] = pause_task
+            pause_task.add_done_callback(
+                lambda completed: self._discard_pause_task(job_id, completed)
+            )
         with self._lock:
+            return self._task_for(self._jobs[job_id])
+
+    async def _pause(
+        self,
+        job_id: str,
+        task: asyncio.Task[None] | None,
+        control: DownloadControl | None,
+    ) -> None:
+        try:
+            if control:
+                await asyncio.to_thread(control.stop)
+            if task:
+                _, pending = await asyncio.wait(
+                    [task], timeout=DOWNLOAD_PAUSE_WORKER_TIMEOUT_SECONDS
+                )
+                if pending:
+                    raise TimeoutError("下载步骤尚未退出，请稍后再次请求停止")
+            if control:
+                # 子进程可能在首次停止检查后注册，工作线程退出后再次确认所有权释放。
+                await asyncio.to_thread(control.stop)
+            self._finish_paused(job_id)
+        except Exception as error:
+            self._update_job(
+                job_id,
+                DownloadStage.PAUSING,
+                self.get(job_id).progress_percent,
+                "停止尚未完成，可再次请求停止",
+                str(error) or "无法确认下载已停止",
+            )
+
+    def _finish_paused(self, job_id: str) -> None:
+        with self._lock:
+            control = self._controls.get(job_id)
+            if control is not None and control.has_active_execution:
+                raise RuntimeError("下载执行尚未退出，不能确认暂停")
             current = self._jobs[job_id]
             if current.stage == DownloadStage.PAUSING:
                 current.stage = DownloadStage.PAUSED
                 current.message = "已暂停，继续时尝试续传"
+                current.error_message = None
                 current.updated_at = datetime.now(UTC)
                 self.library.save_download_job(current)
                 self._active_job_id_by_asset_id[current.asset_id] = job_id
@@ -200,7 +260,22 @@ class DownloadManager:
                     asset.status = MediaAssetStatus.PENDING
                     asset.error_message = None
                     self.library.save(asset)
-            return self._task_for(current)
+
+    async def close(self) -> None:
+        """先停止受管进程和写回线程，再允许关闭资料库连接。"""
+        self._closing = True
+        for job in list(self._jobs.values()):
+            if job.stage not in INACTIVE_DOWNLOAD_STAGES:
+                await self.pause(job.job_id)
+        tasks = [*self._pause_tasks.values(), *self._tasks.values()]
+        if tasks:
+            _, pending = await asyncio.wait(
+                tasks, timeout=DOWNLOAD_SHUTDOWN_TIMEOUT_SECONDS
+            )
+            if pending:
+                raise RuntimeError("下载任务仍在停止，无法安全关闭资料库")
+        if self.has_active_jobs():
+            raise RuntimeError("下载进程尚未退出，无法安全关闭资料库")
 
     def resume(self, job_id: str) -> DownloadTask:
         with self._lock:
@@ -209,6 +284,10 @@ class DownloadManager:
                 raise KeyError(job_id)
             if job.stage not in {DownloadStage.PAUSED, DownloadStage.FAILED}:
                 raise ValueError("只有暂停或失败的下载可以重新开始")
+            if self._closing:
+                raise ValueError("下载管理器正在关闭")
+            if self._job_has_running_worker(job_id):
+                raise ValueError("下载进程仍未退出，请稍后再试")
             active = self._active_job_for(job.asset_id)
             if active and active.job_id != job_id:
                 raise ValueError("该视频已有其他下载任务")
@@ -236,6 +315,8 @@ class DownloadManager:
                 return
             if job.stage not in INACTIVE_DOWNLOAD_STAGES:
                 raise ValueError("请先暂停下载，再删除任务记录")
+            if self._job_has_running_worker(job_id):
+                raise ValueError("下载进程仍未退出，不能删除任务")
             self.library.delete_download_job(job_id)
             self._jobs.pop(job_id)
             if self._active_job_id_by_asset_id.get(job.asset_id) == job_id:
@@ -264,7 +345,17 @@ class DownloadManager:
         with self._lock:
             return any(
                 job.stage not in INACTIVE_DOWNLOAD_STAGES for job in self._jobs.values()
-            )
+            ) or any(self._job_has_running_worker(job_id) for job_id in self._controls)
+
+    def _job_has_running_worker(self, job_id: str) -> bool:
+        task = self._tasks.get(job_id)
+        pause_task = self._pause_tasks.get(job_id)
+        control = self._controls.get(job_id)
+        return (
+            (task is not None and not task.done())
+            or (pause_task is not None and not pause_task.done())
+            or (control is not None and control.has_active_execution)
+        )
 
     async def cancel_assets(self, asset_ids: set[str]) -> bool:
         with self._lock:
@@ -272,7 +363,10 @@ class DownloadManager:
                 job.model_copy(deep=True)
                 for job in self._jobs.values()
                 if job.asset_id in asset_ids
-                and job.stage not in INACTIVE_DOWNLOAD_STAGES
+                and (
+                    job.stage not in INACTIVE_DOWNLOAD_STAGES
+                    or self._job_has_running_worker(job.job_id)
+                )
             ]
             tasks = [
                 self._tasks[job.job_id] for job in jobs if job.job_id in self._tasks
@@ -292,6 +386,22 @@ class DownloadManager:
         with self._lock:
             if self._tasks.get(job_id) is completed:
                 self._tasks.pop(job_id, None)
+                job = self._jobs.get(job_id)
+                control = self._controls.get(job_id)
+                if (
+                    job is not None
+                    and job.stage == DownloadStage.PAUSING
+                    and (control is None or not control.has_active_execution)
+                ):
+                    self._finish_paused(job_id)
+            if not self._job_has_running_worker(job_id):
+                self._controls.pop(job_id, None)
+
+    def _discard_pause_task(self, job_id: str, completed: asyncio.Task[None]) -> None:
+        with self._lock:
+            if self._pause_tasks.get(job_id) is completed:
+                self._pause_tasks.pop(job_id, None)
+            if not self._job_has_running_worker(job_id):
                 self._controls.pop(job_id, None)
 
     async def _run(self, job_id: str) -> None:
@@ -398,13 +508,29 @@ class DownloadManager:
             except DownloadAccountExpired as error:
                 self._fail(job_id, str(error))
             except Exception as error:
-                if is_authentication_failure(error):
-                    self.download_account_store.mark_expired(asset.source_platform)
-                self._fail(job_id, str(error) or "视频下载失败")
+                if control.has_active_execution:
+                    control.request_stop()
+                    self._update_job(
+                        job_id,
+                        DownloadStage.PAUSING,
+                        self.get(job_id).progress_percent,
+                        "下载进程未退出，请再次请求停止",
+                        str(error) or "无法结束下载进程",
+                    )
+                else:
+                    if is_authentication_failure(error):
+                        self.download_account_store.mark_expired(asset.source_platform)
+                    self._fail(job_id, str(error) or "视频下载失败")
             finally:
                 with self._lock:
                     active_job_id = self._active_job_id_by_asset_id.get(job.asset_id)
-                    if active_job_id == job_id:
+                    current = self._jobs.get(job_id)
+                    if (
+                        active_job_id == job_id
+                        and current is not None
+                        and current.stage in TERMINAL_DOWNLOAD_STAGES
+                        and not control.has_active_execution
+                    ):
                         self._active_job_id_by_asset_id.pop(job.asset_id)
 
     def _update_stage_message(self, job_id: str, message: str) -> None:
@@ -504,7 +630,10 @@ class DownloadManager:
         with self._lock:
             job_id = self._active_job_id_by_asset_id.get(asset_id)
             job = self._jobs.get(job_id) if job_id else None
-            if not job or job.stage in TERMINAL_DOWNLOAD_STAGES:
+            if not job or (
+                job.stage in TERMINAL_DOWNLOAD_STAGES
+                and not self._job_has_running_worker(job.job_id)
+            ):
                 self._active_job_id_by_asset_id.pop(asset_id, None)
                 return None
             return job.model_copy(deep=True)

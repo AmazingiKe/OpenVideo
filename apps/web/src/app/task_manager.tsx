@@ -156,7 +156,8 @@ export function TaskManagerProvider({ children }: { children: ReactNode }) {
         name: job.name,
         retry_available: job.stage === "failed" || job.stage === "paused",
         pause_available:
-          !INACTIVE_DOWNLOAD_STAGES.has(job.stage) && job.stage !== "pausing",
+          (!INACTIVE_DOWNLOAD_STAGES.has(job.stage) && job.stage !== "pausing") ||
+          (job.stage === "pausing" && Boolean(job.error_message)),
         delete_available: INACTIVE_DOWNLOAD_STAGES.has(job.stage),
       });
     },

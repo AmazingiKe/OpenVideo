@@ -1,8 +1,10 @@
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
+import os
 import sys
 import subprocess
+from time import monotonic
 from unittest.mock import Mock
 
 import pytest
@@ -30,6 +32,12 @@ def test_process_stop_failure_is_not_reported_as_successful_pause(monkeypatch):
     process.poll.return_value = None
     monkeypatch.setattr(
         control, "stop", Mock(side_effect=subprocess.TimeoutExpired("taskkill", 10))
+    )
+    monkeypatch.setattr(downloader, "_process_tree_running", lambda *_: True)
+    monkeypatch.setattr(
+        downloader,
+        "_stop_process_tree",
+        Mock(side_effect=subprocess.TimeoutExpired("taskkill", 10)),
     )
     with pytest.raises(subprocess.TimeoutExpired):
         with control.track(process):
@@ -69,6 +77,195 @@ def test_pause_stops_actual_process_and_preserves_partial_files(
         finally:
             control.stop()
     assert partial_file.read_bytes() == b"partial"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="验证 POSIX 进程组信号升级")
+@pytest.mark.parametrize("parent_exits_first", [False, True])
+def test_pause_kills_uncooperative_processes_and_descendants(
+    tmp_path, monkeypatch, parent_exits_first
+):
+    monkeypatch.setattr(downloader, "PROCESS_STOP_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(downloader, "PROCESS_KILL_TIMEOUT_SECONDS", 1)
+    started = Event()
+    control = downloader.DownloadControl()
+    worker_code = (
+        "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+        "print('openvideo-progress:1%|1MiB/s|60',flush=True); time.sleep(60)"
+    )
+    command = [sys.executable, "-c", worker_code]
+    if parent_exits_first:
+        command = [
+            sys.executable,
+            "-c",
+            "import subprocess,sys,time; "
+            "subprocess.Popen([sys.executable,'-c',sys.argv[1]]); time.sleep(60)",
+            worker_code,
+        ]
+    partial_file = tmp_path / "download.mp4.part"
+    partial_file.write_bytes(b"partial")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        running = executor.submit(
+            downloader._run_download,
+            command,
+            tmp_path,
+            lambda *_: started.set(),
+            control,
+        )
+        try:
+            assert started.wait(3)
+            stop_started = monotonic()
+            control.stop()
+            with pytest.raises(downloader.DownloadPaused):
+                running.result(timeout=3)
+            assert monotonic() - stop_started < 3
+            assert not control.has_active_execution
+        finally:
+            control.stop()
+    assert partial_file.read_bytes() == b"partial"
+
+
+def test_download_deadline_applies_while_output_is_silent(tmp_path, monkeypatch):
+    monkeypatch.setattr(downloader, "COMMAND_TIMEOUT_SECONDS", 0.1)
+    control = downloader.DownloadControl()
+    started = monotonic()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        running = executor.submit(
+            downloader._run_download,
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            tmp_path,
+            lambda *_: None,
+            control,
+        )
+        try:
+            with pytest.raises(DownloadFailure, match="视频下载超时"):
+                running.result(timeout=4)
+            assert monotonic() - started < 4
+            assert not control.has_active_execution
+        finally:
+            control.stop()
+
+
+def test_metadata_timeout_reaps_the_owned_process(tmp_path, monkeypatch):
+    monkeypatch.setattr(downloader, "METADATA_TIMEOUT_SECONDS", 0.1)
+    popen = subprocess.Popen
+    processes = []
+
+    def start_silent_process(command, **options):
+        if "yt_dlp" not in command:
+            return popen(command, **options)
+        process = popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"], **options
+        )
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(downloader.subprocess, "Popen", start_silent_process)
+    control = downloader.DownloadControl()
+    try:
+        with pytest.raises(DownloadFailure, match="读取视频信息超时"):
+            downloader.read_download_metadata(
+                SOURCE_URL, SourcePlatform.YOUTUBE, control=control
+            )
+        assert len(processes) == 1
+        assert processes[0].poll() is not None
+        assert not control.has_active_execution
+    finally:
+        control.stop()
+
+
+def test_windows_job_is_terminated_even_after_its_parent_has_exited(monkeypatch):
+    monkeypatch.setattr(downloader, "IS_WINDOWS", True)
+    monkeypatch.setattr(downloader, "PROCESS_STOP_TIMEOUT_SECONDS", 0)
+    process = Mock()
+    process.poll.return_value = 0
+    process.returncode = 0
+    windows_job = Mock()
+    active = True
+
+    def terminate_job():
+        nonlocal active
+        active = False
+
+    windows_job.is_running.side_effect = lambda: active
+    windows_job.terminate.side_effect = terminate_job
+
+    assert downloader._process_tree_running(process, windows_job)
+    downloader._stop_process_tree(process, windows_job)
+
+    windows_job.terminate.assert_called_once()
+    process.terminate.assert_not_called()
+    assert not downloader._process_tree_running(process, windows_job)
+
+
+def test_windows_process_runs_only_after_its_job_owns_it(monkeypatch):
+    monkeypatch.setattr(downloader, "IS_WINDOWS", True)
+    process = Mock()
+    process.poll.return_value = 0
+    process.returncode = 0
+    windows_job = Mock()
+    windows_job.is_running.return_value = False
+    transitions = []
+
+    def create_job(_process_id):
+        transitions.append("owned")
+        return windows_job
+
+    monkeypatch.setattr(downloader, "WindowsProcessJob", create_job)
+    monkeypatch.setattr(
+        downloader,
+        "resume_suspended_process",
+        lambda _: transitions.append("resumed"),
+    )
+    with downloader.DownloadControl().track(process):
+        transitions.append("executed")
+
+    assert transitions == ["owned", "resumed", "executed"]
+    windows_job.close.assert_called_once()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="需要真实 Windows Job Object")
+def test_windows_pause_reaps_children_after_parent_exit(tmp_path, monkeypatch):
+    monkeypatch.setattr(downloader, "PROCESS_STOP_TIMEOUT_SECONDS", 0.05)
+    started = Event()
+    control = downloader.DownloadControl()
+    child_code = "import time; print('openvideo-progress:1%|1MiB/s|60',flush=True); time.sleep(60)"
+    command = [
+        sys.executable,
+        "-c",
+        "import subprocess,sys,time; "
+        "subprocess.Popen([sys.executable,'-c',sys.argv[1]]); time.sleep(60)",
+        child_code,
+    ]
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        running = executor.submit(
+            downloader._run_download,
+            command,
+            tmp_path,
+            lambda *_: started.set(),
+            control,
+        )
+        try:
+            assert started.wait(3)
+            control._process.terminate()
+            control._process.wait(timeout=1)
+            assert control.has_active_execution
+            control.stop()
+            with pytest.raises(downloader.DownloadPaused):
+                running.result(timeout=3)
+            assert not control.has_active_execution
+        finally:
+            control.stop()
+
+
+def test_unreaped_output_reader_does_not_report_safe_completion(tmp_path, monkeypatch):
+    monkeypatch.setattr(downloader, "COMMAND_TIMEOUT_SECONDS", 0.01)
+    reader = Mock()
+    reader.is_alive.return_value = True
+    monkeypatch.setattr(downloader, "Thread", lambda **_: reader)
+    control = downloader.DownloadControl()
+    with pytest.raises(DownloadFailure, match="输出读取尚未退出"):
+        downloader._read_download_output(Mock(), tmp_path, lambda *_: None, control)
+    assert control.has_active_execution
 
 
 def test_transfer_directory_reuses_matching_partial_files(tmp_path: Path):

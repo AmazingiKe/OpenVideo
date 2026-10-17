@@ -6,8 +6,10 @@ import shutil
 import subprocess
 import sys
 import signal
-from contextlib import contextmanager, nullcontext
-from threading import Event, RLock
+from contextlib import contextmanager
+from threading import Event, RLock, Thread
+from queue import Empty, Full, Queue
+from time import monotonic, sleep
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +19,12 @@ import httpx
 from openvideo.core.download_models import DownloadQuality
 from openvideo.core.media_models import SourcePlatform
 from openvideo.tools.media import resolve_tool
+from openvideo.tools.process_tree import (
+    WINDOWS_CREATE_SUSPENDED,
+    WindowsProcessJob,
+    process_group_is_running,
+    resume_suspended_process,
+)
 from openvideo.tools.sources import UnsupportedSourceError, resolve_source
 from openvideo.tools.sources.bilibili import (
     bilibili_base_video_id,
@@ -31,7 +39,11 @@ PROGRESS_SEPARATOR = "|"
 TRANSFER_DIRECTORY_PREFIX = "transfer-"
 PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)")
 COMMAND_TIMEOUT_SECONDS = 60 * 60 * 6
-PROCESS_STOP_TIMEOUT_SECONDS = 10
+PROCESS_STOP_TIMEOUT_SECONDS = 2
+PROCESS_KILL_TIMEOUT_SECONDS = 2
+PROCESS_POLL_INTERVAL_SECONDS = 0.05
+METADATA_TIMEOUT_SECONDS = 120
+DOWNLOAD_OUTPUT_QUEUE_SIZE = 128
 MAX_DIAGNOSTIC_LINES = 30
 PLAYLIST_PROBE_LIMIT = 100
 DOWNLOAD_PROGRESS_CEILING = 96
@@ -40,6 +52,14 @@ SOCKET_TIMEOUT_SECONDS = 30
 DOWNLOAD_RETRY_COUNT = 10
 FRAGMENT_RETRY_COUNT = 20
 FILE_ACCESS_RETRY_COUNT = 3
+IS_WINDOWS = os.name == "nt"
+DOWNLOAD_PROCESS_CREATION_FLAGS = (
+    subprocess.CREATE_NO_WINDOW
+    | subprocess.CREATE_NEW_PROCESS_GROUP
+    | WINDOWS_CREATE_SUSPENDED
+    if IS_WINDOWS
+    else 0
+)
 RETRY_SLEEP_EXPRESSION = "exp=1:20"
 BILIBILI_VIEW_API_URL = "https://api.bilibili.com/x/web-interface/view"
 BILIBILI_VIEW_TIMEOUT_SECONDS = 20
@@ -106,51 +126,142 @@ class DownloadControl:
     def __init__(self) -> None:
         self._stopped = Event()
         self._lock = RLock()
+        self._stop_lock = RLock()
         self._process: subprocess.Popen[str] | None = None
+        self._windows_job: WindowsProcessJob | None = None
+        self._reader: Thread | None = None
 
     def checkpoint(self) -> None:
         if self._stopped.is_set():
             raise DownloadPaused("下载已暂停")
 
-    def stop(self) -> None:
+    def request_stop(self) -> None:
         self._stopped.set()
+
+    @property
+    def has_active_execution(self) -> bool:
         with self._lock:
-            process = self._process
-            if process is not None and process.poll() is None:
-                if os.name == "nt":
-                    subprocess.run(
-                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                        capture_output=True,
-                        check=False,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        timeout=PROCESS_STOP_TIMEOUT_SECONDS,
-                    )
-                else:
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
+            return (
+                self._process is not None
+                and _process_tree_running(self._process, self._windows_job)
+            ) or (self._reader is not None and self._reader.is_alive())
+
+    def monitor_output(self, reader: Thread) -> None:
+        with self._lock:
+            self._reader = reader
+
+    def stop(self) -> None:
+        self.request_stop()
+        self.terminate_process_tree()
+
+    def terminate_process_tree(self) -> None:
+        """超时与读管道失败同样需要回收进程，但不改变用户的暂停意图。"""
+        with self._stop_lock:
+            with self._lock:
+                process = self._process
+                windows_job = self._windows_job
+            if process is not None:
+                _stop_process_tree(process, windows_job)
 
     @contextmanager
     def track(self, process: subprocess.Popen[str]):
         """暂停可能先于子进程注册到达，注册后立即补做停止检查。"""
-        with self._lock:
-            self._process = process
+        windows_job = None
         try:
+            if IS_WINDOWS:
+                windows_job = WindowsProcessJob(process.pid)
+            with self._lock:
+                self._process = process
+                self._windows_job = windows_job
             if self._stopped.is_set():
                 self.stop()
+            elif windows_job is not None:
+                resume_suspended_process(process.pid)
             self.checkpoint()
             yield
+            if _process_tree_running(process, windows_job):
+                with self._stop_lock:
+                    _stop_process_tree(process, windows_job)
             self.checkpoint()
         except BaseException:
-            if process.poll() is not None:
+            with self._stop_lock:
+                _stop_process_tree(process, windows_job)
+            if not _process_tree_running(process, windows_job):
                 self.checkpoint()
             raise
         finally:
             with self._lock:
-                if process.poll() is not None:
+                if not _process_tree_running(process, windows_job):
                     self._process = None
+                    self._windows_job = None
+                    if windows_job is not None:
+                        windows_job.close()
+
+
+def _process_tree_running(
+    process: subprocess.Popen[str], windows_job: WindowsProcessJob | None = None
+) -> bool:
+    process.poll()
+    if IS_WINDOWS:
+        if windows_job is not None:
+            return windows_job.is_running()
+        return process.returncode is None
+    if process.returncode is not None:
+        return process_group_is_running(process.pid)
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return process_group_is_running(process.pid)
+    return True
+
+
+def _stop_process_tree(
+    process: subprocess.Popen[str], windows_job: WindowsProcessJob | None = None
+) -> None:
+    """进程组属于本次启动；即使父进程先退出，也必须回收仍持管道的后代。"""
+    if IS_WINDOWS:
+        if windows_job is None:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=PROCESS_KILL_TIMEOUT_SECONDS)
+            return
+        if process.poll() is None:
+            process.terminate()
+        deadline = monotonic() + PROCESS_STOP_TIMEOUT_SECONDS
+        while windows_job.is_running() and monotonic() < deadline:
+            sleep(PROCESS_POLL_INTERVAL_SECONDS)
+        if windows_job.is_running():
+            windows_job.terminate()
+        deadline = monotonic() + PROCESS_KILL_TIMEOUT_SECONDS
+        process.wait(timeout=max(deadline - monotonic(), 0))
+        while windows_job.is_running() and monotonic() < deadline:
+            sleep(PROCESS_POLL_INTERVAL_SECONDS)
+        if windows_job.is_running():
+            raise DownloadFailure("下载进程树尚未退出，请再次请求停止")
+        return
+    if not _process_tree_running(process):
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
+        return
+    deadline = monotonic() + PROCESS_STOP_TIMEOUT_SECONDS
+    while _process_tree_running(process) and monotonic() < deadline:
+        sleep(PROCESS_POLL_INTERVAL_SECONDS)
+    if _process_tree_running(process):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    deadline = monotonic() + PROCESS_KILL_TIMEOUT_SECONDS
+    process.wait(timeout=max(deadline - monotonic(), 0))
+    while _process_tree_running(process) and monotonic() < deadline:
+        sleep(PROCESS_POLL_INTERVAL_SECONDS)
+    if _process_tree_running(process):
+        raise DownloadFailure("下载进程树尚未退出，请再次请求停止")
 
 
 @dataclass(frozen=True)
@@ -325,7 +436,11 @@ def read_download_metadata(
     ]
     if control is None:
         result = subprocess.run(
-            command, capture_output=True, check=False, text=True, timeout=120
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=METADATA_TIMEOUT_SECONDS,
         )
     else:
         process = subprocess.Popen(
@@ -333,15 +448,15 @@ def read_download_metadata(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            start_new_session=os.name != "nt",
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            start_new_session=not IS_WINDOWS,
+            creationflags=DOWNLOAD_PROCESS_CREATION_FLAGS,
         )
         with control.track(process):
             try:
-                stdout, stderr = process.communicate(timeout=120)
+                stdout, stderr = process.communicate(timeout=METADATA_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+                control.terminate_process_tree()
+                process.communicate(timeout=PROCESS_KILL_TIMEOUT_SECONDS)
                 raise DownloadFailure("读取视频信息超时")
             result = subprocess.CompletedProcess(
                 command, process.returncode, stdout, stderr
@@ -725,44 +840,94 @@ def _run_download(
         text=True,
         encoding="utf-8",
         errors="replace",
-        start_new_session=os.name != "nt",
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        start_new_session=not IS_WINDOWS,
+        creationflags=DOWNLOAD_PROCESS_CREATION_FLAGS,
     )
-    with control.track(process) if control else nullcontext():
-        return _read_download_output(process, staging_directory, on_progress)
+    process_control = control or DownloadControl()
+    with process_control.track(process):
+        return _read_download_output(
+            process, staging_directory, on_progress, process_control
+        )
 
 
 def _read_download_output(
     process: subprocess.Popen[str],
     staging_directory: Path,
     on_progress: ProgressCallback,
+    control: DownloadControl,
 ) -> Path:
     """下载器输出同时携带进度和最终路径，发布前必须验证路径属于分片目录。"""
     output_file: Path | None = None
     diagnostics: list[str] = []
     assert process.stdout is not None
-    for raw_line in process.stdout:
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith(PROGRESS_PREFIX):
-            progress = parse_download_progress(line)
-            if progress is not None:
-                on_progress(
-                    min(progress.percent, DOWNLOAD_PROGRESS_CEILING),
-                    download_progress_message(progress),
-                )
-            continue
-        if line.startswith(OUTPUT_PREFIX):
-            output_file = Path(line.removeprefix(OUTPUT_PREFIX).strip())
-            continue
-        diagnostics.append(line)
-        diagnostics = diagnostics[-MAX_DIAGNOSTIC_LINES:]
+    output: Queue[str | Exception | None] = Queue(maxsize=DOWNLOAD_OUTPUT_QUEUE_SIZE)
+    reader_stopped = Event()
+
+    def enqueue(item: str | Exception | None) -> None:
+        while not reader_stopped.is_set():
+            try:
+                output.put(item, timeout=PROCESS_POLL_INTERVAL_SECONDS)
+                return
+            except Full:
+                pass
+
+    def read_lines() -> None:
+        try:
+            for raw_line in process.stdout:
+                if reader_stopped.is_set():
+                    break
+                enqueue(raw_line)
+        except Exception as error:
+            enqueue(error)
+        finally:
+            try:
+                process.stdout.close()
+            finally:
+                enqueue(None)
+
+    reader = Thread(target=read_lines, daemon=True)
+    control.monitor_output(reader)
+    reader.start()
+    deadline = monotonic() + COMMAND_TIMEOUT_SECONDS
     try:
-        return_code = process.wait(timeout=COMMAND_TIMEOUT_SECONDS)
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise DownloadFailure("视频下载超时")
+            try:
+                item = output.get(timeout=min(remaining, PROCESS_POLL_INTERVAL_SECONDS))
+            except Empty:
+                continue
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            line = item.strip()
+            if not line:
+                continue
+            if line.startswith(PROGRESS_PREFIX):
+                progress = parse_download_progress(line)
+                if progress is not None:
+                    on_progress(
+                        min(progress.percent, DOWNLOAD_PROGRESS_CEILING),
+                        download_progress_message(progress),
+                    )
+                continue
+            if line.startswith(OUTPUT_PREFIX):
+                output_file = Path(line.removeprefix(OUTPUT_PREFIX).strip())
+                continue
+            diagnostics.append(line)
+            diagnostics = diagnostics[-MAX_DIAGNOSTIC_LINES:]
+        return_code = process.wait(timeout=max(deadline - monotonic(), 0))
     except subprocess.TimeoutExpired as error:
-        process.kill()
         raise DownloadFailure("视频下载超时") from error
+    finally:
+        reader_stopped.set()
+        if reader.is_alive():
+            control.terminate_process_tree()
+            reader.join(timeout=PROCESS_KILL_TIMEOUT_SECONDS)
+        if reader.is_alive():
+            raise DownloadFailure("下载输出读取尚未退出，请再次请求停止")
     if return_code != 0:
         raise DownloadFailure(_friendly_failure("\n".join(diagnostics)))
     if output_file is None:

@@ -57,6 +57,36 @@ describe("TaskCenter", () => {
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
+  it("offers retrying a failed stop without allowing download resumption or deletion", async () => {
+    const on_pause = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TaskCenter
+        open
+        tasks={[
+          {
+            ...task_record("pausing", false),
+            task_type: "download",
+            pause_available: true,
+            error_message: "进程尚未退出",
+            retry_available: false,
+            delete_available: false,
+          },
+        ]}
+        on_retry={vi.fn()}
+        on_pause={on_pause}
+        on_delete={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "重试停止" }));
+    await waitFor(() => expect(on_pause).toHaveBeenCalledOnce());
+    expect(
+      screen.queryByRole("button", { name: "继续下载" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "删除任务" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("stops a transcription, disables repeated stops, and shows request failures", async () => {
     let reject_stop!: (error: Error) => void;
     const on_cancel = vi.fn(

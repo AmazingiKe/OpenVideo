@@ -269,6 +269,8 @@ def create_app(
         try:
             yield
         finally:
+            if manager:
+                await manager.close()
             await account_login_manager.close()
             await transcription_model_manager.close()
             await formula_model_manager.close()
@@ -376,6 +378,8 @@ def create_app(
                 else "library_activation_failed"
             )
             _library_error(422, error_code, str(error))
+        if manager:
+            await manager.close()
         if analysis_manager:
             await analysis_manager.close()
         if agent_service:
@@ -408,6 +412,8 @@ def create_app(
             event_analysis_manager,
             agent_service,
         )
+        if manager:
+            await manager.close()
         if analysis_manager:
             await analysis_manager.close()
         if agent_service:
