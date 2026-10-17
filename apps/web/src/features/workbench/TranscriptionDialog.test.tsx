@@ -11,11 +11,16 @@ import {
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
 } from "@/shared/types";
+import { check_transcription } from "@/shared/api/transcription_preflight";
 import { TranscriptionDialog } from "./TranscriptionDialog";
 
 vi.mock("@/shared/api/cloud_submission", () => ({
   get_cloud_submission_status: vi.fn(),
   resolve_cloud_submission: vi.fn(),
+}));
+
+vi.mock("@/shared/api/transcription_preflight", () => ({
+  check_transcription: vi.fn(),
 }));
 
 const ASSET_ID = "01890f4c-7a2b-7cc2-98c4-dc0c0c07398f";
@@ -48,6 +53,11 @@ const DEFAULT_TRANSCRIPTION: TranscriptionOptions = {
 describe("TranscriptionDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(check_transcription).mockResolvedValue({
+      ready: true,
+      issues: [],
+      notes: [],
+    });
     vi.mocked(get_cloud_submission_status).mockResolvedValue(null);
   });
 
@@ -60,17 +70,20 @@ describe("TranscriptionDialog", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("starts transcription from the dialog", () => {
+  it("starts transcription from the dialog", async () => {
     const start_transcription = vi.fn();
     render_tools({ start_transcription, has_transcript: false });
 
     expect(screen.getByText("Whisper Small")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "生成转写" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
 
     expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
   });
 
-  it("allows the task language to use automatic detection", () => {
+  it("allows the task language to use automatic detection", async () => {
     Element.prototype.scrollIntoView = vi.fn();
     const start_transcription = vi.fn();
     render_tools({ start_transcription, has_transcript: false });
@@ -86,6 +99,9 @@ describe("TranscriptionDialog", () => {
       pointerType: "mouse",
     });
     fireEvent.click(screen.getByRole("option", { name: "自动检测" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "生成转写" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
 
     expect(start_transcription).toHaveBeenCalledWith({
@@ -94,10 +110,13 @@ describe("TranscriptionDialog", () => {
     });
   });
 
-  it("allows an existing transcript to be regenerated", () => {
+  it("allows an existing transcript to be regenerated", async () => {
     const start_transcription = vi.fn();
     render_tools({ start_transcription });
 
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "重新转写" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "重新转写" }));
 
     expect(start_transcription).toHaveBeenCalledWith(DEFAULT_TRANSCRIPTION);
@@ -117,13 +136,13 @@ describe("TranscriptionDialog", () => {
       ],
     });
 
-    expect(screen.getByRole("button", { name: "下载并使用" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "下载模型" })).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: "生成转写" }),
     ).not.toBeInTheDocument();
   });
 
-  it("starts batch cloud transcription without local runtime or download controls", () => {
+  it("starts batch cloud transcription without local runtime or download controls", async () => {
     const start_transcription = vi.fn();
     const cloud_options: TranscriptionOptions = {
       engine: "bailian",
@@ -154,10 +173,33 @@ describe("TranscriptionDialog", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/CPU|CUDA|int8/)).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "下载并使用" }),
+      screen.queryByRole("button", { name: "下载模型" }),
     ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "转写 3 个视频" }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "转写 3 个视频" }));
     expect(start_transcription).toHaveBeenCalledWith(cloud_options);
+  });
+
+  it("blocks submission on failed checks and allows rechecking after configuration changes", async () => {
+    vi.mocked(check_transcription).mockResolvedValueOnce({
+      ready: false,
+      issues: ["请先保存北京地域密钥"],
+      notes: [],
+    });
+    const start_transcription = vi.fn();
+    render_tools({ start_transcription, has_transcript: false });
+    expect(screen.getByRole("button", { name: "生成转写" })).toBeDisabled();
+    await screen.findByText("请先保存北京地域密钥");
+    fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
+    expect(start_transcription).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "重新检查" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "生成转写" })).toBeEnabled(),
+    );
   });
 
   it("requires explicit verification before unlocking an unknown cloud submission", async () => {
@@ -241,6 +283,9 @@ describe("TranscriptionDialog", () => {
       expect(screen.getByRole("button", { name: "生成转写" })).toBeEnabled(),
     );
     expect(start_transcription).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "生成转写" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "生成转写" }));
     expect(start_transcription).toHaveBeenCalledWith(options);
   });

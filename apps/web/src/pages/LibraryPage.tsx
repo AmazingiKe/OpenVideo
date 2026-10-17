@@ -128,6 +128,7 @@ export function LibraryPage() {
         }}
         asset={transcription_assets[0] ?? null}
         asset_count={transcription_assets.length}
+        asset_ids={transcription_assets.map((item) => item.asset_id)}
         error={resource_error}
         has_transcript={false}
         is_transcribing={false}

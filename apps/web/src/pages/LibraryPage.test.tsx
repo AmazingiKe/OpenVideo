@@ -14,6 +14,14 @@ import {
 } from "@/shared/api";
 import type { MediaAsset, SummaryDocument } from "@/shared/types";
 
+vi.mock("@/shared/api/transcription_preflight", () => ({
+  check_transcription: vi.fn(async () => ({
+    ready: true,
+    issues: [],
+    notes: [],
+  })),
+}));
+
 const ASSET_ID = "019c0000-0000-7000-8000-000000000001";
 const ASSET: MediaAsset = {
   asset_id: ASSET_ID,
@@ -220,6 +228,11 @@ describe("LibraryPage", () => {
       await screen.findByRole("dialog", { name: "批量转写" }),
     ).toBeInTheDocument();
     expect(start_transcription).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "转写 2 个视频" }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "转写 2 个视频" }));
     await waitFor(() => expect(start_transcription).toHaveBeenCalledTimes(2));
     expect(start_transcription).toHaveBeenCalledWith(

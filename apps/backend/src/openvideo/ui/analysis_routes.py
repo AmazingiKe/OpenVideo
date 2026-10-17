@@ -31,6 +31,7 @@ from openvideo.core.transcription_models import (
     TranscriptionDevice,
     TranscriptionEngine,
     TranscriptionOptions,
+    TranscriptionPreflight,
 )
 from openvideo.settings import Settings
 from openvideo.ui.media_routes import ready_asset, validate_marker_bounds
@@ -77,6 +78,11 @@ class TranscriptionCreateRequest(BaseModel):
     language: str | None = None
     device: TranscriptionDevice | None = None
     compute_type: TranscriptionComputeType | None = None
+
+
+class TranscriptionPreflightRequest(BaseModel):
+    asset_ids: list[str] = Field(min_length=1, max_length=200)
+    options: TranscriptionOptions
 
 
 class AnalysisCreateRequest(BaseModel):
@@ -238,6 +244,16 @@ def register_analysis_routes(
     )
     def list_analysis_strategies() -> list[AnalysisStrategyPresetDescriptor]:
         return [preset.model_copy(deep=True) for preset in ANALYSIS_STRATEGY_PRESETS]
+
+    @app.post("/api/transcription/preflight", response_model=TranscriptionPreflight)
+    def check_transcription(
+        request: TranscriptionPreflightRequest,
+    ) -> TranscriptionPreflight:
+        for asset_id in request.asset_ids:
+            ready_asset(library(), asset_id)
+        return analysis_manager().check_transcription(
+            request.asset_ids, request.options
+        )
 
     @app.post(
         "/api/media/assets/{asset_id}/transcribe",

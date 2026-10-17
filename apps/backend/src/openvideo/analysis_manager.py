@@ -2,6 +2,8 @@ import asyncio
 from collections.abc import Callable
 import hashlib
 import json
+import platform
+from importlib.util import find_spec
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +30,8 @@ from openvideo.core.media_models import MediaAsset, MediaAssetStatus, MediaSegme
 from openvideo.core.transcription_models import (
     BAILIAN_PARAFORMER_MODEL,
     Transcript,
+    TranscriptionDevice,
+    TranscriptionPreflight,
     TranscriptionEngine,
     TranscriptionMetadata,
     TranscriptionOptions,
@@ -58,6 +62,7 @@ from openvideo.tools.transcribe import (
     require_transcription_adapter,
 )
 from openvideo.tools.bailian_asr import BailianAsrError
+from openvideo.tools.media import resolve_tool
 
 
 TRANSCRIPTION_PROGRESS_START_PERCENT = 10
@@ -229,6 +234,74 @@ class AnalysisManager:
         self.library.save_analysis_job(job)
         return job.model_copy(deep=True)
 
+    def check_transcription(
+        self, asset_ids: list[str], options: TranscriptionOptions
+    ) -> TranscriptionPreflight:
+        """只读取素材、配置和依赖，避免进入队列后才发现本机准备工作未完成。"""
+        issues: list[str] = []
+        notes: list[str] = []
+        try:
+            self._check_accepting_jobs()
+            self._validate_transcription_options(options)
+        except AnalysisPrerequisiteError as error:
+            issues.append(str(error))
+        if not resolve_tool(
+            self.settings.ffmpeg_path, "ffmpeg", self.settings.ffmpeg_bin_dir
+        ):
+            issues.append("未找到 ffmpeg，请在设置中配置媒体工具路径")
+        if options.engine == TranscriptionEngine.BAILIAN:
+            notes.append(
+                f"当前地域：{self.settings.bailian_asr.region.value}。只检查密钥是否已保存，不验证余额或服务端权限；开始后按音频时长计费。"
+            )
+        else:
+            runtime_modules = {
+                TranscriptionEngine.FASTER_WHISPER: "faster_whisper",
+                TranscriptionEngine.SENSEVOICE: "funasr",
+                TranscriptionEngine.QWEN3_ASR: "qwen_asr",
+            }
+            if find_spec(runtime_modules[options.engine]) is None:
+                issues.append("本地转录运行依赖未安装，请先完成项目依赖安装")
+            needs_cuda = (
+                options.device == TranscriptionDevice.CUDA
+                or options.engine == TranscriptionEngine.QWEN3_ASR
+            )
+            if needs_cuda and platform.system() == "Darwin":
+                issues.append("当前 Mac 不支持 CUDA，请选择 CPU 转录模型或百炼云端模型")
+            notes.append("本机检查不加载模型；显存和实际音频解码会在运行时验证。")
+        for asset_id in dict.fromkeys(asset_ids):
+            asset = self.library.get(asset_id)
+            if asset is None or asset.status != MediaAssetStatus.READY:
+                issues.append("所选素材尚未就绪，请等待导入或下载完成")
+                continue
+            title = asset.title or "未命名视频"
+            if not self.library.resolve_asset_file(asset, asset.playback_path):
+                issues.append(f"{title}：媒体文件不存在，请重新导入")
+            if self._active_job_for(asset_id) is not None:
+                issues.append(f"{title}：已有分析任务，请等待完成或停止任务")
+            metadata = self.library.load_transcription_metadata(asset_id)
+            if metadata and metadata.cloud_submission_uncertain:
+                issues.append(f"{title}：{CLOUD_SUBMISSION_UNCERTAIN_MESSAGE}")
+        return TranscriptionPreflight(
+            ready=not issues, issues=list(dict.fromkeys(issues)), notes=notes
+        )
+
+    def _validate_transcription_options(self, options: TranscriptionOptions) -> None:
+        """预检查与实际提交共用模型、地域和凭据约束，避免两处判断漂移。"""
+        try:
+            descriptor = require_transcription_adapter(options)
+            require_transcription_model_installed(
+                descriptor,
+                self.settings.models_root_directory,
+            )
+            if options.engine == TranscriptionEngine.BAILIAN:
+                self._require_bailian_credentials(options)
+        except (
+            TranscriptionFailure,
+            TranscriptionModelDownloadError,
+            BailianCredentialError,
+        ) as error:
+            raise AnalysisPrerequisiteError(str(error)) from error
+
     def create_transcription(
         self,
         asset_id: str,
@@ -251,20 +324,7 @@ class AnalysisManager:
             raise AnalysisPrerequisiteError(
                 f"{operation_label}正在运行，完成后再开始转录"
             )
-        try:
-            descriptor = require_transcription_adapter(options)
-            require_transcription_model_installed(
-                descriptor,
-                self.settings.models_root_directory,
-            )
-            if options.engine == TranscriptionEngine.BAILIAN:
-                self._require_bailian_credentials(options)
-        except (
-            TranscriptionFailure,
-            TranscriptionModelDownloadError,
-            BailianCredentialError,
-        ) as error:
-            raise AnalysisPrerequisiteError(str(error)) from error
+        self._validate_transcription_options(options)
         existing_transcript = self.library.load_transcript(asset_id)
         if existing_transcript is not None and not force:
             return AnalysisJob(

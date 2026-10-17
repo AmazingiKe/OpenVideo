@@ -278,6 +278,14 @@ class TranscriptionOptions(BaseModel):
         return self
 
 
+class TranscriptionPreflight(BaseModel):
+    """提交前的本机检查结果，不向供应商发送付费识别请求。"""
+
+    ready: bool
+    issues: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
 class TranscriptionMetadata(BaseModel):
     job_id: str
     asset_id: str

@@ -47,6 +47,15 @@ const ASSET: MediaAsset = {
 
 function agent_fetch(input: RequestInfo | URL): Promise<Response> {
   const url = typeof input === "string" ? input : input.toString();
+  if (url.includes("/transcription/preflight")) {
+    return Promise.resolve(
+      Response.json({
+        ready: true,
+        issues: [],
+        notes: ["本机检查通过，开始后将进行音频解码。"],
+      }),
+    );
+  }
   if (url.includes("/api/agent-definitions")) {
     return Promise.resolve(Response.json([]));
   }
@@ -171,5 +180,32 @@ export const CloudBatch: Story = {
       device: "auto",
       compute_type: "auto",
     },
+  },
+};
+
+export const PreflightFailed: Story = {
+  beforeEach() {
+    const original_fetch = window.fetch;
+    window.fetch = (input) =>
+      String(input).includes("/transcription/preflight")
+        ? Promise.resolve(
+            Response.json({
+              ready: false,
+              issues: ["请在设置中保存北京地域的百炼密钥"],
+              notes: ["检查过程不会提交云端转写任务。"],
+            }),
+          )
+        : agent_fetch(input);
+    return () => {
+      window.fetch = original_fetch;
+    };
+  },
+  play: async () => {
+    const body = within(document.body);
+    await body.findByText("请在设置中保存北京地域的百炼密钥");
+    await expect(body.getByRole("button", { name: "重新转写" })).toBeDisabled();
+    await waitFor(() =>
+      expect(getComputedStyle(body.getByRole("dialog")).opacity).toBe("1"),
+    );
   },
 };

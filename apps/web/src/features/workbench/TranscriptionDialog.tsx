@@ -37,6 +37,7 @@ import {
   type TranscriptionModelDescriptor,
   type TranscriptionOptions,
 } from "@/shared/types";
+import { use_transcription_preflight } from "./use_transcription_preflight";
 import { use_transcription_tool_state } from "./use_transcription_tool_state";
 
 type TranscriptionDialogProps = {
@@ -44,6 +45,7 @@ type TranscriptionDialogProps = {
   on_open_change: (open: boolean) => void;
   asset: MediaAsset | null;
   asset_count?: number;
+  asset_ids?: string[];
   error?: string | null;
   has_transcript: boolean;
   is_transcribing: boolean;
@@ -58,6 +60,7 @@ export function TranscriptionDialog({
   on_open_change,
   asset,
   asset_count = 1,
+  asset_ids,
   error = null,
   has_transcript,
   is_transcribing,
@@ -81,6 +84,11 @@ export function TranscriptionDialog({
     transcription_models,
     inspect_cloud_submission: open && asset_count === 1,
   });
+  const preflight = use_transcription_preflight(
+    open && !is_transcribing && !cloud_submission?.uncertain,
+    asset_ids ?? (asset ? [asset.asset_id] : []),
+    transcription_options,
+  );
   const [cloud_task_id, set_cloud_task_id] = useState("");
   const [confirm_not_submitted, set_confirm_not_submitted] = useState(false);
   useEffect(() => {
@@ -279,18 +287,55 @@ export function TranscriptionDialog({
             </AlertDescription>
           </Alert>
         ) : null}
+        {!is_transcribing ? (
+          <Alert
+            variant={
+              preflight.error || preflight.check?.issues.length
+                ? "destructive"
+                : "default"
+            }
+          >
+            <AlertTitle>
+              {preflight.check?.ready ? "开始前检查通过" : "开始前检查"}
+            </AlertTitle>
+            <AlertDescription>
+              {preflight.checking ? (
+                <p className="flex items-center gap-2">
+                  <Spinner aria-hidden="true" />
+                  正在检查素材、模型与运行配置…
+                </p>
+              ) : null}
+              {preflight.error ? <p role="alert">{preflight.error}</p> : null}
+              {preflight.check?.issues.length ? (
+                <ul className="flex list-disc flex-col gap-2 pl-4">
+                  {preflight.check.issues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {preflight.check?.notes.map((note) => (
+                <p key={note}>{note}</p>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={preflight.checking}
+                onClick={preflight.recheck}
+              >
+                重新检查
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {selected_transcription_model &&
         selected_transcription_model.engine !== "bailian" &&
         selected_transcription_model.installation_status !== "installed" ? (
           <TranscriptionModelDownloadAction
             model={selected_transcription_model}
-            action_label="下载并使用"
+            action_label="下载模型"
             on_change={on_transcription_model_change}
-            on_complete={() => {
-              if (transcription_options) {
-                on_start_transcription(transcription_options);
-              }
-            }}
+            on_complete={preflight.recheck}
             disabled={!asset || is_transcribing || submission_blocked}
           />
         ) : (
@@ -306,7 +351,8 @@ export function TranscriptionDialog({
               !asset ||
               !transcription_options ||
               is_transcribing ||
-              submission_blocked
+              submission_blocked ||
+              !preflight.check?.ready
             }
           >
             {is_transcribing ? <Spinner data-icon="inline-start" /> : null}
